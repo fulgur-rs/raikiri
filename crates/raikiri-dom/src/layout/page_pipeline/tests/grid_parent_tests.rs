@@ -18,7 +18,10 @@ fn fixture(display: &str, children: &[&str]) -> (Document, CascadeResult, usize,
         .collect();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    doc.nodes[parent].style.padding = taffy::Rect {
+    doc.layout_node_with_style_mut(parent)
+        .unwrap()
+        .style
+        .padding = taffy::Rect {
         left: taffy::LengthPercentage::length(5.0),
         right: taffy::LengthPercentage::length(5.0),
         top: taffy::LengthPercentage::length(5.0),

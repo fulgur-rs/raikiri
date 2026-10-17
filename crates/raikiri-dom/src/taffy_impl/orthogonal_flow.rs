@@ -27,7 +27,7 @@ use raikiri_style::property::DisplayValue;
 /// container.
 pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool {
     use super::vertical_oof::used_writing_mode;
-    let node = &tree.nodes[idx];
+    let node = &tree.layout_node_with_style(idx).unwrap();
     node.style.size.width.is_auto()
         && node.taffy_position() != TaffyPosition::Absolute
         && node.style.float == taffy::Float::None

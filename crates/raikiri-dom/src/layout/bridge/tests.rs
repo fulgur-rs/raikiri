@@ -32,12 +32,133 @@ fn apply_computed_to_style_bridges_display_to_taffy() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    assert_eq!(doc.nodes[body].style.display, Display::None);
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.display,
+        Display::None
+    );
 
     let default_style = <taffy::Style as Default>::default();
-    assert_eq!(doc.nodes[body].style.size, default_style.size);
-    assert_eq!(doc.nodes[body].style.margin, default_style.margin);
-    assert_eq!(doc.nodes[body].style.padding, default_style.padding);
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.size,
+        default_style.size
+    );
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.margin,
+        default_style.margin
+    );
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.padding,
+        default_style.padding
+    );
+}
+
+#[test]
+fn retained_style_pair_keeps_calc_handles_alive_across_clone_and_relayout() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let root = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;width:100px;height:100px"),
+    );
+    let body = doc.append_element(Some(root), "body", Style::default(), Some("display:block"));
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:calc(50% + 10px);height:10px;padding-left:calc(10% + 5px)"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    crate::layout::layout_single_page(&mut doc, &cr, page).expect("layout Ok");
+    let mut clone = doc.clone();
+    let clone_calc = clone
+        .layout_style(child)
+        .expect("clone retained style")
+        .size
+        .width
+        .into_raw()
+        .calc_value();
+    let clone_rules = build_rule_tree(&clone);
+    let clone_cascade = cascade(&clone, &clone_rules).expect("clone cascade Ok");
+
+    crate::layout::layout_single_page(&mut doc, &cr, page).expect("original relayout Ok");
+    assert_eq!(
+        crate::taffy_impl::resolve_calc(clone_calc, 100.0),
+        60.0,
+        "clone retains its old calc payload after the original relayout"
+    );
+    drop(doc);
+    assert_eq!(
+        crate::taffy_impl::resolve_calc(clone_calc, 100.0),
+        60.0,
+        "clone owns the calc payload after the original document is dropped"
+    );
+
+    crate::layout::layout_single_page(&mut clone, &clone_cascade, page).expect("clone relayout Ok");
+
+    let style = clone.layout_style(child).expect("retained style");
+    let width = style.size.width.into_raw();
+    assert!(width.has_calc());
+    assert_eq!(
+        crate::taffy_impl::resolve_calc(width.calc_value(), 100.0),
+        60.0
+    );
+    assert!(clone.nodes[child].unrounded_layout.size.width.is_finite());
+}
+
+#[test]
+fn retained_calc_payloads_survive_bridge_error_until_successful_rebuild() {
+    use crate::layout::test_support::{ahem_paragraph_in, ifc_ahem_fonts};
+    use raikiri_style::{build_rule_tree, cascade};
+    use std::sync::Arc;
+
+    let (mut doc, _initial_cascade, _root) = ahem_paragraph_in(
+        "",
+        "width:calc(50% + 10px);padding-left:calc(10% + 5px)",
+        "a",
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade Ok");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+
+    apply_computed_to_style(&mut doc, &cascade).expect("initial style bridge");
+    let old_payload = Arc::downgrade(
+        doc.retained_layout_styles
+            .calc_values
+            .first()
+            .expect("calc payload retained"),
+    );
+
+    doc.set_font_collection_with_limits(
+        ifc_ahem_fonts(),
+        shodo::limits::Limits {
+            max_text_bytes: Some(0),
+            ..Default::default()
+        },
+    );
+    assert!(matches!(
+        apply_computed_to_style(&mut doc, &cascade),
+        Err(LayoutError::IfcLimitExceeded { .. })
+    ));
+    assert!(
+        old_payload.upgrade().is_some(),
+        "failed bridge keeps the old calc payload alive"
+    );
+
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    apply_computed_to_style(&mut doc, &cascade).expect("successful style bridge");
+    assert!(
+        old_payload.upgrade().is_none(),
+        "successful bridge releases the previous calc payload prefix"
+    );
 }
 
 #[test]
@@ -73,7 +194,11 @@ fn apply_computed_to_style_tracks_logical_min_block_provenance() {
     assert!(!doc.nodes[auto].has_logical_min_block_size);
     assert!(!doc.nodes[page_only].has_logical_min_block_size);
     assert_eq!(
-        doc.nodes[avoided].style.min_size.height,
+        doc.layout_node_with_style(avoided)
+            .unwrap()
+            .style
+            .min_size
+            .height,
         LengthPercentageAuto::length(40.0)
     );
 }
@@ -90,7 +215,10 @@ fn apply_computed_to_style_bridges_direction_to_taffy() {
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
-    assert_eq!(doc.nodes[body].style.direction, taffy::Direction::Rtl);
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.direction,
+        taffy::Direction::Rtl
+    );
 }
 
 #[test]
@@ -121,14 +249,29 @@ fn apply_computed_to_style_preserves_authored_list_item_padding() {
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
-    assert_eq!(doc.nodes[inside].style.padding.left.into_raw().value(), 0.0);
     assert_eq!(
-        doc.nodes[outside].style.padding.left.into_raw().value(),
+        doc.layout_node_with_style(inside)
+            .unwrap()
+            .style
+            .padding
+            .left
+            .into_raw()
+            .value(),
         0.0
     );
     assert_eq!(
-        doc.nodes[explicit_padding]
+        doc.layout_node_with_style(outside)
+            .unwrap()
             .style
+            .padding
+            .left
+            .into_raw()
+            .value(),
+        0.0
+    );
+    assert_eq!(
+        doc.layout_style(explicit_padding)
+            .unwrap()
             .padding
             .left
             .into_raw()
@@ -161,7 +304,7 @@ fn apply_computed_to_style_bridges_margin_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[body].style.margin
+        doc.layout_node_with_style(body).unwrap().style.margin
     }
 
     // Case 1: shorthand `margin: 10px 20px 30px 40px` (top/right/bottom/left)
@@ -248,7 +391,7 @@ fn apply_computed_to_style_bridges_padding_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[body].style.padding
+        doc.layout_node_with_style(body).unwrap().style.padding
     }
 
     // Case 1: shorthand `padding: 5px 10px 15px 20px` (top/right/bottom/left)
@@ -326,7 +469,7 @@ fn apply_computed_to_style_bridges_width_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[p].style.size.width
+        doc.layout_node_with_style(p).unwrap().style.size.width
     }
 
     // Case 1: `width: 100px` → Dimension::length(100.0) (Px unchanged).
@@ -383,7 +526,7 @@ fn apply_computed_to_style_bridges_height_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[p].style.size.height
+        doc.layout_node_with_style(p).unwrap().style.size.height
     }
 
     // Case 1: `height: 100px` → Dimension::length(100.0) (Px unchanged).
@@ -422,7 +565,7 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[p].style.min_size
+        doc.layout_node_with_style(p).unwrap().style.min_size
     }
 
     // Case 1: unspecified → taffy default (initial min `auto` round-trip).
@@ -469,7 +612,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[p].style.max_size
+        doc.layout_node_with_style(p).unwrap().style.max_size
     }
 
     // Case 1: unspecified → taffy default (initial max `none` round-trip).
@@ -505,9 +648,28 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    assert!(doc.nodes[p].style.inset.left.into_raw().is_plain_calc());
-    assert!(doc.nodes[p].style.inset.top.into_raw().is_plain_calc());
-    assert_eq!(doc.nodes[p].style.inset.right, LengthPercentageAuto::auto());
+    assert!(
+        doc.layout_node_with_style(p)
+            .unwrap()
+            .style
+            .inset
+            .left
+            .into_raw()
+            .is_plain_calc()
+    );
+    assert!(
+        doc.layout_node_with_style(p)
+            .unwrap()
+            .style
+            .inset
+            .top
+            .into_raw()
+            .is_plain_calc()
+    );
+    assert_eq!(
+        doc.layout_node_with_style(p).unwrap().style.inset.right,
+        LengthPercentageAuto::auto()
+    );
 
     // Case 4: `max-width: none` → LengthPercentageAuto::auto() (no maximum).
     assert_eq!(
@@ -565,7 +727,7 @@ fn apply_computed_to_style_bridges_border_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[body].style.border
+        doc.layout_node_with_style(body).unwrap().style.border
     }
 
     // Case 1 (positive path): `border: 5px solid red` shorthand → 4 side
@@ -698,7 +860,7 @@ fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
 
     // border-style unset (initial `none`) must gate width to 0 all the way to taffy.
     assert_eq!(
-        doc.nodes[body].style.border,
+        doc.layout_node_with_style(body).unwrap().style.border,
         Rect {
             top: LengthPercentage::length(0.0),
             right: LengthPercentage::length(0.0),
@@ -736,7 +898,7 @@ fn font_relative_lengths_reach_taffy_as_real_pixels() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    let style = &doc.nodes[body].style;
+    let style = &doc.layout_node_with_style(body).unwrap().style;
 
     // 2em × 20px = 40px (previously 0.0).
     assert_eq!(
@@ -790,7 +952,7 @@ fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("styles");
-        doc.nodes[body].style.box_sizing
+        doc.layout_node_with_style(body).unwrap().style.box_sizing
     }
 
     // Case 1: border-box → taffy::BoxSizing::BorderBox
@@ -829,7 +991,7 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         apply_computed_to_style(&mut doc, &cr).expect("apply Ok");
-        doc.nodes[body].style.box_sizing
+        doc.layout_node_with_style(body).unwrap().style.box_sizing
     }
     assert_eq!(
         box_sizing_for_width_and_borders(None, "border-right: 150px solid red"),
@@ -875,7 +1037,10 @@ fn page_layout_preserves_authored_body_width_from_bridge() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cr = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
-    assert_eq!(doc.nodes[body].style.size.width, Dimension::length(100.0));
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.size.width,
+        Dimension::length(100.0)
+    );
     assert_eq!(doc.nodes[body].unrounded_layout.size.width, 100.0);
 }
 
@@ -908,7 +1073,7 @@ fn layout_single_page_bridges_display_flow_root() {
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
     assert_eq!(
-        doc.nodes[flow_root].style.display,
+        doc.layout_node_with_style(flow_root).unwrap().style.display,
         Display::FlowRoot,
         // cov:ignore: panic-message literal only executes on assertion failure.
         "bridge_display must map DisplayValue::FlowRoot to taffy::Display::FlowRoot"
@@ -954,7 +1119,10 @@ fn layout_single_page_bridges_display_flex_to_taffy_flexbox() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.nodes[flex_container].style.display,
+        doc.layout_node_with_style(flex_container)
+            .unwrap()
+            .style
+            .display,
         Display::Flex,
         "bridge_display must map DisplayValue::Flex to taffy::Display::Flex"
     );
@@ -1681,7 +1849,10 @@ fn layout_single_page_bridges_display_grid_to_taffy_grid() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        doc.nodes[grid_container].style.display,
+        doc.layout_node_with_style(grid_container)
+            .unwrap()
+            .style
+            .display,
         Display::Grid,
         "bridge_display must map DisplayValue::Grid to taffy::Display::Grid"
     );
@@ -2205,8 +2376,14 @@ fn apply_computed_to_style_bridges_min_content_width_to_taffy() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
 
-    assert_eq!(doc.nodes[width].style.size.width, Dimension::min_content());
-    assert_eq!(doc.nodes[inline].style.size.width, Dimension::min_content());
+    assert_eq!(
+        doc.layout_node_with_style(width).unwrap().style.size.width,
+        Dimension::min_content()
+    );
+    assert_eq!(
+        doc.layout_node_with_style(inline).unwrap().style.size.width,
+        Dimension::min_content()
+    );
 }
 
 #[test]
@@ -2234,7 +2411,10 @@ fn a_multicol_container_establishes_a_block_formatting_context() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    assert_eq!(doc.nodes[multicol].style.display, Display::FlowRoot);
+    assert_eq!(
+        doc.layout_node_with_style(multicol).unwrap().style.display,
+        Display::FlowRoot
+    );
     assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 0.0);
     assert_eq!(doc.nodes[child].unrounded_layout.location.y, 15.0);
     assert_eq!(doc.nodes[multicol].unrounded_layout.size.height, 35.0);

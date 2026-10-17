@@ -1676,7 +1676,7 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     let child_layout = doc.nodes[child].unrounded_layout;
     assert!((parent_layout.size.width - 64.0).abs() < 0.01);
     assert!((parent_layout.size.height - 64.0).abs() < 0.01);
-    let used_style = &doc.nodes[parent].style;
+    let used_style = &doc.layout_node_with_style(parent).unwrap().style;
     assert_eq!(used_style.padding.top.into_raw().value(), 16.0);
     assert_eq!(used_style.padding.right.into_raw().value(), 32.0);
     assert_eq!(used_style.padding.bottom.into_raw().value(), 16.0);
@@ -1730,7 +1730,10 @@ fn layout_single_page_bridges_display_none() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
-    assert_eq!(doc.nodes[body].style.display, Display::None);
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.display,
+        Display::None
+    );
 }
 
 #[test]
@@ -8724,12 +8727,24 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
         let (mut doc, cascade, root) = ch_ahem_paragraph("aa", &css);
         lay_out(&mut doc, &cascade);
         assert_eq!(
-            doc.nodes[root].style.min_size.width.into_raw().value(),
+            doc.layout_node_with_style(root)
+                .unwrap()
+                .style
+                .min_size
+                .width
+                .into_raw()
+                .value(),
             64.0,
             "{css}"
         );
         assert_eq!(
-            doc.nodes[root].style.min_size.height.into_raw().value(),
+            doc.layout_node_with_style(root)
+                .unwrap()
+                .style
+                .min_size
+                .height
+                .into_raw()
+                .value(),
             expected_height,
             "{css}"
         );
@@ -13865,13 +13880,19 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
 
     layout_pages(&mut doc, &cascade, page).expect("paged layout succeeds");
     assert_eq!(doc.forced_break_clearance, vec![second]);
-    assert_eq!(doc.nodes[second].style.clear, taffy::Clear::Both);
+    assert_eq!(
+        doc.layout_node_with_style(second).unwrap().style.clear,
+        taffy::Clear::Both
+    );
 
     // A single page has no break to clear at, so the box sits beside the
     // float again and the cached paged layout is not reused.
     layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
     assert!(doc.forced_break_clearance.is_empty());
-    assert_eq!(doc.nodes[second].style.clear, taffy::Clear::None);
+    assert_eq!(
+        doc.layout_node_with_style(second).unwrap().style.clear,
+        taffy::Clear::None
+    );
     assert_eq!(doc.nodes[second].unrounded_layout.location.y, 0.0);
 }
 
@@ -15032,6 +15053,48 @@ fn forced_break_line_clearance_applies_to_paged_layout_only() {
     let (x, y, _, _) = crate::layout::test_support::absolute_rect(&doc, span);
     assert_eq!(x, 40.0);
     assert!(y < 50.0, "{y}");
+}
+
+#[test]
+fn continuation_inputs_and_retained_outputs_survive_session_drop() {
+    use crate::layout::test_support::{ahem_paragraph, with_ahem};
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let build = || {
+        let (mut document, _, root) = ahem_paragraph("a a a a a a", "width:40px");
+        let text = document.nodes[root].children[0];
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        with_ahem(&mut document);
+        (document, cascade, text)
+    };
+
+    let mut page = PageBox::new();
+    page.width = 40.0;
+    page.height = 15.0;
+
+    let (mut document, cascade, text) = build();
+    let first_slices = layout_pages(&mut document, &cascade, page).expect("first layout");
+    document
+        .project_pages(&cascade, page, &first_slices, &[])
+        .expect("first projection");
+    assert!(!first_slices.is_empty());
+    assert!(document.page_fragments(0).count() > 0);
+    assert!(document.ifc_text_lines(text).is_some());
+
+    document.set_continuation_break(Some((text, 4)));
+    let resumed_slices = layout_pages(&mut document, &cascade, page).expect("continued layout");
+    document
+        .project_pages(&cascade, page, &resumed_slices, &[])
+        .expect("continued projection");
+    assert_eq!(document.continuation_break, Some((text, 4)));
+
+    let (mut reference, reference_cascade, reference_text) = build();
+    reference.set_continuation_break(Some((reference_text, 4)));
+    let expected_slices = layout_pages(&mut reference, &reference_cascade, page)
+        .expect("reference continuation layout");
+    assert_eq!(resumed_slices, expected_slices);
 }
 
 #[test]

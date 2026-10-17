@@ -61,7 +61,7 @@ fn in_inset_out_of_flow_subtree(document: &Document, node_id: usize) -> bool {
             match document.nodes[id].position() {
                 PositionValue::Fixed => return true,
                 PositionValue::Absolute => {
-                    let inset = &document.nodes[id].style.inset;
+                    let inset = &document.layout_node_with_style(id).unwrap().style.inset;
                     if !inset.top.is_auto() || !inset.bottom.is_auto() {
                         return true;
                     }
@@ -88,7 +88,7 @@ fn has_nested_named_page_descendant(
         .map(|child_id| (child_id, depth.saturating_add(1)))
         .collect();
     while let Some((current_id, current_depth)) = pending.pop() {
-        let node = &document.nodes[current_id];
+        let node = &document.layout_node_with_style(current_id).unwrap();
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
             || document.nodes[current_id].display() == DisplayValue::None
@@ -542,7 +542,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     && !out_of_flow_subtree
                     && candidate_height > 0.0
                     && !node.children.iter().any(|&child| {
-                        let child_node = &document.nodes[child];
+                        let child_node = &document.layout_node_with_style(child).unwrap();
                         if child_node.is_display_none()
                             || child_node.is_non_rendered_html_element()
                             || matches!(

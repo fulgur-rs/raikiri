@@ -269,15 +269,26 @@ fn float_avoiding_blocks_align_within_the_available_slot() {
             None::<&str>,
         );
         let float = block(&mut tree, root, 50.0, 20.0);
-        tree.nodes[float].style.float = Float::Left;
+        tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
         let child = block(&mut tree, root, 40.0, 10.0);
-        tree.nodes[child].style.display = Display::FlowRoot;
-        tree.nodes[child].style.margin.left = if left_auto {
+        tree.layout_node_with_style_mut(child)
+            .unwrap()
+            .style
+            .display = Display::FlowRoot;
+        tree.layout_node_with_style_mut(child)
+            .unwrap()
+            .style
+            .margin
+            .left = if left_auto {
             LengthPercentageAuto::auto()
         } else {
             LengthPercentageAuto::length(0.0)
         };
-        tree.nodes[child].style.margin.right = if right_auto {
+        tree.layout_node_with_style_mut(child)
+            .unwrap()
+            .style
+            .margin
+            .right = if right_auto {
             LengthPercentageAuto::auto()
         } else {
             LengthPercentageAuto::length(0.0)
@@ -314,7 +325,7 @@ fn fit_content_children_keep_the_finite_available_width() {
     );
     for _ in 0..2 {
         let float = block(&mut tree, child, 100.0, 10.0);
-        tree.nodes[float].style.float = Float::Left;
+        tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
     }
     let mut input = inputs();
     input.known_dimensions.width = Some(150.0);
@@ -440,7 +451,10 @@ fn block_alignment_moves_scrollable_overflow_with_the_children() {
         None::<&str>,
     );
     let child = block(&mut tree, root, 40.0, 20.0);
-    tree.nodes[child].style.display = Display::FlowRoot;
+    tree.layout_node_with_style_mut(child)
+        .unwrap()
+        .style
+        .display = Display::FlowRoot;
     block(&mut tree, child, 40.0, 150.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(tree.nodes[child].unrounded_layout.location.y, 80.0);
@@ -496,7 +510,10 @@ fn containment_limits_descendant_overflow_to_the_child_border_box() {
             None::<&str>,
         );
         let child = block(&mut tree, root, 100.0, 10.0);
-        tree.nodes[child].style.contain = contain;
+        tree.layout_node_with_style_mut(child)
+            .unwrap()
+            .style
+            .contain = contain;
         block(&mut tree, child, 300.0, 10.0);
         let mut input = inputs();
         input.known_dimensions.width = Some(100.0);
@@ -587,10 +604,17 @@ fn a_formatting_context_pushed_below_an_adjoining_float_separates_its_margin() {
     let outer = plain(&mut tree, root);
     let holder = plain(&mut tree, outer);
     let float = block(&mut tree, holder, 200.0, 200.0);
-    tree.nodes[float].style.float = Float::Left;
+    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
     let context = block(&mut tree, outer, 200.0, 1.0);
-    tree.nodes[context].style.display = Display::FlowRoot;
-    tree.nodes[context].style.margin.top = LengthPercentageAuto::length(200.0);
+    tree.layout_node_with_style_mut(context)
+        .unwrap()
+        .style
+        .display = Display::FlowRoot;
+    tree.layout_node_with_style_mut(context)
+        .unwrap()
+        .style
+        .margin
+        .top = LengthPercentageAuto::length(200.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The box does not fit beside the float, so its margin no longer
     // collapses with the parent's and the float stays at the top.
@@ -615,10 +639,17 @@ fn a_formatting_context_beside_an_adjoining_float_keeps_its_margin() {
     let outer = plain(&mut tree, root);
     let holder = plain(&mut tree, outer);
     let float = block(&mut tree, holder, 100.0, 10.0);
-    tree.nodes[float].style.float = Float::Left;
+    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
     let context = block(&mut tree, outer, 100.0, 10.0);
-    tree.nodes[context].style.display = Display::FlowRoot;
-    tree.nodes[context].style.margin.top = LengthPercentageAuto::length(50.0);
+    tree.layout_node_with_style_mut(context)
+        .unwrap()
+        .style
+        .display = Display::FlowRoot;
+    tree.layout_node_with_style_mut(context)
+        .unwrap()
+        .style
+        .margin
+        .top = LengthPercentageAuto::length(50.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The box fits beside the float, so the margin escapes and carries
     // the float down with it.
@@ -642,11 +673,21 @@ fn a_formatting_context_clearing_an_adjoining_float_starts_below_it() {
     );
     let outer = plain(&mut tree, root);
     let float = block(&mut tree, outer, 100.0, 50.0);
-    tree.nodes[float].style.float = Float::Left;
+    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
     let context = block(&mut tree, outer, 100.0, 50.0);
-    tree.nodes[context].style.display = Display::FlowRoot;
-    tree.nodes[context].style.clear = taffy::Clear::Left;
-    tree.nodes[context].style.margin.top = LengthPercentageAuto::length(300.0);
+    tree.layout_node_with_style_mut(context)
+        .unwrap()
+        .style
+        .display = Display::FlowRoot;
+    tree.layout_node_with_style_mut(context)
+        .unwrap()
+        .style
+        .clear = taffy::Clear::Left;
+    tree.layout_node_with_style_mut(context)
+        .unwrap()
+        .style
+        .margin
+        .top = LengthPercentageAuto::length(300.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 0.0);
     assert_eq!(tree.nodes[context].unrounded_layout.location.y, 50.0);
@@ -668,15 +709,30 @@ fn clearance_under_an_unresolved_origin_excludes_the_escaping_margin() {
         None::<&str>,
     );
     let float = block(&mut tree, root, 50.0, 100.0);
-    tree.nodes[float].style.float = Float::Left;
+    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
     let padded = plain(&mut tree, root);
-    tree.nodes[padded].style.padding.top = LengthPercentage::length(1.0);
+    tree.layout_node_with_style_mut(padded)
+        .unwrap()
+        .style
+        .padding
+        .top = LengthPercentage::length(1.0);
     let inner = plain(&mut tree, padded);
     let first = plain(&mut tree, inner);
-    tree.nodes[first].style.margin.bottom = LengthPercentageAuto::length(49.0);
+    tree.layout_node_with_style_mut(first)
+        .unwrap()
+        .style
+        .margin
+        .bottom = LengthPercentageAuto::length(49.0);
     let cleared = plain(&mut tree, inner);
-    tree.nodes[cleared].style.clear = taffy::Clear::Left;
-    tree.nodes[cleared].style.margin.top = LengthPercentageAuto::length(98.0);
+    tree.layout_node_with_style_mut(cleared)
+        .unwrap()
+        .style
+        .clear = taffy::Clear::Left;
+    tree.layout_node_with_style_mut(cleared)
+        .unwrap()
+        .style
+        .margin
+        .top = LengthPercentageAuto::length(98.0);
     // Like the body of a page, the root's own top margin may still collapse
     // with its children, so no origin in it is resolved.
     let mut root_inputs = inputs();
@@ -695,16 +751,35 @@ fn clearance_under_an_unresolved_origin_counts_the_block_margin_once() {
     let mut tree = Document::new();
     let root = plain(&mut tree, 0);
     let float = block(&mut tree, root, 50.0, 150.0);
-    tree.nodes[float].style.float = Float::Left;
+    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
     let padded = plain(&mut tree, root);
-    tree.nodes[padded].style.padding.top = LengthPercentage::length(1.0);
+    tree.layout_node_with_style_mut(padded)
+        .unwrap()
+        .style
+        .padding
+        .top = LengthPercentage::length(1.0);
     let inner = plain(&mut tree, padded);
-    tree.nodes[inner].style.margin.top = LengthPercentageAuto::length(20.0);
+    tree.layout_node_with_style_mut(inner)
+        .unwrap()
+        .style
+        .margin
+        .top = LengthPercentageAuto::length(20.0);
     let first = plain(&mut tree, inner);
-    tree.nodes[first].style.margin.bottom = LengthPercentageAuto::length(49.0);
+    tree.layout_node_with_style_mut(first)
+        .unwrap()
+        .style
+        .margin
+        .bottom = LengthPercentageAuto::length(49.0);
     let cleared = plain(&mut tree, inner);
-    tree.nodes[cleared].style.clear = taffy::Clear::Left;
-    tree.nodes[cleared].style.margin.top = LengthPercentageAuto::length(50.0);
+    tree.layout_node_with_style_mut(cleared)
+        .unwrap()
+        .style
+        .clear = taffy::Clear::Left;
+    tree.layout_node_with_style_mut(cleared)
+        .unwrap()
+        .style
+        .margin
+        .top = LengthPercentageAuto::length(50.0);
     let mut root_inputs = inputs();
     root_inputs.vertical_margins_are_collapsible.start = true;
     block_layout(&mut tree, NodeId::from(root), root_inputs, None);
@@ -722,11 +797,18 @@ fn clearance_past_a_float_on_the_same_strut_keeps_the_float_coordinates() {
     let mut tree = Document::new();
     let root = plain(&mut tree, 0);
     let spacer = plain(&mut tree, root);
-    tree.nodes[spacer].style.margin.bottom = LengthPercentageAuto::length(49.0);
+    tree.layout_node_with_style_mut(spacer)
+        .unwrap()
+        .style
+        .margin
+        .bottom = LengthPercentageAuto::length(49.0);
     let float = block(&mut tree, root, 50.0, 10.0);
-    tree.nodes[float].style.float = Float::Left;
+    tree.layout_node_with_style_mut(float).unwrap().style.float = Float::Left;
     let cleared = block(&mut tree, root, 50.0, 10.0);
-    tree.nodes[cleared].style.clear = taffy::Clear::Left;
+    tree.layout_node_with_style_mut(cleared)
+        .unwrap()
+        .style
+        .clear = taffy::Clear::Left;
     let mut root_inputs = inputs();
     root_inputs.vertical_margins_are_collapsible.start = true;
     block_layout(&mut tree, NodeId::from(root), root_inputs, None);
@@ -750,9 +832,17 @@ fn a_last_child_margin_escapes_when_min_height_equals_the_content() {
         None::<&str>,
     );
     let parent = plain(&mut tree, root);
-    tree.nodes[parent].style.min_size.height = LengthPercentageAuto::length(20.0);
+    tree.layout_node_with_style_mut(parent)
+        .unwrap()
+        .style
+        .min_size
+        .height = LengthPercentageAuto::length(20.0);
     let child = block(&mut tree, parent, 100.0, 20.0);
-    tree.nodes[child].style.margin.bottom = LengthPercentageAuto::length(100.0);
+    tree.layout_node_with_style_mut(child)
+        .unwrap()
+        .style
+        .margin
+        .bottom = LengthPercentageAuto::length(100.0);
     let next = block(&mut tree, root, 100.0, 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(tree.nodes[parent].unrounded_layout.size.height, 20.0);

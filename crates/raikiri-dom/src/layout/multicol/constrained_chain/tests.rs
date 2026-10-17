@@ -66,14 +66,18 @@ fn cyclic_chains_are_rejected_without_returning_an_incomplete_path() {
 fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
     let (mut doc, mc, chain) = fixture(1);
     let pointer = crate::taffy_impl::push_calc(
-        &mut doc.calc_values,
+        &mut doc.retained_layout_styles.calc_values,
         raikiri_style::property::CalcLengthPercentage {
             px: 1.0,
             percent: 10.0,
         },
         false,
     );
-    doc.nodes[chain[0]].style.margin.left = LengthPercentageAuto::calc(pointer);
+    doc.layout_node_with_style_mut(chain[0])
+        .unwrap()
+        .style
+        .margin
+        .left = LengthPercentageAuto::calc(pointer);
     doc.fragment_tree.fragments.clear();
     let context = FragmentationContext {
         available_width: 100.0,

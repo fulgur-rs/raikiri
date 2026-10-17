@@ -367,6 +367,7 @@ pub struct Document {
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
+    pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
@@ -463,9 +464,6 @@ pub struct Document {
     /// Parsing is deferred to the cascade phase.
     /// Call order determines cascade source_order within each kind.
     stylesheets: Vec<(Cow<'static, str>, StylesheetKind)>,
-    /// Stable storage for Taffy calc resolver payloads used by the current
-    /// layout pass. The heap allocations keep pointees stable while styles hold raw handles.
-    pub(crate) calc_values: Vec<Arc<crate::taffy_impl::ArenaCalc>>,
     /// Fragments emitted by the active multicol strategy for this layout pass.
     pub(crate) fragment_tree: FragmentTree,
     /// Column rules retained from final placements, relative to each owner.
@@ -486,6 +484,38 @@ pub struct Document {
     /// the relative `url()` values left in computed values, such as those
     /// of a `style` attribute.
     base_url: Option<url::Url>,
+}
+
+pub(crate) struct LayoutNodeRef<'a> {
+    pub(crate) style: &'a Style,
+    node: &'a Node,
+}
+
+impl std::ops::Deref for LayoutNodeRef<'_> {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        self.node
+    }
+}
+
+pub(crate) struct LayoutNodeMut<'a> {
+    pub(crate) style: &'a mut Style,
+    node: &'a mut Node,
+}
+
+impl std::ops::Deref for LayoutNodeMut<'_> {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        self.node
+    }
+}
+
+impl std::ops::DerefMut for LayoutNodeMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.node
+    }
 }
 
 impl Document {
@@ -628,10 +658,14 @@ impl Document {
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
+        let mut retained_layout_styles =
+            crate::layout::retained_styles::RetainedLayoutStyles::default();
+        retained_layout_styles.insert(crate::node::arena::BoxKey::Source(0), Style::default());
         Self {
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
+            retained_layout_styles,
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
             focused: None,
@@ -658,7 +692,6 @@ impl Document {
             // detached nodes yet, so the flag is not dirty.
             flags_dirty: false,
             stylesheets: Vec::new(),
-            calc_values: Vec::new(),
             fragment_tree: FragmentTree::default(),
             column_rules: std::collections::BTreeMap::new(),
             quirks_mode: QuirksMode::default(),
@@ -705,13 +738,13 @@ impl Document {
         style: Style,
         inline_style: Option<impl Into<SmolStr>>,
     ) -> usize {
-        let style = sanitize_external_style(style);
+        let mut style = sanitize_external_style(style);
         let id = self.nodes.len();
-        self.nodes.push(Node::new_element(
-            tag.into(),
-            style,
-            inline_style.map(Into::into),
-        ));
+        let node = Node::new_element(tag.into(), style.clone(), inline_style.map(Into::into));
+        node.refresh_box_style(&mut style);
+        self.nodes.push(node);
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), style);
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -728,6 +761,8 @@ impl Document {
     pub fn append_text(&mut self, parent: usize, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(text.into()));
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         self.nodes[parent].children.push(id);
         self.nodes[id].parent = Some(parent);
         self.invalidate_layout_cache();
@@ -815,6 +850,8 @@ impl Document {
     pub fn append_comment(&mut self, parent: Option<usize>, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_comment(text.into()));
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -844,6 +881,8 @@ impl Document {
         let id = self.nodes.len();
         self.nodes
             .push(Node::new_processing_instruction(target.into(), data.into()));
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -1495,6 +1534,10 @@ impl Document {
         if !text.is_empty() {
             let text_id = self.nodes.len();
             self.nodes.push(Node::new_text(text));
+            self.retained_layout_styles.insert(
+                crate::node::arena::BoxKey::Source(text_id),
+                Style::default(),
+            );
             self.nodes[id].children.push(text_id);
             if let Some(node) = self.nodes.get_mut(text_id) {
                 node.parent = Some(id);
@@ -1557,7 +1600,7 @@ impl Document {
             .collect();
 
         while let Some((source_id, target_parent)) = pending.pop() {
-            let source_node = &source_document.nodes[source_id];
+            let source_node = &source_document.layout_node_with_style(source_id).unwrap();
             let source_children = source_node.children.clone();
 
             match &source_node.data {
@@ -1917,6 +1960,10 @@ impl Document {
         // mark_in_document_flags clear the default IS_IN_DOCUMENT bit in step 1.
         let frag_root = self.nodes.len();
         self.nodes.push(Node::new_document_fragment());
+        self.retained_layout_styles.insert(
+            crate::node::arena::BoxKey::Source(frag_root),
+            Style::default(),
+        );
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         // Step 2: Store the fragment root index in the template element's
@@ -2008,7 +2055,7 @@ impl Document {
             later_fragments: _,
             flags_dirty: _,
             stylesheets,
-            calc_values: _,
+            retained_layout_styles: _,
             fragment_tree: _,
             column_rules: _,
             quirks_mode,
@@ -2047,6 +2094,12 @@ impl Document {
 
         let mut document = Document::new();
         document.nodes = copied.into();
+        document.retained_layout_styles.retain_source_styles();
+        for id in 1..document.nodes.len() {
+            document
+                .retained_layout_styles
+                .insert(crate::node::arena::BoxKey::Source(id), Style::default());
+        }
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
@@ -2873,7 +2926,96 @@ impl Document {
     /// runs. Paint-side consumers can therefore observe the same used values
     /// without re-probing fonts or falling back to `ComputedValues`.
     pub fn layout_style(&self, id: usize) -> Option<&Style> {
-        self.nodes.get(id).map(|node| &node.style)
+        self.nodes.get(id)?;
+        self.layout_style_for_key(id)
+    }
+
+    pub(crate) fn layout_style_for_key(&self, key: usize) -> Option<&Style> {
+        self.retained_layout_styles.get(self.nodes.box_key(key)?)
+    }
+
+    pub(crate) fn layout_style_for_key_mut(&mut self, key: usize) -> Option<&mut Style> {
+        let box_key = self.nodes.box_key(key)?;
+        self.retained_layout_styles.get_mut(box_key)
+    }
+
+    pub(crate) fn layout_node_with_style(&self, key: usize) -> Option<LayoutNodeRef<'_>> {
+        let box_key = self.nodes.box_key(key)?;
+        Some(LayoutNodeRef {
+            node: self.nodes.layout_node(key)?,
+            style: self.retained_layout_styles.get(box_key)?,
+        })
+    }
+
+    pub(crate) fn layout_node_with_style_mut(&mut self, key: usize) -> Option<LayoutNodeMut<'_>> {
+        let box_key = self.nodes.box_key(key)?;
+        let Self {
+            nodes,
+            retained_layout_styles,
+            ..
+        } = self;
+        Some(LayoutNodeMut {
+            node: &mut nodes[key],
+            style: retained_layout_styles.get_mut(box_key)?,
+        })
+    }
+
+    pub(crate) fn set_initial_containing_block(&mut self, node: Node, mut style: Style) -> usize {
+        node.refresh_box_style(&mut style);
+        let key = self.nodes.set_initial_containing_block(node);
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::InitialContainingBlock, style);
+        key
+    }
+
+    pub(crate) fn set_anonymous_tables(&mut self, boxes: Vec<(Node, Style)>) {
+        let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
+        self.nodes.set_anonymous_tables(nodes);
+        self.retained_layout_styles
+            .retain_source_and_initial_containing_block();
+        for (index, style) in styles.into_iter().enumerate() {
+            self.retained_layout_styles
+                .insert(crate::node::arena::BoxKey::AnonymousTable(index), style);
+        }
+    }
+
+    pub(crate) fn set_anonymous_cells(&mut self, boxes: Vec<(Node, Style)>) {
+        let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
+        self.nodes.set_anonymous_cells(nodes);
+        self.retained_layout_styles.retain_without_cells();
+        for (index, style) in styles.into_iter().enumerate() {
+            self.retained_layout_styles
+                .insert(crate::node::arena::BoxKey::AnonymousCell(index), style);
+        }
+    }
+
+    pub(crate) fn set_box_properties(
+        &mut self,
+        key: usize,
+        display: raikiri_style::property::DisplayValue,
+        position: raikiri_style::property::PositionValue,
+    ) {
+        let Self {
+            nodes,
+            retained_layout_styles,
+            ..
+        } = self;
+        let box_key = nodes.box_key(key).expect("box key has a node");
+        let style = retained_layout_styles
+            .get_mut(box_key)
+            .expect("box key has a retained style");
+        nodes[key].set_box_properties(display, position);
+        nodes[key].refresh_box_style(style);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_display(
+        &mut self,
+        key: usize,
+        display: raikiri_style::property::DisplayValue,
+    ) {
+        let position = self.nodes[key].position().clone();
+        self.set_box_properties(key, display, position);
     }
 
     /// Total number of nodes in the arena, including the Document root.

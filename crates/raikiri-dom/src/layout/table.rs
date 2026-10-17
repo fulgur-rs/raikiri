@@ -178,7 +178,7 @@ fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertic
             vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
         },
     );
-    let margins = doc.nodes[caption].style.margin;
+    let margins = doc.layout_node_with_style(caption).unwrap().style.margin;
     let (minimum, start, end) = if vertical {
         (output.size.height, margins.top, margins.bottom)
     } else {
@@ -200,7 +200,11 @@ fn layout_table_caption(
         .iter()
         .copied()
         .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption)?;
-    let style = doc.nodes[caption_id].style.clone();
+    let style = doc
+        .layout_node_with_style(caption_id)
+        .unwrap()
+        .style
+        .clone();
     // Let block layout apply authored sizes in their box-sizing domain.
     let vertical = table_writing_mode(doc, table_idx).is_vertical();
     let inline_basis = if vertical {
@@ -459,7 +463,7 @@ fn compute_table_layout_checked(
     // Container metrics, split so collapse can substitute collapsed outer
     // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
     // border participates in conflict resolution with edge cells).
-    let table_style = &doc.nodes[table_idx].style;
+    let table_style = &doc.layout_node_with_style(table_idx).unwrap().style;
     let pad = resolve_table_rect(&table_style.padding, inputs.parent_size);
     let table_border = resolve_table_rect(&table_style.border, inputs.parent_size);
 
@@ -470,11 +474,19 @@ fn compute_table_layout_checked(
     // taffy's Dimension::maybe_resolve not directly available; use helper below.
     let effective_known = Size {
         width: inputs.known_dimensions.width.or(resolve_dimension(
-            doc.nodes[table_idx].style.size.width,
+            doc.layout_node_with_style(table_idx)
+                .unwrap()
+                .style
+                .size
+                .width,
             inputs.parent_size.width,
         )),
         height: inputs.known_dimensions.height.or(resolve_dimension(
-            doc.nodes[table_idx].style.size.height,
+            doc.layout_node_with_style(table_idx)
+                .unwrap()
+                .style
+                .size
+                .height,
             inputs.parent_size.height,
         )),
     };
@@ -505,7 +517,11 @@ fn compute_table_layout_checked(
         // width wins; otherwise the container width is only a cap over the
         // padding/border extents (never stretch-to-fill).
         let specified_w = resolve_dimension(
-            doc.nodes[table_idx].style.size.width,
+            doc.layout_node_with_style(table_idx)
+                .unwrap()
+                .style
+                .size
+                .width,
             inputs.parent_size.width,
         );
         // A flex/grid parent supplies the table item's used main size after
@@ -530,7 +546,11 @@ fn compute_table_layout_checked(
             })
         };
         let specified_h = resolve_dimension(
-            doc.nodes[table_idx].style.size.height,
+            doc.layout_node_with_style(table_idx)
+                .unwrap()
+                .style
+                .size
+                .height,
             inputs.parent_size.height,
         );
         let mut height = specified_h.unwrap_or_else(|| {
@@ -604,7 +624,11 @@ fn compute_table_layout_checked(
     // carries the container-imposed width (800 for top-level blocks), which
     // is a cap for auto tables, the target only for specified widths.
     let specified_width = resolve_dimension(
-        doc.nodes[table_idx].style.size.width,
+        doc.layout_node_with_style(table_idx)
+            .unwrap()
+            .style
+            .size
+            .width,
         inputs.parent_size.width,
     );
     // In fixed mode an unresolvable specified width (auto, or % of an
@@ -644,10 +668,9 @@ fn compute_table_layout_checked(
                     if cell.row != 0 {
                         continue;
                     }
-                    let style = &doc
-                        .ifc_layout_node(cell.node_id)
-                        .expect("table cell layout view")
-                        .style;
+                    let style = doc
+                        .layout_style_for_key(cell.node_id)
+                        .expect("table cell layout style");
                     if let Some(minimum) = style
                         .min_size
                         .width
@@ -702,7 +725,7 @@ fn compute_table_layout_checked(
     // csswg-drafts#5336 / Mozilla bug 1651530) in the same domain, so
     // max-height/max-width keep leaving sub-intrinsic tables at natural
     // size. min still wins over max on direct conflict.
-    let st = &doc.nodes[table_idx].style;
+    let st = &doc.layout_node_with_style(table_idx).unwrap().style;
     let specified_height = resolve_dimension(st.size.height, inputs.parent_size.height);
     let min_w = resolve_dimension(st.min_size.width.into(), inputs.parent_size.width);
     let max_w = resolve_dimension(st.max_size.width.into(), inputs.parent_size.width);
@@ -1234,15 +1257,13 @@ fn build_table_grid(
                     col_span,
                     row_span,
                     specified_width: doc
-                        .ifc_layout_node(node_id)
-                        .expect("table cell layout view")
-                        .style
+                        .layout_style_for_key(node_id)
+                        .expect("table cell layout style")
                         .size
                         .width,
                     specified_min_width: doc
-                        .ifc_layout_node(node_id)
-                        .expect("table cell layout view")
-                        .style
+                        .layout_style_for_key(node_id)
+                        .expect("table cell layout style")
                         .min_size
                         .width
                         .into(),
@@ -1297,7 +1318,7 @@ fn collect_col_widths(
             .map_or(1, |v| v.clamp(1, 1000))
     }
     fn sizing_of(doc: &Document, col_id: usize) -> ColSizing {
-        let st = &doc.nodes[col_id].style;
+        let st = &doc.layout_node_with_style(col_id).unwrap().style;
         ColSizing {
             width: st.size.width,
             min_width: st.min_size.width.into(),
@@ -1513,7 +1534,12 @@ fn push_row(
         let col_span = get_colspan(doc, cell_id);
         let next_col = next_table_column(col, col_span)?;
         let row_span = get_rowspan(doc, cell_id);
-        let specified_width = doc.nodes[cell_id].style.size.width;
+        let specified_width = doc
+            .layout_node_with_style(cell_id)
+            .unwrap()
+            .style
+            .size
+            .width;
         cells.push(CellPlacement {
             node_id: cell_id,
             row: row_ix,
@@ -1521,7 +1547,13 @@ fn push_row(
             col_span,
             row_span,
             specified_width,
-            specified_min_width: doc.nodes[cell_id].style.min_size.width.into(),
+            specified_min_width: doc
+                .layout_node_with_style(cell_id)
+                .unwrap()
+                .style
+                .min_size
+                .width
+                .into(),
             resolved: None,
             natural_height: 0.0,
             baseline: 0.0,
@@ -1979,7 +2011,7 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
             if line != 0 {
                 continue;
             }
-            let child_node = &doc.nodes[child];
+            let child_node = &doc.layout_node_with_style(child).unwrap();
             let top =
                 child_node.unrounded_layout.padding.top + child_node.unrounded_layout.border.top;
             let first = child_node
@@ -1996,7 +2028,7 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
         stack.push((child, doc.nodes[child].unrounded_layout.location.y));
     }
     while let Some((id, y)) = stack.pop() {
-        let node = &doc.nodes[id];
+        let node = &doc.layout_node_with_style(id).unwrap();
         if !node.is_in_document()
             || node.is_display_none()
             || node.taffy_position() == taffy::Position::Absolute
@@ -2045,9 +2077,8 @@ fn resolve_row_heights(
     // full vertical-table support plus transform:rotate on its reference).
     for (r, &row_id) in grid.rows.iter().enumerate() {
         let h = doc
-            .ifc_layout_node(row_id)
-            .expect("table row layout view")
-            .style
+            .layout_style_for_key(row_id)
+            .expect("table row layout style")
             .size
             .height;
         if let Some(height) = resolve_dimension(h, None) {
@@ -2060,13 +2091,15 @@ fn resolve_row_heights(
         // Cell height floors the row rather than stretching the content used
         // for alignment. Preserve ordinary block border and margin sizing.
         let authored_height = doc
-            .ifc_layout_node(cell.node_id)
-            .expect("table cell layout view")
-            .style
+            .layout_style_for_key(cell.node_id)
+            .expect("table cell layout style")
             .size
             .height;
         if !authored_height.is_auto() {
-            doc.table_layout_node_mut(cell.node_id).style.size.height = Dimension::auto();
+            doc.layout_style_for_key_mut(cell.node_id)
+                .expect("table cell layout style")
+                .size
+                .height = Dimension::auto();
             doc.table_layout_node_mut(cell.node_id).cache.clear();
         }
         let output = doc.compute_child_layout(
@@ -2095,7 +2128,10 @@ fn resolve_row_heights(
             },
         );
         if !authored_height.is_auto() {
-            doc.table_layout_node_mut(cell.node_id).style.size.height = authored_height;
+            doc.layout_style_for_key_mut(cell.node_id)
+                .expect("table cell layout style")
+                .size
+                .height = authored_height;
             doc.table_layout_node_mut(cell.node_id).cache.clear();
         }
         cell.row_pass = (authored_height.is_auto() && row_pass_is_final(doc, cell.node_id))
@@ -2105,10 +2141,9 @@ fn resolve_row_heights(
             });
         // Distribute rowspan height across spanned rows (simple: equally)
         cell.natural_height = output.size.height;
-        let style = &doc
-            .ifc_layout_node(cell.node_id)
-            .expect("table cell layout view")
-            .style;
+        let style = doc
+            .layout_style_for_key(cell.node_id)
+            .expect("table cell layout style");
         let padding = style
             .padding
             .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
@@ -2320,10 +2355,9 @@ fn place_cells(
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.
         let (mut padding, mut border) = {
-            let style = &doc
-                .ifc_layout_node(cell.node_id)
-                .expect("table cell layout view")
-                .style;
+            let style = doc
+                .layout_style_for_key(cell.node_id)
+                .expect("table cell layout style");
             (
                 style
                     .padding
@@ -2483,12 +2517,13 @@ fn reposition_cells_for_vertical_writing(
         let node = doc
             .ifc_layout_node(cell.node_id)
             .expect("table cell layout view");
-        let mut padding = node
-            .style
+        let style = doc
+            .layout_style_for_key(cell.node_id)
+            .expect("table cell layout style");
+        let mut padding = style
             .padding
             .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
-        let border = node
-            .style
+        let border = style
             .border
             .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
         let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
@@ -2504,7 +2539,7 @@ fn reposition_cells_for_vertical_writing(
                 .iter()
                 .filter(|&&child| doc.nodes[child].taffy_position() != taffy::Position::Absolute)
                 .map(|&child| {
-                    let child = &doc.nodes[child];
+                    let child = &doc.layout_node_with_style(child).unwrap();
                     // Relative insets move ink after normal flow; they must
                     // not consume the cell's alignment space. Taffy leaves
                     // floated boxes at their normal positions, so their
@@ -2515,8 +2550,8 @@ fn reposition_cells_for_vertical_writing(
                             - padding.right
                             - border.left
                             - border.right
-                            - if node.style.overflow.y == taffy::Overflow::Scroll {
-                                node.style.scrollbar_width
+                            - if style.overflow.y == taffy::Overflow::Scroll {
+                                style.scrollbar_width
                             } else {
                                 0.0
                             };
@@ -2530,7 +2565,7 @@ fn reposition_cells_for_vertical_writing(
                             .inset
                             .right
                             .maybe_resolve(Some(inner_width), crate::taffy_impl::resolve_calc);
-                        if node.style.direction == taffy::Direction::Rtl {
+                        if style.direction == taffy::Direction::Rtl {
                             right.map(|right| -right).or(left).unwrap_or(0.0)
                         } else {
                             left.or(right.map(|right| -right)).unwrap_or(0.0)
@@ -2829,10 +2864,9 @@ impl CollapsedLines {
 
 /// Border-box side widths of one cell's `style.border`.
 fn cell_border_sides(doc: &Document, cell_id: usize, basis: Option<f32>) -> Rect<f32> {
-    let s = &doc
-        .ifc_layout_node(cell_id)
-        .expect("table cell layout view")
-        .style;
+    let s = doc
+        .layout_style_for_key(cell_id)
+        .expect("table cell layout style");
     Rect {
         left: resolve_length(s.border.left, basis),
         right: resolve_length(s.border.right, basis),
@@ -2872,43 +2906,18 @@ fn border_candidate(
 ) -> Option<CollapsedBorderCandidate> {
     // An earlier resolution step may already have replaced a side.
     let node = &doc.ifc_layout_node(node_id).expect("table box layout view");
+    let style = doc
+        .layout_style_for_key(node_id)
+        .expect("table box layout style");
     let borders = node
         .collapsed_border
         .as_ref()
         .or(node.computed_border.as_ref())?;
     let (border, taffy_width) = match side {
-        CellBorderSide::Top => (
-            borders.top,
-            doc.ifc_layout_node(node_id)
-                .expect("table box layout view")
-                .style
-                .border
-                .top,
-        ),
-        CellBorderSide::Right => (
-            borders.right,
-            doc.ifc_layout_node(node_id)
-                .expect("table box layout view")
-                .style
-                .border
-                .right,
-        ),
-        CellBorderSide::Bottom => (
-            borders.bottom,
-            doc.ifc_layout_node(node_id)
-                .expect("table box layout view")
-                .style
-                .border
-                .bottom,
-        ),
-        CellBorderSide::Left => (
-            borders.left,
-            doc.ifc_layout_node(node_id)
-                .expect("table box layout view")
-                .style
-                .border
-                .left,
-        ),
+        CellBorderSide::Top => (borders.top, style.border.top),
+        CellBorderSide::Right => (borders.right, style.border.right),
+        CellBorderSide::Bottom => (borders.bottom, style.border.bottom),
+        CellBorderSide::Left => (borders.left, style.border.left),
     };
     Some(CollapsedBorderCandidate {
         border,
@@ -2989,13 +2998,16 @@ fn set_collapsed_side(
     border: ComputedBorder,
     taffy_width: LengthPercentage,
 ) {
-    let node = doc.table_layout_node_mut(node_id);
+    let style = doc
+        .layout_style_for_key_mut(node_id)
+        .expect("table box layout style");
     match side {
-        CellBorderSide::Top => node.style.border.top = taffy_width,
-        CellBorderSide::Right => node.style.border.right = taffy_width,
-        CellBorderSide::Bottom => node.style.border.bottom = taffy_width,
-        CellBorderSide::Left => node.style.border.left = taffy_width,
+        CellBorderSide::Top => style.border.top = taffy_width,
+        CellBorderSide::Right => style.border.right = taffy_width,
+        CellBorderSide::Bottom => style.border.bottom = taffy_width,
+        CellBorderSide::Left => style.border.left = taffy_width,
     }
+    let node = doc.table_layout_node_mut(node_id);
     let Some(computed) = node.computed_border else {
         return; // cov:ignore: callers only reach here after border_candidate found computed borders.
     };

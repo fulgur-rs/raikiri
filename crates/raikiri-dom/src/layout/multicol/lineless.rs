@@ -26,7 +26,7 @@ use raikiri_style::property::BreakInside;
 /// columns as well. Such a child may also hold plain blocks with no
 /// content (see [`wrapped_blocks`]), which take its place in the stream.
 pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Option<Vec<usize>> {
-    let container = &tree.nodes[parent];
+    let container = &tree.layout_node_with_style(parent).unwrap();
     if container.ifc.is_some()
         || container.style.direction != TaffyDirection::Ltr
         || !inherits_horizontal(tree, parent)
@@ -37,7 +37,7 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
     let mut children = Vec::new();
     let mut boxes = Vec::new();
     for child in rendered_elements(tree, parent) {
-        let node = &tree.nodes[child];
+        let node = &tree.layout_node_with_style(child).unwrap();
         if !is_plain_block(tree, child) {
             return None;
         }
@@ -54,7 +54,7 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
     boxes
         .iter()
         .any(|&child| {
-            let style = &tree.nodes[child].style;
+            let style = &tree.layout_node_with_style(child).unwrap().style;
             style_dimension_length(style.size.height).is_some()
                 || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
         })
@@ -70,7 +70,7 @@ fn rendered_elements(tree: &Document, parent: usize) -> impl Iterator<Item = usi
         .iter()
         .copied()
         .filter(|&child| {
-            let node = &tree.nodes[child];
+            let node = &tree.layout_node_with_style(child).unwrap();
             node.is_in_document()
                 && !node.is_display_none()
                 && matches!(node.data, NodeData::Element(_))
@@ -84,7 +84,7 @@ pub(super) fn starts_the_outer_columns(tree: &Document, id: usize) -> bool {
     let Some(parent) = tree.nodes[id].parent else {
         return false;
     };
-    let outer = &tree.nodes[parent];
+    let outer = &tree.layout_node_with_style(parent).unwrap();
     let zero = LengthPercentage::length(0.0);
     outer.multicol.is_some()
         && !outer.has_before_or_after_content
@@ -93,13 +93,13 @@ pub(super) fn starts_the_outer_columns(tree: &Document, id: usize) -> bool {
         // Text that makes lines gives the container inline content.
         && outer.ifc.is_none()
         && rendered_elements(tree, parent).next() == Some(id)
-        && tree.nodes[id].style.margin.top == LengthPercentageAuto::length(0.0)
+        && tree.layout_node_with_style(id).unwrap().style.margin.top == LengthPercentageAuto::length(0.0)
 }
 
 /// Whether `child` is a block that can be sliced at a column end, leaving
 /// aside what it contains.
 fn is_plain_block(tree: &Document, child: usize) -> bool {
-    let node = &tree.nodes[child];
+    let node = &tree.layout_node_with_style(child).unwrap();
     let defaults: taffy::Style = taffy::Style::default();
     !(node.display() != DisplayValue::Block
         || node.style.direction != TaffyDirection::Ltr
@@ -112,7 +112,7 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
         || node.style.float.is_floated()
         || node.style.clear != defaults.clear
         || node.style.inset != Rect::auto()
-        || block_margins(node).is_none()
+        || block_margins(node.style).is_none()
         || node.style.overflow != defaults.overflow
         || node.tag_name().is_some_and(|tag| {
             ATOMIC_TAGS.contains(&tag)
@@ -135,8 +135,8 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
 /// box, its margins collapse with theirs (CSS 2, 8.3.1) and its pieces span
 /// exactly the pieces of its children.
 fn wrapped_blocks(tree: &Document, wrapper: usize) -> Option<Vec<usize>> {
-    let node = &tree.nodes[wrapper];
-    if has_block_edge_decorations(node)
+    let node = &tree.layout_node_with_style(wrapper).unwrap();
+    if has_block_edge_decorations(node.style)
         || node.paints_whole_box_effects
         || matches!(
             node.break_inside,
@@ -177,9 +177,9 @@ fn is_horizontal(node: &crate::Node) -> bool {
 
 /// The block-start and block-end margins of a child, when they are
 /// non-negative lengths and its inline margins are zero.
-fn block_margins(node: &crate::Node) -> Option<(f32, f32)> {
+fn block_margins(style: &taffy::Style) -> Option<(f32, f32)> {
     let zero = LengthPercentageAuto::length(0.0);
-    let margin = node.style.margin;
+    let margin = style.margin;
     if margin.left != zero || margin.right != zero {
         return None;
     }
@@ -189,9 +189,9 @@ fn block_margins(node: &crate::Node) -> Option<(f32, f32)> {
     Some((length(margin.top)?, length(margin.bottom)?))
 }
 
-fn has_block_edge_decorations(node: &crate::Node) -> bool {
+fn has_block_edge_decorations(style: &taffy::Style) -> bool {
     let zero = LengthPercentage::length(0.0);
-    let (padding, border) = (node.style.padding, node.style.border);
+    let (padding, border) = (style.padding, style.border);
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
 }
 
@@ -199,7 +199,7 @@ fn has_block_edge_decorations(node: &crate::Node) -> bool {
 /// positioned children that `skip_absolute` leaves out.
 fn has_rendered_content(tree: &Document, id: usize, skip_absolute: bool) -> bool {
     tree.nodes[id].children.iter().any(|&child| {
-        let node = &tree.nodes[child];
+        let node = &tree.layout_node_with_style(child).unwrap();
         node.is_in_document()
             && !node.is_display_none()
             && !(skip_absolute && is_absolute_box(node))
@@ -225,7 +225,7 @@ fn absolute_children(tree: &Document, child: usize) -> Vec<usize> {
         .iter()
         .copied()
         .filter(|&id| {
-            let node = &tree.nodes[id];
+            let node = &tree.layout_node_with_style(id).unwrap();
             node.is_in_document() && !node.is_display_none() && is_absolute_box(node)
         })
         .collect()
@@ -864,8 +864,8 @@ fn push_wrapped_block(
 
 /// The stream item of `child`, a box of block size `height`.
 fn item(tree: &Document, child: usize, height: f32) -> Item {
-    let node = &tree.nodes[child];
-    let (margin_top, margin_bottom) = block_margins(node).unwrap_or_default();
+    let node = &tree.layout_node_with_style(child).unwrap();
+    let (margin_top, margin_bottom) = block_margins(node.style).unwrap_or_default();
     Item {
         height,
         margin_top,
@@ -879,7 +879,7 @@ fn item(tree: &Document, child: usize, height: f32) -> Item {
         // whole box, would repeat them at each break instead of slicing them
         // (CSS Fragmentation 3, 5.4). Such a box may still sit whole in one
         // column.
-        whole: has_block_edge_decorations(node) || node.paints_whole_box_effects,
+        whole: has_block_edge_decorations(node.style) || node.paints_whole_box_effects,
     }
 }
 
@@ -1144,7 +1144,9 @@ pub(super) fn layout(
                 );
                 // The wrapper's margins collapse with those of its first
                 // and last blocks.
-                let (top, bottom) = block_margins(&tree.nodes[child]).unwrap_or_default();
+                let (top, bottom) =
+                    block_margins(tree.layout_node_with_style(child).unwrap().style)
+                        .unwrap_or_default();
                 let last = items.len() - 1;
                 items[first].margin_top = items[first].margin_top.max(top);
                 items[last].margin_bottom = items[last].margin_bottom.max(bottom);

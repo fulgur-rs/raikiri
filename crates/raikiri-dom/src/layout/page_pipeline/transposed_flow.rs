@@ -305,10 +305,18 @@ impl TransposedDocument {
             .collect();
         let mut styles = Vec::with_capacity(keys);
         for (key, &layout) in transposed.iter().enumerate() {
-            let node = document.table_layout_node_mut(key);
-            node.unrounded_layout = layout;
-            let style = axes.style(&node.style);
-            styles.push(std::mem::replace(&mut node.style, style));
+            document.table_layout_node_mut(key).unrounded_layout = layout;
+            let style = axes.style(
+                document
+                    .layout_style_for_key(key)
+                    .expect("transposed box has a retained style"),
+            );
+            styles.push(std::mem::replace(
+                document
+                    .layout_style_for_key_mut(key)
+                    .expect("transposed box has a retained style"),
+                style,
+            ));
         }
         // The heights recorded for boxes grown around floats are physical
         // heights; on transposed axes they would be read as block sizes.
@@ -357,9 +365,10 @@ impl TransposedDocument {
                     frame.map_or(self.page_area_width, |frame| current[frame].size.height);
                 self.axes.physical_layout(current[key], parent_width)
             };
-            let node = document.table_layout_node_mut(key);
-            node.unrounded_layout = layout;
-            node.style = style;
+            document.table_layout_node_mut(key).unrounded_layout = layout;
+            *document
+                .layout_style_for_key_mut(key)
+                .expect("transposed box has a retained style") = style;
         }
         document.context.in_flow_heights = self.in_flow_heights;
         document.context.pagination_on_transposed_axes = false;

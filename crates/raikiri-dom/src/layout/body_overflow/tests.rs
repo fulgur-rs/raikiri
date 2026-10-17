@@ -65,14 +65,20 @@ fn boxes_that_keep_the_margins_apart_add_them() {
 #[test]
 fn body_overflow_is_visible_only_when_it_propagates_to_the_viewport() {
     let (doc, body, _) = laid_out("", "margin:8px;overflow:hidden", "margin-top:30px");
-    assert_eq!(doc.nodes[body].style.overflow.y, TaffyOverflow::Visible);
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.overflow.y,
+        TaffyOverflow::Visible
+    );
     assert_eq!(absolute_rect(&doc, body).1, 30.0);
     let (doc, body, _) = laid_out(
         "overflow:hidden",
         "margin:8px;overflow:hidden",
         "margin-top:30px",
     );
-    assert_ne!(doc.nodes[body].style.overflow.y, TaffyOverflow::Visible);
+    assert_ne!(
+        doc.layout_node_with_style(body).unwrap().style.overflow.y,
+        TaffyOverflow::Visible
+    );
     assert_eq!(absolute_rect(&doc, body).1, 8.0);
 }
 
@@ -88,9 +94,12 @@ fn a_body_outside_html_keeps_its_overflow() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
-    let before = doc.nodes[body].style.overflow;
+    let before = doc.layout_node_with_style(body).unwrap().style.overflow;
     propagate_body_overflow_to_viewport(&mut doc, &cascade, body);
-    assert_eq!(doc.nodes[body].style.overflow, before);
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.overflow,
+        before
+    );
 }
 
 #[test]

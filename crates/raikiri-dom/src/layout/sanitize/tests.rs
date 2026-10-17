@@ -19,7 +19,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
     let mut doc = Document::new();
     let pointer = crate::taffy_impl::push_calc(
-        &mut doc.calc_values,
+        &mut doc.retained_layout_styles.calc_values,
         CalcLengthPercentage {
             percent: 50.0,
             px: 10.0,
@@ -55,7 +55,7 @@ fn guarded_style_for(inline: &str) -> taffy::Style {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    doc.nodes[p].style.clone()
+    doc.layout_node_with_style(p).unwrap().style.clone()
 }
 
 /// site 1 — `computed_length_percentage_to_taffy_length_percentage` (padding).

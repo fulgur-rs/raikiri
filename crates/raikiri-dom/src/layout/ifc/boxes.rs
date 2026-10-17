@@ -487,7 +487,13 @@ fn carried_float_placements(
                 },
             })
         })
-        .filter(|placement| tree.nodes[placement.node_id].style.float.is_floated())
+        .filter(|placement| {
+            tree.layout_node_with_style(placement.node_id)
+                .unwrap()
+                .style
+                .float
+                .is_floated()
+        })
         .collect()
 }
 
@@ -526,12 +532,16 @@ fn seed_carried_floats(
                 height: visible_bottom - visible_top,
             },
             geometry.top_edge + visible_top - column_origin,
-            tree.nodes[source.node_id]
+            tree.layout_node_with_style(source.node_id)
+                .unwrap()
                 .style
                 .float
                 .float_direction()
                 .unwrap_or(FloatDirection::Left),
-            tree.nodes[source.node_id].style.clear,
+            tree.layout_node_with_style(source.node_id)
+                .unwrap()
+                .style
+                .clear,
             false,
         );
     }
@@ -1265,7 +1275,8 @@ fn shorten(base: LineSpace, tentative: &[TentativeFloat]) -> LineSpace {
 /// Margins of `node` resolved against `basis`, the root's content width; `auto`
 /// is zero.
 fn resolved_margins(tree: &Document, node: usize, basis: f32) -> taffy::Rect<f32> {
-    tree.nodes[node]
+    tree.layout_node_with_style(node)
+        .unwrap()
         .style
         .margin
         .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
@@ -1328,7 +1339,7 @@ fn measure_float(
         geometry.definite_height,
         available,
     );
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     TentativeFloat {
         node,
         // The projection accepts only left and right floats.
@@ -1496,7 +1507,7 @@ fn layout_block_child(
     // `auto` side margins share the room the block leaves (CSS 2.1 10.3.3),
     // as in taffy's block algorithm: both auto centre the block, one auto
     // takes all of it.
-    let style_margin = tree.nodes[node].style.margin;
+    let style_margin = tree.layout_node_with_style(node).unwrap().style.margin;
     let free = (geometry.width - width - margin.left - margin.right).max(0.0);
     match (style_margin.left.is_auto(), style_margin.right.is_auto()) {
         (true, true) => margin.left = free / 2.0,
@@ -1513,7 +1524,7 @@ fn layout_block_child(
     // Clearance (CSS 2.1 9.5.2): a cleared block whose top border edge would
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
-    let clear = tree.nodes[node].style.clear;
+    let clear = tree.layout_node_with_style(node).unwrap().style.clear;
     let clear_y = ctx
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
@@ -1671,7 +1682,7 @@ fn layout_vertical_block_child(
     let basis = geometry.axes.block_extent(geometry.content_size);
     let inline_basis = geometry.axes.inline_extent(geometry.content_size);
     let mut margin = resolved_margins(tree, node, inline_basis);
-    let style_margin = tree.nodes[node].style.margin;
+    let style_margin = tree.layout_node_with_style(node).unwrap().style.margin;
     let vertical_rl = matches!(
         geometry.axes.writing_mode(),
         WritingMode::VerticalRl | WritingMode::SidewaysRl
@@ -1797,8 +1808,8 @@ fn layout_formatting_context_child(
     collapse_top: bool,
 ) -> BlockChild {
     let margin = resolved_margins(tree, node, geometry.width);
-    let style_margin = tree.nodes[node].style.margin;
-    let clear = tree.nodes[node].style.clear;
+    let style_margin = tree.layout_node_with_style(node).unwrap().style.margin;
+    let clear = tree.layout_node_with_style(node).unwrap().style.clear;
     let own_width = used_block_width(tree, node, geometry.width);
     let x_margins = margin.left + margin.right;
     let top_margin = pending.collapse_with_margin(margin.top);
@@ -1957,7 +1968,7 @@ fn used_block_width_with_edge_basis(
     edge_basis: f32,
 ) -> Option<f32> {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     style
         .size
         .width
@@ -1979,7 +1990,7 @@ fn clamp_block_width_with_edge_basis(
     width: f32,
 ) -> f32 {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     let adjustment = box_sizing_adjustment(tree, node, edge_basis);
     let min = style
         .min_size
@@ -1997,7 +2008,7 @@ fn clamp_block_width_with_edge_basis(
 
 fn used_block_height(tree: &Document, node: usize, basis: f32) -> Option<f32> {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     style
         .size
         .height
@@ -2007,7 +2018,7 @@ fn used_block_height(tree: &Document, node: usize, basis: f32) -> Option<f32> {
 
 fn clamp_block_height(tree: &Document, node: usize, basis: f32, height: f32) -> f32 {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     let adjustment = box_sizing_height_adjustment(tree, node, basis);
     let min = style
         .min_size
@@ -2025,7 +2036,7 @@ fn clamp_block_height(tree: &Document, node: usize, basis: f32, height: f32) -> 
 
 /// What a `content-box` size needs added to become a border-box size.
 fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     if style.box_sizing != taffy::BoxSizing::ContentBox {
         return 0.0;
     }
@@ -2035,7 +2046,7 @@ fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
 }
 
 fn box_sizing_height_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     if style.box_sizing != taffy::BoxSizing::ContentBox {
         return 0.0;
     }
@@ -2170,7 +2181,7 @@ fn relative_inset(
     axes: super::geometry::IfcAxes,
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     if !matches!(
         tree.nodes[node].taffy_position(),
         taffy::Position::Relative | taffy::Position::Sticky
@@ -2210,7 +2221,7 @@ fn relative_inset(
 /// bottom margin edge (CSS 2.1 10.8.1). `overflow: clip` does not make a
 /// scroll container (CSS Overflow 3 §3.1).
 fn atomic_baseline(tree: &Document, node: usize, output: &taffy::LayoutOutput) -> Option<f32> {
-    let overflow = tree.nodes[node].style.overflow;
+    let overflow = tree.layout_node_with_style(node).unwrap().style.overflow;
     let scrolls = |overflow| !matches!(overflow, taffy::Overflow::Visible | taffy::Overflow::Clip);
     if scrolls(overflow.x) || scrolls(overflow.y) {
         return None;
@@ -2261,7 +2272,7 @@ pub(crate) fn commit_child_layout(
     location: taffy::Point<f32>,
     basis: f32,
 ) {
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     let padding = style.padding.resolve_or_zero(Some(basis), resolve_calc);
     let border = style.border.resolve_or_zero(Some(basis), resolve_calc);
     let margin = style
@@ -2307,7 +2318,7 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
     let Some(lines) = root.lines.clone() else {
         return;
     };
-    let style = &tree.nodes[idx].style;
+    let style = &tree.layout_node_with_style(idx).unwrap().style;
     let border = style
         .border
         .resolve_or_zero(Some(border_box.width), resolve_calc);
@@ -2346,7 +2357,7 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
             }
             None => (content_left, content_top + lines.height),
         };
-        let child = &tree.nodes[node].style;
+        let child = &tree.layout_node_with_style(node).unwrap().style;
         // Two auto margins share the free space between the insets equally.
         // In the root's block axis that holds even when the space is
         // negative (CSS 2.1 §10.6.4); in its inline axis negative space
@@ -2370,7 +2381,9 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
             }
             _ => None,
         });
-        let height = tree.nodes[node]
+        let height = tree
+            .layout_node_with_style(node)
+            .unwrap()
             .style
             .size
             .height
@@ -2530,7 +2543,7 @@ pub(crate) fn intrinsics_of_boxes(
                 let margin = resolved_margins(tree, b.node, basis);
                 let (min_content, max_content) =
                     content_widths(tree, b.node, basis, margin.left + margin.right);
-                let style = &tree.nodes[b.node].style;
+                let style = &tree.layout_node_with_style(b.node).unwrap().style;
                 let side = match style.float.float_direction() {
                     Some(FloatDirection::Right) => FloatSide::Right,
                     _ => FloatSide::Left,

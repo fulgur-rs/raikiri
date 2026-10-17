@@ -202,8 +202,7 @@ fn replace_children_from_deep_copies_nodes_in_order_and_detaches_old_subtree() {
 fn replace_children_from_splices_document_fragment_children() {
     let mut source = Document::new();
     let source_parent = source.append_element(Some(0), "section", Style::default(), None::<&str>);
-    let fragment = source.nodes.len();
-    source.nodes.push(Node::new_document_fragment());
+    let fragment = source.create_detached_fragment();
     source.nodes[source_parent].children.push(fragment);
     source.nodes[fragment].parent = Some(source_parent);
     source.append_text(fragment, "fragment text");

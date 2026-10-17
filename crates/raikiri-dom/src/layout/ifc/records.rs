@@ -29,7 +29,7 @@ fn inline_elements(tree: &Document, root: usize, ifc: &IfcRoot) -> Vec<usize> {
     let mut out = Vec::new();
     let mut stack: Vec<usize> = tree.nodes[root].children.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
-        let node = &tree.nodes[id];
+        let node = &tree.layout_node_with_style(id).unwrap();
         if !node.is_in_document()
             || node.kind() != NodeKind::Element
             || ifc.boxes.iter().any(|b| b.node == id)

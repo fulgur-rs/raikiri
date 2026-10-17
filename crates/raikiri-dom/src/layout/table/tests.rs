@@ -81,7 +81,7 @@ fn append_grid_part(
     css: &str,
 ) -> usize {
     let id = doc.append_element(Some(parent), tag, Style::default(), Some(css));
-    doc.nodes[id].set_display(display);
+    doc.set_display(id, display);
     id
 }
 
@@ -264,7 +264,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
             },
             Some("display:table;width:40px;border-spacing:0"),
         );
-        doc.nodes[table].set_display(DisplayValue::Table);
+        doc.set_display(table, DisplayValue::Table);
         let row = doc.append_element(
             Some(table),
             "tr",
@@ -274,7 +274,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
             },
             Some("display:table-row"),
         );
-        doc.nodes[row].set_display(DisplayValue::TableRow);
+        doc.set_display(row, DisplayValue::TableRow);
         let mut children = Vec::new();
         for _ in 0..2 {
             let cell = doc.append_element(
@@ -290,7 +290,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
                 },
                 Some("display:table-cell;width:20px;height:10px"),
             );
-            doc.nodes[cell].set_display(DisplayValue::TableCell);
+            doc.set_display(cell, DisplayValue::TableCell);
             children.push(cell);
         }
         doc.mark_in_document_flags();
@@ -857,35 +857,35 @@ fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
     super::resolve_collapsed_cell_borders(&mut doc, &grid, &super::CellIndex::new(&grid));
 
     assert_eq!(
-        doc.nodes[cells[0]].style.border.right,
+        doc.layout_style_for_key(cells[0]).unwrap().border.right,
         LengthPercentage::length(5.0)
     );
     assert_eq!(
-        doc.nodes[cells[1]].style.border.left,
+        doc.layout_style_for_key(cells[1]).unwrap().border.left,
         LengthPercentage::length(5.0)
     );
     assert_eq!(
-        doc.nodes[cells[2]].style.border.right,
+        doc.layout_style_for_key(cells[2]).unwrap().border.right,
         LengthPercentage::length(9.0)
     );
     assert_eq!(
-        doc.nodes[cells[3]].style.border.left,
+        doc.layout_style_for_key(cells[3]).unwrap().border.left,
         LengthPercentage::length(9.0)
     );
     assert_eq!(
-        doc.nodes[cells[0]].style.border.bottom,
+        doc.layout_style_for_key(cells[0]).unwrap().border.bottom,
         LengthPercentage::length(7.0)
     );
     assert_eq!(
-        doc.nodes[cells[2]].style.border.top,
+        doc.layout_style_for_key(cells[2]).unwrap().border.top,
         LengthPercentage::length(7.0)
     );
     assert_eq!(
-        doc.nodes[cells[1]].style.border.bottom,
+        doc.layout_style_for_key(cells[1]).unwrap().border.bottom,
         LengthPercentage::length(9.0)
     );
     assert_eq!(
-        doc.nodes[cells[3]].style.border.top,
+        doc.layout_style_for_key(cells[3]).unwrap().border.top,
         LengthPercentage::length(9.0)
     );
 
@@ -1002,7 +1002,11 @@ fn an_edge_cell_side_yields_to_a_winning_table_border() {
     assert_eq!(losing_sides.bottom.style(), BorderStyle::None);
     assert_eq!(losing_sides.bottom.width().px(), 0.0);
     assert_eq!(
-        doc.nodes[losing].style.border.bottom,
+        doc.layout_node_with_style(losing)
+            .unwrap()
+            .style
+            .border
+            .bottom,
         LengthPercentage::length(0.0)
     );
     // The right side is an inner boundary, not a table edge.
@@ -1028,7 +1032,7 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
                 &mut doc,
                 collapsed_candidate(BorderStyle::Solid, 5.0, color),
             );
-            doc.nodes[row].set_display(DisplayValue::TableRow);
+            doc.set_display(row, DisplayValue::TableRow);
             row
         })
         .collect();
@@ -1050,7 +1054,11 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
     assert_eq!(bottom.color, BorderColor::Resolved(red));
     assert_eq!(bottom.width().px(), 5.0);
     assert_eq!(
-        doc.nodes[spanning].style.border.bottom,
+        doc.layout_node_with_style(spanning)
+            .unwrap()
+            .style
+            .border
+            .bottom,
         LengthPercentage::length(5.0)
     );
     for row in rows {
@@ -1157,7 +1165,7 @@ fn an_anonymous_row_does_not_turn_its_first_cell_into_a_row() {
         &mut doc,
         collapsed_candidate(BorderStyle::Solid, 1.0, CssColor::BLACK),
     );
-    doc.nodes[first].set_display(DisplayValue::TableCell);
+    doc.set_display(first, DisplayValue::TableCell);
     let grid = super::TableGrid {
         n_cols: 2,
         // An anonymous row is recorded by its first cell.
@@ -1186,7 +1194,7 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
     // A hand-built box that never went through the style bridge has no
     // computed borders, so it takes part in no conflict.
     let bare_row = bordered_cell(&mut doc, 2.0);
-    doc.nodes[bare_row].set_display(DisplayValue::TableRow);
+    doc.set_display(bare_row, DisplayValue::TableRow);
     let bare_table = bordered_cell(&mut doc, 2.0);
     let bare_cell = bordered_cell(&mut doc, 2.0);
     let cell = collapsed_cell(
@@ -1217,7 +1225,7 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
     assert!(doc.nodes[bare_cell].collapsed_border().is_none());
     assert!(doc.nodes[bare_row].collapsed_border().is_none());
     assert_eq!(
-        doc.nodes[cell].style.border.top,
+        doc.layout_node_with_style(cell).unwrap().style.border.top,
         LengthPercentage::length(3.0)
     );
 }
@@ -2816,7 +2824,7 @@ fn table_shell() -> (Document, usize) {
 fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
     let (mut doc, table) = table_shell();
     let colgroup = doc.append_element(Some(table), "colgroup", Style::default(), None::<&str>);
-    doc.nodes[colgroup].set_display(DisplayValue::TableColumnGroup);
+    doc.set_display(colgroup, DisplayValue::TableColumnGroup);
 
     let col_a = doc.append_element(
         Some(colgroup),
@@ -2830,7 +2838,7 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
         },
         None::<&str>,
     );
-    doc.nodes[col_a].set_display(DisplayValue::TableColumn);
+    doc.set_display(col_a, DisplayValue::TableColumn);
 
     let col_b = doc.append_element(
         Some(colgroup),
@@ -2844,13 +2852,13 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
         },
         None::<&str>,
     );
-    doc.nodes[col_b].set_display(DisplayValue::TableColumn);
+    doc.set_display(col_b, DisplayValue::TableColumn);
     doc.set_element_attributes(col_b, vec![("span".into(), "2".into())]);
 
     // A `<tr>` sibling of the colgroup must be skipped, not treated
     // as a column.
     let tr = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr].set_display(DisplayValue::TableRow);
+    doc.set_display(tr, DisplayValue::TableRow);
 
     // A bare `<col>` directly under the table (anonymous colgroup).
     let col_c = doc.append_element(
@@ -2865,7 +2873,7 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
         },
         None::<&str>,
     );
-    doc.nodes[col_c].set_display(DisplayValue::TableColumn);
+    doc.set_display(col_c, DisplayValue::TableColumn);
 
     doc.mark_in_document_flags();
     let sizing = super::collect_col_widths(&doc, table).unwrap();
@@ -2885,9 +2893,9 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
 fn collect_rows_wraps_bare_cells_in_anonymous_row() {
     let (mut doc, table) = table_shell();
     let td1 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
-    doc.nodes[td1].set_display(DisplayValue::TableCell);
+    doc.set_display(td1, DisplayValue::TableCell);
     let td2 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
-    doc.nodes[td2].set_display(DisplayValue::TableCell);
+    doc.set_display(td2, DisplayValue::TableCell);
     doc.mark_in_document_flags();
 
     let mut rows = Vec::new();
@@ -2907,18 +2915,18 @@ fn head_body_fixture() -> (Document, usize, usize, usize) {
     // DOM order: tbody first, thead second — reorder must float the
     // header group up regardless.
     let tbody = doc.append_element(Some(table), "tbody", Style::default(), None::<&str>);
-    doc.nodes[tbody].set_display(DisplayValue::TableRowGroup);
+    doc.set_display(tbody, DisplayValue::TableRowGroup);
     let tr_body = doc.append_element(Some(tbody), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr_body].set_display(DisplayValue::TableRow);
+    doc.set_display(tr_body, DisplayValue::TableRow);
     let body_cell = doc.append_element(Some(tr_body), "td", Style::default(), None::<&str>);
-    doc.nodes[body_cell].set_display(DisplayValue::TableCell);
+    doc.set_display(body_cell, DisplayValue::TableCell);
 
     let thead = doc.append_element(Some(table), "thead", Style::default(), None::<&str>);
-    doc.nodes[thead].set_display(DisplayValue::TableHeaderGroup);
+    doc.set_display(thead, DisplayValue::TableHeaderGroup);
     let tr_head = doc.append_element(Some(thead), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr_head].set_display(DisplayValue::TableRow);
+    doc.set_display(tr_head, DisplayValue::TableRow);
     let head_cell = doc.append_element(Some(tr_head), "td", Style::default(), None::<&str>);
-    doc.nodes[head_cell].set_display(DisplayValue::TableCell);
+    doc.set_display(head_cell, DisplayValue::TableCell);
 
     doc.mark_in_document_flags();
     (doc, table, head_cell, body_cell)
@@ -2960,16 +2968,16 @@ fn collect_rows_inner_no_reorder_keeps_dom_order_for_nested_call() {
 fn collect_rows_inner_skips_character_data_between_rows() {
     let (mut doc, table) = table_shell();
     let tr1 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr1].set_display(DisplayValue::TableRow);
+    doc.set_display(tr1, DisplayValue::TableRow);
     let td1 = doc.append_element(Some(tr1), "td", Style::default(), None::<&str>);
-    doc.nodes[td1].set_display(DisplayValue::TableCell);
+    doc.set_display(td1, DisplayValue::TableCell);
 
     doc.append_text(table, "   ");
 
     let tr2 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr2].set_display(DisplayValue::TableRow);
+    doc.set_display(tr2, DisplayValue::TableRow);
     let td2 = doc.append_element(Some(tr2), "td", Style::default(), None::<&str>);
-    doc.nodes[td2].set_display(DisplayValue::TableCell);
+    doc.set_display(td2, DisplayValue::TableCell);
 
     doc.mark_in_document_flags();
     let mut rows = Vec::new();
@@ -2993,9 +3001,9 @@ fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
     // catch-all branch still recurses into it looking for rows.
     let wrapper = doc.append_element(Some(table), "div", Style::default(), None::<&str>);
     let tr = doc.append_element(Some(wrapper), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr].set_display(DisplayValue::TableRow);
+    doc.set_display(tr, DisplayValue::TableRow);
     let td = doc.append_element(Some(tr), "td", Style::default(), None::<&str>);
-    doc.nodes[td].set_display(DisplayValue::TableCell);
+    doc.set_display(td, DisplayValue::TableCell);
 
     doc.mark_in_document_flags();
     let mut rows = Vec::new();

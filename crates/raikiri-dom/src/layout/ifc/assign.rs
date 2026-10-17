@@ -91,7 +91,7 @@ pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize)
     // inside them (an SVG `<title>`) is not a paragraph of theirs. Form
     // controls and the other replaced elements lay their content (a label,
     // fallback content) out as a paragraph of their own.
-    let node = &doc.nodes[idx];
+    let node = &doc.layout_node_with_style(idx).unwrap();
     let tag = node.tag_name().unwrap_or("");
     if node.is_inline_svg_content()
         || node.is_inline_svg_root()
@@ -155,7 +155,7 @@ fn needs_ifc_layout(
         && matches!(cv.column_width, ComputedColumnWidth::Auto);
     let mut stack = doc.nodes[idx].children.clone();
     while let Some(id) = stack.pop() {
-        let node = &doc.nodes[id];
+        let node = &doc.layout_node_with_style(id).unwrap();
         if !node.is_in_document() {
             continue;
         }
@@ -378,7 +378,7 @@ fn check_text_in_paragraphs(doc: &Document) -> Result<(), LayoutError> {
 /// content (drawn by the SVG renderer) is not text of the document flow.
 fn text_outside_paragraphs(doc: &Document) -> Option<usize> {
     (0..doc.nodes.len()).find(|&idx| {
-        let node = &doc.nodes[idx];
+        let node = &doc.layout_node_with_style(idx).unwrap();
         if node.kind() != NodeKind::Text
             || !node.is_in_document()
             || node.is_inline_svg_content()
@@ -393,7 +393,7 @@ fn text_outside_paragraphs(doc: &Document) -> Option<usize> {
             return false;
         }
         !doc.ancestors(idx).any(|id| {
-            let element = &doc.nodes[id];
+            let element = &doc.layout_node_with_style(id).unwrap();
             element.kind() == NodeKind::Element
                 && (element.is_non_rendered_html_element()
                     || doc.nodes[id].display() == DisplayValue::None)
@@ -420,7 +420,7 @@ fn collect_candidates(
     // paragraphs would be shaped for nothing.
     let mut taken = inside_hidden_subtrees(doc);
     for idx in 0..doc.nodes.len() {
-        let node = &doc.nodes[idx];
+        let node = &doc.layout_node_with_style(idx).unwrap();
         // A root is any box that lays its own inline content out, whatever
         // its parent's layout: a block child of another paragraph is a box of
         // that paragraph and the root of its own content. Inline content of a
@@ -533,7 +533,7 @@ pub(super) fn is_css_whitespace(c: char) -> bool {
 /// collapsible white space (CSS Flexbox 1, 4; CSS Grid 1, 6). The white-space
 /// test matches the item collection of the taffy tree.
 fn is_anonymous_item_text(doc: &Document, text: usize) -> bool {
-    let node = &doc.nodes[text];
+    let node = &doc.layout_node_with_style(text).unwrap();
     if node.kind() != NodeKind::Text || !node.is_in_document() {
         return false;
     }

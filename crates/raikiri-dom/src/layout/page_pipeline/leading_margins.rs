@@ -39,7 +39,7 @@ pub(super) fn truncate(
     let mut moved = false;
     while let Some((parent, flow_y, leading_flow)) = stack.pop() {
         control.check_aborted()?;
-        let parent_node = &document.nodes[parent];
+        let parent_node = &document.layout_node_with_style(parent).unwrap();
         let block_flow = parent_node.formatting_context == FormattingContext::Block
             && parent_node.style.align_content == taffy::AlignContent::NORMAL
             && (matches!(
@@ -62,7 +62,7 @@ pub(super) fn truncate(
         let mut first_in_flow = true;
         let mut preceding_float = false;
         for child in children {
-            let node = &document.nodes[child];
+            let node = &document.layout_node_with_style(child).unwrap();
             if node.is_display_none() || node.is_non_rendered_html_element() {
                 continue;
             }

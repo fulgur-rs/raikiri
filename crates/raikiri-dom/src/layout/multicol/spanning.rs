@@ -5,7 +5,7 @@ use crate::layout::context::LayoutSession;
 use taffy::util::MaybeResolve;
 
 pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
-    let node = &tree.nodes[child];
+    let node = &tree.layout_node_with_style(child).unwrap();
     node.column_span_all
         && node.is_in_document()
         && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
@@ -54,7 +54,7 @@ pub(super) fn layout(
             continue;
         }
         if children[start..end].iter().any(|&child| {
-            let node = &tree.nodes[child];
+            let node = &tree.layout_node_with_style(child).unwrap();
             node.kind() != NodeKind::Text
                 || node.unrounded_layout.size.height != 0.0
                 || node.ifc.is_some()
@@ -99,7 +99,7 @@ pub(super) fn layout(
             let stack = std::mem::take(&mut tree.context.fragmentation_stack);
             clear_column_state(tree, child);
             let fragment_start = tree.fragment_tree.fragments.len();
-            let margin = &tree.nodes[child].style.margin;
+            let margin = &tree.layout_node_with_style(child).unwrap().style.margin;
             let inline_margin = [margin.left, margin.right]
                 .into_iter()
                 .filter_map(|value| {

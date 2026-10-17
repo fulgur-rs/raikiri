@@ -21,7 +21,7 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         let index = usize::from(node);
         let style = self
             .transposed_child_style(index)
-            .unwrap_or(&self.nodes[index].style);
+            .unwrap_or(self.layout_node_with_style(index).unwrap().style);
         let mut query = BlockChildStyle::new(style, None);
         query.oof_table |= matches!(
             self.nodes[index].display(),

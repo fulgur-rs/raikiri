@@ -39,7 +39,7 @@ fn whitespace_only_text_is_not_a_child_of_a_block_container() {
     // cannot separate the margins of its siblings.
     let mut tree = Document::new();
     let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    tree.nodes[parent].set_display(raikiri_style::property::DisplayValue::Block);
+    tree.set_display(parent, raikiri_style::property::DisplayValue::Block);
     tree.append_text(parent, "\n  ");
     let first = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
     tree.append_text(parent, "\t\r\u{000c} ");
@@ -62,14 +62,14 @@ fn children_walked_by_index_match_the_child_iterator() {
     // with one child.
     let mut tree = Document::new();
     let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    tree.nodes[parent].set_display(raikiri_style::property::DisplayValue::Block);
+    tree.set_display(parent, raikiri_style::property::DisplayValue::Block);
     let mut expected = Vec::new();
     for _ in 0..37 {
         expected.push(tree.append_element(Some(parent), "div", Style::default(), None::<&str>));
     }
     tree.append_text(parent, " ");
     let contents = tree.append_element(Some(parent), "span", Style::default(), None::<&str>);
-    tree.nodes[contents].set_display(DisplayValue::Contents);
+    tree.set_display(contents, DisplayValue::Contents);
     for _ in 0..3 {
         expected.push(tree.append_element(Some(contents), "div", Style::default(), None::<&str>));
     }

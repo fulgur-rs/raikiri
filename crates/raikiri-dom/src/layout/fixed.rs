@@ -64,7 +64,7 @@ fn generates_inline_box_with_properties(
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     // spec: https://www.w3.org/TR/css-display-3/#transformations
     // Out-of-flow boxes and flex and grid items are blockified.
-    let node = &document.nodes[id];
+    let node = &document.layout_node_with_style(id).unwrap();
     let tag = node.tag_name().unwrap_or("");
     properties.display().is_inline_flow()
         && !super::ifc::assign::is_layout_root(document, id)
@@ -291,7 +291,11 @@ pub(crate) fn place_fixed_boxes_in_page_area(
     let page = Area {
         origin: Point::ZERO,
         size: area_size,
-        direction: document.nodes[principal].style.direction,
+        direction: document
+            .layout_node_with_style(principal)
+            .unwrap()
+            .style
+            .direction,
         vertical: is_vertical(document, principal),
     };
     visit_out_of_flow_boxes(
@@ -335,7 +339,7 @@ pub(super) fn restore_fixed_box_block_positions(
             if !matches!(cb, ContainingBlock::Page) {
                 return;
             }
-            let style = &document.nodes[id].style;
+            let style = &document.layout_node_with_style(id).unwrap().style;
             let layout = document.nodes[id].unrounded_layout;
             let calc = crate::taffy_impl::resolve_calc;
             let top = style.inset.top.maybe_resolve(Some(area_height), calc);
@@ -442,7 +446,7 @@ fn visit_out_of_flow_boxes(
         .map(|&child| (child, root_origin, in_paragraph, abs_cb, fixed_cb))
         .collect();
     while let Some((id, parent_origin, in_paragraph, abs_cb, fixed_cb)) = stack.pop() {
-        let node = &document.nodes[id];
+        let node = &document.layout_node_with_style(id).unwrap();
         if !node.is_in_document() || node.is_display_none() {
             continue;
         }
@@ -464,7 +468,7 @@ fn visit_out_of_flow_boxes(
         if out_of_flow && visited {
             visit(document, id, parent_origin, cb);
         }
-        let node = &document.nodes[id];
+        let node = &document.layout_node_with_style(id).unwrap();
         // The inline engine places the boxes of a paragraph relative to the
         // paragraph, not to the inline elements between them.
         let inline = in_paragraph
@@ -513,7 +517,7 @@ fn place_fixed_box(tree: &mut LayoutSession<'_>, id: usize, parent_origin: Point
         vertical,
     } = area;
     let calc = crate::taffy_impl::resolve_calc;
-    let style = &tree.nodes[id].style;
+    let style = &tree.layout_node_with_style(id).unwrap().style;
     let area_width = Some(area_size.width);
     let area_height = Some(area_size.height);
     let aspect_ratio = style.aspect_ratio;
@@ -917,7 +921,7 @@ fn static_position_alignment(
     let Some(parent) = tree.taffy_parent_of(id) else {
         return (Size::ZERO, Size::ZERO); // cov:ignore: a placed box has a parent
     };
-    let parent_style = &tree.nodes[parent].style;
+    let parent_style = &tree.layout_node_with_style(parent).unwrap().style;
     let rtl = parent_style.direction == TaffyDirection::Rtl;
     // CSS 2.1 §10.3.7: in a right-to-left static containing block the
     // static position is the box's right edge.
@@ -996,7 +1000,7 @@ fn static_position_alignment(
         | AlignContentKeyword::Stretch
         | AlignContentKeyword::SpaceBetween => flex(false, main_reversed),
     };
-    let style = &tree.nodes[id].style;
+    let style = &tree.layout_node_with_style(id).unwrap().style;
     let align = style
         .align_self
         .or(Some(parent_style.align_items))

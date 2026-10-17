@@ -57,7 +57,7 @@ pub(super) fn containing_block_inline_size(
     {
         return None;
     }
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     if style
         .size
         .height
@@ -109,7 +109,7 @@ pub(super) fn absolute_child_inputs(
     {
         return inputs;
     }
-    let inset = tree.nodes[node].style.inset;
+    let inset = tree.layout_node_with_style(node).unwrap().style.inset;
     if !inset.top.is_auto() && !inset.bottom.is_auto() {
         return inputs;
     }
@@ -164,7 +164,7 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
     if !mode.is_vertical() {
         return;
     }
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     let border = style
         .border
         .resolve_or_zero(Some(border_box.height), resolve_calc);
@@ -178,7 +178,7 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
         .filter(|&child| is_absolute(tree, child) && has_inline_content(tree, child))
         .collect();
     for child in children {
-        let child_style = &tree.nodes[child].style;
+        let child_style = &tree.layout_node_with_style(child).unwrap().style;
         if !child_style.inset.left.is_auto() || !child_style.inset.right.is_auto() {
             continue;
         }

@@ -106,7 +106,7 @@ pub(super) struct Sink<'a> {
 
 /// Whether `id` is a text node of white space alone.
 fn is_white_space_text(doc: &Document, id: usize) -> bool {
-    let node = &doc.nodes[id];
+    let node = &doc.layout_node_with_style(id).unwrap();
     node.kind() == NodeKind::Text
         && node
             .text_content()
@@ -116,7 +116,7 @@ fn is_white_space_text(doc: &Document, id: usize) -> bool {
 /// Whether `id` takes no part in layout: a node outside the document, a
 /// comment, or an element that renders nothing.
 fn is_skipped(doc: &Document, id: usize) -> bool {
-    let node = &doc.nodes[id];
+    let node = &doc.layout_node_with_style(id).unwrap();
     !node.is_in_document()
         || matches!(
             node.kind(),

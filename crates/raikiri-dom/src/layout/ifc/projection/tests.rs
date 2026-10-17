@@ -949,7 +949,10 @@ fn inside_marker_is_first_inline_content_and_only_indents_the_first_line() {
     assert_eq!(projected.paragraph.text(), "\u{2066}X \u{2069}aaaa bbbb");
     assert_eq!(line_texts(&projected, 70.0), ["X aaaa", "bbbb"]);
     assert_eq!(
-        fixture.doc.nodes[fixture.root]
+        fixture
+            .doc
+            .layout_node_with_style(fixture.root)
+            .unwrap()
             .style
             .padding
             .left

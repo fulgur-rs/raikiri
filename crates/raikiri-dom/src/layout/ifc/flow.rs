@@ -387,7 +387,7 @@ pub(crate) fn rebreak_roots(
 fn first_text_node(doc: &Document, root: usize) -> Option<usize> {
     let mut stack: Vec<usize> = doc.nodes[root].children.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
-        let node = &doc.nodes[id];
+        let node = &doc.layout_node_with_style(id).unwrap();
         if !node.is_in_document() {
             continue;
         }

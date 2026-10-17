@@ -486,12 +486,12 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
         );
         doc.mark_in_document_flags();
         let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-        assert!(anonymous_prototype(&doc, table).ifc.is_none());
+        assert!(anonymous_prototype(&doc, table).0.ifc.is_none());
         crate::layout::layout_single_page(&mut doc, &computed, raikiri_traits::PageBox::A4)
             .unwrap();
         assert_eq!(doc.anonymous_table_cells(table).count(), 2);
         assert!(doc.table_objects.prototypes_by_owner.is_empty());
-        for (_, cell) in doc.anonymous_table_cells(table) {
+        for (cell_key, cell) in doc.anonymous_table_cells(table) {
             let crate::node::NodeData::Element(element) = &cell.data else {
                 panic!("anonymous cell element");
             };
@@ -499,7 +499,10 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
             assert!(element.canvas_bitmap.is_none());
             assert!(cell.order_modified_children.is_empty());
             assert!(cell.grid_item_row_starts.is_empty());
-            assert_eq!(cell.style.display, taffy::Display::Block);
+            assert_eq!(
+                doc.layout_style_for_key(cell_key).unwrap().display,
+                taffy::Display::Block
+            );
             assert_eq!(
                 cell.authored_writing_mode,
                 doc.nodes[table].authored_writing_mode

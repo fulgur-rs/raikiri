@@ -155,7 +155,7 @@ impl LayoutSession<'_> {
             .then_some(inputs.parent_size.height)
             .flatten()
             .map(|inline_size| {
-                let style = &mut self.nodes[idx].style;
+                let style = &mut self.layout_node_with_style_mut(idx).unwrap().style;
                 let resolved = style
                     .padding
                     .resolve_or_zero(Some(inline_size), resolve_calc)
@@ -164,7 +164,7 @@ impl LayoutSession<'_> {
             });
         let output = self.compute_child_layout_with_block_ctx(node_id, inputs, None);
         if let Some(padding) = physical_padding {
-            self.nodes[idx].style.padding = padding;
+            self.layout_node_with_style_mut(idx).unwrap().style.padding = padding;
         }
         self.context.transposed_blocks.push(block);
         Some(transpose_output(output))
@@ -191,7 +191,7 @@ fn orthogonal_child_inputs(
     inputs: LayoutInput,
     block_space: Option<f32>,
 ) -> LayoutInput {
-    let style = &tree.nodes[idx].style;
+    let style = &tree.layout_node_with_style(idx).unwrap().style;
     if !flows_horizontally(tree, idx)
         || inputs.sizing_mode != SizingMode::InherentSize
         || tree.nodes[idx].taffy_position() == TaffyPosition::Absolute
@@ -292,7 +292,10 @@ pub(super) fn compute_vertical_block(
     right_to_left: bool,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    let mut container_style = transpose_style(&tree.nodes[idx].style, right_to_left);
+    let mut container_style = transpose_style(
+        tree.layout_node_with_style(idx).unwrap().style,
+        right_to_left,
+    );
     // Percentages of the container's padding refer to the inline size of
     // its containing block (CSS Writing Modes 4 §7.1): the physical height
     // of a vertical parent, the physical width of a horizontal one.
@@ -315,7 +318,10 @@ pub(super) fn compute_vertical_block(
         .map(|child| {
             (
                 child,
-                transpose_style(&tree.nodes[child].style, right_to_left),
+                transpose_style(
+                    tree.layout_node_with_style(child).unwrap().style,
+                    right_to_left,
+                ),
             )
         })
         .collect();
@@ -358,7 +364,13 @@ pub(super) fn compute_vertical_block(
 /// container it fills the parent's inline size like any block-level box.
 fn shrinks_to_fit(tree: &Document, idx: usize, inputs: &LayoutInput) -> bool {
     inputs.sizing_mode == SizingMode::InherentSize
-        && tree.nodes[idx].style.size.height.is_auto()
+        && tree
+            .layout_node_with_style(idx)
+            .unwrap()
+            .style
+            .size
+            .height
+            .is_auto()
         && !tree
             .taffy_parent_of(idx)
             .is_some_and(|parent| is_vertical(tree, parent))
@@ -373,7 +385,10 @@ fn fit_content_inline_size(
     inputs: LayoutInput,
 ) -> f32 {
     let page_height = tree.fixed_page_area.unwrap_or_default().1;
-    let style = &tree.nodes[usize::from(node_id)].style;
+    let style = &tree
+        .layout_node_with_style(usize::from(node_id))
+        .unwrap()
+        .style;
     // The transposed horizontal margins are the physical top and bottom.
     let margin = style
         .margin

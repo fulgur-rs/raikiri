@@ -46,6 +46,7 @@ use taffy::{
 };
 
 pub(crate) mod context;
+pub(crate) mod retained_styles;
 pub(crate) mod table;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {

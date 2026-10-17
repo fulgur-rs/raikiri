@@ -773,7 +773,7 @@ fn unsupported_text_and_parallel_or_hidden_nodes_keep_the_scope_bounded() {
     doc.append_comment(Some(root), "opaque");
     doc.append_text(root, " ");
     let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
-    doc.nodes[hidden].set_display(raikiri_style::property::DisplayValue::None);
+    doc.set_display(hidden, raikiri_style::property::DisplayValue::None);
     doc.nodes[hidden].formatting_context = FormattingContext::None;
     let positioned = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     {
