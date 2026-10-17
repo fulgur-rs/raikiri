@@ -862,6 +862,7 @@ fn sizing_keywords_resolve_against_the_containing_block() {
 #[test]
 fn sizing_keywords_measure_the_box_in_each_axis() {
     let (mut doc, fixed) = laid_out_with_words("position:absolute;left:5px;top:6px;font:10px Ahem");
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
     let area = Size {
         width: 800.0,
         height: 600.0,
@@ -880,9 +881,13 @@ fn sizing_keywords_measure_the_box_in_each_axis() {
     };
     let mut resolve = |width: Dimension, height: Dimension, known: Size<Option<f32>>| {
         let mut known = known;
-        doc.nodes[fixed].style.size = Size { width, height };
+        session
+            .layout_node_with_style_mut(fixed)
+            .unwrap()
+            .style
+            .size = Size { width, height };
         resolve_sizing_keywords(
-            &mut doc,
+            &mut session,
             fixed,
             &mut known,
             Size { width, height },
@@ -987,7 +992,10 @@ fn static_position_alignment_follows_the_flex_container() {
             &format!("display:flex;height:100px;width:100px;flex-direction:{flex_direction}"),
             &format!("position:fixed;width:20px;height:10px;direction:{direction}"),
         );
-        doc.nodes[fixed].style.align_self = Some(align);
+        doc.layout_node_with_style_mut(fixed)
+            .unwrap()
+            .style
+            .align_self = Some(align);
         let (alignment, _) = static_position_alignment(
             &doc,
             fixed,
@@ -1022,7 +1030,10 @@ fn static_position_alignment_follows_the_flex_container() {
         "position:fixed;width:20px;height:10px",
     );
     let mut doc = doc;
-    doc.nodes[fixed].style.align_self = Some(align(AlignItemsKeyword::End, AlignmentSafety::Safe));
+    doc.layout_node_with_style_mut(fixed)
+        .unwrap()
+        .style
+        .align_self = Some(align(AlignItemsKeyword::End, AlignmentSafety::Safe));
     let (alignment, _) = static_position_alignment(
         &doc,
         fixed,

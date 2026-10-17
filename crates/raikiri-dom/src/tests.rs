@@ -1,7 +1,16 @@
 use super::*;
 use raikiri_traits::{Dom, Element, Node, NodeId, NodeKind};
 use taffy::prelude::*;
-use taffy::{AvailableSpace, Dimension, Display, Size, Style, compute_root_layout};
+use taffy::{AvailableSpace, Dimension, Display, Size, Style};
+
+fn compute_root_layout(
+    doc: &mut Document,
+    root: taffy::NodeId,
+    available_space: Size<AvailableSpace>,
+) {
+    let mut session = crate::layout::context::LayoutSession::new(doc);
+    taffy::compute_root_layout(&mut session, root, available_space);
+}
 
 fn build_document(display: Display) -> (Document, usize) {
     let mut doc = Document::new();
@@ -35,14 +44,16 @@ fn build_document(display: Display) -> (Document, usize) {
 fn all_three_display_modes_layout_non_degenerate() {
     for display in [Display::Block, Display::Flex, Display::Grid] {
         let (mut doc, layout_root) = build_document(display);
-        compute_root_layout(
-            &mut doc,
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        taffy::compute_root_layout(
+            &mut session,
             taffy::NodeId::from(layout_root),
             Size {
                 width: AvailableSpace::Definite(800.0),
                 height: AvailableSpace::Definite(600.0),
             },
         );
+        drop(session);
         let layout = doc.nodes[layout_root].unrounded_layout;
         assert!(
             layout.size.width > 0.0 && layout.size.height > 0.0,

@@ -34,7 +34,10 @@ pub(crate) fn propagate_body_overflow_to_viewport(
         && doc.parent_of(body_id) == doc.document_element_index()
         && doc.nodes[body_id].tag_name() == Some("body")
     {
-        doc.nodes[body_id].style.overflow = Point {
+        doc.layout_node_with_style_mut(body_id)
+            .unwrap()
+            .style
+            .overflow = Point {
             x: TaffyOverflow::Visible,
             y: TaffyOverflow::Visible,
         };

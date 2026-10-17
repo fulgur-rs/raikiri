@@ -1,10 +1,11 @@
 //! Place full-width spanners between independently laid-out column groups.
 
 use super::*;
+use crate::layout::context::LayoutSession;
 use taffy::util::MaybeResolve;
 
 pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
-    let node = &tree.nodes[child];
+    let node = &tree.layout_node_with_style(child).unwrap();
     node.column_span_all
         && node.is_in_document()
         && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
@@ -13,7 +14,7 @@ pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
         && !node.style.float.is_floated()
 }
 
-pub(super) fn retire_preliminary_fragments(tree: &mut Document, children: &[usize]) {
+pub(super) fn retire_preliminary_fragments(tree: &mut LayoutSession<'_>, children: &[usize]) {
     // The preliminary block measurement lays out nested column containers.
     // Spanners are subsequently laid out outside the owner's column stack;
     // retire obsolete records without invalidating a caller's container index.
@@ -32,7 +33,7 @@ pub(super) fn retire_preliminary_fragments(tree: &mut Document, children: &[usiz
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     owner: usize,
     children: &[usize],
     container_fragment: usize,
@@ -53,7 +54,7 @@ pub(super) fn layout(
             continue;
         }
         if children[start..end].iter().any(|&child| {
-            let node = &tree.nodes[child];
+            let node = &tree.layout_node_with_style(child).unwrap();
             node.kind() != NodeKind::Text
                 || node.unrounded_layout.size.height != 0.0
                 || node.ifc.is_some()
@@ -70,7 +71,7 @@ pub(super) fn layout(
                 origin_y: block_offset,
                 ..context
             };
-            if let Some(active) = tree.fragmentation_stack.last_mut() {
+            if let Some(active) = tree.context.fragmentation_stack.last_mut() {
                 *active = group_context;
             }
             block_offset = layout_column_group(
@@ -95,10 +96,10 @@ pub(super) fn layout(
         if let Some(child) = spanner {
             // A spanner establishes an independent formatting context. The
             // owner's column stack must not fragment its text or descendants.
-            let stack = std::mem::take(&mut tree.fragmentation_stack);
+            let stack = std::mem::take(&mut tree.context.fragmentation_stack);
             clear_column_state(tree, child);
             let fragment_start = tree.fragment_tree.fragments.len();
-            let margin = &tree.nodes[child].style.margin;
+            let margin = &tree.layout_node_with_style(child).unwrap().style.margin;
             let inline_margin = [margin.left, margin.right]
                 .into_iter()
                 .filter_map(|value| {
@@ -136,7 +137,7 @@ pub(super) fn layout(
                     vertical_margins_are_collapsible: TaffyLine::FALSE,
                 },
             );
-            tree.fragmentation_stack = stack;
+            tree.context.fragmentation_stack = stack;
             let mut child_layout = tree.nodes[child].unrounded_layout;
             child_layout.order = end as u32;
             child_layout.size = output.size;
@@ -201,7 +202,7 @@ pub(super) fn layout(
     block_offset + block_end_inset
 }
 
-fn clear_column_state(tree: &mut Document, root: usize) {
+fn clear_column_state(tree: &mut LayoutSession<'_>, root: usize) {
     let mut pending = vec![root];
     while let Some(node_id) = pending.pop() {
         let node = &mut tree.nodes[node_id];

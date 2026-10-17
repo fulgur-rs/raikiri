@@ -1,5 +1,6 @@
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
+use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use crate::node::FormattingContext;
 use raikiri_style::property::BreakInside;
@@ -29,7 +30,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         if depth >= 128 {
             return false;
         }
-        let node = &tree.nodes[id];
+        let node = &tree.layout_node_with_style(id).unwrap();
         if !node.is_in_document() || node.is_display_none() {
             continue;
         }
@@ -175,7 +176,7 @@ fn avoided(value: BreakBetween) -> bool {
 }
 
 fn atomic(tree: &Document, id: usize) -> bool {
-    let node = &tree.nodes[id];
+    let node = &tree.layout_node_with_style(id).unwrap();
     node.style.float.is_floated()
         || (node.display().is_block_flex_or_grid_container()
             || matches!(
@@ -194,14 +195,14 @@ fn atomic(tree: &Document, id: usize) -> bool {
 /// Block-in-inline splitting leaves no inline fragment with content around
 /// those blocks (CSS 2.1, 9.2.1.1), so the box flows like a block wrapper.
 fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
-    let node = &tree.nodes[id];
+    let node = &tree.layout_node_with_style(id).unwrap();
     node.display() == DisplayValue::Inline
         && node.formatting_context == FormattingContext::Block
         && node.ifc.is_none()
         && !in_paragraph_with_lines(tree, id)
         && has_rendered_element_child(tree, id)
         && node.children.iter().all(|&child| {
-            let child = &tree.nodes[child];
+            let child = &tree.layout_node_with_style(child).unwrap();
             !child.is_in_document()
                 || child.is_display_none()
                 || if child.kind() == NodeKind::Element {
@@ -260,7 +261,12 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
     let in_flow = |&&child: &&usize| {
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
-            && !tree.nodes[child].style.float.is_floated()
+            && !tree
+                .layout_node_with_style(child)
+                .unwrap()
+                .style
+                .float
+                .is_floated()
             && tree.nodes[child].taffy_position() != TaffyPosition::Absolute
             && matches!(tree.nodes[child].data, NodeData::Element(_))
     };
@@ -275,7 +281,7 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
 }
 
 fn collect(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     id: usize,
     context: FragmentationContext,
     ancestors: &mut Vec<usize>,
@@ -289,7 +295,12 @@ fn collect(
     {
         return;
     }
-    let floated = tree.nodes[id].style.float.is_floated();
+    let floated = tree
+        .layout_node_with_style(id)
+        .unwrap()
+        .style
+        .float
+        .is_floated();
     let known_width = (tree.nodes[id].multicol_auto_width
         && !floated
         && (tree.nodes[id].display().is_block_flex_or_grid_container()
@@ -297,7 +308,7 @@ fn collect(
                 tree.nodes[id].display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
             ))
-        && tree.nodes[id].style.size.width == Dimension::auto()
+        && tree.layout_node_with_style(id).unwrap().style.size.width == Dimension::auto()
         && tree.nodes[id].image_intrinsic_box().is_none()
         && tree.nodes[id].tag_name() != Some("img"))
     .then_some(context.column_width);
@@ -321,12 +332,12 @@ fn collect(
             // The measured box belongs to a column, not the original full-width
             // containing block. Its parent determines block inline alignment;
             // physical float sides remain independent of inline direction.
-            inline_offset: match tree.nodes[id].style.float {
+            inline_offset: match tree.layout_node_with_style(id).unwrap().style.float {
                 taffy::Float::Right => context.column_width - output.size.width,
                 taffy::Float::Left => 0.0,
                 taffy::Float::None => {
                     if tree.nodes[id].parent.is_some_and(|parent| {
-                        tree.nodes[parent].style.direction == taffy::Direction::Rtl
+                        tree.layout_node_with_style(parent).unwrap().style.direction == taffy::Direction::Rtl
                     }) {
                         context.column_width - output.size.width
                     } else {
@@ -349,7 +360,7 @@ fn collect(
                 && !has_rendered_element_child(tree, id)
                 && !tree.nodes[id].has_before_or_after_content
                 && !tree.nodes[id].children.iter().any(|&child| {
-                    let child = &tree.nodes[child];
+                    let child = &tree.layout_node_with_style(child).unwrap();
                     child.is_in_document()
                         && !child.is_display_none()
                         && matches!(&child.data, NodeData::Text(text) if !text.text_content.trim().is_empty())
@@ -403,7 +414,7 @@ fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
             continue;
         };
         *next += 1;
-        let node = &tree.nodes[child];
+        let node = &tree.layout_node_with_style(child).unwrap();
         let in_document = node.is_in_document();
         let raw_cost = match &node.data {
             NodeData::Text(text) if in_document => text.text_content.len().max(1),
@@ -468,7 +479,7 @@ fn fragment(
 }
 
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     root: usize,
     context: FragmentationContext,
     fallback: Size<f32>,
@@ -561,7 +572,9 @@ pub(super) fn layout(
             };
             let offset = context.column_offset_x(column);
             let x = content_origin.x
-                + if tree.nodes[root].style.direction == taffy::Direction::Rtl {
+                + if tree.layout_node_with_style(root).unwrap().style.direction
+                    == taffy::Direction::Rtl
+                {
                     context.available_width - context.column_width - offset
                 } else {
                     offset

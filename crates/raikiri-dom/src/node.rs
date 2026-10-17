@@ -415,13 +415,12 @@ impl FormattingContext {
 /// remain public.
 #[derive(Debug, Clone)]
 pub struct Node {
-    /// Taffy layout style.
-    pub(crate) style: Style,
     /// CSS display and position captured for this layout pass.
     box_properties: BoxProperties,
     /// How this box lays out its contents. Layout dispatch and the other
     /// consumers read this classification instead of re-deriving it from
-    /// [`Self::display`], [`Self::style`] and the paragraph root flag.
+    /// [`Self::display`], the retained style from
+    /// [`crate::Document::layout_node_with_style`], and the paragraph root flag.
     pub(crate) formatting_context: FormattingContext,
     /// Computed `table-layout` for the table engine. No `taffy::Style`
     /// counterpart exists (taffy 0.12 has no table layout), so the keyword
@@ -570,7 +569,7 @@ pub struct Node {
     /// `size.width` and `padding.{left,right}` can make
     /// `size.width - padding.left - padding.right` negative.
     ///
-    /// [`crate::Document::store_unrounded_layout`], through which taffy's
+    /// [`crate::layout::context::LayoutSession::store_unrounded_layout`], through which taffy's
     /// `set_unrounded_layout` and the table algorithm store whole layouts,
     /// enforces this contract (see the docs for
     /// [`crate::layout::sanitize::sanitize_taffy_layout`] for details and
@@ -638,14 +637,13 @@ impl Node {
         if self.flags.contains(NodeFlags::IS_ROOT_ELEMENT) {
             self.box_properties.blockify_root();
         }
-        self.refresh_box_style();
     }
 
     /// Refresh the backend projection after rebuilding other style fields.
-    pub(crate) fn refresh_box_style(&mut self) {
+    pub(crate) fn refresh_box_style(&self, style: &mut Style) {
         let kind = self.kind();
         self.box_properties.apply_to_style(
-            &mut self.style,
+            style,
             self.multicol.is_some(),
             kind,
             self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
@@ -660,20 +658,19 @@ impl Node {
     /// Construct a node carrying `data` and `style`, with every other field at
     /// its pre-cascade, pre-layout default. Each `new_*` constructor delegates
     /// here so the defaults live in one place.
-    fn with_data(data: NodeData, style: Style) -> Self {
+    fn with_data(data: NodeData, style: &Style) -> Self {
         let box_properties = if matches!(data, NodeData::Element(_)) {
-            BoxProperties::from_taffy_style(&style)
+            BoxProperties::from_taffy_style(style)
         } else {
             BoxProperties::new(DisplayValue::Inline, PositionValue::Static)
         };
-        let mut node = Self {
+        Self {
             formatting_context: match data {
                 NodeData::Element(_) => FormattingContext::from_taffy_display(
                     box_properties.taffy_display(false, NodeKind::Element, false),
                 ),
                 _ => FormattingContext::Text,
             },
-            style,
             box_properties,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
@@ -727,14 +724,12 @@ impl Node {
             percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
-        };
-        node.refresh_box_style();
-        node
+        }
     }
 
     /// Construct the Document root node for arena index 0.
     pub(crate) fn new_document() -> Self {
-        Self::with_data(NodeData::Document, Style::default())
+        Self::with_data(NodeData::Document, &Style::default())
     }
 
     /// Construct an Element node with its tag name, style, and inline_style.
@@ -757,7 +752,7 @@ impl Node {
                 image_intrinsic_size: None,
                 canvas_bitmap: None,
             })),
-            style,
+            &style,
         )
     }
 
@@ -765,7 +760,7 @@ impl Node {
     pub(crate) fn new_text(text: SmolStr) -> Self {
         Self::with_data(
             NodeData::Text(TextData { text_content: text }),
-            Style::default(),
+            &Style::default(),
         )
     }
 
@@ -776,7 +771,7 @@ impl Node {
     /// layout, paint, and cascade automatically skip them through the
     /// `is_in_document()` gate.
     pub(crate) fn new_comment(text: SmolStr) -> Self {
-        Self::with_data(NodeData::Comment(text), Style::default())
+        Self::with_data(NodeData::Comment(text), &Style::default())
     }
 
     /// Construct a Processing instruction node with its target and data.
@@ -785,7 +780,7 @@ impl Node {
     pub(crate) fn new_processing_instruction(target: SmolStr, data: SmolStr) -> Self {
         Self::with_data(
             NodeData::ProcessingInstruction { target, data },
-            Style::default(),
+            &Style::default(),
         )
     }
 
@@ -795,7 +790,7 @@ impl Node {
     /// `mark_in_document_flags` clears it because it is unreachable from the
     /// Document root.
     pub(crate) fn new_document_fragment() -> Self {
-        Self::with_data(NodeData::DocumentFragment, Style::default())
+        Self::with_data(NodeData::DocumentFragment, &Style::default())
     }
 
     // ─── inherent accessor methods ─────────────────

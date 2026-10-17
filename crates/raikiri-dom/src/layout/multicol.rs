@@ -6,6 +6,7 @@ mod paragraph_group;
 pub(super) mod spanning;
 
 use super::*;
+use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
@@ -18,7 +19,7 @@ pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 /// layout.
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 pub(crate) fn compute_multicol_layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: TaffyNodeId,
     inputs: LayoutInput,
     block_ctx: Option<&mut BlockContext<'_>>,
@@ -43,13 +44,21 @@ pub(crate) fn compute_multicol_layout(
             AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
         })
         .or_else(|| {
-            multicol_definite_dimension(tree, tree.nodes[index].style.size.width, parent_width)
+            multicol_definite_dimension(
+                tree,
+                tree.layout_node_with_style(index).unwrap().style.size.width,
+                parent_width,
+            )
         })
         .unwrap_or(0.0);
     let available_height = if style.height_definite {
         multicol_definite_dimension(
             tree,
-            tree.nodes[index].style.size.height,
+            tree.layout_node_with_style(index)
+                .unwrap()
+                .style
+                .size
+                .height,
             inputs.parent_size.height,
         )
         .or(inputs.known_dimensions.height)
@@ -78,12 +87,18 @@ pub(crate) fn compute_multicol_layout(
         .iter()
         .any(|&child| spanning::is_spanner(tree, child));
     let custom_scope = (span_scope
-        || tree.fragmentation_stack.is_empty()
+        || tree.context.fragmentation_stack.is_empty()
             && (multicol_has_nested_descendant(tree, index)
                 || (multicol_has_direct_block_child(tree, index)
-                    && tree.nodes[index].style.size.height == Dimension::auto())
+                    && tree
+                        .layout_node_with_style(index)
+                        .unwrap()
+                        .style
+                        .size
+                        .height
+                        == Dimension::auto())
                 || multicol_has_direct_break_flow(tree, index))
-        || !tree.fragmentation_stack.is_empty())
+        || !tree.context.fragmentation_stack.is_empty())
         && (!multicol_has_min_constrained_child(tree, index)
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
@@ -92,11 +107,11 @@ pub(crate) fn compute_multicol_layout(
     // too.
     let definite_paragraphs = !custom_scope
         && !span_scope
-        && tree.fragmentation_stack.is_empty()
+        && tree.context.fragmentation_stack.is_empty()
         && style.horizontal
         && available_height.is_some_and(|height| height > 0.0)
         && multicol_has_direct_block_child(tree, index)
-        && tree.nodes[index].style.direction == TaffyDirection::Ltr
+        && tree.layout_node_with_style(index).unwrap().style.direction == TaffyDirection::Ltr
         && multicol_has_only_paragraph_children(tree, index)
         && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
@@ -108,20 +123,20 @@ pub(crate) fn compute_multicol_layout(
     // A nested container whose children are sliced only because they hold
     // absolutely positioned boxes.
     let nested_out_of_flow = lineless_children.is_some()
-        && !tree.fragmentation_stack.is_empty()
+        && !tree.context.fragmentation_stack.is_empty()
         && lineless::supported(tree, index, false).is_none();
     // A nested container that turns out taller than its outer column falls
     // back to the custom path, which also breaks it at the outer column end.
-    let nested_fallback = custom_scope && !tree.fragmentation_stack.is_empty();
+    let nested_fallback = custom_scope && !tree.context.fragmentation_stack.is_empty();
     let mut custom_scope = custom_scope && lineless_children.is_none();
-    let stack_depth = tree.fragmentation_stack.len();
+    let stack_depth = tree.context.fragmentation_stack.len();
     let outer_height = stack_depth
         .checked_sub(1)
-        .and_then(|outer| tree.fragmentation_stack[outer].available_height);
-    tree.fragmentation_stack.push(context);
+        .and_then(|outer| tree.context.fragmentation_stack[outer].available_height);
+    tree.context.fragmentation_stack.push(context);
     let mut output = crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     if tree.fragment_tree.limit_exceeded {
-        tree.fragmentation_stack.truncate(stack_depth);
+        tree.context.fragmentation_stack.truncate(stack_depth);
         return output;
     }
     // Columns sliced here are not cut again at the end of an outer column,
@@ -188,12 +203,12 @@ pub(crate) fn compute_multicol_layout(
         let content_width = multicol_content_width(tree, index, output.size.width, parent_width);
         let resolved = FragmentationContext::resolve(content_width, fragmentainer_height, style)
             .unwrap_or(context);
-        if let Some(active) = tree.fragmentation_stack.last_mut() {
+        if let Some(active) = tree.context.fragmentation_stack.last_mut() {
             *active = resolved;
         }
         // The parent writes the container's layout after this callback.
         // Resolve insets from the used percentage basis before placing children.
-        let css = &tree.nodes[index].style;
+        let css = &tree.layout_node_with_style(index).unwrap().style;
         let basis = parent_width.unwrap_or(output.size.width).max(0.0);
         let content_origin = Point {
             x: multicol_resolve_inset(tree, css.padding.left, basis)
@@ -206,11 +221,16 @@ pub(crate) fn compute_multicol_layout(
         // The authored minimum border-box height of the container.
         let minimum = multicol_definite_dimension(
             tree,
-            tree.nodes[index].style.min_size.height.into(),
+            tree.layout_node_with_style(index)
+                .unwrap()
+                .style
+                .min_size
+                .height
+                .into(),
             inputs.parent_size.height,
         )
         .map_or(0.0, |height| {
-            let css = &tree.nodes[index].style;
+            let css = &tree.layout_node_with_style(index).unwrap().style;
             if css.box_sizing == TaffyBoxSizing::BorderBox {
                 height
             } else {
@@ -228,13 +248,13 @@ pub(crate) fn compute_multicol_layout(
         // both block insets fills its containing block; the columns then
         // take that height. Other known heights come from the item's own
         // content and are rebalanced here.
-        let css = &tree.nodes[index].style;
+        let css = &tree.layout_node_with_style(index).unwrap().style;
         let positioned = tree.nodes[index].taffy_position() == TaffyPosition::Absolute;
         let inset_height = positioned && !css.inset.top.is_auto() && !css.inset.bottom.is_auto();
         // The layout mode of the container that places this box in flow.
         let placement = tree.parent_of(index).filter(|_| !positioned).map(|parent| {
-            let container = &tree.nodes[parent].style;
-            let item = &tree.nodes[index].style;
+            let container = &tree.layout_node_with_style(parent).unwrap().style;
+            let item = &tree.layout_node_with_style(index).unwrap().style;
             let stretched = matches!(
                 item.align_self.or(Some(container.align_items)),
                 None | Some(taffy::AlignItems::STRETCH | taffy::AlignItems::NORMAL)
@@ -339,7 +359,7 @@ pub(crate) fn compute_multicol_layout(
     }
     // Truncating to the depth captured on entry keeps the stack balanced if a
     // future child strategy starts pushing a nested context of its own.
-    tree.fragmentation_stack.truncate(stack_depth);
+    tree.context.fragmentation_stack.truncate(stack_depth);
     output
 }
 
@@ -348,7 +368,7 @@ pub(crate) fn compute_multicol_layout(
 /// and keep an auto `height` at the tallest such child. The foundational
 /// block path cannot break between them, so this approximates the columns.
 fn space_min_constrained_children(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     index: usize,
     available_height: Option<f32>,
     height_definite: bool,
@@ -418,7 +438,7 @@ fn multicol_max_fragmentainer_height(
     parent_height: Option<f32>,
     parent_width: Option<f32>,
 ) -> Option<f32> {
-    let style = &tree.nodes[node_id].style;
+    let style = &tree.layout_node_with_style(node_id).unwrap().style;
     let max_height =
         multicol_definite_dimension(tree, style.max_size.height.into(), parent_height)?;
     let basis = parent_width.unwrap_or(border_box_height).max(0.0);
@@ -471,13 +491,13 @@ fn column_child_input(
 /// The width a column imposes on a child it lays out, or `None` when an
 /// element's authored width resolves against the column width instead.
 fn column_child_known_width(tree: &Document, child: usize, column_width: f32) -> Option<f32> {
-    let node = &tree.nodes[child];
+    let node = &tree.layout_node_with_style(child).unwrap();
     (node.kind() != NodeKind::Element || node.style.size.width == Dimension::auto())
         .then_some(column_width)
 }
 
 pub(crate) fn multicol_definite_dimension(
-    tree: &Document,
+    _tree: &Document,
     value: Dimension,
     basis: Option<f32>,
 ) -> Option<f32> {
@@ -485,7 +505,7 @@ pub(crate) fn multicol_definite_dimension(
     let resolved = match value.expand() {
         ExpandedDimension::Length(px) => px,
         ExpandedDimension::Percent(percent) => basis * percent,
-        ExpandedDimension::Calc(pointer) => tree.resolve_calc_value(pointer, basis),
+        ExpandedDimension::Calc(pointer) => crate::taffy_impl::resolve_calc(pointer, basis),
         ExpandedDimension::Auto
         | ExpandedDimension::MinContent
         | ExpandedDimension::MaxContent
@@ -500,11 +520,11 @@ pub(crate) fn multicol_definite_dimension(
 }
 
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
-fn multicol_resolve_inset(tree: &Document, value: LengthPercentage, basis: f32) -> f32 {
+fn multicol_resolve_inset(_tree: &Document, value: LengthPercentage, basis: f32) -> f32 {
     let resolved = match value.expand() {
         ExpandedLengthPercentage::Length(px) => px,
         ExpandedLengthPercentage::Percent(percent) => basis * percent,
-        ExpandedLengthPercentage::Calc(pointer) => tree.resolve_calc_value(pointer, basis),
+        ExpandedLengthPercentage::Calc(pointer) => crate::taffy_impl::resolve_calc(pointer, basis),
     };
     if resolved.is_finite() {
         resolved.max(0.0)
@@ -520,7 +540,7 @@ fn multicol_content_width(
     border_box_width: f32,
     parent_width: Option<f32>,
 ) -> f32 {
-    let style = &tree.nodes[node_id].style;
+    let style = &tree.layout_node_with_style(node_id).unwrap().style;
     let basis = parent_width.unwrap_or(border_box_width).max(0.0);
     let horizontal = multicol_resolve_inset(tree, style.padding.left, basis)
         + multicol_resolve_inset(tree, style.padding.right, basis)
@@ -536,7 +556,7 @@ fn multicol_authored_content_height(
     parent_width: Option<f32>,
     fallback_width: f32,
 ) -> f32 {
-    let style = &tree.nodes[node_id].style;
+    let style = &tree.layout_node_with_style(node_id).unwrap().style;
     if style.box_sizing != TaffyBoxSizing::BorderBox {
         return height;
     }
@@ -602,46 +622,50 @@ fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool
     let mut children = tree.nodes[node_id]
         .children
         .iter()
-        .map(|&child| &tree.nodes[child])
-        .filter(|child| {
-            child.is_in_document() && child.kind() == NodeKind::Element && !child.is_display_none()
+        .copied()
+        .filter(|&child| {
+            tree.nodes[child].is_in_document()
+                && tree.nodes[child].kind() == NodeKind::Element
+                && !tree.nodes[child].is_display_none()
         });
     // One paragraph already breaks between its lines on the existing path.
     children.clone().nth(1).is_some()
         && children.all(|child| {
             let zero = LengthPercentage::length(0.0);
             let zero_margin = LengthPercentageAuto::length(0.0);
+            let node = &tree.nodes[child];
+            let style = &tree.layout_node_with_style(child).unwrap().style;
             // Block-edge decoration needs slice or clone geometry for each
             // piece, which only the lines are given; the pieces are stacked
             // without collapsing adjoining margins; and the line offsets are
             // read as horizontal block offsets.
-            child.formatting_context == FormattingContext::Inline
-                && !child
+            node.formatting_context == FormattingContext::Inline
+                && !node
                     .authored_writing_mode
                     .is_some_and(WritingMode::is_vertical)
-                && matches!(child.display(), DisplayValue::Block)
-                && [child.style.padding.top, child.style.padding.bottom]
+                && matches!(node.display(), DisplayValue::Block)
+                && [style.padding.top, style.padding.bottom]
                     .into_iter()
-                    .chain([child.style.border.top, child.style.border.bottom])
+                    .chain([style.border.top, style.border.bottom])
                     .all(|edge| edge == zero)
-                && [child.style.margin.top, child.style.margin.bottom]
+                && [style.margin.top, style.margin.bottom]
                     .into_iter()
                     .all(|edge| edge == zero_margin)
-                && child.taffy_position() != TaffyPosition::Absolute
+                && node.taffy_position() != TaffyPosition::Absolute
                 // A relative offset is applied after the columns place the
                 // box, so it must not be carried into its column location.
                 && [
-                    child.style.inset.left,
-                    child.style.inset.right,
-                    child.style.inset.top,
-                    child.style.inset.bottom,
+                    style.inset.left,
+                    style.inset.right,
+                    style.inset.top,
+                    style.inset.bottom,
                 ]
                 .iter()
                 .all(|inset| inset.is_auto())
-                && !child.style.float.is_floated()
-                && child.style.size.height.is_auto()
-                && child.style.min_size.height.is_auto()
-                && child.style.max_size.height.is_auto()
+                && !style.float.is_floated()
+                && style.size.height.is_auto()
+                && style.min_size.height.is_auto()
+                && style.max_size.height.is_auto()
         })
 }
 
@@ -655,7 +679,13 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
             && tree.nodes[child].kind() == NodeKind::Element
             && !tree.nodes[child].is_display_none()
             && tree.nodes[child].has_logical_min_block_size
-            && !tree.nodes[child].style.min_size.height.is_auto()
+            && !tree
+                .layout_node_with_style(child)
+                .unwrap()
+                .style
+                .min_size
+                .height
+                .is_auto()
     })
 }
 
@@ -666,8 +696,8 @@ fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) ->
 }
 
 fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bool {
-    let parent = &tree.nodes[parent];
-    let child = &tree.nodes[child];
+    let parent = &tree.layout_node_with_style(parent).unwrap();
+    let child = &tree.layout_node_with_style(child).unwrap();
     let layout = child.unrounded_layout;
     // Child block-edge decoration needs slice/clone geometry; keep the existing
     // strategy until that geometry is carried by each fragment.
@@ -687,7 +717,8 @@ fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bo
 }
 
 fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
-    if tree.nodes[parent].ifc.is_some() || tree.nodes[parent].style.direction != TaffyDirection::Ltr
+    if tree.nodes[parent].ifc.is_some()
+        || tree.layout_node_with_style(parent).unwrap().style.direction != TaffyDirection::Ltr
     {
         return false;
     }
@@ -708,7 +739,7 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
         if children.next().is_some() {
             return false;
         }
-        let node = &tree.nodes[child];
+        let node = &tree.layout_node_with_style(child).unwrap();
         let zero_margin = LengthPercentageAuto::length(0.0);
         if node.display() != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
@@ -741,7 +772,7 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
 }
 
 fn relayout_nested_multicol_children(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: TaffyNodeId,
     context: FragmentationContext,
     border_box_size: Size<f32>,
@@ -812,24 +843,25 @@ fn relayout_nested_multicol_children(
             false,
         )
     };
+    let fragment_height = if tree.nodes[index]
+        .multicol
+        .is_some_and(|style| style.height_definite)
+    {
+        fallback_height
+    } else if has_fragmentainer_height_constraint {
+        used.min(fallback_height)
+    } else {
+        used
+    };
     if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
-        fragment.rect.height = if tree.nodes[index]
-            .multicol
-            .is_some_and(|style| style.height_definite)
-        {
-            fallback_height
-        } else if has_fragmentainer_height_constraint {
-            used.min(fallback_height)
-        } else {
-            used
-        };
+        fragment.rect.height = fragment_height;
     } // cov:ignore: the successful try_push index remains stable throughout recursive group layout.
     used
 }
 
 #[allow(clippy::too_many_arguments)]
 fn layout_column_group(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     index: usize,
     children: &[usize],
     source_order: usize,
@@ -855,7 +887,7 @@ fn layout_column_group(
     // Paragraphs in definite-height columns are placed by the same planner,
     // so that a paragraph broken between columns hands its end to the next.
     let definite_paragraphs = fragment_height.is_some()
-        && tree.fragmentation_stack.len() <= 1
+        && tree.context.fragmentation_stack.len() <= 1
         && multicol_has_only_paragraph_children(tree, index)
         && !multicol_has_nested_descendant(tree, index);
     let auto_measurements = if (context.column_fill != ColumnFillValue::Auto
@@ -912,7 +944,7 @@ fn layout_column_group(
         if boxes.next().is_some() {
             return None;
         }
-        let node = &tree.nodes[*child];
+        let node = &tree.layout_node_with_style(*child).unwrap();
         if !can_balance_single_paragraph(tree, index, *child) {
             return None;
         }
@@ -1271,7 +1303,7 @@ fn plan_nested_continuation(
     border_box_size: Size<f32>,
     break_before: bool,
 ) -> Option<NestedContinuation> {
-    let node = &tree.nodes[child];
+    let node = &tree.layout_node_with_style(child).unwrap();
     let style = node.multicol?;
     // Children that hold no lines are cut at any block offset, so their
     // container may also have a definite height and continue in overflow
@@ -1443,7 +1475,10 @@ fn latest_root(tree: &Document, node: usize) -> Option<usize> {
 /// first row; each later row gets a box of its own in its outer column, so
 /// its background, border and overflow clip follow the row. Fragmentainers
 /// number the nested columns row by row.
-fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> Option<()> {
+fn apply_nested_continuation(
+    tree: &mut LayoutSession<'_>,
+    plan: &NestedContinuation,
+) -> Option<()> {
     let root = tree.fragment_tree.fragments[plan.root];
     tree.fragment_tree.fragments[plan.root].rect.height = plan.first_height;
     let replaced: std::collections::HashSet<usize> = plan.children.iter().copied().collect();
@@ -1643,7 +1678,7 @@ fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> 
 
 // cov:ignore: nested box and float fragment records are exercised by the ignored flex-float WPT.
 fn record_nested_ifc_box_fragments(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     subtree_root: usize,
     parent_fragment: usize,
     context: FragmentationContext,
@@ -1706,7 +1741,13 @@ fn record_nested_ifc_box_fragments(
         }
         let mut overflow_clip_heights = std::collections::HashMap::<usize, f32>::new();
         for source in placements.clone() {
-            if !tree.nodes[source.node_id].style.float.is_floated() {
+            if !tree
+                .layout_node_with_style(source.node_id)
+                .unwrap()
+                .style
+                .float
+                .is_floated()
+            {
                 continue;
             }
             let logical_top =
@@ -2091,17 +2132,20 @@ impl FlexFloatChain {
 
     /// The chain of `node_id`, whose parent's chain is `self`.
     fn below(self, tree: &Document, node_id: usize) -> Self {
-        let node = &tree.nodes[node_id];
+        let node = &tree.layout_node_with_style(node_id).unwrap();
         let float = node.style.float.is_floated()
             || node
                 .ifc
                 .as_ref()
                 .and_then(|root| root.lines.as_ref())
                 .is_some_and(|lines| {
-                    lines
-                        .fragment_box_placements
-                        .iter()
-                        .any(|placement| tree.nodes[placement.node_id].style.float.is_floated())
+                    lines.fragment_box_placements.iter().any(|placement| {
+                        tree.layout_node_with_style(placement.node_id)
+                            .unwrap()
+                            .style
+                            .float
+                            .is_floated()
+                    })
                 });
         if node
             .authored_writing_mode
@@ -2158,7 +2202,7 @@ fn extend_fragment_clip(fragment: &mut crate::fragment::LayoutFragment, height: 
 fn multicol_subtree_has_float(tree: &Document, subtree_root: usize) -> bool {
     let mut pending = vec![subtree_root];
     while let Some(node_id) = pending.pop() {
-        let node = &tree.nodes[node_id];
+        let node = &tree.layout_node_with_style(node_id).unwrap();
         if !node.is_in_document() || node.is_display_none() {
             continue;
         }
@@ -2326,7 +2370,7 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
 
 // cov:ignore: nested text fragment refresh is exercised by ignored multicol WPT reftests.
 fn refresh_nested_text_fragments(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: usize,
     context: FragmentationContext,
 ) {
@@ -2364,7 +2408,7 @@ fn refresh_nested_text_fragments(
 /// paragraph. Both are carried down so that the subtree walk does not search
 /// ancestors or sibling placements again for every node.
 fn refresh_nested_text_fragments_in(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: usize,
     context: FragmentationContext,
     chain: FlexFloatChain,
@@ -2376,7 +2420,12 @@ fn refresh_nested_text_fragments_in(
         return;
     }
     let nested_row_flex_scope = chain.is_scope();
-    let is_floated = tree.nodes[node_id].style.float.is_floated();
+    let is_floated = tree
+        .layout_node_with_style(node_id)
+        .unwrap()
+        .style
+        .float
+        .is_floated();
     // A paragraph laid out by the inline engine keeps its lines on its root:
     // its fragments go there, and only its boxes hold text of their own.
     if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
@@ -2727,7 +2776,7 @@ pub(crate) fn root_column_fragments(
 /// which supplies their used widths, so they are not guessed from a page
 /// fallback. A replaced box keeps its natural width (CSS 2.1 §10.3.4).
 pub(crate) fn prepare_authored_block_widths(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
     fallback_width: f32,
 ) {
@@ -2769,12 +2818,20 @@ pub(crate) fn prepare_authored_block_widths(
         ) && !ancestors.vertical[idx]
             && matches!(doc.nodes[idx].position(), PositionValue::Static)
             && !has_nonzero_horizontal_margin(&cascade.computed[idx])
-            && !doc.nodes[idx].style.item_is_replaced
+            && !doc
+                .layout_node_with_style(idx)
+                .unwrap()
+                .style
+                .item_is_replaced
             && !ancestors.out_of_flow_ancestor[idx]
             && !ancestors.non_block_flow_ancestor[idx]
             && let Some(width) = ancestors.authored_containing_width(idx)
         {
-            doc.nodes[idx].style.size.width = Dimension::length(width);
+            doc.layout_node_with_style_mut(idx)
+                .unwrap()
+                .style
+                .size
+                .width = Dimension::length(width);
         }
     }
 }

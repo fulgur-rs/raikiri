@@ -1,7 +1,7 @@
 //! Initial padding-box placement using the public out-of-flow routine.
 
 use super::sizing::Metrics;
-use crate::Document;
+use crate::layout::context::LayoutSession;
 use taffy::{
     AxisStaticEdge, AxisStaticPosition, Direction, LayoutBlockContainer, NodeId, OofCandidate,
     OofPositioningArea, Point, Position, Rect, Size,
@@ -14,7 +14,7 @@ pub(super) struct Candidate {
 }
 
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     owner: NodeId,
     children: &[Candidate],
     container: Metrics,

@@ -6,6 +6,7 @@ use super::generated_blocks;
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
+use crate::layout::context::LayoutSession;
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
 use crate::taffy_impl::resolve_calc;
 use shodo::geometry::{Direction, WritingMode};
@@ -95,12 +96,13 @@ struct FragmentedFloatOutput<'a> {
 /// size the lines are broken at. In columns that is the column width, as
 /// the column box is the containing block of the content (CSS Multicol 1
 /// §2); a vertical root's is its physical height (CSS Writing Modes 4 §7.2).
-fn resolve_root_percentages(tree: &mut Document, idx: usize, geometry: &FlowGeometry) {
-    let Some(root) = tree.nodes[idx].ifc.as_mut() else {
+fn resolve_root_percentages(tree: &mut LayoutSession<'_>, idx: usize, geometry: &FlowGeometry) {
+    let (nodes, ifc) = (&mut tree.document.nodes, &mut tree.document.ifc);
+    let Some(root) = nodes[idx].ifc.as_mut() else {
         return;
     };
     root.resolve_percent_offsets(geometry.content_size.width);
-    if let Some(state) = tree.ifc.as_mut() {
+    if let Some(state) = ifc.as_mut() {
         root.resolve_percent_edges(geometry.width, &mut state.layout_cx, &state.fonts);
     }
 }
@@ -108,7 +110,7 @@ fn resolve_root_percentages(tree: &mut Document, idx: usize, geometry: &FlowGeom
 /// [`layout_with_boxes_in`] for a root whose margins stay inside it.
 #[cfg(test)]
 pub(crate) fn layout_with_boxes(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     idx: usize,
     geometry: FlowGeometry,
     block_ctx: Option<&mut BlockContext<'_>>,
@@ -130,7 +132,7 @@ pub(crate) fn layout_with_boxes(
 /// in between. Those margins are then returned in
 /// [`IfcLines::escaping_margin`] instead of being added to the height.
 pub(crate) fn layout_with_boxes_in(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     idx: usize,
     geometry: FlowGeometry,
     block_ctx: Option<&mut BlockContext<'_>>,
@@ -208,7 +210,7 @@ pub(crate) fn layout_with_boxes_in(
 /// their own inline formatting context are aligned on their own, and a root
 /// split across fragmentainers is not group-aligned.
 fn group_padding(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -250,7 +252,7 @@ fn group_padding(
 /// Lay an IFC root across horizontal fragmentainers with a fresh float context per column.
 // cov:ignore: fragmentainer-local IFC layout is exercised by the ignored flex-float WPT.
 pub(crate) fn layout_with_boxes_in_fragmentainers(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     idx: usize,
     geometry: FlowGeometry,
     context: FragmentationContext,
@@ -485,7 +487,13 @@ fn carried_float_placements(
                 },
             })
         })
-        .filter(|placement| tree.nodes[placement.node_id].style.float.is_floated())
+        .filter(|placement| {
+            tree.layout_node_with_style(placement.node_id)
+                .unwrap()
+                .style
+                .float
+                .is_floated()
+        })
         .collect()
 }
 
@@ -524,12 +532,16 @@ fn seed_carried_floats(
                 height: visible_bottom - visible_top,
             },
             geometry.top_edge + visible_top - column_origin,
-            tree.nodes[source.node_id]
+            tree.layout_node_with_style(source.node_id)
+                .unwrap()
                 .style
                 .float
                 .float_direction()
                 .unwrap_or(FloatDirection::Left),
-            tree.nodes[source.node_id].style.clear,
+            tree.layout_node_with_style(source.node_id)
+                .unwrap()
+                .style
+                .clear,
             false,
         );
     }
@@ -541,7 +553,7 @@ fn seed_carried_floats(
 /// at [`layout_with_boxes_in`].
 #[allow(clippy::too_many_arguments)]
 fn run_boxes(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     idx: usize,
     root: &IfcRoot,
     geometry: FlowGeometry,
@@ -585,7 +597,7 @@ fn run_boxes(
 
 #[allow(clippy::too_many_arguments)]
 fn run_boxes_segment(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     root: &IfcRoot,
     geometry: FlowGeometry,
     ctx: &mut BlockContext<'_>,
@@ -1135,7 +1147,7 @@ fn run_boxes_segment(
 }
 
 fn commit_fragmented_float(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     ctx: &mut BlockContext<'_>,
     float: TentativeFloat,
     y: f32,
@@ -1177,7 +1189,7 @@ fn cleared_break(line: &shodo::Line, cleared: &ClearBreakIndex) -> Option<taffy:
 /// Move every box that sits inside relatively positioned inline elements of
 /// the paragraph by their offsets: an offset moves the element together with
 /// everything inside it (CSS 2.1 9.4.3).
-fn offset_boxes_inside_relative_inlines(tree: &mut Document, idx: usize, root: &IfcRoot) {
+fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize, root: &IfcRoot) {
     if root.offsets.is_empty() {
         return;
     }
@@ -1263,7 +1275,8 @@ fn shorten(base: LineSpace, tentative: &[TentativeFloat]) -> LineSpace {
 /// Margins of `node` resolved against `basis`, the root's content width; `auto`
 /// is zero.
 fn resolved_margins(tree: &Document, node: usize, basis: f32) -> taffy::Rect<f32> {
-    tree.nodes[node]
+    tree.layout_node_with_style(node)
+        .unwrap()
         .style
         .margin
         .map(|margin| margin.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
@@ -1276,7 +1289,7 @@ fn resolved_margins(tree: &Document, node: usize, basis: f32) -> taffy::Rect<f32
 /// heights resolve against `height_basis`, the root's definite content
 /// height, and behave as `auto` without one.
 fn perform_box_layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
     height_basis: Option<f32>,
@@ -1312,7 +1325,11 @@ fn perform_box_layout(
 
 /// Lay a float out the way the block algorithm does: resolve its margins
 /// against the container, then give it the room that is left.
-fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> TentativeFloat {
+fn measure_float(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    geometry: FlowGeometry,
+) -> TentativeFloat {
     let margin = resolved_margins(tree, node, geometry.width);
     let available = (geometry.width - margin.left - margin.right).max(0.0);
     let output = perform_box_layout(
@@ -1322,7 +1339,7 @@ fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> Te
         geometry.definite_height,
         available,
     );
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     TentativeFloat {
         node,
         // The projection accepts only left and right floats.
@@ -1352,7 +1369,7 @@ pub(crate) struct AtomicMeasure {
 /// Each atomic is laid out as a node of its own, so this runs outside the
 /// engine state scope: an atomic may hold another ifc root.
 pub(crate) fn measure_atomics(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     root: &IfcRoot,
     geometry: FlowGeometry,
 ) -> AtomicMeasure {
@@ -1459,7 +1476,7 @@ struct BlockChild {
 /// block children above it. With `perform`, its final layout is stored.
 #[allow(clippy::too_many_arguments)]
 fn layout_block_child(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     ctx: &mut BlockContext<'_>,
     node: usize,
     y: f32,
@@ -1490,7 +1507,7 @@ fn layout_block_child(
     // `auto` side margins share the room the block leaves (CSS 2.1 10.3.3),
     // as in taffy's block algorithm: both auto centre the block, one auto
     // takes all of it.
-    let style_margin = tree.nodes[node].style.margin;
+    let style_margin = tree.layout_node_with_style(node).unwrap().style.margin;
     let free = (geometry.width - width - margin.left - margin.right).max(0.0);
     match (style_margin.left.is_auto(), style_margin.right.is_auto()) {
         (true, true) => margin.left = free / 2.0,
@@ -1507,7 +1524,7 @@ fn layout_block_child(
     // Clearance (CSS 2.1 9.5.2): a cleared block whose top border edge would
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
-    let clear = tree.nodes[node].style.clear;
+    let clear = tree.layout_node_with_style(node).unwrap().style.clear;
     let clear_y = ctx
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
@@ -1655,7 +1672,7 @@ fn layout_block_child(
 
 /// Lay out an ordinary block child along a vertical root's block axis.
 fn layout_vertical_block_child(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: usize,
     y: f32,
     pending: CollapsibleMarginSet,
@@ -1665,7 +1682,7 @@ fn layout_vertical_block_child(
     let basis = geometry.axes.block_extent(geometry.content_size);
     let inline_basis = geometry.axes.inline_extent(geometry.content_size);
     let mut margin = resolved_margins(tree, node, inline_basis);
-    let style_margin = tree.nodes[node].style.margin;
+    let style_margin = tree.layout_node_with_style(node).unwrap().style.margin;
     let vertical_rl = matches!(
         geometry.axes.writing_mode(),
         WritingMode::VerticalRl | WritingMode::SidewaysRl
@@ -1764,7 +1781,7 @@ fn layout_vertical_block_child(
 /// context, as taffy's block algorithm decides for an in-flow item: a block
 /// box that is not a scroll container. Flow roots, flex and grid containers
 /// and scroll containers establish formatting contexts of their own.
-fn in_the_roots_formatting_context(tree: &Document, node: usize) -> bool {
+fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> bool {
     use taffy::{CoreStyle, LayoutBlockContainer};
     let style = tree.get_block_container_style(taffy::NodeId::from(node));
     let overflow = style.overflow();
@@ -1781,7 +1798,7 @@ fn in_the_roots_formatting_context(tree: &Document, node: usize) -> bool {
 /// them where it fits, narrowed to the room they leave, or below them.
 #[allow(clippy::too_many_arguments)]
 fn layout_formatting_context_child(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     ctx: &mut BlockContext<'_>,
     node: usize,
     y: f32,
@@ -1791,8 +1808,8 @@ fn layout_formatting_context_child(
     collapse_top: bool,
 ) -> BlockChild {
     let margin = resolved_margins(tree, node, geometry.width);
-    let style_margin = tree.nodes[node].style.margin;
-    let clear = tree.nodes[node].style.clear;
+    let style_margin = tree.layout_node_with_style(node).unwrap().style.margin;
+    let clear = tree.layout_node_with_style(node).unwrap().style.clear;
     let own_width = used_block_width(tree, node, geometry.width);
     let x_margins = margin.left + margin.right;
     let top_margin = pending.collapse_with_margin(margin.top);
@@ -1951,7 +1968,7 @@ fn used_block_width_with_edge_basis(
     edge_basis: f32,
 ) -> Option<f32> {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     style
         .size
         .width
@@ -1973,7 +1990,7 @@ fn clamp_block_width_with_edge_basis(
     width: f32,
 ) -> f32 {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     let adjustment = box_sizing_adjustment(tree, node, edge_basis);
     let min = style
         .min_size
@@ -1991,7 +2008,7 @@ fn clamp_block_width_with_edge_basis(
 
 fn used_block_height(tree: &Document, node: usize, basis: f32) -> Option<f32> {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     style
         .size
         .height
@@ -2001,7 +2018,7 @@ fn used_block_height(tree: &Document, node: usize, basis: f32) -> Option<f32> {
 
 fn clamp_block_height(tree: &Document, node: usize, basis: f32, height: f32) -> f32 {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     let adjustment = box_sizing_height_adjustment(tree, node, basis);
     let min = style
         .min_size
@@ -2019,7 +2036,7 @@ fn clamp_block_height(tree: &Document, node: usize, basis: f32, height: f32) -> 
 
 /// What a `content-box` size needs added to become a border-box size.
 fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     if style.box_sizing != taffy::BoxSizing::ContentBox {
         return 0.0;
     }
@@ -2029,7 +2046,7 @@ fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
 }
 
 fn box_sizing_height_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     if style.box_sizing != taffy::BoxSizing::ContentBox {
         return 0.0;
     }
@@ -2043,7 +2060,7 @@ fn box_sizing_height_adjustment(tree: &Document, node: usize, basis: f32) -> f32
 /// Truncate the performed lines for `text-overflow: ellipsis` before the
 /// boxes on them are placed, so placement sees what remains on each line.
 fn truncate_for_text_overflow(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     root: &IfcRoot,
     lines: &mut std::sync::Arc<Vec<shodo::Line>>,
     width: f32,
@@ -2059,7 +2076,7 @@ fn truncate_for_text_overflow(
 /// Mark the atomic inlines an ellipsis removed from their lines, and clear
 /// the mark on those still on a line, so paint skips only hidden ones.
 fn hide_truncated_atomics(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     lines: &[shodo::Line],
     outputs: &[(usize, taffy::LayoutOutput)],
 ) {
@@ -2089,7 +2106,7 @@ fn hide_truncated_atomics(
 }
 
 fn place_atomics(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     lines: &[shodo::Line],
     outputs: &[(usize, taffy::LayoutOutput)],
     geometry: FlowGeometry,
@@ -2164,7 +2181,7 @@ fn relative_inset(
     axes: super::geometry::IfcAxes,
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     if !matches!(
         tree.nodes[node].taffy_position(),
         taffy::Position::Relative | taffy::Position::Sticky
@@ -2204,7 +2221,7 @@ fn relative_inset(
 /// bottom margin edge (CSS 2.1 10.8.1). `overflow: clip` does not make a
 /// scroll container (CSS Overflow 3 §3.1).
 fn atomic_baseline(tree: &Document, node: usize, output: &taffy::LayoutOutput) -> Option<f32> {
-    let overflow = tree.nodes[node].style.overflow;
+    let overflow = tree.layout_node_with_style(node).unwrap().style.overflow;
     let scrolls = |overflow| !matches!(overflow, taffy::Overflow::Visible | taffy::Overflow::Clip);
     if scrolls(overflow.x) || scrolls(overflow.y) {
         return None;
@@ -2216,7 +2233,7 @@ fn atomic_baseline(tree: &Document, node: usize, output: &taffy::LayoutOutput) -
 /// layout, store its position. Returns the top of the placed margin box from
 /// the content-box top.
 pub(crate) fn commit_float(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     ctx: &mut BlockContext<'_>,
     float: TentativeFloat,
     y: f32,
@@ -2249,13 +2266,13 @@ pub(crate) fn commit_float(
 /// content inline size, used to resolve the child's percentage margins,
 /// padding, and border.
 pub(crate) fn commit_child_layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: usize,
     output: &taffy::LayoutOutput,
     location: taffy::Point<f32>,
     basis: f32,
 ) {
-    let style = &tree.nodes[node].style;
+    let style = &tree.layout_node_with_style(node).unwrap().style;
     let padding = style.padding.resolve_or_zero(Some(basis), resolve_calc);
     let border = style.border.resolve_or_zero(Some(basis), resolve_calc);
     let margin = style
@@ -2282,7 +2299,7 @@ pub(crate) fn commit_child_layout(
 /// sits in the lines: at the anchor for a box that was inline-level, below
 /// the anchor's line for one that was block-level (as if it were a block
 /// there), and below the last line when it has no anchor.
-pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Size<f32>) {
+pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border_box: Size<f32>) {
     use taffy::util::MaybeResolve;
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
         return;
@@ -2301,7 +2318,7 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
     let Some(lines) = root.lines.clone() else {
         return;
     };
-    let style = &tree.nodes[idx].style;
+    let style = &tree.layout_node_with_style(idx).unwrap().style;
     let border = style
         .border
         .resolve_or_zero(Some(border_box.width), resolve_calc);
@@ -2340,7 +2357,7 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
             }
             None => (content_left, content_top + lines.height),
         };
-        let child = &tree.nodes[node].style;
+        let child = &tree.layout_node_with_style(node).unwrap().style;
         // Two auto margins share the free space between the insets equally.
         // In the root's block axis that holds even when the space is
         // negative (CSS 2.1 §10.6.4); in its inline axis negative space
@@ -2364,7 +2381,9 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
             }
             _ => None,
         });
-        let height = tree.nodes[node]
+        let height = tree
+            .layout_node_with_style(node)
+            .unwrap()
             .style
             .size
             .height
@@ -2457,7 +2476,11 @@ impl BoxIntrinsics {
 
 /// Min- and max-content inline extents of the root's boxes, for the
 /// paragraph's intrinsic sizes. Each box is measured without changing layout.
-pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -> BoxIntrinsics {
+pub(crate) fn intrinsics_of_boxes(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    basis: f32,
+) -> BoxIntrinsics {
     let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
         matches!(
             root.writing_mode,
@@ -2520,7 +2543,7 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
                 let margin = resolved_margins(tree, b.node, basis);
                 let (min_content, max_content) =
                     content_widths(tree, b.node, basis, margin.left + margin.right);
-                let style = &tree.nodes[b.node].style;
+                let style = &tree.layout_node_with_style(b.node).unwrap().style;
                 let side = match style.float.float_direction() {
                     Some(FloatDirection::Right) => FloatSide::Right,
                     _ => FloatSide::Left,
@@ -2572,23 +2595,33 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
 
 /// Min- and max-content margin-box width of `node`, measured without changing
 /// its layout.
-fn content_widths(tree: &mut Document, node: usize, basis: f32, margins_x: f32) -> (f32, f32) {
+fn content_widths(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    basis: f32,
+    margins_x: f32,
+) -> (f32, f32) {
     content_sizes_on_axis(tree, node, basis, margins_x, RequestedAxis::Horizontal)
 }
 
-fn content_heights(tree: &mut Document, node: usize, basis: f32, margins_y: f32) -> (f32, f32) {
+fn content_heights(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    basis: f32,
+    margins_y: f32,
+) -> (f32, f32) {
     content_sizes_on_axis(tree, node, basis, margins_y, RequestedAxis::Vertical)
 }
 
 fn content_sizes_on_axis(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
     margins: f32,
     axis: RequestedAxis,
 ) -> (f32, f32) {
     let vertical = axis == RequestedAxis::Vertical;
-    let measure = |tree: &mut Document, available: AvailableSpace| {
+    let measure = |tree: &mut LayoutSession<'_>, available: AvailableSpace| {
         let output = tree.compute_child_layout(
             taffy::NodeId::from(node),
             LayoutInput {

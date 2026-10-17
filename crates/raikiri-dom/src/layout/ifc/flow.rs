@@ -3,6 +3,7 @@
 use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
+use crate::layout::context::LayoutSession;
 use crate::taffy_impl::block_flow::context::BlockContext;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
@@ -316,7 +317,11 @@ pub(crate) fn last_baseline(lines: &IfcLines) -> Option<f32> {
 /// Break every ifc root again at a page-specific width: the content width of
 /// the nearest authored-width ancestor of its text, else `max_advance`. Box
 /// geometry is not touched.
-pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_advance: f32) {
+pub(crate) fn rebreak_roots(
+    doc: &mut LayoutSession<'_>,
+    cascade: &CascadeResult,
+    max_advance: f32,
+) {
     let Some(mut state) = doc.ifc.take() else {
         return;
     };
@@ -382,7 +387,7 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
 fn first_text_node(doc: &Document, root: usize) -> Option<usize> {
     let mut stack: Vec<usize> = doc.nodes[root].children.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
-        let node = &doc.nodes[id];
+        let node = &doc.layout_node_with_style(id).unwrap();
         if !node.is_in_document() {
             continue;
         }

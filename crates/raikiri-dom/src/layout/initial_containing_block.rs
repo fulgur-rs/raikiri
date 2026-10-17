@@ -52,27 +52,27 @@ pub(crate) fn prepare(
     width: f32,
     height: f32,
 ) -> usize {
-    let mut node = Node::new_element(
-        "".into(),
-        Style {
-            // The native root establishes its BFC and resolves a Block root's
-            // definite dimensions before its children need percentage bases.
-            display: taffy::Display::Block,
-            size: Size {
-                width: Dimension::length(width),
-                height: Dimension::length(height),
-            },
-            ..Style::default()
+    let mut style = Style {
+        // The native root establishes its BFC and resolves a Block root's
+        // definite dimensions before its children need percentage bases.
+        display: taffy::Display::Block,
+        size: Size {
+            width: Dimension::length(width),
+            height: Dimension::length(height),
         },
-        None,
-    );
+        ..Style::default()
+    };
+    let mut node = Node::new_element("".into(), style.clone(), None);
     if let Some(root) = root_element(document) {
         node.children.push(root);
         let principal = principal_element(document, cascade, root);
         node.used_writing_mode = document.nodes[principal].used_writing_mode;
-        node.style.direction = document.nodes[principal].style.direction;
+        style.direction = document
+            .layout_style_for_key(principal)
+            .expect("principal element has a style")
+            .direction;
     }
-    document.nodes.set_initial_containing_block(node)
+    document.set_initial_containing_block(node, style)
 }
 
 #[cfg(test)]

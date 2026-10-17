@@ -36,7 +36,7 @@ pub(super) fn realign_inline_level_abspos_static_positions(
 ) {
     for parent_id in 0..document.nodes.len() {
         let parent = &cascade.computed[parent_id];
-        let parent_node = &document.nodes[parent_id];
+        let parent_node = &document.layout_node_with_style(parent_id).unwrap();
         // Only block containers whose children are blocks; inline content
         // and the inside of inline elements are placed by the inline engine,
         // and the children of a multicol container by its columns.
@@ -168,7 +168,7 @@ pub(super) fn realign_inline_level_abspos_static_positions(
 /// element that is not replaced and not a form control.
 fn is_non_atomic_inline(document: &Document, id: usize, display: DisplayValue) -> bool {
     use super::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
-    let node = &document.nodes[id];
+    let node = &document.layout_node_with_style(id).unwrap();
     let tag = node.tag_name().unwrap_or("");
     display == DisplayValue::Inline
         && !node.is_inline_svg_root()

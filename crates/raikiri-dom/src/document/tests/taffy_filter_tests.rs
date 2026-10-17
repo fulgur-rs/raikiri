@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 use taffy::TraversePartialTree;
 
 #[test]
@@ -23,26 +24,28 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
 
     let body_id = taffy::NodeId::from(body);
     let tmpl_id = taffy::NodeId::from(tmpl);
+    let session = LayoutSession::new(&mut doc);
 
     // The body directly contains one template child (taffy count).
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, body_id),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, body_id),
         1,
         "body has template as its one filtered child"
     );
     let body_children: Vec<taffy::NodeId> =
-        <Document as TraversePartialTree>::child_ids(&doc, body_id).collect();
+        <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, body_id).collect();
     assert_eq!(body_children, vec![tmpl_id]);
 
     // The template's real <p> child is part of the flat tree.
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, tmpl_id),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, tmpl_id),
         1,
         "template real children stay in the taffy layout tree"
     );
     let tmpl_children: Vec<taffy::NodeId> =
-        <Document as TraversePartialTree>::child_ids(&doc, tmpl_id).collect();
+        <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, tmpl_id).collect();
     assert_eq!(tmpl_children, vec![taffy::NodeId::from(inner)]);
+    drop(session);
 
     // The contents fragment subtree appears in no reachable child list.
     assert!(
@@ -61,12 +64,13 @@ fn a_flex_container_drops_a_white_space_only_child() {
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     doc.append_text(parent, "\n  ");
-    doc.nodes[parent].set_display(raikiri_style::property::DisplayValue::Flex);
+    doc.set_display(parent, raikiri_style::property::DisplayValue::Flex);
     doc.mark_in_document_flags();
 
     let parent_id = taffy::NodeId::from(parent);
+    let session = LayoutSession::new(&mut doc);
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, parent_id),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, parent_id),
         0,
     );
 }
@@ -116,18 +120,57 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
     // (b) The body has only one child (<p>) in the taffy layout tree.
     let body_taffy = taffy::NodeId::from(body);
     let p_taffy = taffy::NodeId::from(p);
+    let session = LayoutSession::new(&mut doc);
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, body_taffy),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, body_taffy),
         1,
         "body's taffy child_count must be 1 (only <p>), Comment/PI filtered"
     );
     let kids: Vec<taffy::NodeId> =
-        <Document as TraversePartialTree>::child_ids(&doc, body_taffy).collect();
+        <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, body_taffy).collect();
     assert_eq!(kids, vec![p_taffy]);
 
     // (c) get_child_id also agrees with the filtered view (index 0 = <p>).
     assert_eq!(
-        <Document as TraversePartialTree>::get_child_id(&doc, body_taffy, 0),
+        <LayoutSession<'_> as TraversePartialTree>::get_child_id(&session, body_taffy, 0),
         p_taffy
     );
+}
+
+#[test]
+fn document_child_indexing_matches_filtered_flat_tree_order() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        None::<&str>,
+    );
+    let first = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
+    doc.append_text(parent, " \n");
+    doc.append_comment(Some(parent), "ignored");
+    doc.append_processing_instruction(Some(parent), "xml-stylesheet", "href='x'");
+    let contents = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    doc.set_display(contents, raikiri_style::property::DisplayValue::Contents);
+    let nested_first = doc.append_element(Some(contents), "div", Style::default(), None::<&str>);
+    let nested_second = doc.append_element(Some(contents), "div", Style::default(), None::<&str>);
+    let last = doc.append_element(Some(parent), "section", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+
+    let parent_id = taffy::NodeId::from(parent);
+    let expected = [first, nested_first, nested_second, last].map(taffy::NodeId::from);
+    let children: Vec<_> = <Document as TraversePartialTree>::child_ids(&doc, parent_id).collect();
+
+    assert_eq!(children, expected);
+    assert_eq!(
+        <Document as TraversePartialTree>::child_count(&doc, parent_id),
+        expected.len()
+    );
+    for (index, child) in expected.into_iter().enumerate() {
+        assert_eq!(
+            <Document as TraversePartialTree>::get_child_id(&doc, parent_id, index),
+            child,
+            "Document child index {index}"
+        );
+    }
 }

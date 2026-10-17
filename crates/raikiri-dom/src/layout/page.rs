@@ -8,7 +8,7 @@ use crate::node::FormattingContext;
 /// inserted into the head, say) or in another namespace is not the body.
 pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
     const HTML: Option<&str> = Some("http://www.w3.org/1999/xhtml");
-    let node = &doc.nodes[id];
+    let node = &doc.layout_node_with_style(id).unwrap();
     match node.tag_name() {
         Some("body") => true,
         Some("frameset") => node.parent.is_some_and(|parent| {
@@ -41,7 +41,7 @@ pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
-        let node = &doc.nodes[node_idx];
+        let node = &doc.layout_node_with_style(node_idx).unwrap();
         if node.kind() == NodeKind::Element && is_body_element(doc, node_idx) {
             return Some(node_idx);
         }
@@ -535,6 +535,14 @@ fn document_has_resolved_pagination_order(document: &Document, cascade: &Cascade
 /// must not change the initial layout geometry. The scan therefore stops after
 /// the first rendered in-flow body child.
 pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
+    first_page_name_with_transposed_axes(document, cascade, false)
+}
+
+pub(crate) fn first_page_name_with_transposed_axes(
+    document: &Document,
+    cascade: &CascadeResult,
+    pagination_on_transposed_axes: bool,
+) -> Option<String> {
     let body_id = find_body(document)?;
     let resolved_layout = document_has_resolved_pagination_order(document, cascade);
     let boxes = if resolved_layout {
@@ -592,6 +600,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                             first_child,
                             None,
                             resolved_layout,
+                            pagination_on_transposed_axes,
                         )
                     {
                         return Some(name);
@@ -623,6 +632,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                     child_id,
                     None,
                     resolved_layout,
+                    pagination_on_transposed_axes,
                 );
                 return propagated;
             }
@@ -805,7 +815,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
     let mut projection_changed = false;
     let grid_details_stale = doc.layout_dirty;
     for parent_idx in 0..doc.nodes.len() {
-        let parent = &doc.nodes[parent_idx];
+        let parent = &doc.layout_node_with_style(parent_idx).unwrap();
         // The items of a flex or grid container include the children of its
         // `display: contents` children (see `TaffyChildIter`), so `order`
         // sorts that flattened sequence. Taffy takes no `order` input, so the
@@ -814,7 +824,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
         if parent.formatting_context.is_flex_or_grid() {
             let mut pending: Vec<usize> = parent.children.iter().rev().copied().collect();
             while let Some(child) = pending.pop() {
-                let node = &doc.nodes[child];
+                let node = &doc.layout_node_with_style(child).unwrap();
                 if node.kind() == NodeKind::Element
                     && node.display() == DisplayValue::Contents
                     && !node.is_ifc_root()
@@ -884,7 +894,7 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
     parent_id: usize,
     child_id: usize,
 ) -> bool {
-    let child = &document.nodes[child_id];
+    let child = &document.layout_node_with_style(child_id).unwrap();
     child.is_in_document()
         && !child.is_display_none()
         && child.taffy_position() != TaffyPosition::Absolute
@@ -922,7 +932,7 @@ fn flex_pagination_child_order(
         }
     }
     let is_in_flow = |child_id: usize| {
-        let child = &document.nodes[child_id];
+        let child = &document.layout_node_with_style(child_id).unwrap();
         child.is_in_document()
             && boxes.identity(child_id).display() != DisplayValue::None
             && !matches!(
@@ -1030,7 +1040,7 @@ fn grid_pagination_children(document: &Document, parent_id: usize) -> Vec<usize>
         .collect();
     let mut children = Vec::new();
     while let Some(child) = pending.pop() {
-        let node = &document.nodes[child];
+        let node = &document.layout_node_with_style(child).unwrap();
         if node.kind() == NodeKind::Element
             && node.display() == DisplayValue::Contents
             && !node.is_ifc_root()
@@ -1124,7 +1134,7 @@ fn table_pagination_child_order(
         .collect();
     let mut children = Vec::new();
     while let Some(child) = pending.pop() {
-        let node = &document.nodes[child];
+        let node = &document.layout_node_with_style(child).unwrap();
         // Table layout drops these without a box, as it does for any
         // non-rendered element whatever its `display`.
         if !node.is_in_document()
@@ -1215,7 +1225,11 @@ pub(crate) fn is_static_position_absolute(document: &Document, node_id: usize) -
 }
 
 fn static_absolute_with_boxes(document: &Document, node_id: usize, boxes: BoxTree<'_>) -> bool {
-    let inset = &document.nodes[node_id].style.inset;
+    let inset = &document
+        .layout_node_with_style(node_id)
+        .unwrap()
+        .style
+        .inset;
     matches!(boxes.identity(node_id).position(), PositionValue::Absolute)
         && inset.top.is_auto()
         && inset.bottom.is_auto()
@@ -1226,12 +1240,19 @@ fn static_absolute_with_boxes(document: &Document, node_id: usize, boxes: BoxTre
 /// vertical document is paginated on transposed axes, a box laid out on
 /// horizontal axes. Its content offers no class A break points, and its
 /// descendants' page names neither open pages nor propagate to the box.
-pub(crate) fn is_monolithic_for_pagination(
+pub(crate) fn is_monolithic_for_pagination_with_transposed_axes(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
+    pagination_on_transposed_axes: bool,
 ) -> bool {
-    monolithic_with_boxes(document, cascade, node_id, BoxTree::for_layout(document))
+    monolithic_with_boxes(
+        document,
+        cascade,
+        node_id,
+        BoxTree::for_layout(document),
+        pagination_on_transposed_axes,
+    )
 }
 
 fn monolithic_with_boxes(
@@ -1239,9 +1260,10 @@ fn monolithic_with_boxes(
     cascade: &CascadeResult,
     node_id: usize,
     boxes: BoxTree<'_>,
+    pagination_on_transposed_axes: bool,
 ) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
-    let node = &document.nodes[node_id];
+    let node = &document.layout_node_with_style(node_id).unwrap();
     let replaced = node
         .flags
         .contains(crate::node::NodeFlags::IS_INLINE_SVG_ROOT)
@@ -1256,7 +1278,7 @@ fn monolithic_with_boxes(
         || (!page_applies_with_boxes(boxes, node_id)
             && boxes.identity(node_id).display().is_atomic_inline_level())
         || orthogonal_flow_with_boxes(document, cascade, node_id, boxes)
-        || (document.pagination_on_transposed_axes
+        || (pagination_on_transposed_axes
             && node.kind() == NodeKind::Element
             && !crate::layout::bridge::uses_vertical_axes(cascade, node_id))
 }
@@ -1305,13 +1327,37 @@ fn orthogonal_flow_with_boxes(
 /// that child participates in a class-A break point. Nested named boxes
 /// therefore do not each open a page; the deepest first in-flow box owns
 /// the value compared at the boundary.
+#[cfg(test)]
 pub(crate) fn propagated_start_page_name(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
     inherited_page_name: Option<&str>,
 ) -> (bool, Option<String>) {
-    propagated_start_page_name_with_order(document, cascade, node_id, inherited_page_name, true)
+    propagated_start_page_name_with_transposed_axes(
+        document,
+        cascade,
+        node_id,
+        inherited_page_name,
+        false,
+    )
+}
+
+pub(crate) fn propagated_start_page_name_with_transposed_axes(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    inherited_page_name: Option<&str>,
+    pagination_on_transposed_axes: bool,
+) -> (bool, Option<String>) {
+    propagated_start_page_name_with_order(
+        document,
+        cascade,
+        node_id,
+        inherited_page_name,
+        true,
+        pagination_on_transposed_axes,
+    )
 }
 
 fn propagated_start_page_name_with_order(
@@ -1320,6 +1366,7 @@ fn propagated_start_page_name_with_order(
     node_id: usize,
     inherited_page_name: Option<&str>,
     resolved_layout: bool,
+    pagination_on_transposed_axes: bool,
 ) -> (bool, Option<String>) {
     let boxes = if resolved_layout {
         BoxTree::for_layout(document)
@@ -1389,7 +1436,13 @@ fn propagated_start_page_name_with_order(
         };
         let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
         // A monolithic box does not pass a descendant's page value up.
-        if monolithic_with_boxes(document, cascade, node_id, boxes) {
+        if monolithic_with_boxes(
+            document,
+            cascade,
+            node_id,
+            boxes,
+            pagination_on_transposed_axes,
+        ) {
             return (true, used_page_name);
         }
         let child_order = if resolved_layout {

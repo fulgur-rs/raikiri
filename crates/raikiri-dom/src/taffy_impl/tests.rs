@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 
 #[test]
 fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
@@ -14,10 +15,11 @@ fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
         let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
         let node = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
         tree.nodes[parent].used_writing_mode = mode;
+        let session = LayoutSession::new(&mut tree);
 
         assert_eq!(
             ifc_parent_inline_size(
-                &tree,
+                &session,
                 node,
                 Size {
                     width: Some(60.0),
@@ -37,7 +39,7 @@ fn whitespace_only_text_is_not_a_child_of_a_block_container() {
     // cannot separate the margins of its siblings.
     let mut tree = Document::new();
     let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    tree.nodes[parent].set_display(raikiri_style::property::DisplayValue::Block);
+    tree.set_display(parent, raikiri_style::property::DisplayValue::Block);
     tree.append_text(parent, "\n  ");
     let first = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
     tree.append_text(parent, "\t\r\u{000c} ");
@@ -45,11 +47,12 @@ fn whitespace_only_text_is_not_a_child_of_a_block_container() {
     let last = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
     tree.append_text(parent, "\n");
     let parent = NodeId::from(parent);
+    let session = LayoutSession::new(&mut tree);
 
-    let children: Vec<usize> = tree.child_ids(parent).map(usize::from).collect();
+    let children: Vec<usize> = session.child_ids(parent).map(usize::from).collect();
     assert_eq!(children, vec![first, text, last]);
-    assert_eq!(tree.child_count(parent), 3);
-    assert_eq!(usize::from(tree.get_child_id(parent, 1)), text);
+    assert_eq!(session.child_count(parent), 3);
+    assert_eq!(usize::from(session.get_child_id(parent, 1)), text);
 }
 
 #[test]
@@ -59,44 +62,52 @@ fn children_walked_by_index_match_the_child_iterator() {
     // with one child.
     let mut tree = Document::new();
     let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    tree.nodes[parent].set_display(raikiri_style::property::DisplayValue::Block);
+    tree.set_display(parent, raikiri_style::property::DisplayValue::Block);
     let mut expected = Vec::new();
     for _ in 0..37 {
         expected.push(tree.append_element(Some(parent), "div", Style::default(), None::<&str>));
     }
     tree.append_text(parent, " ");
     let contents = tree.append_element(Some(parent), "span", Style::default(), None::<&str>);
-    tree.nodes[contents].set_display(DisplayValue::Contents);
+    tree.set_display(contents, DisplayValue::Contents);
     for _ in 0..3 {
         expected.push(tree.append_element(Some(contents), "div", Style::default(), None::<&str>));
     }
     let other = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
     let e = tree.append_element(Some(other), "div", Style::default(), None::<&str>);
     let (parent, other) = (NodeId::from(parent), NodeId::from(other));
-    let children: Vec<usize> = tree.child_ids(parent).map(usize::from).collect();
+    let mut session = LayoutSession::new(&mut tree);
+    let children: Vec<usize> = session.child_ids(parent).map(usize::from).collect();
     assert_eq!(children, expected);
 
-    let count = tree.child_count(parent);
+    let count = session.child_count(parent);
     assert_eq!(count, 40);
     let mut walked = Vec::new();
     for index in 0..count {
-        walked.push(usize::from(tree.get_child_id(parent, index)));
+        walked.push(usize::from(session.get_child_id(parent, index)));
         // A walk of another container in between leaves this one's list.
-        assert_eq!(tree.child_count(other), 1);
-        assert_eq!(usize::from(tree.get_child_id(other, 0)), e);
+        assert_eq!(session.child_count(other), 1);
+        assert_eq!(usize::from(session.get_child_id(other, 0)), e);
     }
     assert_eq!(walked, expected);
     // The list goes when the walk ends, so a later change of the children
     // is seen without counting them again.
-    assert!(tree.taffy_child_walks.borrow().is_empty());
-    tree.nodes[expected[0]].set_display(DisplayValue::Contents);
-    assert_eq!(usize::from(tree.get_child_id(parent, 0)), expected[1]);
+    assert!(
+        session
+            .context
+            .node_states
+            .borrow()
+            .values()
+            .all(|state| state.taffy_child_walks.is_none())
+    );
+    session.nodes[expected[0]].set_display(DisplayValue::Contents);
+    assert_eq!(usize::from(session.get_child_id(parent, 0)), expected[1]);
     // Indices out of order read the same children.
-    tree.nodes[expected[0]].set_display(DisplayValue::Block);
-    tree.child_count(parent);
+    session.nodes[expected[0]].set_display(DisplayValue::Block);
+    session.child_count(parent);
     for index in [39, 2, 0, 38, 1] {
         assert_eq!(
-            usize::from(tree.get_child_id(parent, index)),
+            usize::from(session.get_child_id(parent, index)),
             expected[index]
         );
     }
@@ -223,10 +234,11 @@ fn a_horizontal_override_keeps_the_vertical_ancestor_fragmentation_guard() {
             doc.nodes[columns].multicol.unwrap(),
         )
         .unwrap();
-        doc.fragmentation_stack.push(context);
+        let mut session = LayoutSession::new(&mut doc);
+        session.context.fragmentation_stack.push(context);
         let expected = (mode == "horizontal-tb").then_some(context);
         assert_eq!(
-            fragmentation_context_for_ifc(&doc, paragraph, &root),
+            fragmentation_context_for_ifc(&session, paragraph, &root),
             expected
         );
     }

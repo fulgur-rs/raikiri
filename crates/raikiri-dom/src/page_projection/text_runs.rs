@@ -124,7 +124,7 @@ pub(super) fn prepare_markers(
         }
     }
     for owner in owners {
-        let node = &document.nodes[owner];
+        let node = &document.layout_node_with_style(owner).unwrap();
         let layout = node.unrounded_layout;
         // Only a usable image replaces the list-style-type text fallback.
         if document.list_marker_image(owner).is_some() {
@@ -981,8 +981,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
     let in_flow = |id: usize| {
         laid_out(id)
             && document
-                .nodes
-                .get(id)
+                .layout_node_with_style(id)
                 .is_some_and(|node| node.style.float == taffy::Float::None)
     };
     let (mut id, mut y) = (owner, 0.0);
@@ -1073,7 +1072,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
 /// Alignment 3 §9.1). Text directly in the grid is an anonymous item of its
 /// own.
 fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) -> Option<FirstLine> {
-    let node = document.nodes.get(grid)?;
+    let node = document.layout_node_with_style(grid)?;
     let is_item = |id: usize| {
         document.nodes.get(id).is_some_and(|item| {
             item.is_in_document()
@@ -1108,13 +1107,15 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
         .iter()
         .copied()
         .find(|&child| {
-            aligns_by_baseline(&node.style, &document.nodes[child].style)
-                && !node.grid_items_without_baseline.contains(&child)
+            aligns_by_baseline(
+                node.style,
+                document.layout_node_with_style(child).unwrap().style,
+            ) && !node.grid_items_without_baseline.contains(&child)
         })
         .or_else(|| first_row_items.first().copied())?;
     // A relative offset moves the item's box, not the line the grid
     // takes its baseline from.
-    let item_node = &document.nodes[item];
+    let item_node = &document.layout_node_with_style(item).unwrap();
     let item_layout = item_node.unrounded_layout;
     let top = item_layout.location.y - layout_applied_relative_offset_y(document, cascade, item);
     let bottom = item_layout.size.height;

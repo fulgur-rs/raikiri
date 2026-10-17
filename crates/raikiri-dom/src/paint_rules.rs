@@ -180,7 +180,7 @@ pub(crate) fn is_replaced_element(document: &Document, node_id: usize) -> bool {
 /// `<video>`, an `<object>` showing fallback) and inline SVG roots, whose auto
 /// width is 100%, keep the ordinary block sizing.
 pub(crate) fn lays_out_as_replaced(document: &Document, node_id: usize) -> bool {
-    let node = &document.nodes[node_id];
+    let node = &document.layout_node_with_style(node_id).unwrap();
     is_replaced_element(document, node_id)
         && !node.is_inline_svg_root()
         && node.image_intrinsic_box().is_some()
@@ -1647,7 +1647,7 @@ fn lacks_visible_table_cell_content(
     }
     let mut stack = children.to_vec();
     while let Some(id) = stack.pop() {
-        let node = &document.nodes[id];
+        let node = &document.layout_node_with_style(id).unwrap();
         let cv = &cascade.computed[id];
         if !node.is_in_document()
             || node.is_non_rendered_html_element()

@@ -214,7 +214,12 @@ fn replace_children_from_does_not_adopt_foreign_calc() {
     let mut source = Document::new();
     let src_parent = source.append_element(Some(0), "div", Style::default(), None::<&str>);
     let src_child = source.append_element(Some(src_parent), "span", Style::default(), None::<&str>);
-    source.nodes[src_child].style.size.width = taffy::Dimension::calc(external_calc_ptr());
+    source
+        .layout_node_with_style_mut(src_child)
+        .unwrap()
+        .style
+        .size
+        .width = taffy::Dimension::calc(external_calc_ptr());
     let mut target = Document::new();
     let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
     target.replace_children_from(target_parent, &source, src_parent);

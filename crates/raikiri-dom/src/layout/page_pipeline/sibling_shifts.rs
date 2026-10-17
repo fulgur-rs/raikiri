@@ -44,7 +44,7 @@ impl SiblingShifts {
     /// A following sibling moves with the flow unless it is out of flow or
     /// placed by its parent's paragraph.
     fn moves(document: &Document, parent: usize, sibling: usize) -> bool {
-        let node = &document.nodes[sibling];
+        let node = &document.layout_node_with_style(sibling).unwrap();
         node.taffy_position() != TaffyPosition::Absolute
             && !node.style.float.is_floated()
             && !node.in_ifc_subtree()
