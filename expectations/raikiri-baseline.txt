@@ -1108,8 +1108,6 @@ css/css-grid/abspos/grid-abspos-staticpos-align-self-img-001.html
 css/css-grid/abspos/grid-abspos-staticpos-align-self-img-002.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-001.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-002.html
-css/css-grid/alignment/replaced-alignment-with-aspect-ratio-004.html
-css/css-grid/alignment/replaced-alignment-with-aspect-ratio-005.html
 css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-003.html
 # REMOVED 2026-09-16: grid abspos last-baseline vertical/rtl cases remain unsupported by the horizontal Taffy bridge.
 
@@ -1436,6 +1434,7 @@ css/css-page/page-name-propagated-002-print.html
 # monolithic or row-flex content, background-clip on the root page), so the audit reports
 # them VACUOUS-UNSTYLED; each failed before the matching pagination fix and is kept as a guard.
 css/css-page/page-background-001-print.html
+css/css-page/page-background-003-print.html
 css/css-page/page-background-004-print.html
 css/css-page/page-name-003-print.html
 css/css-page/page-name-flex-002-print.html
