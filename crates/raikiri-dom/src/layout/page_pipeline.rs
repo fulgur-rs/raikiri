@@ -6230,6 +6230,7 @@ fn same_bfc_float_end_in_subtree(
 ) -> f32 {
     if document.nodes[branch].kind() != NodeKind::Element
         || holds_floats(document, cascade, branch)
+        || matches!(cascade.computed[branch].float, FloatValue::Footnote)
         || !matches!(
             document.nodes[branch].position(),
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
@@ -6237,7 +6238,13 @@ fn same_bfc_float_end_in_subtree(
     {
         return f32::NEG_INFINITY;
     }
-    let branch_offset = branch_top - layout_relative_offset_y(document, cascade, body_id, branch);
+    let branch_offset = branch_top
+        - layout_relative_offset_y(document, cascade, body_id, branch)
+        - if document.contributes_layout_offset(branch) {
+            0.0
+        } else {
+            document.nodes[branch].unrounded_layout.location.y
+        };
     let mut pending: Vec<(usize, f32)> = document.nodes[branch]
         .children
         .iter()
@@ -6252,6 +6259,9 @@ fn same_bfc_float_end_in_subtree(
         }
         let layout = &node.unrounded_layout;
         if node.display() == DisplayValue::None {
+            continue;
+        }
+        if matches!(cascade.computed[child].float, FloatValue::Footnote) {
             continue;
         }
         if node.display() == DisplayValue::Contents {
