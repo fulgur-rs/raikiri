@@ -3150,6 +3150,88 @@ fn emphasis_marks_follow_the_text_color_by_default_and_can_go_under() {
 }
 
 #[test]
+fn vertical_emphasis_marks_sit_beside_each_cluster_but_not_punctuation() {
+    for (mode, position, right) in [
+        ("vertical-rl", "over right", true),
+        ("vertical-lr", "over right", true),
+        ("vertical-rl", "over left", false),
+    ] {
+        let (mut doc, cascade, root) = paragraph(
+            &format!(
+                "writing-mode:{mode};text-orientation:upright;line-height:40px;\
+                 text-emphasis:dot;text-emphasis-position:{position};\
+                 text-emphasis-color:rgb(255,0,0)"
+            ),
+            |doc, root| {
+                doc.append_text(root, "aa,a");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let placed = glyphs(&draw_root(&doc, &cascade, root));
+        let red = solid(255, 0, 0);
+        let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+        assert_eq!(text.len(), 4, "{mode}: every character is drawn");
+        assert_eq!(marks.len(), 3, "{mode}: the comma takes no mark");
+        let column = text[0].1;
+        assert!(
+            marks.iter().all(|mark| (mark.1 > column) == right),
+            "{mode} {position}: marks go on the {} side: {marks:?} {text:?}",
+            if right { "right" } else { "left" }
+        );
+        // Each mark is centered on its 10px cluster down the line.
+        let ys: Vec<f64> = marks.iter().map(|mark| mark.2).collect();
+        assert!((ys[1] - ys[0] - 10.0).abs() < 0.01, "{mode}: {ys:?}");
+        assert!((ys[2] - ys[1] - 20.0).abs() < 0.01, "{mode}: {ys:?}");
+    }
+}
+
+#[test]
+fn vertical_emphasis_marks_default_to_the_text_color() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;\
+         text-emphasis:dot;color:rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    assert_eq!(placed.len(), 4, "two characters and two marks: {placed:?}");
+    assert!(
+        placed.iter().all(|g| g.3 == blue),
+        "marks take currentcolor: {placed:?}"
+    );
+}
+
+#[test]
+fn vertical_emphasis_marks_take_one_mark_per_combined_square() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;line-height:40px;text-emphasis:dot;\
+         text-emphasis-color:rgb(255,0,0)",
+        |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "12");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let red = solid(255, 0, 0);
+    let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+    assert_eq!(text.len(), 2, "both digits are drawn");
+    assert_eq!(marks.len(), 1, "the square takes one mark: {marks:?}");
+    assert!(
+        text.iter().all(|digit| marks[0].1 > digit.1),
+        "the mark goes on the right: {marks:?} {text:?}"
+    );
+}
+
+#[test]
 fn ellipsis_is_painted_in_the_root_style() {
     let css =
         "width:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgb(0,0,255)";
@@ -3733,4 +3815,26 @@ fn only_a_face_with_a_head_table_has_glyph_outlines() {
     let ahem = std::fs::read(std::path::Path::new(FONT_DIR).join("Ahem.ttf")).expect("Ahem");
     let ahem = peniko::FontData::new(peniko::Blob::from(ahem), 0);
     assert!(crate::text::has_glyph_outlines(&ahem));
+}
+
+#[test]
+fn vertical_emphasis_marks_a_combined_square_that_starts_without_a_glyph() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;line-height:40px;text-emphasis:dot;white-space:pre;\
+         text-emphasis-color:rgb(255,0,0)",
+        |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "\t1");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let red = solid(255, 0, 0);
+    let marks = placed.iter().filter(|g| g.3 == red).count();
+    assert_eq!(marks, 1, "the square takes its mark: {placed:?}");
 }

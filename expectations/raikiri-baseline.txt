@@ -1576,6 +1576,13 @@ css/css-text-decor/text-emphasis-style-property-011.html
 css/css-text-decor/text-emphasis-style-property-011a.html
 css/css-text-decor/text-emphasis-style-property-011b.html
 
+# --- css-text-decor text-emphasis upright marks in vertical lines against ruby references (exact, 800x600) ---
+css/css-text-decor/text-emphasis-style-property-003.html
+css/css-text-decor/text-emphasis-style-property-004.html
+css/css-text-decor/text-emphasis-style-property-005.html
+css/css-text-decor/text-emphasis-style-property-005a.html
+css/css-text-decor/text-combine-emphasis.html
+
 # --- css-lists list-style shorthand and inside marker text (exact, 800x600, bundled fonts) ---
 css/css-lists/content-property/marker-text-matches-decimal-leading-zero.html
 css/css-lists/content-property/marker-text-matches-decimal.html

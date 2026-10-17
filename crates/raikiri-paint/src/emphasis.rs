@@ -4,7 +4,9 @@
 //! run, the mark character, its size, its side and the distance from the
 //! baseline to the edge the mark is painted outside. This module places one
 //! mark over each shaping cluster that takes one, centered on the cluster in
-//! the inline direction, as Blink does.
+//! the inline direction, as Blink does. Marks stay upright in vertical
+//! text (CSS Text Decoration 3 §3.1), so a vertical run's marks are shaped as
+//! upright vertical text and centered on their cluster's em box.
 
 use anyrender::PaintScene;
 use peniko::Color;
@@ -12,7 +14,7 @@ use raikiri_dom::{Document, StandaloneAlign, StandaloneText};
 use raikiri_style::ComputedValues;
 use raikiri_style::property::TextDecorationColor;
 use shodo::Fragment;
-use shodo::geometry::BaselineKind;
+use shodo::geometry::{BaselineKind, PhysicalConverter, WritingMode};
 
 /// The mark shaped once per run, with what placing it needs.
 struct ShapedMark {
@@ -150,5 +152,144 @@ pub(crate) fn draw_marks_in(
             mark_baseline - shaped.baseline,
             color,
         );
+    }
+}
+
+/// The mark shaped as upright vertical text, with the physical offset of its
+/// em box center from the shaped text's origin.
+struct UprightMark {
+    text: StandaloneText,
+    center: (f32, f32),
+}
+
+fn shape_upright_mark(
+    document: &Document,
+    character: char,
+    font_size: f32,
+    families: &[raikiri_style::FontFamilyName],
+) -> Option<UprightMark> {
+    let mut content = [0u8; 4];
+    let style = raikiri_dom::StandaloneStyle {
+        writing_mode: WritingMode::VerticalRl,
+        text_orientation: shodo::style::TextOrientation::Upright,
+        ..crate::standalone_text::style(font_size, families)
+    };
+    let text = document.shape_standalone_text(
+        character.encode_utf8(&mut content),
+        &style,
+        None,
+        StandaloneAlign::Start,
+    )?; // cov:ignore: one character is never empty nor over the engine's limits.
+    let line = text.lines().first()?;
+    let run = line.fragments().find_map(|fragment| match fragment {
+        Fragment::GlyphRun(run) => Some(run),
+        _ => None,
+    })?;
+    let converter =
+        PhysicalConverter::new(line.writing_mode(), line.used_direction(), text.container());
+    // An upright run's baseline is the central one, through its em box center.
+    let center = converter.point(
+        run.inline_start() + run.inline_size() / 2.0,
+        line.block_offset() + run.baseline(),
+    );
+    Some(UprightMark { text, center })
+}
+
+/// Draw the emphasis marks of one glyph run of a vertical line.
+///
+/// `converter` maps the logical coordinates of `line`, laid out in
+/// `writing_mode`, to the ifc root's, whose page origin is `origin`. Each
+/// mark's em box is centered on its cluster's advance and starts the mark's
+/// offset from the run's baseline toward its side. A run of
+/// `text-combine-upright` text takes one mark per combined square it starts,
+/// centered on the square, as its characters take none of their own.
+pub(crate) fn draw_vertical_marks(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    (line, run): (&shodo::Line, &shodo::GlyphRunView<'_>),
+    (writing_mode, converter): (WritingMode, &PhysicalConverter),
+    origin: (f32, f32),
+    style: &ComputedValues,
+    text_color: Color,
+) {
+    let Some(mark) = run.emphasis_mark() else {
+        return;
+    };
+    let color = match style.text_emphasis_color {
+        TextDecorationColor::Resolved(color) => crate::text::css_color_to_peniko(color),
+        _ => text_color,
+    };
+    let Some(shaped) =
+        shape_upright_mark(document, mark.character, mark.font_size, &style.font_family)
+    else {
+        return; // cov:ignore: shaping one character fails only past the engine's limits.
+    };
+    // Line-over is the block-start side, except in `vertical-lr`, whose
+    // lines stack left to right with their line-over side on the right.
+    let over = if writing_mode == WritingMode::VerticalLr {
+        1.0
+    } else {
+        -1.0
+    };
+    let side = if mark.line_over { over } else { -over };
+    let reach = side * (mark.offset + mark.font_size / 2.0);
+    let mut draw = |inline: f32, block: f32| {
+        let (x, y) = converter.point(inline, block);
+        crate::standalone_text::draw(
+            scene,
+            &shaped.text,
+            origin.0 + x - shaped.center.0,
+            origin.1 + y - shaped.center.1,
+            color,
+        );
+    };
+    if run.orientation() == shodo::GlyphOrientation::Combined {
+        // A square can span several runs, and its first characters may have
+        // no glyph (a preserved tab); only the earliest run inside it marks
+        // it, so it takes one mark.
+        let text = run.text_range();
+        for combination in line.text_combinations() {
+            let range = &combination.text_range;
+            let first = line
+                .fragments()
+                .filter_map(|fragment| match fragment {
+                    Fragment::GlyphRun(run) => Some(run.text_range()),
+                    _ => None,
+                })
+                .filter(|run| run.start < range.end && range.start < run.end)
+                .min_by_key(|run| run.start);
+            if first == Some(text.clone()) {
+                let square = combination.square;
+                draw(
+                    square.inline_start + square.inline_size / 2.0,
+                    line.block_offset() + square.block_start + square.block_size / 2.0 + reach,
+                );
+            }
+        }
+        return;
+    }
+    // Clusters follow the run's text, which bidi reordering can reverse;
+    // lay their advances out in the order their glyphs are drawn.
+    let glyphs: Vec<shodo::Glyph> = run.glyphs().collect();
+    let mut clusters: Vec<(f32, shodo::Cluster)> = run
+        .clusters()
+        .filter_map(|cluster| {
+            let key = glyphs
+                .iter()
+                .filter(|glyph| cluster.text_range.contains(&(glyph.cluster as usize)))
+                .map(|glyph| glyph.inline_position)
+                .reduce(f32::min)?;
+            Some((key, cluster))
+        })
+        .collect();
+    clusters.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let block = line.block_offset() + run.baseline() + reach;
+    let mut inline = run.inline_start();
+    for (_, cluster) in clusters {
+        let center = inline + cluster.advance / 2.0;
+        inline += cluster.advance;
+        if !cluster.flags.emphasis_excluded {
+            draw(center, block);
+        }
     }
 }
