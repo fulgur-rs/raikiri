@@ -14,7 +14,8 @@ use crate::error::CascadeError;
 use crate::logical::FlowMapping;
 use crate::media::MediaContext;
 use crate::property::{
-    Direction, DisplayValue, FloatValue, PropertyKey, PropertyValue, TextOrientation, WritingMode,
+    CssWideKeyword, Direction, DisplayValue, FloatValue, PropertyKey, PropertyValue,
+    TextOrientation, WritingMode,
 };
 use crate::rule::{Declaration, parse_declaration_block_within};
 
@@ -875,9 +876,12 @@ pub(crate) fn pick_winners(
 /// The element's own `writing-mode`, `text-orientation` and `direction`
 /// winners decide them, falling back to the inherited values (CSS Logical
 /// Properties 1 §4: a flow-relative property maps "according to the
-/// element's own writing-mode and direction"). `resolve` substitutes a
-/// `var()` winner; a winner that still is not a keyword (a CSS-wide keyword,
-/// or an invalid substitution) takes the inherited value too.
+/// element's own writing-mode and direction"). `resolve` gives the value of
+/// the winning declaration for a property, with `var()` substituted and
+/// `revert` / `revert-layer` rolled back; a winner that still is not a
+/// keyword (another CSS-wide keyword, or an invalid substitution) takes the
+/// inherited value too, except that `display` takes its initial value
+/// unless it is `inherit`.
 ///
 /// The writing mode is the one block layout places the element's box in:
 /// flex, grid and table boxes and multicol
@@ -890,7 +894,7 @@ pub(crate) fn pick_winners(
 pub(crate) fn flow_mapping(
     candidates: ElementCandidates<'_>,
     inherited: &ComputedValues,
-    mut resolve: impl FnMut(&PropertyValue) -> Option<PropertyValue>,
+    mut resolve: impl FnMut(PropertyKey, usize) -> Option<PropertyValue>,
 ) -> Option<FlowMapping> {
     let decls = candidates.decls();
     if decls.iter().all(|candidate| candidate.logical().is_none()) {
@@ -915,26 +919,56 @@ pub(crate) fn flow_mapping(
             *slot = Some(ranked);
         }
     }
-    let mut winner = |slot: Option<RankedDecl>| slot.and_then(|w| resolve(candidates.value(w.idx)));
-    let writing_mode = match winner(writing_mode) {
+    // `all: revert-layer` rolls these winners back as `pick_winners` does;
+    // `all` never covers `direction`.
+    if decls
+        .iter()
+        .any(|candidate| candidate.is_all_revert_layer())
+    {
+        for (key, slot) in [
+            (PropertyKey::WritingMode, &mut writing_mode),
+            (PropertyKey::TextOrientation, &mut text_orientation),
+            (PropertyKey::Display, &mut display),
+            (PropertyKey::Float, &mut float),
+        ] {
+            if slot.is_none() {
+                continue;
+            }
+            let selected = super::rollback::select_layered_winner(decls, |idx, candidate| {
+                if candidate.key() != key && !candidate.is_all_revert_layer() {
+                    return None;
+                }
+                Some(candidate.precedence().layered(idx, candidate.rollback()))
+            });
+            *slot = selected.map(|idx| decls[idx].precedence().ranked(idx));
+        }
+    }
+    let mut winner =
+        |key: PropertyKey, slot: Option<RankedDecl>| slot.and_then(|w| resolve(key, w.idx));
+    let writing_mode = match winner(PropertyKey::WritingMode, writing_mode) {
         Some(PropertyValue::WritingMode(mode)) => mode,
         _ => inherited.cssom_writing_mode,
     };
-    let text_orientation = match winner(text_orientation) {
+    let text_orientation = match winner(PropertyKey::TextOrientation, text_orientation) {
         Some(PropertyValue::TextOrientation(orientation)) => orientation,
         _ => inherited.text_orientation,
     };
-    let direction = match winner(direction) {
+    let direction = match winner(PropertyKey::Direction, direction) {
         Some(PropertyValue::Direction(direction)) => direction,
         _ => inherited.direction,
     };
     // An annotation of a horizontal inter-character ruby is laid out in
     // `vertical-rl` (CSS Ruby 1 §4.1), as its computed value says.
-    let display = match winner(display) {
+    let display = match winner(PropertyKey::Display, display) {
         Some(PropertyValue::Display(display)) => display,
+        Some(PropertyValue::Deferred(marker))
+            if marker.css_wide_keyword() == Some(CssWideKeyword::Inherit) =>
+        {
+            inherited.display
+        }
         _ => DisplayValue::Inline,
     };
-    let float = match winner(float) {
+    let float = match winner(PropertyKey::Float, float) {
         Some(PropertyValue::Float(float)) => float,
         _ => FloatValue::None,
     };
