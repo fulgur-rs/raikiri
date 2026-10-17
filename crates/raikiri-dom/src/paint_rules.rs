@@ -272,6 +272,22 @@ pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedV
     .then_some(cv)
 }
 
+/// How the `::before` or `::after` with generated id `id` transforms its box
+/// at `rect`, as the painter turns its group: `None` when it has no
+/// transform of its own (see [`pseudo_transform`]), `Some(None)` when that
+/// transform is singular and the pseudo-element paints nothing (CSS
+/// Transforms 1 §5), else the transform about its own box, in the
+/// coordinates `rect` is in.
+pub fn pseudo_box_transform(
+    cascade: &CascadeResult,
+    id: usize,
+    rect: PaintRect,
+) -> Option<Option<raikiri_traits::PaintTransform>> {
+    use crate::page_projection::paint_transform::{box_transform, is_singular};
+    let cv = pseudo_transform(cascade, id)?;
+    Some((!is_singular(cv)).then(|| box_transform(cv, rect)))
+}
+
 /// Whether the pseudo-element with generated id `id` composites its boxes,
 /// images and text as one group in its paragraph: one with an opacity below
 /// one (see [`pseudo_opacity_layer`]), or one with a transform of its own

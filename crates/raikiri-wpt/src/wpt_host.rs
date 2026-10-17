@@ -466,9 +466,9 @@ impl DocumentHost for WptDocumentHost {
                 .map(|transform| transform.map(|transform| root * transform))
                 .collect(),
         };
-        self.computed_styles = Some(cascade.computed);
         let scene = self.page_scene.as_ref().expect("scene just built");
-        self.generated_boxes = collect_generated_boxes(document, scene);
+        self.generated_boxes = collect_generated_boxes(document, &cascade, scene);
+        self.computed_styles = Some(cascade.computed);
         self.scroll_content_extents = compute_scroll_content_extents(
             document,
             scene,
@@ -838,11 +838,14 @@ fn compute_scroll_content_extents(
 
 /// The border boxes of the `::before` and `::after` boxes that paragraphs lay
 /// out, by originating element, in the coordinates of [`border_box_of`]. A
-/// box split across lines has one rectangle per piece. Floated and
+/// box split across lines has one rectangle per piece. A box with a
+/// transform of its own reports the bounds it is drawn at, and one with a
+/// singular transform reports nothing. Floated and
 /// absolutely positioned generated boxes are not laid out in a paragraph and
 /// have no box to report.
 fn collect_generated_boxes(
     document: &raikiri_dom::Document,
+    cascade: &raikiri_style::CascadeResult,
     scene: &raikiri::PageScene,
 ) -> HashMap<usize, Vec<DomRect>> {
     let mut boxes: HashMap<usize, Vec<DomRect>> = HashMap::new();
@@ -870,12 +873,27 @@ fn collect_generated_boxes(
             };
             let left = origin.0 + f64::from(piece.x);
             let top = origin.1 + f64::from(piece.y);
-            boxes.entry(owner).or_default().push(rect(
+            let area = rect(
                 left,
                 top,
                 left + f64::from(piece.width),
                 top + f64::from(piece.height),
-            ));
+            );
+            // A transformable pseudo-element turns about its own box; a
+            // singular transform paints nothing of it.
+            let paint_rect = raikiri_traits::PaintRect::new(
+                area.left as f32,
+                area.top as f32,
+                area.width as f32,
+                area.height as f32,
+            );
+            let area = match raikiri_dom::paint_rules::pseudo_box_transform(cascade, id, paint_rect)
+            {
+                None => area,
+                Some(None) => continue,
+                Some(Some(transform)) => transform_rect(transform, area),
+            };
+            boxes.entry(owner).or_default().push(area);
         }
     }
     boxes
