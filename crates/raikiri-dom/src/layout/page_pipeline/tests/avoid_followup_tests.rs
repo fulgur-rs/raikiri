@@ -277,6 +277,142 @@ fn a_nested_float_in_a_footnote_is_excluded_from_bfc_extent() {
         ),
         f32::NEG_INFINITY
     );
+    assert_eq!(
+        super::super::same_bfc_float_end_in_subtree(
+            &doc,
+            &cascade,
+            doc.parent_of(wrapper).unwrap(),
+            footnote,
+            doc.nodes[footnote].unrounded_layout.location.y,
+        ),
+        f32::NEG_INFINITY
+    );
+}
+
+#[test]
+fn a_moved_float_child_contributes_its_shift_to_the_float_extent() {
+    let mut root = 0;
+    let mut moved = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        root = block(doc, body, "display:flow-root");
+        moved = block(doc, root, "float:left;width:20px;height:40px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let body = doc.parent_of(root).unwrap();
+
+    let grown = super::super::grown_auto_height(
+        &doc,
+        &cascade,
+        root,
+        moved,
+        20.0,
+        20.0,
+        20.0,
+        false,
+        body,
+        &super::super::IfcBoxShifts::default(),
+    )
+    .unwrap();
+
+    assert_eq!(grown.float_extent_delta, 20.0);
+}
+
+#[test]
+fn an_untracked_ifc_sibling_float_follows_the_moved_block() {
+    let mut outer = 0;
+    let mut paragraph = 0;
+    let mut moved = 0;
+    let mut wrapper = 0;
+    let mut float = 0;
+    let (mut doc, _) = paged_body_with_ifc(|doc, body| {
+        outer = block(doc, body, "display:flow-root");
+        paragraph = block(
+            doc,
+            outer,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "a");
+        moved = block(doc, paragraph, "display:block;height:10px");
+        doc.append_text(paragraph, "b");
+        wrapper = block(doc, paragraph, "display:inline");
+        float = block(doc, wrapper, "float:left;width:20px;height:80px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let body = doc.parent_of(outer).unwrap();
+
+    doc.nodes[moved].unrounded_layout.location.y = 40.0;
+    doc.nodes[wrapper].unrounded_layout.location.y = 0.0;
+    doc.nodes[float].unrounded_layout.location.y = 0.0;
+    doc.nodes[float].unrounded_layout.size.height = 80.0;
+    let grown = super::super::grown_auto_height(
+        &doc,
+        &cascade,
+        paragraph,
+        moved,
+        20.0,
+        20.0,
+        20.0,
+        false,
+        body,
+        &super::super::IfcBoxShifts::default(),
+    )
+    .unwrap();
+
+    assert_eq!(grown.float_extent_delta, 20.0);
+}
+
+#[test]
+fn a_moved_footnote_passes_float_extent_through_non_bfc_ancestors() {
+    for parent_display in ["display:block", "display:flow-root"] {
+        let mut body = 0;
+        let mut parent = 0;
+        let mut footnote = 0;
+        let (mut doc, _) = paged_body(|doc, body_id| {
+            body = body_id;
+            parent = block(doc, body, parent_display);
+            footnote = block(doc, parent, "float:footnote;width:20px;height:10px");
+        });
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        let mut shifts = super::super::SubtreeShifts::default();
+
+        assert!(super::super::grow_ancestors_for_shift(
+            &mut doc,
+            &cascade,
+            footnote,
+            20.0,
+            body,
+            &mut shifts,
+            0,
+            &super::super::IfcBoxShifts::default(),
+        ));
+        assert_eq!(shifts.bounded, vec![(parent, 20.0, 0)]);
+    }
+}
+
+#[test]
+fn margin_truncation_stops_at_an_unchanged_fixed_height_ancestor() {
+    let mut body = 0;
+    let mut outer = 0;
+    let mut inner = 0;
+    let mut moved = 0;
+    let (mut doc, _) = paged_body(|doc, body_id| {
+        body = body_id;
+        outer = block(doc, body, "display:block;height:200px");
+        inner = block(doc, outer, "display:block");
+        moved = block(doc, inner, "display:block;height:30px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+
+    super::super::move_box_by_truncated_margin(&mut doc, &cascade, moved, -10.0, body);
+
+    assert_eq!(doc.nodes[moved].unrounded_layout.location.y, moved_y - 10.0);
+    assert_eq!(doc.nodes[inner].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[outer].unrounded_layout.size.height, 200.0);
 }
 
 #[test]
