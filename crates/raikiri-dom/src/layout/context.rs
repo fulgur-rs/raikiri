@@ -24,7 +24,6 @@ pub(crate) struct LayoutContext {
     pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<String>>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,
-    pub(crate) in_flow_heights: HashMap<usize, f32>,
     pub(crate) text_group: TextGroupScope,
     /// The least space a line leaves unfilled so far in the group being
     /// measured.

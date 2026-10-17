@@ -162,6 +162,64 @@ fn overflow_clip_propagates_a_block_root_to_the_viewport() {
 }
 
 #[test]
+fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box() {
+    let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
+    let no_border = PaintInsets::new(0.0, 0.0, 0.0, 0.0);
+    let mut rounded = PaintClip::new(border_box);
+    rounded.corner_radii = Some([[8.0; 2]; 4]);
+    for (css, expected, same_before) in [
+        // Visible overflow clips at the border box on both axes.
+        ("display:block", PaintClip::new(border_box), false),
+        // A visible block axis joins a clipped inline axis.
+        (
+            "display:block;overflow-x:clip;overflow-y:visible",
+            PaintClip::new(border_box),
+            false,
+        ),
+        // A visible inline axis joins a clipped block axis.
+        (
+            "display:block;overflow-x:visible;overflow-y:clip",
+            PaintClip::new(border_box),
+            false,
+        ),
+        // An overflow-clip-margin past the border box is cut back to it.
+        (
+            "display:block;overflow:clip;overflow-clip-margin:5px",
+            PaintClip::new(border_box),
+            false,
+        ),
+        (
+            "display:block;overflow-x:clip;overflow-y:visible;overflow-clip-margin:5px",
+            PaintClip::new(border_box),
+            false,
+        ),
+        // A clip already inside the border box keeps its edges and curves.
+        (
+            "display:block;overflow:clip;border-radius:8px",
+            rounded,
+            true,
+        ),
+    ] {
+        let mut doc = Document::new();
+        let node = doc.append_element(Some(doc.root_index()), "div", Style::default(), Some(css));
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        let before = overflow_clip(&doc, &cascade, node, border_box, no_border);
+        assert_eq!(
+            before == Some(expected),
+            same_before,
+            "{css}: only a clip inside the border box on both axes stays the same"
+        );
+        doc.nodes[node].clips_collapsed_table_span = true;
+        assert_eq!(
+            overflow_clip(&doc, &cascade, node, border_box, no_border),
+            Some(expected),
+            "{css}"
+        );
+    }
+}
+
+#[test]
 fn negative_z_index_sorts_before_static_and_positive_after() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -837,4 +895,52 @@ fn an_extreme_clip_margin_keeps_the_clip_finite() {
     for value in [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height] {
         assert!(value.is_finite(), "{:?}", clip.rect);
     }
+}
+
+#[test]
+fn positioned_frames_go_back_to_their_place_in_tree_order() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, parent| {
+        doc.append_element(Some(parent), "div", Style::default(), Some("display:block"))
+    };
+    let a = block(&mut doc, body);
+    let b = block(&mut doc, body);
+    let b1 = block(&mut doc, b);
+    let b2 = block(&mut doc, b);
+    let c = block(&mut doc, body);
+    doc.mark_in_document_flags();
+
+    assert!(precedes_in_tree(&doc, a, b1));
+    assert!(precedes_in_tree(&doc, b, b1));
+    assert!(!precedes_in_tree(&doc, b1, b));
+    assert!(!precedes_in_tree(&doc, c, a));
+    assert!(!precedes_in_tree(&doc, a, a));
+    assert!(!precedes_in_tree(&doc, a, usize::MAX));
+
+    use PositionedFrame::{Box, Close, Open};
+    let insert = |mut frames: Vec<PositionedFrame>, frame| {
+        insert_positioned_frame(&doc, &mut frames, frame, |frame| *frame);
+        frames
+    };
+    // A box goes back past the boxes after it, and past a clip around
+    // boxes after it as a whole.
+    assert_eq!(
+        insert(vec![Box(a), Box(c)], Box(b1)),
+        [Box(a), Box(b1), Box(c)]
+    );
+    assert_eq!(
+        insert(vec![Open(b), Box(b1), Close], Box(a)),
+        [Box(a), Open(b), Box(b1), Close]
+    );
+    // It stays after a clip of its own ancestor, which it cannot reenter,
+    // and after a clip still open.
+    assert_eq!(
+        insert(vec![Open(b), Box(b2), Close], Box(b1)),
+        [Open(b), Box(b2), Close, Box(b1)]
+    );
+    assert_eq!(insert(vec![Open(b)], Box(a)), [Open(b), Box(a)]);
+    // Clips keep the order they are added in.
+    assert_eq!(insert(vec![Box(c)], Open(b)), [Box(c), Open(b)]);
 }

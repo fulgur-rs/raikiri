@@ -144,12 +144,9 @@ pub fn overflow_clip(
     border_box: PaintRect,
     border: PaintInsets,
 ) -> Option<PaintClip> {
-    if !clips_element_overflow(document, cascade, node_id) {
-        return None;
-    }
-    let padding = document.nodes[node_id].unrounded_layout.padding;
-    let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
-    Some(
+    let clip = clips_element_overflow(document, cascade, node_id).then(|| {
+        let padding = document.nodes[node_id].unrounded_layout.padding;
+        let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
         OverflowClipGeometry::new(
             &cascade.computed[node_id],
             border_box,
@@ -157,8 +154,60 @@ pub fn overflow_clip(
             padding,
             is_replaced_element(document, node_id),
         )
-        .at(border_box),
-    )
+        .at(border_box)
+    });
+    if !document
+        .get_node(node_id)
+        .is_some_and(|node| node.clips_collapsed_table_span)
+    {
+        return clip;
+    }
+    // A cell that spans a collapsed row keeps the rows that remain and clips
+    // its contents to its border box (CSS Tables 3, "Visibility-collapse cell
+    // rendering"). An axis the element already clips keeps its own edges
+    // where they lie inside the border box; an `overflow-clip-margin` that
+    // reaches past it is cut back to the border box.
+    let Some(clip) = clip else {
+        return Some(PaintClip::new(border_box));
+    };
+    let (x, width) = clamp_clip_axis(
+        clip.clip_x,
+        clip.rect.x,
+        clip.rect.width,
+        border_box.x,
+        border_box.width,
+    );
+    let (y, height) = clamp_clip_axis(
+        clip.clip_y,
+        clip.rect.y,
+        clip.rect.height,
+        border_box.y,
+        border_box.height,
+    );
+    let rect = PaintRect::new(x, y, width, height);
+    if rect == clip.rect && clip.clip_x && clip.clip_y {
+        return Some(clip);
+    }
+    // The element's curves were shaped for its own clip edge, so a trimmed
+    // or newly bounded rectangle takes square corners.
+    Some(PaintClip::new(rect))
+}
+
+/// One axis of a collapsed-span clip: the element's own clip edges intersected
+/// with the border box, or the border box when that axis did not clip.
+fn clamp_clip_axis(
+    clips: bool,
+    start: f32,
+    size: f32,
+    box_start: f32,
+    box_size: f32,
+) -> (f32, f32) {
+    if !clips {
+        return (box_start, box_size);
+    }
+    let lo = start.max(box_start);
+    let hi = (start + size).min(box_start + box_size);
+    (lo, (hi - lo).max(0.0))
 }
 
 /// Whether the element is a replaced element, whose overflow and
@@ -502,6 +551,16 @@ pub fn atomic_on_first_line(document: &Document, root: usize, id: usize) -> bool
         })
 }
 
+/// The node a line fragment lays out, if any.
+fn fragment_node(fragment: shodo::Fragment<'_>) -> Option<usize> {
+    match fragment {
+        shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
+        shodo::Fragment::Atomic(atomic) => Some(atomic.node.0 as usize),
+        shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
+        shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
+    }
+}
+
 /// Whether paragraph `root` has a translucent first line (see
 /// [`first_line_opacity_layer`]) and `id`, an inline element or a `::before`
 /// or `::after` laid out in its lines, has no content on the lines after it.
@@ -532,12 +591,7 @@ fn within_translucent_first_line(document: &Document, root: usize, id: usize) ->
         .flatten()
         .skip(1)
         .flat_map(|line| line.fragments())
-        .filter_map(|fragment| match fragment {
-            shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
-            shodo::Fragment::Atomic(atomic) => Some(atomic.node.0 as usize),
-            shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
-            shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
-        })
+        .filter_map(fragment_node)
         .any(inside);
     // A block-level `::before` or `::after` paints its own box with the
     // line it goes with, which need not hold any of its content.
@@ -676,12 +730,14 @@ fn establishes_stacking_context(document: &Document, id: usize, cv: &ComputedVal
 /// order at the end of the layer of the nearest ancestor that closes one.
 ///
 /// Boxes laid out beside the lines of a paragraph keep their place among the
-/// paragraph's content, as do boxes with a negative stack level, which
-/// paint below the blocks of the layer.
+/// paragraph's content, apart from those [`leaves_paragraph_lines`] finds, as
+/// do boxes with a negative stack level, which paint below the blocks of the
+/// layer.
 pub fn defers_to_positioned_layer(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
+    paragraphs: &LeavingParagraphs,
 ) -> bool {
     cascade.computed.get(node_id).is_some_and(|cv| {
         let positioned = !matches!(cv.position, PositionValue::Static);
@@ -692,30 +748,238 @@ pub fn defers_to_positioned_layer(
             && generates_box(cv)
             && (positioned || establishes_stacking_context(document, node_id, cv))
             && !negative
-            && box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
-                |parent| {
-                    document
-                        .get_node(parent)
-                        .is_some_and(|node| !node.is_ifc_root())
-                        && cascade.computed.get(parent).is_some_and(|parent| {
-                            // A child of a table part sits in an anonymous cell;
-                            // the children of flex and grid containers join the
-                            // layer the same way.
-                            is_block_container(parent.display)
-                                || (parent.display.is_flex_or_grid_container()
-                                    || matches!(
-                                        parent.display,
-                                        DisplayValue::Table
-                                            | DisplayValue::InlineTable
-                                            | DisplayValue::TableRowGroup
-                                            | DisplayValue::TableHeaderGroup
-                                            | DisplayValue::TableFooterGroup
-                                            | DisplayValue::TableRow
-                                    ))
-                        })
-                },
-            )
+            && (leaves_paragraph_lines(document, cascade, node_id, paragraphs)
+                || box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
+                    |parent| {
+                        document
+                            .get_node(parent)
+                            .is_some_and(|node| !node.is_ifc_root())
+                            && cascade.computed.get(parent).is_some_and(|parent| {
+                                // A child of a table part sits in an anonymous cell;
+                                // the children of flex and grid containers join the
+                                // layer the same way.
+                                is_block_container(parent.display)
+                                    || (parent.display.is_flex_or_grid_container()
+                                        || matches!(
+                                            parent.display,
+                                            DisplayValue::Table
+                                                | DisplayValue::InlineTable
+                                                | DisplayValue::TableRowGroup
+                                                | DisplayValue::TableHeaderGroup
+                                                | DisplayValue::TableFooterGroup
+                                                | DisplayValue::TableRow
+                                        ))
+                            })
+                    },
+                ))
     })
+}
+
+/// Whether box `node_id`, laid out beside the lines of a paragraph, is
+/// positioned with an integer `z-index` of zero or more outside every
+/// inline box of the paragraph that forms a stacking context, beyond the
+/// paragraph's translucent first line, if it has one.
+///
+/// It forms a stacking context in the stacking context of the paragraph,
+/// where it paints by stack level among the positioned boxes outside the
+/// paragraph, in tree order within a level (CSS 2.1 Appendix E steps 8 and
+/// 9), so it waits for the end of the layer like them.
+pub fn leaves_paragraph_lines(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    paragraphs: &LeavingParagraphs,
+) -> bool {
+    cascade.computed.get(node_id).is_some_and(|cv| {
+        !cv.display.is_inline_flow()
+            && !matches!(cv.position, PositionValue::Static)
+            && matches!(cv.z_index, ZIndexValue::Integer(level) if level >= 0)
+    }) && paragraph_of_line_box(document, cascade, node_id).is_some_and(|root| {
+        document.parent_of(node_id).is_some_and(|parent| {
+            parent == root || outside_inline_stacking_contexts(document, cascade, root, parent)
+        }) && !within_translucent_first_line(document, root, node_id)
+            && paragraphs.can_leave(document, cascade, root)
+    })
+}
+
+/// What [`content_can_leave_paragraph`] tells of each paragraph a painter
+/// asks about, found once per paragraph, as it scans the paragraph's lines.
+#[derive(Debug, Default)]
+pub struct LeavingParagraphs(std::cell::RefCell<std::collections::HashMap<usize, bool>>);
+
+impl LeavingParagraphs {
+    /// Whether the content of paragraph `root` can leave its lines (see
+    /// [`content_can_leave_paragraph`]).
+    pub fn can_leave(&self, document: &Document, cascade: &CascadeResult, root: usize) -> bool {
+        *self
+            .0
+            .borrow_mut()
+            .entry(root)
+            .or_insert_with(|| content_can_leave_paragraph(document, cascade, root))
+    }
+}
+
+/// Whether the positioned content of paragraph `root` that forms a stacking
+/// context in the paragraph's stacking context can wait for the end of the
+/// layer, apart from the paragraph's lines.
+///
+/// It cannot when a translucent first line wraps part of it, as the group
+/// of the `::first-line` box holds that part (CSS Color 4 §3.3), or when a
+/// `::before` or `::after` forms such a stacking context too, as the lines
+/// order those groups by stack level among themselves, or when such an
+/// inline element holds a block, which paints with the paragraph's blocks;
+/// the content then paints with the lines, as all of it did before.
+pub fn content_can_leave_paragraph(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> bool {
+    if first_line_opacity_layer(document, root).is_some() {
+        return false;
+    }
+    // A block-level `::before` or `::after` with no content has no line
+    // fragment, only its piece.
+    document.get_node(root).is_none_or(|node| {
+        // An in-flow block inside such an inline element paints apart from
+        // the element's group.
+        !node.ifc_boxes().into_iter().any(|id| {
+            cascade.computed.get(id).is_some_and(|cv| {
+                !cv.display.is_inline_level()
+                    && matches!(cv.position, PositionValue::Static)
+                    && matches!(cv.float, FloatValue::None)
+            }) && document
+                .ancestors(id)
+                .take_while(|&ancestor| ancestor != root)
+                .any(|ancestor| inline_stacking_group(document, cascade, root, ancestor))
+        }) && !node
+            .ifc_lines()
+            .into_iter()
+            .flatten()
+            .flat_map(|line| line.fragments())
+            .filter_map(fragment_node)
+            .chain(
+                node.ifc_generated_block_pieces()
+                    .iter()
+                    .map(|piece| piece.node),
+            )
+            .any(|id| {
+                crate::generated_content::generated_origin(id).is_some_and(|(element, _)| {
+                    pseudo_stacking_group(document, cascade, root, id)
+                        && outside_inline_stacking_contexts(document, cascade, root, element)
+                })
+            })
+    })
+}
+
+/// The paragraph whose lines lay out box `node_id`: the paragraph root
+/// reached through the inline elements around the box.
+fn paragraph_of_line_box(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    document.ancestors(node_id).find_map(|ancestor| {
+        if document
+            .get_node(ancestor)
+            .is_some_and(|node| node.is_ifc_root())
+        {
+            return Some(Some(ancestor));
+        }
+        let inline = document
+            .get_node(ancestor)
+            .is_some_and(|node| node.kind() == NodeKind::Element)
+            && cascade.computed.get(ancestor).is_some_and(|cv| {
+                cv.display.is_inline_flow() || cv.display == DisplayValue::Contents
+            });
+        (!inline).then_some(None)
+    })?
+}
+
+/// Whether node `a` comes before node `b` in tree order. A node comes before
+/// its descendants; nodes outside the tree, such as generated boxes, come
+/// before none and after none.
+fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
+    if a == b || document.get_node(a).is_none() || document.get_node(b).is_none() {
+        return false;
+    }
+    let chain = |id: usize| {
+        let mut chain: Vec<usize> = document.inclusive_ancestors(id).collect();
+        chain.reverse();
+        chain
+    };
+    let (a_chain, b_chain) = (chain(a), chain(b));
+    let shared = a_chain
+        .iter()
+        .zip(&b_chain)
+        .take_while(|(x, y)| x == y)
+        .count();
+    match (a_chain.get(shared), b_chain.get(shared)) {
+        // `a` is an ancestor of `b`.
+        (None, Some(_)) => true,
+        (Some(&a_branch), Some(&b_branch)) if shared > 0 => document
+            .get_node(a_chain[shared - 1])
+            .and_then(|parent| {
+                let at = |id| parent.children.iter().position(|&child| child == id);
+                Some(at(a_branch)? < at(b_branch)?)
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Adds `frame` to `frames`, the list a layer keeps in tree order of the
+/// boxes that wait for its end (see [`PositionedFrame`]), at its place in
+/// tree order.
+///
+/// The painters list most boxes as they reach them, in paint order, which
+/// is tree order but for the order-modified document order of flex and grid
+/// items (CSS Flexbox 1 §5.4), so they push those at the end. A paragraph
+/// whose inline content waits for the end of the layer reaches its boxes
+/// (see [`leaves_paragraph_lines`] and [`leaves_paragraph_content`]) after
+/// the boxes that follow it, so its boxes go back past them with this, past
+/// the clips around them as a whole.
+pub fn insert_positioned_frame<F>(
+    document: &Document,
+    frames: &mut Vec<F>,
+    frame: F,
+    kind: impl Fn(&F) -> PositionedFrame,
+) {
+    let PositionedFrame::Box(id) = kind(&frame) else {
+        frames.push(frame);
+        return;
+    };
+    let mut at = frames.len();
+    while at > 0 {
+        let first = match kind(&frames[at - 1]) {
+            PositionedFrame::Box(other) => Some((at - 1, other)),
+            PositionedFrame::Close => {
+                // The clip around the frames back to the matching open.
+                let mut depth = 0;
+                (0..at).rev().find_map(|index| match kind(&frames[index]) {
+                    PositionedFrame::Close => {
+                        depth += 1;
+                        None
+                    }
+                    PositionedFrame::Open(owner) => {
+                        depth -= 1;
+                        (depth == 0).then_some((index, owner))
+                    }
+                    PositionedFrame::Box(_) => None,
+                })
+            }
+            PositionedFrame::Open(_) => None,
+        };
+        match first {
+            Some((index, other))
+                if precedes_in_tree(document, id, other)
+                    && !document.is_ancestor_or_self(other, id) =>
+            {
+                at = index;
+            }
+            _ => break,
+        }
+    }
+    frames.insert(at, frame);
 }
 
 /// Whether a box hands the positioned boxes it holds to the enclosing layer.
@@ -1027,6 +1291,7 @@ fn held_levels(document: &Document, cascade: &CascadeResult, id: usize) -> HeldL
             || inside_inline_opacity_group(document, cascade, id)
     };
     let mut held = HeldLevels::None;
+    let paragraphs = LeavingParagraphs::default();
     let mut stack: Vec<(usize, bool)> = if auto {
         let kept = cascade.computed.get(id).is_some_and(|cv| keeps(id, cv));
         children(id, kept).collect()
@@ -1054,7 +1319,7 @@ fn held_levels(document: &Document, cascade: &CascadeResult, id: usize) -> HeldL
             if kept
                 || level < 0
                 || matches!(cv.position, PositionValue::Static)
-                || !defers_to_positioned_layer(document, cascade, child)
+                || !defers_to_positioned_layer(document, cascade, child, &paragraphs)
             {
                 return HeldLevels::Kept;
             }
@@ -1259,6 +1524,30 @@ pub fn inline_stacking_group(
         None => level >= 0 && !within_translucent_first_line(document, root, id),
         Some(context) => paints_as_inline_group(document, cascade, root, context),
     }
+}
+
+/// Whether the group of inline element `id` of paragraph `root`, which
+/// [`inline_stacking_group`] finds, forms a stacking context in the stacking
+/// context of the paragraph: one with a stack level of zero or more outside
+/// every inline box of the paragraph that forms a stacking context.
+///
+/// Such a group paints by stack level among the positioned boxes outside the
+/// paragraph, in tree order within a level (CSS 2.1 Appendix E steps 8 and
+/// 9), so the painters let it wait for the end of the layer like them, when
+/// `can_leave`: what [`content_can_leave_paragraph`] tells of the paragraph,
+/// which callers find once for all its groups.
+pub fn leaves_paragraph_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+    can_leave: bool,
+) -> bool {
+    can_leave
+        && inline_stacking_group(document, cascade, root, id)
+        && document
+            .parent_of(id)
+            .is_some_and(|parent| outside_inline_stacking_contexts(document, cascade, root, parent))
 }
 
 /// Whether inline element `context` of paragraph `root`, which forms a
