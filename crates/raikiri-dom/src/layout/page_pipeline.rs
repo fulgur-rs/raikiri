@@ -1496,6 +1496,36 @@ impl PageOrigins {
         (self.page_index_for_y(margin_start + edge_slack) + 1).min(last_page)
     }
 
+    /// The page a box at flow position `effective_y` falls on when it starts
+    /// a page transition from `current_page`, or `current_page` when the
+    /// position is outside the flow.
+    ///
+    /// Preceding content that overflowed past the current page (a tall box,
+    /// or floats it contains) may have put the box partway down a later page,
+    /// which the flow has reached by `flow_max`. A page-type change sits after
+    /// all of that content, so it opens the page after the one the box's
+    /// margin box starts on, below its block-start `margin_top`, unless that
+    /// margin box is already at the top of a page.
+    fn transition_natural_page(
+        &self,
+        effective_y: f32,
+        margin_top: f32,
+        current_page: u32,
+        flow_max: u32,
+        named_page_change: bool,
+    ) -> u32 {
+        let Some(page) = self.page_index_in_flow(effective_y) else {
+            return current_page;
+        };
+        let margin_box_y = effective_y - margin_top.max(0.0);
+        if named_page_change && page > current_page && flow_max >= page && margin_box_y.is_finite()
+        {
+            self.page_starting_at_or_after(margin_box_y)
+        } else {
+            page
+        }
+    }
+
     /// The page that starts at flow position `y` (within 0.001), or else the
     /// page after the one `y` falls on. A position above the first page falls
     /// on the first page.
@@ -4722,28 +4752,15 @@ fn paginate_flow(
             // page transition) on this box describe the same boundary, not two
             // blank pages.
             if page_transition {
-                let natural_page = if let Some(page) = page_index_in_flow(effective_y) {
-                    // Preceding content that overflowed past the current
-                    // page (a tall box, or floats it contains) has put this
-                    // box partway down a later page. A page-type change sits
-                    // after all of that content, so it opens the page after
-                    // the one the box's margin box starts on, unless that
-                    // margin box is already at the top of a page. Content
-                    // kept on its page as monolithic (see
-                    // `monolithic_paper_fit`) has not opened that later page.
-                    let margin_box_y = effective_y - margin_top.max(0.0);
-                    if named_page_change
-                        && page > current_page
-                        && reach.flow_max >= page
-                        && margin_box_y.is_finite()
-                    {
-                        page_origins.page_starting_at_or_after(margin_box_y)
-                    } else {
-                        page
-                    }
-                } else {
-                    current_page
-                };
+                // Content kept on its page as monolithic (see
+                // `monolithic_paper_fit`) has not opened a later page.
+                let natural_page = page_origins.transition_natural_page(
+                    effective_y,
+                    margin_top,
+                    current_page,
+                    reach.flow_max,
+                    named_page_change,
+                );
                 let target_page = current_page.saturating_add(1).max(natural_page);
                 check_candidate_page!('candidate_loop, target_page);
                 let target_y = page_origin(target_page);
