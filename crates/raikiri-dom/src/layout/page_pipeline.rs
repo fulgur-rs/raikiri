@@ -5065,27 +5065,21 @@ fn paginate_flow(
             && let Some(parent_id) =
                 BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
         {
-            // An empty box right after the forced-break box passes the
-            // break on to the margin after it; any other box ends it.
             if !starts_after_forced_break {
-                let follows_forced_box = sibling_margins
-                    .previous_bottoms
-                    .get(&parent_id)
-                    .is_some_and(|&(previous, _)| {
-                        sibling_margins.follows_forced_break(document, cascade, previous, node_id)
-                    });
-                sibling_margins.forced_break_box = (follows_forced_box
-                    && collapses_with_previous_block
-                    && margins_collapse_through)
-                    .then_some(node_id);
+                sibling_margins.pass_on_forced_break(
+                    document,
+                    cascade,
+                    parent_id,
+                    node_id,
+                    collapses_with_previous_block && margins_collapse_through,
+                );
             }
-            if collapses_with_previous_block {
-                sibling_margins
-                    .previous_bottoms
-                    .insert(parent_id, (node_id, raw_y + height));
-            } else {
-                sibling_margins.previous_bottoms.remove(&parent_id);
-            }
+            sibling_margins.record_bottom(
+                parent_id,
+                node_id,
+                collapses_with_previous_block,
+                raw_y + height,
+            );
         }
 
         let header_delta = make_room_for_table_header(
@@ -6990,6 +6984,40 @@ impl SiblingMargins {
     ) -> bool {
         self.forced_break_box
             .is_some_and(|owner| forced_margin_reaches(document, cascade, owner, previous, node_id))
+    }
+
+    /// Moves the forced break on to `node_id`, a child of `parent_id`, or
+    /// ends it. An empty box right after the forced-break box passes the
+    /// break on to the margin after it when its margins collapse through
+    /// with that margin (`collapses_through`); any other box ends it.
+    fn pass_on_forced_break(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        parent_id: usize,
+        node_id: usize,
+        collapses_through: bool,
+    ) {
+        let follows_forced_box =
+            self.previous_bottoms
+                .get(&parent_id)
+                .is_some_and(|&(previous, _)| {
+                    self.follows_forced_break(document, cascade, previous, node_id)
+                });
+        self.forced_break_box = (follows_forced_box && collapses_through).then_some(node_id);
+    }
+
+    /// Records `bottom`, the unpaginated border-box bottom of `node_id`, as
+    /// the previous bottom for the next block-level child of `parent_id`
+    /// when `node_id` is a block whose margins collapse with its siblings'
+    /// (`collapses`). Any other box ends the run of adjoining siblings, so
+    /// the previous bottom of `parent_id` is forgotten.
+    fn record_bottom(&mut self, parent_id: usize, node_id: usize, collapses: bool, bottom: f32) {
+        if collapses {
+            self.previous_bottoms.insert(parent_id, (node_id, bottom));
+        } else {
+            self.previous_bottoms.remove(&parent_id);
+        }
     }
 }
 
