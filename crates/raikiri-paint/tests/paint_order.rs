@@ -181,6 +181,11 @@ fn api_steps(page: &Page<'_>) -> Vec<Step> {
             PaintEvent::Text(fragment) => {
                 Step::Text(paragraph_root(document, node_index(fragment.node())))
             }
+            // The walker draws the box of an inline `::before` or `::after`
+            // with its paragraph's lines.
+            PaintEvent::GeneratedBox(fragment) => {
+                Step::Text(paragraph_root(document, node_index(fragment.line.root)))
+            }
             _ => panic!("unexpected event {event:?}"),
         };
         if matches!(step, Step::Text(_)) && steps.last() == Some(&step) {
@@ -749,6 +754,30 @@ fn blocks_inside_paragraphs_paint_between_negative_content_and_the_lines() {
                      <div id=k style=\"background: gray; height: 10px\"></div>tail</div>"
                 ),
                 page_css,
+            );
+            let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+            let page = result.pages().next().expect("a page");
+            let steps = walker_steps(&page);
+            let at = step_at(&result, Step::Box(k));
+            assert_eq!(steps[at - 1], Step::Text(m), "{page_css} {style}");
+            assert_eq!(steps[at + 1], Step::Text(m), "{page_css} {style}");
+        }
+    }
+}
+
+/// The text of a `::before` positioned below a paragraph's blocks is traced
+/// before the blocks, like the paragraph's other text positioned there.
+#[test]
+fn negative_pseudo_text_is_traced_before_the_blocks() {
+    let css = "#m::before { content: 'x'; position: relative; z-index: -1 }";
+    for page_css in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let result = assert_same_order(
+                &format!(
+                    "<div id=m style=\"{style}\">over\
+                     <div id=k style=\"background: gray; height: 10px\"></div>tail</div>"
+                ),
+                &format!("{page_css} {css}"),
             );
             let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
             let page = result.pages().next().expect("a page");
