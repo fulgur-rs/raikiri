@@ -6419,8 +6419,6 @@ fn push_in_flow_boxes_rev(
     boxes.push(node_id);
 }
 
-
-
 /// A forced break after a box, kept attached to that box until its
 /// descendants have been visited. Applying it to the first flex child would
 /// turn a break-after on the flex container into an extra blank page.
