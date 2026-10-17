@@ -2147,6 +2147,14 @@ pub(crate) fn paint_document_impl(
         FinishLines {
             root: usize,
         },
+        /// The group of a positioned inline element that forms a stacking
+        /// context in its paragraph's stacking context (see
+        /// [`raikiri_dom::paint_rules::leaves_paragraph_content`]), which
+        /// waits for the end of the layer like the positioned boxes. Its
+        /// lines leave its paint in `left_groups`.
+        InlineGroup {
+            node_id: usize,
+        },
         /// Close a layer of deferred inline content: paint what its blocks
         /// deferred, then drop the layer.
         EndDeferral,
@@ -2308,6 +2316,10 @@ pub(crate) fn paint_document_impl(
     // Boxes recorded before the lines of their paragraph, which place them:
     // the paragraph root, the box and its paint.
     let mut early_boxes: Vec<(usize, usize, anyrender::Scene)> = Vec::new();
+    // The paint of the inline groups waiting for the end of their layer (see
+    // `PaintFrame::InlineGroup`), in page space, by element.
+    let mut left_groups: std::collections::HashMap<usize, (usize, anyrender::Scene)> =
+        std::collections::HashMap::new();
     // Paragraphs whose text below their blocks was traced before the blocks.
     let mut traced_below = std::collections::HashSet::new();
     // How an open layer ends once its subtree is done.
@@ -2365,13 +2377,66 @@ pub(crate) fn paint_document_impl(
     // How the queue of a layer's positioned boxes reads its frames.
     fn positioned_frame(frame: &PaintFrame<'_>) -> raikiri_dom::paint_rules::PositionedFrame {
         match frame {
-            PaintFrame::Visit { node_id, .. } => {
+            PaintFrame::Visit { node_id, .. } | PaintFrame::InlineGroup { node_id } => {
                 raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
             }
             PaintFrame::PushClip { node_id, .. } => {
                 raikiri_dom::paint_rules::PositionedFrame::Open(*node_id)
             }
             _ => raikiri_dom::paint_rules::PositionedFrame::Close,
+        }
+    }
+    // Whether the lines drawn now leave the groups that form stacking
+    // contexts in the paragraph's stacking context to the end of the layer,
+    // where the positioned boxes paint.
+    fn leaves_groups(deferral_scopes: &[DeferralLayer<'_>]) -> bool {
+        deferral_scopes
+            .last()
+            .is_some_and(|layer| layer.allowed && !layer.flushing)
+    }
+    // Composites held lines into `scene` like `HeldLines::finish`, apart
+    // from the groups they leave to the end of the layer, which it returns.
+    fn finish_lines_leaving_groups(
+        scene: &mut impl PaintScene,
+        lines: crate::ifc_text::HeldLines<'_>,
+    ) -> Vec<(usize, anyrender::Scene)> {
+        let (below, blocks, above, left) = lines.finish_leaving_groups(true);
+        scene.append_scene(below, Affine::IDENTITY);
+        for block in blocks {
+            scene.append_scene(block, Affine::IDENTITY);
+        }
+        scene.append_scene(above, Affine::IDENTITY);
+        left
+    }
+    // Lets the groups a paragraph's lines left wait for the end of the
+    // layer, inside `clip`, the clip of the lines, if any.
+    fn leave_groups<'a>(
+        document: &Document,
+        deferral_scopes: &mut [DeferralLayer<'a>],
+        left_groups: &mut std::collections::HashMap<usize, (usize, anyrender::Scene)>,
+        root: usize,
+        left: Vec<(usize, anyrender::Scene)>,
+        clip: Option<(Affine, Rect)>,
+    ) {
+        for (node_id, content) in left {
+            let entry = left_groups.entry(node_id);
+            let waiting = matches!(entry, std::collections::hash_map::Entry::Occupied(_));
+            let (_, paint) = entry.or_insert_with(|| (root, anyrender::Scene::default()));
+            if let Some((transform, clip)) = clip {
+                paint.push_clip_layer(transform, &clip);
+                paint.append_scene(content, Affine::IDENTITY);
+                paint.pop_layer();
+            } else {
+                paint.append_scene(content, Affine::IDENTITY);
+            }
+            if !waiting && let Some(layer) = deferral_scopes.last_mut() {
+                raikiri_dom::paint_rules::insert_positioned_frame(
+                    document,
+                    &mut layer.positioned,
+                    PaintFrame::InlineGroup { node_id },
+                    positioned_frame,
+                );
+            }
         }
     }
     let mut stack = vec![
@@ -2433,7 +2498,12 @@ pub(crate) fn paint_document_impl(
             && !layer.flushing
             && raikiri_dom::paint_rules::defers_to_positioned_layer(document, cascade, *node_id)
         {
-            layer.positioned.push(frame);
+            raikiri_dom::paint_rules::insert_positioned_frame(
+                document,
+                &mut layer.positioned,
+                frame,
+                positioned_frame,
+            );
             continue;
         }
         // The lines of an anonymous cell in a table part that defers wait
@@ -2728,7 +2798,16 @@ pub(crate) fn paint_document_impl(
                 // again.
                 let below = traced_below.remove(&node_id);
                 if let Some(t) = trace.as_deref_mut()
-                    && traced_text(document, cascade, node_id, |negative| !below || !negative)
+                    && traced_text(
+                        document,
+                        cascade,
+                        node_id,
+                        |negative| !below || !negative,
+                        |owner| {
+                            !leaves_groups(&deferral_scopes)
+                                || !in_left_group(document, cascade, node_id, owner, None)
+                        },
+                    )
                 {
                     t.push(crate::PaintTraceEvent::Text(node_id));
                 }
@@ -2780,7 +2859,7 @@ pub(crate) fn paint_document_impl(
                     // The content positioned below the blocks paints first,
                     // then the blocks, then the rest of the lines (CSS 2.1
                     // Appendix E steps 3, 4 and 7).
-                    let (below, _, above) = crate::ifc_text::hold_ifc_lines(
+                    let (below, _, above, left) = crate::ifc_text::hold_ifc_lines(
                         image_cache,
                         document,
                         cascade,
@@ -2797,8 +2876,16 @@ pub(crate) fn paint_document_impl(
                             .map(|lines| lines.translated(translation_y)),
                         paint_transform,
                     )
-                    .map(crate::ifc_text::HeldLines::finish_around_blocks)
+                    .map(|lines| lines.finish_leaving_groups(leaves_groups(&deferral_scopes)))
                     .unwrap_or_default();
+                    leave_groups(
+                        document,
+                        &mut deferral_scopes,
+                        &mut left_groups,
+                        node_id,
+                        left,
+                        text_clip.map(|clip| (page_clip_transform, clip)),
+                    );
                     for (content, blocks) in [(below, early), (above, Vec::new())] {
                         if let Some(clip) = &text_clip {
                             scene.scene.push_clip_layer(page_clip_transform, clip);
@@ -2811,25 +2898,36 @@ pub(crate) fn paint_document_impl(
                             scene.scene.append_scene(block, Affine::IDENTITY);
                         }
                     }
-                } else {
-                    crate::ifc_text::draw_ifc_lines_with_resources(
-                        image_cache,
-                        scene,
-                        document,
-                        cascade,
-                        node_id,
-                        crate::ifc_text::IfcPosition { x, y, shift_y },
-                        &decorations,
-                        fragmentainer,
-                        custom_highlights,
-                        pixel_source,
-                        warnings,
-                        page_box,
-                        page_lines
-                            .filter(|_| !inside_fixed)
-                            .map(|lines| lines.translated(translation_y)),
-                        paint_transform,
-                    );
+                } else if let Some(lines) = crate::ifc_text::hold_ifc_lines(
+                    image_cache,
+                    document,
+                    cascade,
+                    node_id,
+                    crate::ifc_text::IfcPosition { x, y, shift_y },
+                    &decorations,
+                    fragmentainer,
+                    custom_highlights,
+                    pixel_source,
+                    warnings,
+                    page_box,
+                    page_lines
+                        .filter(|_| !inside_fixed)
+                        .map(|lines| lines.translated(translation_y)),
+                    paint_transform,
+                ) {
+                    if leaves_groups(&deferral_scopes) {
+                        let left = finish_lines_leaving_groups(scene, lines);
+                        leave_groups(
+                            document,
+                            &mut deferral_scopes,
+                            &mut left_groups,
+                            node_id,
+                            left,
+                            text_clip.map(|clip| (page_clip_transform, clip)),
+                        );
+                    } else {
+                        lines.finish(scene);
+                    }
                 }
                 scene.transform = saved_transform;
                 if text_clip.is_some() && !around_blocks {
@@ -2918,7 +3016,7 @@ pub(crate) fn paint_document_impl(
             PaintFrame::TraceBelowBlocks { root } => {
                 if let Some(t) = trace.as_deref_mut() {
                     traced_below.insert(root);
-                    if traced_text(document, cascade, root, |negative| negative) {
+                    if traced_text(document, cascade, root, |negative| negative, |_| true) {
                         t.push(crate::PaintTraceEvent::Text(root));
                     }
                 }
@@ -2932,9 +3030,41 @@ pub(crate) fn paint_document_impl(
                 {
                     let saved_transform = scene.transform;
                     scene.transform = lines.paint_transform();
-                    lines.finish(scene);
+                    if leaves_groups(&deferral_scopes) {
+                        let left = finish_lines_leaving_groups(scene, lines);
+                        leave_groups(
+                            document,
+                            &mut deferral_scopes,
+                            &mut left_groups,
+                            root,
+                            left,
+                            None,
+                        );
+                    } else {
+                        lines.finish(scene);
+                    }
                     scene.transform = saved_transform;
                 }
+                continue;
+            }
+            PaintFrame::InlineGroup { node_id } => {
+                if let Some((root, content)) = left_groups.remove(&node_id) {
+                    // The text of one paragraph painted at once is one step,
+                    // even when it spans several groups.
+                    if let Some(t) = trace.as_deref_mut()
+                        && t.last() != Some(&crate::PaintTraceEvent::Text(root))
+                        && traced_text(
+                            document,
+                            cascade,
+                            root,
+                            |_| true,
+                            |owner| in_left_group(document, cascade, root, owner, Some(node_id)),
+                        )
+                    {
+                        t.push(crate::PaintTraceEvent::Text(root));
+                    }
+                    scene.scene.append_scene(content, Affine::IDENTITY);
+                } // cov:ignore: a group's frame is queued once, with its paint, and paints once
                 continue;
             }
             PaintFrame::PopClip => {
@@ -4660,12 +4790,14 @@ pub(crate) fn paint_document_impl(
 /// `::before` or `::after` positioned there (see
 /// [`raikiri_dom::paint_rules::negative_pseudo_group`]). The box of a
 /// block-level `::before` or `::after` positioned there, painted with the
-/// lines, counts as such text even without content.
+/// lines, counts as such text even without content. Only text whose owner
+/// (the text node, or the element generating it) `keeps` counts.
 fn traced_text(
     document: &Document,
     cascade: &CascadeResult,
     root: usize,
     admits: impl Fn(bool) -> bool,
+    keeps: impl Fn(usize) -> bool,
 ) -> bool {
     let below = |start: usize| {
         document
@@ -4690,13 +4822,15 @@ fn traced_text(
             .get_node(owner)
             .and_then(|text| text.text_content())
             .is_some_and(|text| !text.trim().is_empty())
+            && keeps(owner)
             && admits(below(owner))
     }) || generated().any(|owner| {
         raikiri_dom::generated_content::generated_origin(owner).is_some_and(|(element, _)| {
-            admits(
-                raikiri_dom::paint_rules::negative_pseudo_group(document, cascade, root, owner)
-                    || below(element),
-            )
+            keeps(element)
+                && admits(
+                    raikiri_dom::paint_rules::negative_pseudo_group(document, cascade, root, owner)
+                        || below(element),
+                )
         })
     }) || (admits(true)
         && document.get_node(root).is_some_and(|node| {
@@ -4704,6 +4838,26 @@ fn traced_text(
                 raikiri_dom::paint_rules::negative_pseudo_group(document, cascade, root, piece.node)
             })
         }))
+}
+
+/// Whether `start` lies in content of paragraph `root` that leaves the lines
+/// to paint with the positioned boxes (see
+/// [`raikiri_dom::paint_rules::leaves_paragraph_content`]), within `group`
+/// when given.
+fn in_left_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    start: usize,
+    group: Option<usize>,
+) -> bool {
+    document
+        .inclusive_ancestors(start)
+        .take_while(|&id| id != root)
+        .any(|id| {
+            group.is_none_or(|group| group == id)
+                && raikiri_dom::paint_rules::leaves_paragraph_content(document, cascade, root, id)
+        })
 }
 
 /// The first in-document text node below `root`, in document order.

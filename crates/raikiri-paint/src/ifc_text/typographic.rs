@@ -477,11 +477,29 @@ impl TypographicPaint {
     /// paragraph's blocks: the paint below them, the blocks, and the paint
     /// above them.
     pub(super) fn finish_around_blocks(
-        mut self,
+        self,
         clip: Rect,
         paint_transform: Affine,
         first_line: Option<(Self, f32)>,
     ) -> (Scene, Vec<Scene>, Scene) {
+        let (below, blocks, above, _) =
+            self.finish_leaving(clip, paint_transform, first_line, None);
+        (below, blocks, above)
+    }
+
+    /// Composite the groups like [`Self::finish_around_blocks`], apart from
+    /// the groups outside every other group, with a stack level of zero or
+    /// more, whose owner `leaves` holds: those are returned by owner, in
+    /// tree order, for the caller to paint among the positioned boxes of
+    /// the paragraph's stacking context.
+    pub(super) fn finish_leaving(
+        mut self,
+        clip: Rect,
+        paint_transform: Affine,
+        first_line: Option<(Self, f32)>,
+        leaves: Option<&dyn Fn(usize) -> bool>,
+    ) -> (Scene, Vec<Scene>, Scene, Vec<(usize, Scene)>) {
+        let mut left = Vec::new();
         // The enclosing TransformScene transforms recorded commands on replay.
         // Counter-transform only the opacity clip so it remains in page space.
         let inverse = paint_transform.inverse();
@@ -545,6 +563,7 @@ impl TypographicPaint {
             // the parent's own boxes (Appendix E step 3).
             let parent = group.parent;
             let level = group.level;
+            let owner = group.owner;
             let insertion = if level < 0 {
                 0
             } else {
@@ -561,9 +580,13 @@ impl TypographicPaint {
                         order.push(parent);
                     }
                 }
+                None if level >= 0 && leaves.is_some_and(|leaves| leaves(owner)) => {
+                    left.push((index, owner, child.3));
+                }
                 None => roots.push(child),
             }
         }
+        left.sort_by_key(|&(index, _, _)| index);
         // Groups and boxes with negative stack levels outside every group
         // paint below the blocks, at the start of the paragraph's paint.
         let (below, above): (Vec<_>, Vec<_>) =
@@ -572,6 +595,9 @@ impl TypographicPaint {
             merge_children(Scene::new(), below),
             self.blocks,
             merge_children(self.normal, above),
+            left.into_iter()
+                .map(|(_, owner, scene)| (owner, scene))
+                .collect(),
         )
     }
 }
