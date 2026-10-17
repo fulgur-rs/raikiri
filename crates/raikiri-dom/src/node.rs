@@ -930,6 +930,12 @@ impl Node {
             &lines.lines,
             root.writing_mode,
             content_size,
+            |id| {
+                root.generated_boxes
+                    .iter()
+                    .find(|generated| generated.id == id)
+                    .map(|generated| generated.edges(Some(lines.width)))
+            },
         );
         // A first letter never retains paint boxes on a later formatted line.
         pieces.retain(|piece| {
