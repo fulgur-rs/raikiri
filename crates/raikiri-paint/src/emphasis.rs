@@ -201,8 +201,8 @@ fn shape_upright_mark(
 /// `writing_mode`, to the ifc root's, whose page origin is `origin`. Each
 /// mark's em box is centered on its cluster's advance and starts the mark's
 /// offset from the run's baseline toward its side. A run of
-/// `text-combine-upright` text takes one mark per combined square, centered
-/// on the square, as its characters take none of their own.
+/// `text-combine-upright` text takes one mark per combined square it starts,
+/// centered on the square, as its characters take none of their own.
 pub(crate) fn draw_vertical_marks(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -244,9 +244,11 @@ pub(crate) fn draw_vertical_marks(
         );
     };
     if run.orientation() == shodo::GlyphOrientation::Combined {
+        // A square can span several runs; only the run holding its first
+        // character marks it, so it takes one mark.
         let text = run.text_range();
         for combination in line.text_combinations() {
-            if combination.text_range.start < text.end && text.start < combination.text_range.end {
+            if text.contains(&combination.text_range.start) {
                 let square = combination.square;
                 draw(
                     square.inline_start + square.inline_size / 2.0,
