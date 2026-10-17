@@ -7,7 +7,7 @@
 pub mod markers;
 
 use crate::Document;
-use crate::target::CounterSnapshot;
+use crate::target::{CounterSnapshot, CounterSnapshots};
 use raikiri_style::property::{
     ContentComponent, CounterStyle, DisplayValue, FloatValue, PositionValue, QuoteKeyword,
 };
@@ -281,7 +281,7 @@ pub fn generated_pieces<'a>(
     cascade: &'a CascadeResult,
     element: usize,
     pseudo: PseudoElem,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> Option<(&'a ComputedValues, Vec<GeneratedPiece>)> {
     if !matches!(pseudo, PseudoElem::Before | PseudoElem::After) {
         return None;
@@ -289,8 +289,7 @@ pub fn generated_pieces<'a>(
     let computed = cascade
         .pseudo
         .get(&(StyleNodeId::new(element as u64), pseudo))?;
-    let base = snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
-    let counters = CounterSnapshotView::new(base, Some(computed));
+    let counters = pseudo_counters(snapshots, element, pseudo, computed);
     let mut pieces = Vec::new();
     let tail = content_components_visit(
         document,
@@ -322,7 +321,7 @@ pub fn generated_text<'a>(
     cascade: &'a CascadeResult,
     element: usize,
     pseudo: PseudoElem,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> Option<(&'a ComputedValues, String)> {
     if pseudo == PseudoElem::Marker {
         return markers::marker_render_info_with_snapshots(document, cascade, element, snapshots);
@@ -330,8 +329,7 @@ pub fn generated_text<'a>(
     let computed = cascade
         .pseudo
         .get(&(StyleNodeId::new(element as u64), pseudo))?;
-    let base = snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
-    let counters = CounterSnapshotView::new(base, Some(computed));
+    let counters = pseudo_counters(snapshots, element, pseudo, computed);
     let content = content_components_to_text_with_quotes(
         document,
         element,
@@ -354,14 +352,13 @@ pub fn generated_alt_text(
     cascade: &CascadeResult,
     element: usize,
     pseudo: PseudoElem,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> Option<String> {
     let computed = cascade
         .pseudo
         .get(&(StyleNodeId::new(element as u64), pseudo))?;
     let alt = computed.content.alt()?;
-    let base = snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
-    let counters = CounterSnapshotView::new(base, Some(computed));
+    let counters = pseudo_counters(snapshots, element, pseudo, computed);
     content_components_to_text_with_quotes(
         document,
         element,
@@ -371,6 +368,25 @@ pub fn generated_alt_text(
         &counters,
         &cascade.counter_styles,
     )
+}
+
+/// The counters that the content of the `pseudo` of `element` reads: the
+/// walk's snapshot after the pseudo-element's own directives, or, when the
+/// walk took none for it, the element's snapshot with the pseudo-element's
+/// directives applied locally.
+fn pseudo_counters<'a>(
+    snapshots: &'a CounterSnapshots,
+    element: usize,
+    pseudo: PseudoElem,
+    computed: &'a ComputedValues,
+) -> CounterSnapshotView<'a> {
+    match snapshots.pseudo(element, pseudo) {
+        Some(snapshot) => CounterSnapshotView::new(snapshot, None),
+        None => CounterSnapshotView::new(
+            snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT),
+            Some(computed),
+        ),
+    }
 }
 
 static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =

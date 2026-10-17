@@ -47,7 +47,7 @@ fn generated_pseudo_content_with_snapshots<'a>(
     cascade: &'a CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-    snapshots: &[CounterSnapshot],
+    snapshots: &crate::CounterSnapshots,
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     crate::generated_content::generated_text(document, cascade, node_id, pseudo, snapshots)
 }
@@ -293,7 +293,8 @@ fn marker_render_info_resolves_named_counters_from_element_scopes() {
         &snapshots,
     )
     .expect("generated after content");
-    assert_eq!(after_content, "4");
+    // `::after` follows both list items, so it reads their increments.
+    assert_eq!(after_content, "6");
 }
 
 #[test]

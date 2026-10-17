@@ -76,8 +76,14 @@ fn generated_pieces_keep_images_in_place_and_text_drops_them() {
     document.mark_in_document_flags();
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade succeeds");
-    let (_, pieces) = generated_pieces(&document, &cascade, element, PseudoElem::Before, &[])
-        .expect("before content");
+    let (_, pieces) = generated_pieces(
+        &document,
+        &cascade,
+        element,
+        PseudoElem::Before,
+        &CounterSnapshots::default(),
+    )
+    .expect("before content");
     assert_eq!(
         pieces,
         [
@@ -88,18 +94,42 @@ fn generated_pieces_keep_images_in_place_and_text_drops_them() {
         ]
     );
     // The text of the same content leaves the images out.
-    let (_, text) =
-        generated_text(&document, &cascade, element, PseudoElem::Before, &[]).expect("before text");
+    let (_, text) = generated_text(
+        &document,
+        &cascade,
+        element,
+        PseudoElem::Before,
+        &CounterSnapshots::default(),
+    )
+    .expect("before text");
     assert_eq!(text, "AB");
     // `::marker` content is not split into pieces, and a pseudo-element
     // without content has none.
-    assert!(generated_pieces(&document, &cascade, element, PseudoElem::Marker, &[]).is_none());
+    assert!(
+        generated_pieces(
+            &document,
+            &cascade,
+            element,
+            PseudoElem::Marker,
+            &CounterSnapshots::default()
+        )
+        .is_none()
+    );
     assert!(
         cascade
             .pseudo
             .contains_key(&(StyleNodeId::new(element as u64), PseudoElem::After))
     );
-    assert!(generated_pieces(&document, &cascade, element, PseudoElem::After, &[]).is_none());
+    assert!(
+        generated_pieces(
+            &document,
+            &cascade,
+            element,
+            PseudoElem::After,
+            &CounterSnapshots::default()
+        )
+        .is_none()
+    );
 }
 
 #[test]

@@ -494,7 +494,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
 fn shared_counter_snapshots(
     document: &Document,
     cascade: &CascadeResult,
-) -> Result<std::sync::Arc<Vec<raikiri_dom::CounterSnapshot>>, raikiri_traits::RenderError> {
+) -> Result<std::sync::Arc<raikiri_dom::CounterSnapshots>, raikiri_traits::RenderError> {
     document.shared_counter_snapshots(cascade).map_err(|error| {
         raikiri_traits::RenderError::LimitExceeded {
             kind: raikiri_traits::LimitKind::CounterSnapshots,
