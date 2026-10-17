@@ -85,10 +85,13 @@ pub(crate) fn missing_glyph_origins(
     // rather than by a scan of the whole run.
     let mut glyphs: Vec<_> = glyphs.into_iter().collect();
     glyphs.sort_by_key(|&(offset, ..)| offset);
+    // Layout advances the pen in 1/64 px and rounds each stub glyph's em to
+    // that, so boxes are counted and spaced by the rounded em.
+    let pitch = (size * 64.0).round() / 64.0;
     let mut origins = Vec::new();
     for cluster in run.clusters() {
-        let boxes = (cluster.shaping_advance / size).round();
-        // A zero font size gives no count at all. With no font in the
+        let boxes = (cluster.shaping_advance / pitch).round();
+        // An em that rounds to zero gives no count at all. With no font in the
         // document, the stub face also shapes white space, which stays blank.
         if boxes.is_nan() || boxes < 1.0 || cluster.flags.whitespace {
             continue;
@@ -107,9 +110,6 @@ pub(crate) fn missing_glyph_origins(
         // off that grid, so the boxes go on the grid that holds the most
         // origins, starting from the leftmost such origin.
         let count = boxes as usize;
-        // Layout rounds the em before it advances the pen, so the grid's
-        // pitch is the cluster's own advance per box, not the font size.
-        let pitch = cluster.shaping_advance / boxes;
         let on_grid = |anchor: f32, x: f32| {
             let steps = (x - anchor) / pitch;
             let step = steps.round();

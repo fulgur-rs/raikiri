@@ -3659,6 +3659,11 @@ fn zero_advance_stub_glyphs_take_no_box_of_their_own() {
             "10.1px",
             5,
         ),
+        (
+            "\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}",
+            "0.1px",
+            9,
+        ),
     ] {
         let style = format!("width:200px;font-size:{font_size}");
         let scene = painted_root(&style, |doc, root| {
