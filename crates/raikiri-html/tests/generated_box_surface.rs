@@ -1098,3 +1098,23 @@ fn a_generated_box_on_a_line_taller_than_the_page_is_on_every_page_of_its_line()
         assert_eq!(boxes, 1, "page {number}");
     }
 }
+
+/// A shrink-to-fit box holds the image of its `::before`, also when the
+/// image is its only content.
+#[test]
+fn a_before_image_sizes_a_shrink_to_fit_box() {
+    let document = lay_out(
+        "<div></div>",
+        "div{float:left;background:lime}div::before{content:url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E)}",
+    );
+    let page = document.page(0).unwrap();
+    let widths: Vec<f32> = page
+        .paint_order_for_text_runs(&page.text_runs())
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::Box(fragment) => Some(fragment.rect().width),
+            _ => None,
+        })
+        .collect();
+    assert!(widths.contains(&10.0), "{widths:?}");
+}
