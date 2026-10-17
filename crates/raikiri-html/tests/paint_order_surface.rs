@@ -634,6 +634,58 @@ fn line_order(body: &str, style: &str) -> Vec<String> {
     order
 }
 
+/// A box that is not visible lists no decoration of its own, whether it is a
+/// block, a table part, a line piece of a split inline element or a generated
+/// box, while the boxes inside it that are visible still list theirs.
+#[test]
+fn boxes_that_are_not_visible_list_no_decoration() {
+    for keyword in ["hidden", "collapse"] {
+        let hidden = format!("visibility:{keyword};background:red");
+        assert_eq!(
+            line_order(
+                &format!(
+                    "<div id=d style='{hidden}'>\
+                     <div id=e style='visibility:visible;background:blue'>A</div></div>"
+                ),
+                "",
+            ),
+            ["box e", "text 0"]
+        );
+        // A cell takes `collapse` from its row, as it takes `hidden`.
+        assert_eq!(
+            line_order(
+                &format!(
+                    "<table><tr id=r style='{hidden}'><td id=c>A</td></tr>\
+                     <tr><td id=v>B</td></tr></table>"
+                ),
+                "",
+            ),
+            ["box v", "text 0"]
+        );
+        assert_eq!(
+            line_order(
+                &format!("<p id=p>A<span id=s style='{hidden}'>B<br>C</span></p>"),
+                "#p::first-line {opacity:.5}",
+            ),
+            ["box p", "push 0.5", "text 0", "pop"]
+        );
+        assert_eq!(
+            line_order(
+                "<p id=p>A</p>",
+                &format!("#p::before {{content:'X';{hidden}}}"),
+            ),
+            ["box p", "text 0"]
+        );
+    }
+    assert_eq!(
+        line_order(
+            "<p id=p>A</p>",
+            "#p::before {content:'X';visibility:visible;background:red}",
+        ),
+        ["box p", "generated 0", "text 0"]
+    );
+}
+
 /// A translucent `::first-line` composites the first line's content as one
 /// group, listed after the paragraph's other lines, and splits the groups
 /// of the inline elements on it.

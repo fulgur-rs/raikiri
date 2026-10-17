@@ -1746,3 +1746,33 @@ fn a_z_indexed_span_paints_over_the_later_text_of_its_paragraph() {
         .collect();
     assert_eq!(texts, [by_id(&result, "b"), by_id(&result, "a")]);
 }
+
+/// A box that is not visible lists no decoration of its own in either order,
+/// while a visible box inside it does.
+#[test]
+fn boxes_that_are_not_visible_keep_native_and_public_order() {
+    for keyword in ["hidden", "collapse"] {
+        let result = assert_same_order(
+            &format!(
+                "<div id=a style='visibility:{keyword};background:red'>\
+                 <div id=b style='visibility:visible;background:blue'>x</div></div>\
+                 <table><tr id=r style='visibility:{keyword};background:red'>\
+                 <td id=c>y</td></tr></table>"
+            ),
+            "",
+        );
+        let page = result.pages().next().expect("a page");
+        let boxes: Vec<usize> = page
+            .paint_order()
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::Box(fragment) => Some(node_index(fragment.node())),
+                _ => None,
+            })
+            .collect();
+        for hidden in ["a", "r", "c"] {
+            assert!(!boxes.contains(&by_id(&result, hidden)), "{hidden}");
+        }
+        assert!(boxes.contains(&by_id(&result, "b")));
+    }
+}

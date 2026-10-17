@@ -30,7 +30,7 @@ use raikiri_style::property::{
     CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient, GradientStopColor,
     HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
     OutlineStyle, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
-    UnboundedColor, VerticalAlign, Visibility, VisualBox, ZIndexValue,
+    UnboundedColor, VerticalAlign, VisualBox, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -2544,7 +2544,7 @@ pub(crate) fn paint_document_impl(
                             ),
                         )
                     });
-                if cascade.computed[owner].visibility != Visibility::Hidden
+                if !raikiri_dom::paint_rules::hides_own_box(&cascade.computed[owner])
                     && cell_on_band
                     && let Some(border) = cell.collapsed_border()
                 {
@@ -3278,9 +3278,7 @@ pub(crate) fn paint_document_impl(
                     .get_node(node_id)
                     .and_then(|node| node.collapsed_border())
                     .unwrap_or(&cv.border);
-                // A hidden table must not paint its own collapsed border. Keep
-                // row/cell visibility handling unchanged; `visibility: collapse`
-                // is table-layout-specific and existing row painting relies on it.
+                // A hidden table must not paint its own collapsed border.
                 let visibility_hidden_table =
                     raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
                 let mut paints_on_page = !visibility_hidden_table
@@ -3502,6 +3500,7 @@ pub(crate) fn paint_document_impl(
                 {
                     if let Some(t) = trace.as_deref_mut()
                         && generates_box
+                        && !raikiri_dom::paint_rules::hides_own_box(cv)
                     {
                         t.push(crate::PaintTraceEvent::Box(node_id));
                     }
@@ -3544,10 +3543,11 @@ pub(crate) fn paint_document_impl(
                     };
                     // A `display: contents` element has no box whose
                     // background, borders or outline could paint; its
-                    // generated content still does.
-                    let paints_table_part = generates_box
-                        && !raikiri_dom::paint_rules::is_visibility_hidden_table_part(cv);
-                    if paints_table_part {
+                    // generated content still does. Neither does a box that
+                    // is not visible, whose descendants may still be.
+                    let paints_own_box =
+                        generates_box && !raikiri_dom::paint_rules::hides_own_box(cv);
+                    if paints_own_box {
                         // Paint element background (CSS Backgrounds 3 §2.2).
                         // Shift applies to the box itself per CSS 2.1 §10.8.1.
                         let clip_background = page_content_clip.filter(|_| {
@@ -3660,7 +3660,7 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::TableColumn
                             | DisplayValue::TableCell
                     );
-                    let border_image_drawn = paints_table_part
+                    let border_image_drawn = paints_own_box
                         && !collapsed_internal_table_box
                         && if paints_as_absolute_continuation && unfragmented_top < own_paint_y {
                             // A continuation fragment slices the image laid
@@ -3712,7 +3712,7 @@ pub(crate) fn paint_document_impl(
                         border_covered_by_background || border_image_drawn;
                     // Paint border on top of background (CSS Backgrounds 3 §5).
                     let paints_continuation_border =
-                        paints_table_part && paints_as_absolute_continuation;
+                        paints_own_box && paints_as_absolute_continuation;
                     if !border_covered_by_background && paints_continuation_border {
                         paint_element_border_with_top(
                             scene,
@@ -3724,7 +3724,7 @@ pub(crate) fn paint_document_impl(
                             cv.color,
                             false,
                         );
-                    } else if paints_table_part && !border_covered_by_background {
+                    } else if paints_own_box && !border_covered_by_background {
                         paint_element_border_rounded(
                             scene,
                             own_paint_width,
@@ -3743,7 +3743,7 @@ pub(crate) fn paint_document_impl(
                     // outside the border edge (CSS Basic UI §4). Each box of a
                     // sliced box draws a whole outline around itself, like the
                     // pieces of an inline box.
-                    if paints_table_part {
+                    if paints_own_box {
                         paint_element_outline(
                             scene,
                             own_paint_width,
@@ -3823,7 +3823,7 @@ pub(crate) fn paint_document_impl(
                                 .get(node_id)
                                 .copied()
                                 .unwrap_or(false),
-                            cv.visibility != Visibility::Hidden,
+                            !raikiri_dom::paint_rules::hides_own_box(cv),
                             warnings,
                         )
                     } else if document.is_canvas_element(node_id) {
@@ -3848,7 +3848,7 @@ pub(crate) fn paint_document_impl(
                             &paint_padding,
                             cv.object_fit,
                             &cv.object_position,
-                            cv.visibility != Visibility::Hidden,
+                            !raikiri_dom::paint_rules::hides_own_box(cv),
                         )
                     } else if let Some(source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
@@ -3868,7 +3868,7 @@ pub(crate) fn paint_document_impl(
                             &layout.padding,
                             cv.object_fit,
                             &cv.object_position,
-                            cv.visibility != Visibility::Hidden,
+                            !raikiri_dom::paint_rules::hides_own_box(cv),
                             node_id,
                             warnings,
                         )
@@ -3876,6 +3876,7 @@ pub(crate) fn paint_document_impl(
                         false
                     };
                     if !painted_image
+                        && paints_own_box
                         && pixel_source.is_none()
                         && node.tag_name() == Some("img")
                         && let Some(src) = node.attribute("src")
@@ -3924,7 +3925,7 @@ pub(crate) fn paint_document_impl(
                         }
                         scene.pop_layer();
                     }
-                    if has_column_rules && cv.visibility == Visibility::Visible {
+                    if has_column_rules && !raikiri_dom::paint_rules::hides_own_box(cv) {
                         // Rules obey the owner's overflow, while an outside marker
                         // remains outside that clip and paints above the rule.
                         let rule_clip = raikiri_dom::paint_rules::overflow_clip(
