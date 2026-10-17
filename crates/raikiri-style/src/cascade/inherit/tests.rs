@@ -11436,7 +11436,7 @@ fn root_self_referential_lh_uses_the_initial_fonts_normal_line() {
 }
 
 #[test]
-fn svg_font_size_ch_exports_the_measured_em_multiple() {
+fn svg_font_size_ch_exports_the_fallback_em_multiple() {
     let mut doc = TestDoc::new();
     let style = doc.push_element(0, "style", None);
     doc.push_text(style, "#text { font-size: 2ch }");
@@ -11455,11 +11455,11 @@ fn svg_font_size_ch_exports_the_measured_em_multiple() {
         .iter()
         .find(|property| property.property == PropertyKey::FontSize)
         .and_then(|property| property.expression.as_deref());
-    assert_eq!(font_size, Some("4em"));
+    assert_eq!(font_size, Some("1em"));
 }
 
 #[test]
-fn svg_font_size_calc_with_ch_exports_its_measured_em_multiple() {
+fn svg_font_size_calc_with_ch_exports_the_fallback_em_multiple() {
     let mut doc = TestDoc::new();
     let style = doc.push_element(0, "style", None);
     doc.push_text(
@@ -11481,7 +11481,7 @@ fn svg_font_size_calc_with_ch_exports_its_measured_em_multiple() {
         .iter()
         .find(|property| property.property == PropertyKey::FontSize)
         .and_then(|property| property.expression.as_deref());
-    assert_eq!(font_size, Some("5.5em"));
+    assert_eq!(font_size, Some("2.5em"));
 }
 
 #[test]

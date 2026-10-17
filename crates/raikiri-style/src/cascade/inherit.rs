@@ -671,7 +671,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             // staging representation, so winner application order does not matter.
             let mut specified = SpecifiedValues::inherit_from(parent_computed);
             if let Some(candidates) = element_candidates {
-                apply_winners_with_normal_line_height(
+                apply_winners(
                     candidates,
                     &mut winners,
                     &mut specified,
@@ -680,7 +680,6 @@ pub(crate) fn walk_from<D: StyleDom>(
                     Some(&mut out.page_values[idx]),
                     Some(&mut out.authored_writing_modes[idx]),
                     is_svg.then_some(&mut node_svg_properties),
-                    options.normal_line_height,
                 );
             }
 
@@ -1297,34 +1296,9 @@ pub(crate) fn apply_winners(
     specified: &mut SpecifiedValues,
     inherited: &ComputedValues,
     custom_properties: &CustomPropertyEnvironment,
-    page_value: Option<&mut crate::property::PageValue>,
-    authored_writing_mode: Option<&mut Option<WritingMode>>,
-    svg_properties: Option<&mut Vec<SvgStyleProperty>>,
-) {
-    apply_winners_with_normal_line_height(
-        candidates,
-        winners,
-        specified,
-        inherited,
-        custom_properties,
-        page_value,
-        authored_writing_mode,
-        svg_properties,
-        None,
-    );
-}
-
-#[allow(clippy::too_many_arguments)] // winner application writes independent cascade metadata outputs
-fn apply_winners_with_normal_line_height(
-    candidates: ElementCandidates<'_>,
-    winners: &mut Vec<Option<RankedDecl>>,
-    specified: &mut SpecifiedValues,
-    inherited: &ComputedValues,
-    custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
-    normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
 ) {
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
     let flow = flow_mapping(candidates, inherited, |key, idx| {
@@ -1478,9 +1452,7 @@ fn apply_winners_with_normal_line_height(
                             if color.key == crate::property::PropertyKey::Color
                                 && svg_color_is_current_color(&color.source))
                         || (value.is_none() && svg_property_is_inherited(winner_key)),
-                    expression: value.as_ref().and_then(|value| {
-                        svg_property_expression(value, inherited, normal_line_height)
-                    }),
+                    expression: value.as_ref().and_then(svg_property_expression),
                 });
             }
             if let Some(value) = value {
@@ -1555,64 +1527,28 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
     )
 }
 
-fn svg_ch_em_ratio(
-    inherited: &ComputedValues,
-    normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
-) -> f32 {
-    let advance = normal_line_height
-        .and_then(|measurer| {
-            measurer.ch_advance(&crate::ChFontKey {
-                family: inherited.font_family.clone(),
-                size: inherited.font_size,
-                weight: inherited.font_weight,
-                style: inherited.font_style,
-                optical_sizing: inherited.font_optical_sizing,
-            })
-        })
-        .unwrap_or(ComputedLength(inherited.font_size.0 * 0.5));
-    if inherited.font_size.0 == 0.0 {
-        0.5
-    } else {
-        advance.0 / inherited.font_size.0
-    }
-}
-
-fn svg_property_expression(
-    value: &PropertyValue,
-    inherited: &ComputedValues,
-    normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
-) -> Option<String> {
+fn svg_property_expression(value: &PropertyValue) -> Option<String> {
     match value {
         PropertyValue::FontSize(Length::Em(_) | Length::Percent(_) | Length::Ex(_)) => {
             crate::property::serialize_value(value)
         }
         // SVG 1.1 lengths, as SVG renderers such as usvg parse them, have no
-        // `ch` or `ic` unit. Export `ch` as an equivalent `em` multiple using
-        // the inherited font's measured U+0030 advance, or its `0.5em` fallback.
+        // `ch` or `ic` unit. Keep `ch` on its `0.5em` fallback because this
+        // export has no per-instance font metrics for SVG `<use>`.
         PropertyValue::FontSize(Length::Ch(value)) => {
-            let em = value * svg_ch_em_ratio(inherited, normal_line_height);
-            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(em)))
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(value * 0.5)))
         }
         PropertyValue::FontSize(Length::Ic(value)) => {
             crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(*value)))
         }
-        // A calc made only of percentages, `em`, and `ch` stays relative as
-        // its equivalent `em` multiple; a calc with an absolute length or
-        // another relative basis keeps its computed px size (SVG 1.1 lengths
-        // have no `calc()` or `ch`).
+        // A calc that only scales the parent's size stays relative as its
+        // `em` multiple; any other calc keeps its computed px size (SVG 1.1
+        // lengths have no `calc()`). Relative `ch` terms use the `0.5em`
+        // fallback because this export has no per-instance font metrics.
         PropertyValue::FontSizeCalc(calc) => {
-            let ch_ratio = if calc
-                .relative_terms()
-                .any(|(unit, _)| unit == crate::property::RelativeCalcUnit::Ch)
-            {
-                svg_ch_em_ratio(inherited, normal_line_height)
-            } else {
-                0.5
-            };
-            calc.font_size_scale_with_ch_ratio(ch_ratio)
-                .and_then(|scale| {
-                    crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
-                })
+            calc.font_size_scale_with_ch_ratio(0.5).and_then(|scale| {
+                crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
+            })
         }
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
