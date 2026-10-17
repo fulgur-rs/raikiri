@@ -582,6 +582,8 @@ pub(crate) fn hold_ifc_lines<'a>(
                 position,
                 offsets,
                 custom_highlights,
+                &positioned_line.runs,
+                &positioned_line.converter,
             );
         }
         let resolved_decorations = raikiri_dom::text_decoration::positioned_line_decorations(
@@ -853,21 +855,90 @@ fn draw_custom_highlights(
     position: IfcPosition,
     offsets: &[(usize, (f32, f32))],
     custom_highlights: &[crate::TextHighlightRange],
+    runs: &[raikiri_dom::PositionedRun<'_>],
+    converter: &PhysicalConverter,
+) {
+    let highlights = LineHighlights {
+        paragraph,
+        position,
+        offsets,
+        custom_highlights,
+        converter,
+    };
+    draw_line_highlights(
+        paint,
+        &highlights,
+        line,
+        hit_layout,
+        line_index,
+        |inline, block| (inline, block),
+    );
+    // A ruby annotation's text lies on a line of its own, which the
+    // paragraph's line layout does not hold.
+    let mut annotations: Vec<raikiri_dom::AnnotationRun<'_>> = Vec::new();
+    for annotation in runs.iter().filter_map(|run| run.annotation) {
+        // An annotation with several runs is drawn once.
+        if !annotations
+            .iter()
+            .any(|seen| std::ptr::eq(seen.line, annotation.line))
+        {
+            annotations.push(annotation);
+        }
+    }
+    for annotation in annotations {
+        let layout = LineLayout::new(std::slice::from_ref(annotation.line));
+        draw_line_highlights(
+            paint,
+            &highlights,
+            annotation.line,
+            &layout,
+            0,
+            |inline, block| annotation.to_paragraph(inline, block),
+        );
+    }
+}
+
+/// The custom highlights of one line of a paragraph and where they paint.
+struct LineHighlights<'a> {
+    paragraph: Paragraph<'a>,
+    position: IfcPosition,
+    offsets: &'a [(usize, (f32, f32))],
+    custom_highlights: &'a [crate::TextHighlightRange],
+    /// The map from the paragraph's logical coordinates to physical ones.
+    converter: &'a PhysicalConverter,
+}
+
+/// Fill the highlighted text of `line`, line `line_index` of
+/// `hit_layout`, whose logical coordinates `place` maps to the
+/// paragraph's.
+fn draw_line_highlights(
+    paint: &mut typographic::TypographicPaint,
+    highlights: &LineHighlights<'_>,
+    line: &shodo::Line,
+    hit_layout: &LineLayout<'_>,
+    line_index: usize,
+    place: impl Fn(f32, f32) -> (f32, f32),
 ) {
     let Paragraph {
         document,
         cascade,
         root_id,
-    } = paragraph;
+    } = highlights.paragraph;
+    let position = highlights.position;
     let line_range = line.text_range();
     let Some(offset_mapping) = line.offset_mapping() else {
         return;
     };
-    for highlight in custom_highlights {
-        let foreground = cascade
-            .computed
-            .get(highlight.node)
-            .map_or(raikiri_style::CssColor::BLACK, |values| values.color);
+    for highlight in highlights.custom_highlights {
+        let values = cascade.computed.get(highlight.node);
+        // Hidden text is laid out but not painted, and neither is its
+        // highlight. Its line can still hold visible text.
+        if values
+            .is_some_and(|values| values.visibility != raikiri_style::property::Visibility::Visible)
+        {
+            continue;
+        }
+        let foreground = values.map_or(raikiri_style::CssColor::BLACK, |values| values.color);
         let Some(color) = cascade.custom_highlight_background(&highlight.name, foreground) else {
             continue;
         };
@@ -907,26 +978,34 @@ fn draw_custom_highlights(
             continue;
         }
         let color = css_color_to_peniko(color);
-        let (offset_x, offset_y) = cumulative_offset(document, root_id, offsets, highlight.node);
+        let (offset_x, offset_y) =
+            cumulative_offset(document, root_id, highlights.offsets, highlight.node);
         // The highlight paints with its text, in the groups of the inline
         // elements around it.
         let group = paint.element_group(
-            paragraph,
+            highlights.paragraph,
             paint_box(document, cascade, highlight.node, highlight.node),
         );
         let scene = paint.target(group);
         for selected in selection {
+            let (inline_a, block_a) = place(selected.inline_start, selected.block_start);
+            let (inline_b, block_b) = place(
+                selected.inline_start + selected.inline_size,
+                selected.block_start + selected.block_size,
+            );
+            let placed = highlights.converter.rect(shodo::geometry::LogicalRect {
+                inline_start: inline_a.min(inline_b),
+                block_start: block_a.min(block_b),
+                inline_size: (inline_b - inline_a).abs(),
+                block_size: (block_b - block_a).abs(),
+            });
+            let x = position.x + offset_x + placed.x;
+            let y = position.y + position.shift_y + offset_y + placed.y;
             let rect = Rect::new(
-                f64::from(position.x + offset_x + selected.inline_start),
-                f64::from(position.y + position.shift_y + offset_y + selected.block_start),
-                f64::from(position.x + offset_x + selected.inline_start + selected.inline_size),
-                f64::from(
-                    position.y
-                        + position.shift_y
-                        + offset_y
-                        + selected.block_start
-                        + selected.block_size,
-                ),
+                f64::from(x),
+                f64::from(y),
+                f64::from(x + placed.width),
+                f64::from(y + placed.height),
             );
             scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
         }

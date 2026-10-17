@@ -294,6 +294,205 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
     assert!(highlight_index < glyph_index);
 }
 
+/// Paint a ruby `<ruby>a<rt>xyz</rt></ruby>` with `ruby_style` in a
+/// paragraph with `paragraph_style`, the text of its annotation highlighted, and return the highlight's rectangles and the
+/// origins of the annotation's glyphs.
+fn highlighted_ruby_annotation(
+    paragraph_style: &str,
+    ruby_style: &str,
+) -> (Vec<kurbo::Rect>, Vec<kurbo::Point>) {
+    use anyrender::types::Paint;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "::highlight(sample) { background-color: rgb(0, 255, 255); }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some(paragraph_style));
+    let ruby = doc.append_element(Some(paragraph), "ruby", Style::default(), Some(ruby_style));
+    let base = doc.append_element(
+        Some(ruby),
+        "rb",
+        Style::default(),
+        Some("display:ruby-base"),
+    );
+    doc.append_text(base, "a");
+    let annotation = doc.append_element(
+        Some(ruby),
+        "rt",
+        Style::default(),
+        Some("display:ruby-text;font-size:10px"),
+    );
+    let text = doc.append_text(annotation, "xyz");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &[TextHighlightRange {
+            name: "sample".to_owned(),
+            node: text,
+            start_byte: 0,
+            end_byte: 3,
+        }],
+    )
+    .expect("paint succeeds");
+    let highlights = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill)
+                if fill.brush == Paint::Solid(Color::from_rgba8(0, 255, 255, 255)) =>
+            {
+                Some(kurbo::Shape::bounding_box(
+                    &(fill.transform * fill.shape.clone()),
+                ))
+            }
+            _ => None,
+        })
+        .collect();
+    let glyphs = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) if run.glyphs.len() == 3 => Some(
+                run.glyphs
+                    .iter()
+                    .map(|glyph| {
+                        run.transform * kurbo::Point::new(f64::from(glyph.x), f64::from(glyph.y))
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .next()
+        .expect("the annotation's glyphs should be painted");
+    (highlights, glyphs)
+}
+
+#[test]
+fn custom_highlight_paints_the_text_of_a_ruby_annotation() {
+    let (highlights, glyphs) =
+        highlighted_ruby_annotation("display:block;font-size:20px", "display:ruby");
+    assert_eq!(highlights.len(), 1, "{highlights:?}");
+    let rect = highlights[0];
+    for glyph in &glyphs {
+        assert!(
+            rect.x0 <= glyph.x + 1e-3
+                && glyph.x < rect.x1
+                && rect.y0 < glyph.y
+                && glyph.y <= rect.y1,
+            "{rect:?} {glyphs:?}"
+        );
+    }
+    // The highlight covers the annotation's smaller text, not the line of
+    // its base.
+    assert!(rect.height() < 20.0, "{rect:?}");
+}
+
+#[test]
+fn custom_highlight_skips_hidden_text_on_a_line_with_visible_text() {
+    use anyrender::types::Paint;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "::highlight(sample) { background-color: rgb(0, 255, 255); }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    doc.append_text(paragraph, "seen ");
+    let hidden = doc.append_element(
+        Some(paragraph),
+        "span",
+        Style::default(),
+        Some("visibility:hidden"),
+    );
+    let text = doc.append_text(hidden, "unseen");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &[TextHighlightRange {
+            name: "sample".to_owned(),
+            node: text,
+            start_byte: 0,
+            end_byte: 6,
+        }],
+    )
+    .expect("paint succeeds");
+    assert!(!scene.commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill) if fill.brush == Paint::Solid(Color::from_rgba8(0, 255, 255, 255))
+    )));
+}
+
+#[test]
+fn custom_highlight_of_a_ruby_annotation_follows_it_in_a_right_to_left_line() {
+    let (highlights, glyphs) =
+        highlighted_ruby_annotation("display:block;font-size:20px;direction:rtl", "display:ruby");
+    assert_eq!(highlights.len(), 1, "{highlights:?}");
+    let rect = highlights[0];
+    for glyph in &glyphs {
+        assert!(
+            rect.x0 <= glyph.x + 1e-3
+                && glyph.x < rect.x1
+                && rect.y0 < glyph.y
+                && glyph.y <= rect.y1,
+            "{rect:?} {glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn custom_highlight_of_an_inter_character_ruby_annotation_runs_down_its_text() {
+    let (highlights, glyphs) = highlighted_ruby_annotation(
+        "display:block;font-size:20px",
+        "display:ruby;ruby-position:inter-character",
+    );
+    assert!(!highlights.is_empty());
+    let bounds = highlights
+        .iter()
+        .fold(highlights[0], |bounds, rect| bounds.union(*rect));
+    assert!(bounds.height() > bounds.width(), "{bounds:?}");
+    for glyph in &glyphs {
+        assert!(
+            bounds.x0 - 1e-3 <= glyph.x && glyph.x <= bounds.x1 + 1e-3,
+            "{bounds:?} {glyphs:?}"
+        );
+    }
+}
+
 #[test]
 fn paint_single_page_opacity_wraps_element_subtree_in_one_layer() {
     let mut doc = Document::new();
