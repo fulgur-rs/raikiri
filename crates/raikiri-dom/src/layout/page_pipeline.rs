@@ -7440,7 +7440,7 @@ fn flex_container_of_item_alone_on_its_line(
     }
     let container = document.layout_parent_of(item).filter(|&container| {
         let computed = &cascade.computed[container];
-        document.nodes[container].display() == DisplayValue::Flex
+        document.nodes[container].display().is_flex_container()
             && matches!(
                 computed.flex_direction,
                 FlexDirectionValue::Row | FlexDirectionValue::RowReverse
