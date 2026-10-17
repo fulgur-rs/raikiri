@@ -132,16 +132,35 @@ fn the_flow_after_a_block_with_a_hanging_float_follows_its_moved_content() {
 #[test]
 fn a_shared_ifc_block_child_reports_its_float_from_the_content_edge() {
     let mut root = 0;
-    let (doc, _) = paged_body(|doc, body| {
+    let mut paragraph = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
         root = block(doc, body, "display:flow-root");
-        let paragraph = block(
+        paragraph = block(
             doc,
             root,
-            "display:block;padding-top:20px;border-top:2px solid black",
+            "display:block;padding-top:20px;border-top:2px solid black;font-family:Ahem;font-size:10px;line-height:10px",
         );
+        doc.append_text(paragraph, "x");
         let child = block(doc, paragraph, "display:block");
         block(doc, child, "float:left;width:20px;height:50px");
     });
+    assert!(doc.nodes[paragraph].is_ifc_root());
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 82.0);
+}
+
+#[test]
+fn a_local_ifc_root_holds_its_own_float_end() {
+    let mut root = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        root = block(
+            doc,
+            body,
+            "display:flow-root;padding-top:20px;border-top:2px solid black;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(root, "x");
+        block(doc, root, "float:left;width:20px;height:50px");
+    });
+    assert!(doc.nodes[root].is_ifc_root());
     assert_eq!(doc.nodes[root].unrounded_layout.size.height, 72.0);
 }
 
@@ -178,6 +197,31 @@ fn a_flow_root_grows_when_the_moved_content_passes_a_hanging_float() {
     let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
     // The moved box ends at 160, below the float's 130 end.
     assert_eq!((ys, root_height), (vec![60.0, 100.0, 160.0], 100.0));
+}
+
+#[test]
+fn a_flow_root_grows_for_a_float_after_the_moved_block() {
+    let mut root = 0;
+    let mut moved = 0;
+    let mut later_float = 0;
+    let mut following = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        root = block(doc, body, "display:flow-root");
+        moved = block(doc, root, "display:block;height:60px;break-inside:avoid");
+        later_float = block(doc, root, "float:left;width:20px;height:80px");
+        following = block(doc, body, "display:block;height:10px");
+    });
+    assert_eq!(
+        (
+            page_flow_y(&doc, root),
+            page_flow_y(&doc, moved),
+            doc.nodes[root].unrounded_layout.size.height,
+            page_flow_y(&doc, later_float),
+            page_flow_y(&doc, following),
+        ),
+        (60.0, 100.0, 180.0, 160.0, 240.0)
+    );
 }
 
 #[test]
@@ -275,6 +319,49 @@ fn a_formatting_context_grows_with_a_float_that_moved_inside_a_min_height_block(
 }
 
 #[test]
+fn a_moved_ifc_block_child_keeps_its_origin_in_ancestor_float_extent() {
+    let mut root = 0;
+    let mut paragraph = 0;
+    let mut moved = 0;
+    let mut following = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        root = block(doc, body, "display:flow-root");
+        paragraph = block(
+            doc,
+            root,
+            "display:block;min-height:100px;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        doc.append_text(paragraph, "x");
+        moved = block(doc, paragraph, "display:block;break-inside:avoid");
+        block(doc, moved, "float:left;width:20px;height:150px");
+        block(doc, moved, "display:block;height:60px");
+        following = block(doc, body, "display:block;height:10px");
+    });
+    assert!(doc.nodes[paragraph].is_ifc_root());
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    assert_eq!(
+        super::super::same_bfc_float_end_in_subtree(
+            &doc,
+            &cascade,
+            doc.parent_of(root).unwrap(),
+            paragraph,
+            doc.nodes[paragraph].unrounded_layout.location.y,
+        ),
+        190.0
+    );
+    assert_eq!(
+        (
+            page_flow_y(&doc, moved),
+            doc.nodes[root].unrounded_layout.size.height,
+            page_flow_y(&doc, following),
+        ),
+        (100.0, 190.0, 250.0)
+    );
+}
+
+#[test]
 fn a_formatting_context_keeps_its_max_height_when_a_float_moves_inside_a_min_height_block() {
     for (max_height, expected_height, expected_following_y) in
         [("120px", 120.0, 180.0), ("170px", 170.0, 230.0)]
@@ -322,6 +409,29 @@ fn the_flow_after_a_fixed_height_block_stays_past_a_forced_break_in_it() {
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!((ys, pages), (vec![100.0, 130.0], 2));
+}
+
+#[test]
+fn a_fixed_height_wrapper_reports_that_it_cannot_absorb_a_moved_child() {
+    let mut body = 0;
+    let mut moved = 0;
+    let (mut doc, _) = paged_body(|doc, body_id| {
+        body = body_id;
+        let wrapper = block(doc, body, "display:block;height:20px");
+        moved = block(doc, wrapper, "display:block;height:40px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let mut shifts = super::super::SubtreeShifts::default();
+    assert!(super::super::grow_ancestors_for_shift(
+        &mut doc,
+        &cascade,
+        moved,
+        20.0,
+        body,
+        &mut shifts,
+        0,
+    ));
 }
 
 #[test]

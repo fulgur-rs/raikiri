@@ -6168,6 +6168,11 @@ fn grown_auto_height(
         {
             continue;
         }
+        if child == moved {
+            // Later siblings move with an in-flow block even when that block
+            // has no float of its own.
+            float_shifted = true;
+        }
         let child_layout = &child_node.unrounded_layout;
         let top = pagination_child_parent_y(document, parent, child, child_layout.location.y);
         if is_floating_box_for_pagination(document, cascade, child) {
@@ -6327,13 +6332,10 @@ fn same_bfc_float_end_in_subtree(
             continue;
         }
         if node.display() == DisplayValue::Contents {
-            let in_ifc = document
-                .parent_of(child)
-                .is_some_and(|parent| in_inline_context(document, parent));
-            let child_offset = if in_ifc {
-                offset
-            } else {
+            let child_offset = if document.contributes_layout_offset(child) {
                 offset + layout.location.y
+            } else {
+                offset
             };
             pending.extend(
                 node.children
@@ -6363,13 +6365,10 @@ fn same_bfc_float_end_in_subtree(
             continue;
         }
         let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
-        let in_ifc = document
-            .parent_of(child)
-            .is_some_and(|parent| in_inline_context(document, parent));
-        let child_offset = if in_ifc {
-            offset
-        } else {
+        let child_offset = if document.contributes_layout_offset(child) {
             offset + layout.location.y - relative_offset
+        } else {
+            offset
         };
         pending.extend(
             node.children
@@ -7487,7 +7486,7 @@ fn grow_ancestors_for_shift(
         let size_absorbed = (grown.height - height).clamp(0.0, limit);
         let flow_absorbed = (new_flow - old_flow).clamp(0.0, limit);
         let owns_floats = holds_floats(document, cascade, parent);
-        bounded |= grown.capped;
+        bounded |= grown.capped || flow_absorbed < flow_delta - 0.001;
         if flow_absorbed < flow_delta - 0.001 {
             shifts
                 .bounded
