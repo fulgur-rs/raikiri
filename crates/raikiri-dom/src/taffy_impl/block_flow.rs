@@ -149,7 +149,7 @@ pub(crate) fn compute_block_flow(
     }
     if matches!(
         tree.context.text_group,
-        TextGroupScope::Probing { .. } | TextGroupScope::Skipping
+        TextGroupScope::Probing | TextGroupScope::Skipping
     ) {
         // Its lines are not part of the group being measured, so it is laid
         // out once, unpadded, with nothing below it joining anything.
@@ -162,19 +162,14 @@ pub(crate) fn compute_block_flow(
     // out once to find the space the shortest leaves unfilled, then again
     // with every line padded by it. The measuring pass leaves the block
     // context as it found it.
-    let outer = std::mem::replace(
-        &mut tree.context.text_group,
-        TextGroupScope::Probing { shortest: None },
-    );
+    let outer = std::mem::replace(&mut tree.context.text_group, TextGroupScope::Probing);
+    tree.context.text_group_shortest = None;
     let saved = shared.as_deref().map(BlockContext::snapshot);
     run(tree, shared.as_deref_mut());
     if let (Some(ctx), Some(saved)) = (shared.as_deref_mut(), &saved) {
         ctx.restore(saved);
     }
-    let padding = match tree.context.text_group {
-        TextGroupScope::Probing { shortest, .. } => shortest.unwrap_or(0.0),
-        _ => 0.0, // cov:ignore: the probe leaves its own scope in place.
-    };
+    let padding = tree.context.text_group_shortest.take().unwrap_or(0.0);
     tree.context.text_group = TextGroupScope::Applying { align, padding };
     let output = run(tree, shared);
     tree.context.text_group = outer;

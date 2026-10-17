@@ -26,6 +26,9 @@ pub(crate) struct LayoutContext {
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) in_flow_heights: HashMap<usize, f32>,
     pub(crate) text_group: TextGroupScope,
+    /// The least space a line leaves unfilled so far in the group being
+    /// measured.
+    pub(crate) text_group_shortest: Option<f32>,
     /// The next child layout is in the group's block formatting context
     /// although it gets no block context (a vertical block child), so it
     /// keeps the group.
@@ -45,7 +48,7 @@ pub(crate) enum TextGroupScope {
     None,
     /// Measuring: the lines laid out report the space they leave unfilled,
     /// and the shortest of it is the group's padding.
-    Probing { shortest: Option<f32> },
+    Probing,
     /// Inside a group being measured or skipped, below a box that roots a
     /// group of its own: that group is neither measured nor applied, since
     /// its lines are not part of the outer group, and laying it out once

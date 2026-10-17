@@ -220,10 +220,9 @@ pub(crate) fn layout_with_boxes_in(
 /// Take the group the root's lines belong to, when it declares none of its
 /// own: a group rooted above reaches its lines through the block context.
 fn join_group(tree: &LayoutSession<'_>, root: &mut IfcRoot) {
-    if root.options.text_group_align != TextGroupAlign::None {
-        return;
-    }
-    if let TextGroupScope::Applying { align, padding } = tree.context.text_group {
+    if let (TextGroupAlign::None, TextGroupScope::Applying { align, padding }) =
+        (root.options.text_group_align, tree.context.text_group)
+    {
         root.options.text_group_align = align;
         root.options.group_padding = padding;
     }
@@ -240,8 +239,9 @@ fn leave_group(
     if own_group {
         // A root with its own group measures and pads itself.
         tree.context.text_group = outer;
-    } else if let TextGroupScope::Probing { shortest } = &mut tree.context.text_group {
-        *shortest = shortest_remaining(lines, *shortest);
+    } else if matches!(tree.context.text_group, TextGroupScope::Probing) {
+        tree.context.text_group_shortest =
+            shortest_remaining(lines, tree.context.text_group_shortest);
     }
 }
 
@@ -266,10 +266,7 @@ fn own_group_padding(
     (local, top_margin_escapes, bottom_margin_escapes): (bool, bool, bool),
     outer: TextGroupScope,
 ) -> f32 {
-    if matches!(
-        outer,
-        TextGroupScope::Probing { .. } | TextGroupScope::Skipping
-    ) {
+    if matches!(outer, TextGroupScope::Probing | TextGroupScope::Skipping) {
         tree.context.text_group = TextGroupScope::Skipping;
         0.0
     } else {
@@ -308,7 +305,8 @@ fn group_padding(
         return 0.0;
     }
     let align = root.options.text_group_align;
-    tree.context.text_group = TextGroupScope::Probing { shortest: None };
+    tree.context.text_group = TextGroupScope::Probing;
+    tree.context.text_group_shortest = None;
     let saved = ctx.snapshot();
     let probe = run_boxes_segment(
         tree,
@@ -329,10 +327,7 @@ fn group_padding(
     ctx.restore(&saved);
     // The block children laid out by the probe reported their lines to the
     // scope; the root's own lines join them.
-    let reported = match tree.context.text_group {
-        TextGroupScope::Probing { shortest, .. } => shortest,
-        _ => None, // cov:ignore: the probe leaves its own scope in place.
-    };
+    let reported = tree.context.text_group_shortest.take();
     let padding = shortest_remaining(&probe.lines, reported).unwrap_or(0.0);
     tree.context.text_group = TextGroupScope::Applying { align, padding };
     padding
