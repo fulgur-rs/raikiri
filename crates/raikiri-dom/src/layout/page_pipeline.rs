@@ -4970,11 +4970,7 @@ fn paginate_flow(
                 // margin (CSS Fragmentation 3 §5.2): the box starts at the
                 // top of the page instead of keeping the part of the margin
                 // that crossed the page edge.
-                let previous = BoxTree::for_layout(document)
-                    .parent(node_id, BoxParentScope::Document)
-                    .and_then(|parent_id| sibling_margins.previous_bottoms.get(&parent_id).copied())
-                    .map(|(previous, bottom)| (previous, raw_y - bottom))
-                    .filter(|(_, gap)| gap.is_finite() && *gap > 0.0);
+                let previous = sibling_margins.gap_after_previous(document, node_id, raw_y);
                 if let Some((previous, gap)) = previous
                     && collapses_with_previous_block
                     // A clearing box's gap may contain clearance. Its used
@@ -6984,6 +6980,22 @@ impl SiblingMargins {
     ) -> bool {
         self.forced_break_box
             .is_some_and(|owner| forced_margin_reaches(document, cascade, owner, previous, node_id))
+    }
+
+    /// The previous in-flow sibling block of `node_id` and the positive gap
+    /// between its unpaginated bottom and `raw_y`, the unpaginated top of
+    /// `node_id`, if both are known and the gap is finite.
+    fn gap_after_previous(
+        &self,
+        document: &Document,
+        node_id: usize,
+        raw_y: f32,
+    ) -> Option<(usize, f32)> {
+        BoxTree::for_layout(document)
+            .parent(node_id, BoxParentScope::Document)
+            .and_then(|parent_id| self.previous_bottoms.get(&parent_id).copied())
+            .map(|(previous, bottom)| (previous, raw_y - bottom))
+            .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
     }
 
     /// Moves the forced break on to `node_id`, a child of `parent_id`, or
