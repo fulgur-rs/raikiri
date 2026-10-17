@@ -6368,6 +6368,7 @@ fn visit_same_bfc_floats_in_subtree(
         || holds_floats(document, cascade, branch)
         || (matches!(cascade.computed[branch].float, FloatValue::Footnote)
             && is_floating_box_for_pagination(document, cascade, branch))
+        // cov:ignore: abs/fixed are caught above; running() is normalized by cascade.
         || !matches!(
             document.nodes[branch].position(),
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
