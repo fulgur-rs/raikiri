@@ -4810,11 +4810,7 @@ fn paginate_flow(
         // cell-internal breaks remain out of this narrow row-boundary pass.
         // A row that follows a repeated header must fit beside the header's
         // copy on the next page; otherwise moving it gains nothing.
-        let repeated_header_height = table_headers
-            .rows
-            .get(&node_id)
-            .and_then(|header_id| table_headers.headers.get(header_id))
-            .map_or(0.0, |header| header.height + header.gap);
+        let repeated_header_height = table_headers.repeated_height_before(node_id);
         let table_row_lead = table_row_leads.get(&node_id).copied().unwrap_or(0.0);
         let table_row_overflow = candidate.is_table_row
             && table_row_moves(
