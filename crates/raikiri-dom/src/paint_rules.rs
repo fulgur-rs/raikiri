@@ -246,8 +246,10 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
         return None;
     }
     let cv = crate::generated_content::computed_for_id(cascade, id)?;
-    (matches!(cv.position, PositionValue::Static | PositionValue::Relative)
-        && matches!(cv.float, FloatValue::None))
+    (matches!(
+        cv.position,
+        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+    ) && matches!(cv.float, FloatValue::None))
     .then(|| opacity_layer(cv))
     .flatten()
 }
@@ -264,8 +266,10 @@ pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedV
         return None;
     }
     let cv = crate::generated_content::computed_for_id(cascade, id)?;
-    (matches!(cv.position, PositionValue::Static | PositionValue::Relative)
-        && matches!(cv.float, FloatValue::None)
+    (matches!(
+        cv.position,
+        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+    ) && matches!(cv.float, FloatValue::None)
         && (cv.display.is_atomic_inline_level()
             || matches!(cv.content.as_slice(), [ContentComponent::Image { .. }]))
         && !cv.transform.is_empty())
@@ -406,12 +410,14 @@ fn within_translucent_first_line(document: &Document, root: usize, id: usize) ->
 
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
 /// composites at among the other groups of its paragraph: the `z-index` of a
-/// relatively positioned pseudo-element, and 0 otherwise, the level of the
-/// non-positioned groups (CSS 2.1 §9.9.1, Appendix E steps 8 and 9).
+/// relatively or sticky positioned pseudo-element, and 0 otherwise, the
+/// level of the non-positioned groups (CSS 2.1 §9.9.1, Appendix E steps 8
+/// and 9). A sticky one stays in its lines like a relative one (CSS
+/// Positioned Layout 3 §3.4).
 pub fn pseudo_stack_level(cascade: &CascadeResult, id: usize) -> i32 {
     crate::generated_content::computed_for_id(cascade, id).map_or(0, |cv| {
         match (&cv.position, cv.z_index) {
-            (PositionValue::Relative, ZIndexValue::Integer(level)) => level,
+            (PositionValue::Relative | PositionValue::Sticky, ZIndexValue::Integer(level)) => level,
             _ => 0,
         }
     })
@@ -1123,8 +1129,8 @@ pub fn inline_stacking_group(
 }
 
 /// Whether the `::before` or `::after` with generated id `id`, laid out in
-/// the lines of paragraph `root`, is relatively positioned with a negative
-/// `z-index` outside every inline box of the paragraph that forms a
+/// the lines of paragraph `root`, is relatively or sticky positioned with a
+/// negative `z-index` outside every inline box of the paragraph that forms a
 /// stacking context, with content beyond the paragraph's translucent first
 /// line, if it has one.
 ///

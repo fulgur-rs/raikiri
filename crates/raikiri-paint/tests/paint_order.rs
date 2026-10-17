@@ -1428,6 +1428,24 @@ fn paragraph_blocks_cover_negative_pseudo_elements() {
     }
 }
 
+/// A sticky `::before` stays in its paragraph's lines like a relative one
+/// (CSS Positioned Layout 3 §3.4): it paints its text, below the block
+/// inside the paragraph with a negative stack level and above it otherwise,
+/// in the same order in both painters.
+#[test]
+fn sticky_pseudo_elements_paint_in_their_lines_by_stack_level() {
+    for (z_index, red) in [("auto", 200), ("1", 200), ("-1", 0)] {
+        let css = format!(
+            "#m::before {{ content: 'BB'; position: sticky; z-index: {z_index}; color: red }}"
+        );
+        let body = "<div id=m style=\"color: black\">AA\
+                    <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>";
+        let pixels = render_first_page(&lay_out(body, &css));
+        assert_eq!(pixels_of(&pixels, [255, 0, 0]), red, "{z_index}");
+        assert_same_order(body, &css);
+    }
+}
+
 /// A `display: contents` element forms no stacking context, so the negative
 /// span inside it still paints below the paragraph's block in both orders.
 #[test]
