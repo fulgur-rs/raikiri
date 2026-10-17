@@ -451,3 +451,25 @@ fn translated_png_markers_move_with_their_item_text() {
         assert_eq!(rects, [expected], "{css}");
     }
 }
+
+#[test]
+fn an_inside_marker_on_a_line_taller_than_the_page_is_on_every_page_of_its_line() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<ul><li style='list-style-position:inside;line-height:100px'>A</li></ul>",
+        "",
+        &pixels,
+    );
+    assert_eq!(document.page_count(), 2);
+    for number in 0..document.page_count() {
+        let page = document.page(number).unwrap();
+        let runs = page.text_runs();
+        assert!(runs.iter().any(|run| run.text == "A"), "page {number}");
+        let markers = page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .filter(|event| matches!(event, PaintEvent::MarkerImage(_)))
+            .count();
+        assert_eq!(markers, 1, "page {number}");
+    }
+}
