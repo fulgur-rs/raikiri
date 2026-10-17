@@ -181,6 +181,47 @@ pub fn background_image_dimensions(
         .then_some((image_w, image_h))
 }
 
+/// The used tile size of a background image once `round` is applied to one
+/// axis only (CSS Backgrounds 3
+/// <https://www.w3.org/TR/css-backgrounds-3/#background-repeat>).
+///
+/// When `background-repeat` is `round` in one dimension only and
+/// `background-size` is `auto` in the other, the other dimension scales with
+/// the rescaled one so the image keeps its aspect ratio. `image` is the size
+/// from [`background_image_dimensions`] and `positioning` the width and
+/// height of the background positioning area. Any other combination returns
+/// `image` unchanged: the `round` axis itself is rescaled later by
+/// [`background_tiles`].
+pub fn background_round_ratio_size(
+    size: &ComputedBackgroundSize,
+    image: (f64, f64),
+    positioning: (f64, f64),
+    repeat: &BackgroundRepeat,
+) -> (f64, f64) {
+    let ComputedBackgroundSize::Explicit { width, height } = size else {
+        return image;
+    };
+    let (image_w, image_h) = image;
+    let (pos_w, pos_h) = positioning;
+    let adjusted = match (repeat.x, repeat.y) {
+        (BackgroundRepeatKeyword::Round, BackgroundRepeatKeyword::Round) => image,
+        (BackgroundRepeatKeyword::Round, _) if background_length(*height, pos_h).is_none() => {
+            let (tile_w, _) = round_axis_tiles(pos_w, image_w, repeat.x);
+            (image_w, image_h * tile_w / image_w)
+        }
+        (_, BackgroundRepeatKeyword::Round) if background_length(*width, pos_w).is_none() => {
+            let (tile_h, _) = round_axis_tiles(pos_h, image_h, repeat.y);
+            (image_w * tile_h / image_h, image_h)
+        }
+        _ => image,
+    };
+    if adjusted.0.is_finite() && adjusted.1.is_finite() && adjusted.0 > 0.0 && adjusted.1 > 0.0 {
+        adjusted
+    } else {
+        image
+    }
+}
+
 /// The tiles of one CSS background image layer, in CSS pixels.
 ///
 /// Every tile has the same size; a tile's origin is one entry of `x` paired
