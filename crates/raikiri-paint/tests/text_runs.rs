@@ -548,6 +548,26 @@ fn a_line_taller_than_the_page_is_in_the_runs_of_every_page_it_reaches() {
     assert!(assert_runs_match_paint(&result) > 0);
 }
 
+/// A line taller than a short first page also reaches into a following,
+/// taller page, which draws it and so lists its runs.
+#[test]
+fn a_line_taller_than_a_short_first_page_is_in_the_runs_of_the_next_page() {
+    let result = lay_out(
+        "<p style=\"line-height: 80px; margin: 0\">tall</p><p>after</p>",
+        "@page :first { size: 300px 100px } body { margin: 0 }",
+    );
+    assert_eq!(result.page_count(), 2);
+    for page in result.pages() {
+        let tall = page
+            .text_runs()
+            .iter()
+            .filter(|run| run.text == "tall")
+            .count();
+        assert_eq!(tall, 1, "page {}", page.index());
+    }
+    assert!(assert_runs_match_paint(&result) > 0);
+}
+
 #[test]
 fn repeated_paragraphs_appear_on_every_page() {
     let result = lay_out(

@@ -25,8 +25,8 @@ impl<'p> FlowPages<'p> {
         }
     }
 
-    /// The pages whose flow range can hold a line centered between `low` and
-    /// `high`, in flow order. A page without a flow range cannot own a
+    /// The pages whose flow range can own a line centered, or reaching,
+    /// between `low` and `high`, in flow order. A page without a flow range cannot own a
     /// normal-flow line, so it is never a candidate.
     ///
     /// Callers compute each center with the arithmetic of

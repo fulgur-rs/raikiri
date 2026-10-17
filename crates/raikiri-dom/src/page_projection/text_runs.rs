@@ -1522,6 +1522,7 @@ fn root_runs<'a>(
     document: &'a Document,
     cascade: &'a CascadeResult,
     page: &PageFragment,
+    pages: &[PageFragment],
     context: &RunContext,
     root: &ProjectedTextRoot,
     out: &mut Vec<PositionedGlyphRun<'a>>,
@@ -1546,12 +1547,12 @@ fn root_runs<'a>(
         let Some(offset) = positioned.line_offset(index) else {
             continue;
         };
-        if let Some((start, end)) = flow_range {
+        if flow_range.is_some() {
             let top = root.y + offset.1 + line.block_offset();
             let (top, bottom) = page
                 .flow_axis
                 .line_extent(root, top, top + line.block_size());
-            if !page.flow_axis.holds_line(top, bottom, start, end) {
+            if !page.owns_line(pages, top, bottom) {
                 continue;
             }
         }
@@ -1634,8 +1635,8 @@ fn text_source(document: &Document, node: usize) -> usize {
 /// The block-axis span of the lines of `root` in shared flow coordinates,
 /// over the lines [`root_runs`] can draw: the lowest and highest line center
 /// across the page, or the top of the first line and the bottom of the last
-/// down the page, which [`FlowAxis::holds_line`] can give to every page they
-/// reach. `None` when no line has a finite extent.
+/// down the page, which [`PageFragment::owns_line`] can give to every page
+/// they reach. `None` when no line has a finite extent.
 fn line_span(
     document: &Document,
     cascade: &CascadeResult,
@@ -1720,7 +1721,7 @@ pub(super) fn roots_by_page(
         let Some((low, high)) = line_span(document, cascade, root, axis) else {
             continue;
         };
-        // A superset of the pages `FlowAxis::holds_line` gives a line: those
+        // A superset of the pages `PageFragment::owns_line` gives a line: those
         // holding its center, or reached by its extent down the page.
         let reaches = |range: (f32, f32)| high >= range.0 - 0.001 && low < range.1 - 0.001;
         let first = if ordered {
@@ -1781,7 +1782,15 @@ impl Document {
                         }
                     }
                 } else {
-                    root_runs(self, cascade, page, context, &root, &mut runs);
+                    root_runs(
+                        self,
+                        cascade,
+                        page,
+                        &projection.pages,
+                        context,
+                        &root,
+                        &mut runs,
+                    );
                 }
             }
         }
