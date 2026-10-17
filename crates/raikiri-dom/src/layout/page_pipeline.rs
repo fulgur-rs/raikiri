@@ -1387,6 +1387,21 @@ impl PageOrigins {
         (y.is_finite() && y >= 0.0).then(|| self.page_index_for_y(y))
     }
 
+    /// The page whose start is the first page edge inside a margin that
+    /// starts at `margin_start`, at most `last_page`. An edge within 0.001
+    /// of `margin_start` counts as inside the margin, unless the margin
+    /// follows a forced break: the forced break at its start is not an edge
+    /// inside it.
+    fn first_edge_in_margin(
+        &self,
+        margin_start: f32,
+        follows_forced_break: bool,
+        last_page: u32,
+    ) -> u32 {
+        let edge_slack = if follows_forced_break { 0.001 } else { -0.001 };
+        (self.page_index_for_y(margin_start + edge_slack) + 1).min(last_page)
+    }
+
     /// The page that starts at flow position `y` (within 0.001), or else the
     /// page after the one `y` falls on. A position above the first page falls
     /// on the first page.
@@ -5001,11 +5016,11 @@ fn paginate_flow(
                             let collapsed = adjoining_margin(document, cascade, previous, false)
                                 .max(adjoining_margin(document, cascade, node_id, true));
                             let margin_start = previous_bottom.max(effective_y - collapsed);
-                            // The forced break at the start of a kept
-                            // margin is not an edge inside it.
-                            let edge_slack = if follows_forced_break { 0.001 } else { -0.001 };
-                            let first_edge =
-                                (page_index_for_y(margin_start + edge_slack) + 1).min(natural_page);
+                            let first_edge = page_origins.first_edge_in_margin(
+                                margin_start,
+                                follows_forced_break,
+                                natural_page,
+                            );
                             (page_origin(first_edge), page_origin(first_edge))
                         };
                         let delta = target_y - effective_y;

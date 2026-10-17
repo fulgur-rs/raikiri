@@ -664,6 +664,19 @@ fn page_starting_at_or_after_keeps_a_page_start_and_skips_past_mid_page() {
 }
 
 #[test]
+fn first_edge_in_margin_skips_a_forced_break_at_the_margin_start() {
+    let fixed = PageOrigins::new(&[], 100.0);
+    // The first edge after a margin that starts mid-page.
+    assert_eq!(fixed.first_edge_in_margin(150.0, false, 5), 2);
+    // An unforced margin that starts on an edge breaks at that edge.
+    assert_eq!(fixed.first_edge_in_margin(200.0, false, 5), 2);
+    // A forced break at the margin start is not an edge inside it.
+    assert_eq!(fixed.first_edge_in_margin(200.0, true, 5), 3);
+    // The edge never goes past the box's own page.
+    assert_eq!(fixed.first_edge_in_margin(150.0, false, 1), 1);
+}
+
+#[test]
 fn float_top_beside_moves_below_floats_it_does_not_fit_beside() {
     let edge = |node, side, top, bottom, width| FloatEdge {
         node,
