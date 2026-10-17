@@ -1216,9 +1216,10 @@ fn measure_ifc_root(
     };
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
-    let has_boxes = !probe.boxes.is_empty()
-        || !probe.generated_blocks.is_empty()
-        || !probe.generated_boxes.is_empty();
+    let has_boxes = !probe.boxes.is_empty() || !probe.generated_blocks.is_empty();
+    // Empty atomic pseudo-elements are sized without laying out a node, so
+    // they take part in the intrinsic widths but keep the paragraph's columns.
+    let has_box_intrinsics = has_boxes || !probe.generated_boxes.is_empty();
     let vertical = writing_mode != shodo::geometry::WritingMode::HorizontalTb;
     let inline_available = if vertical {
         available.height
@@ -1239,7 +1240,7 @@ fn measure_ifc_root(
     // and only when the intrinsic widths decide the width.
     let needs_intrinsics =
         !(inline_stretched && matches!(inline_available, AvailableSpace::Definite(_)));
-    let box_intrinsics = if has_boxes && needs_intrinsics {
+    let box_intrinsics = if has_box_intrinsics && needs_intrinsics {
         let basis = match inline_available {
             AvailableSpace::Definite(size) => size,
             _ => 0.0,

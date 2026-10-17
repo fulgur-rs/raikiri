@@ -3416,3 +3416,21 @@ fn empty_inline_block_before_keeps_its_physical_margins_right_to_left() {
     assert_eq!(fills.len(), 1, "{fills:?}");
     assert!((fills[0].x1 - 180.0).abs() < 0.01, "{fills:?}");
 }
+
+/// An empty inline-block `::before` keeps its paragraph in its columns.
+#[test]
+fn empty_inline_block_before_keeps_a_multicol_paragraph_in_columns() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} p{margin:0;width:200px;columns:2;column-gap:0} p::before{content:'';display:inline-block;width:10px;height:10px;background:red}</style></head><body><p>a<br>b<br>c<br>d</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!(fills[0].x0.abs() < 0.01, "{fills:?}");
+    let in_second_column = scene.commands.iter().any(|command| match command {
+        RenderCommand::GlyphRun(run) => run.glyphs.first().is_some_and(|glyph| {
+            (run.transform * kurbo::Point::new(f64::from(glyph.x), 0.0)).x >= 100.0
+        }),
+        _ => false,
+    });
+    assert!(in_second_column);
+}
