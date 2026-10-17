@@ -1038,6 +1038,34 @@ fn try_insert<K: Eq + Hash, V>(
     Ok(())
 }
 
+/// The value the winning declaration at `idx` gives `key` for
+/// [`flow_mapping`]: `var()` substituted, and `revert` / `revert-layer`
+/// rolled back to the declaration that survives, as [`apply_winners`] does.
+/// Other CSS-wide keywords stay markers; `None` means no value survives.
+fn flow_winner_value(
+    candidates: ElementCandidates<'_>,
+    key: crate::property::PropertyKey,
+    idx: usize,
+    deferred_resolver: &mut DeferredResolver<'_>,
+) -> Option<PropertyValue> {
+    let value = match candidates.value(idx) {
+        PropertyValue::Deferred(deferred) => deferred_resolver.resolve(deferred)?,
+        value => value.clone(),
+    };
+    let PropertyValue::Deferred(marker) = &value else {
+        return Some(value);
+    };
+    match marker.css_wide_keyword() {
+        Some(keyword @ (CssWideKeyword::Revert | CssWideKeyword::RevertLayer)) => {
+            match find_rollback(candidates, key, idx, keyword, deferred_resolver)? {
+                PropertyValue::Deferred(fallback) => deferred_resolver.resolve(&fallback),
+                value => Some(value),
+            }
+        }
+        _ => Some(value),
+    }
+}
+
 /// Find a longhand's surviving value after origin or layer rollback.
 fn find_rollback(
     candidates: ElementCandidates<'_>,
@@ -1275,9 +1303,8 @@ pub(crate) fn apply_winners(
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
-    let flow = flow_mapping(candidates, inherited, |value| match value {
-        PropertyValue::Deferred(deferred) => deferred_resolver.resolve(deferred),
-        value => Some(value.clone()),
+    let flow = flow_mapping(candidates, inherited, |key, idx| {
+        flow_winner_value(candidates, key, idx, &mut deferred_resolver)
     });
     pick_winners(candidates, winners, flow);
     // The drain below takes every slot, so the white-space winners are read

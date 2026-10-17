@@ -3932,6 +3932,41 @@ fn inter_character_ruby_annotations_compute_to_vertical_rl() {
 }
 
 #[test]
+fn inter_character_annotations_map_logical_sides_after_display_rollback() {
+    // An author `display: revert` rolls back to the UA `ruby-text`, and
+    // `display: inherit` takes the parent's `ruby-text`, so both annotations
+    // map their flow-relative sides through `vertical-rl`.
+    let mut doc = TestDoc::new();
+    let ruby = doc.push_element(
+        0,
+        "ruby",
+        Some("display: ruby; ruby-position: inter-character"),
+    );
+    let reverted = doc.push_element(ruby, "rt", None);
+    let parent = doc.push_element(ruby, "rt", None);
+    let inherited = doc.push_element(parent, "span", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("rt { display: ruby-text; }", Origin::UserAgent);
+    tree.add_stylesheet(
+        "rt { display: revert; margin-inline-start: 5px; } \
+         span { display: inherit; margin-inline-start: 5px; }",
+        Origin::Author,
+    );
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    for node in [reverted, inherited] {
+        assert_eq!(r.computed[node].display, DisplayValue::RubyText);
+        assert_eq!(
+            r.computed[node].margin.top,
+            ComputedLengthPercentageOrAuto::Px(5.0)
+        );
+        assert_eq!(
+            r.computed[node].margin.left,
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        );
+    }
+}
+
+#[test]
 fn ruby_annotations_keep_the_inherited_writing_mode_otherwise() {
     for (ruby_style, rtc_style, expected) in [
         // `over` annotations stay in the ruby's writing mode.
