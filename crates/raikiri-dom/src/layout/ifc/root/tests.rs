@@ -220,3 +220,36 @@ fn an_empty_atomic_before_keeps_its_size_through_a_rebreak() {
         .expect("the pseudo-element has a piece");
     assert_eq!(piece.parent, Some(owner));
 }
+
+/// A rebreak of a vertical paragraph keeps an empty inline-block `::before`
+/// on its lines, its physical height along the inline axis.
+#[test]
+fn an_empty_atomic_before_keeps_its_size_through_a_vertical_rebreak() {
+    use crate::layout::ifc::test_support::sheet_fixture;
+    use crate::layout::test_support::page_box_800x600;
+    let fixture = sheet_fixture(
+        "div::before{content:'';display:inline-block;width:30px;height:15px}",
+        "line-height:10px;writing-mode:vertical-rl;height:200px",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    doc.set_font_collection_with_limits(ahem_fonts(), Limits::default());
+    crate::layout::layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600())
+        .expect("layout");
+    crate::layout::relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
+    let before =
+        crate::generated_content::generated_node_id(root, raikiri_style::PseudoElem::Before);
+    let atomic = doc.nodes[root]
+        .ifc_lines()
+        .expect("lines")
+        .iter()
+        .flat_map(|line| line.fragments())
+        .find_map(|fragment| match fragment {
+            shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == before => Some(atomic),
+            _ => None,
+        })
+        .expect("the pseudo-element is on a line");
+    assert_eq!(atomic.border_rect.inline_size, 15.0);
+}

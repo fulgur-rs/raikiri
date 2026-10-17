@@ -62,27 +62,20 @@ impl GeneratedAtomic {
     }
 
     /// The atomic size of the box in a paragraph of `writing_mode` whose
-    /// inline size is `basis`, or not known yet for `None`, and whose
-    /// definite content-box height is `definite_height`. Without content an
-    /// `auto` size is zero. A percentage width counts only against the
-    /// width of a horizontal paragraph; a percentage height counts against
-    /// the definite height of a horizontal paragraph, or against the inline
-    /// size of a vertical one, which is its height (CSS 2.1 10.5).
+    /// inline size is `basis`, or not known yet for `None`. A percentage
+    /// width or height counts against the definite physical width or height
+    /// of the containing block in `containing`, and is `auto` without one
+    /// (CSS 2.1 10.2, 10.5). Without content an `auto` size is zero.
     pub(crate) fn size(
         &self,
         basis: Option<f32>,
-        definite_height: Option<f32>,
+        containing: (Option<f32>, Option<f32>),
         writing_mode: WritingMode,
     ) -> shodo::AtomicSize {
         let horizontal = writing_mode == WritingMode::HorizontalTb;
         let edges = self.edges(basis);
-        let width = self.used_size(
-            self.width,
-            edges.left + edges.right,
-            basis.filter(|_| horizontal),
-        );
-        let height_basis = if horizontal { definite_height } else { basis };
-        let height = self.used_size(self.height, edges.top + edges.bottom, height_basis);
+        let width = self.used_size(self.width, edges.left + edges.right, containing.0);
+        let height = self.used_size(self.height, edges.top + edges.bottom, containing.1);
         let margin = |value| length_or_auto(value, Some(basis.unwrap_or(0.0))).unwrap_or(0.0);
         let (top, right, bottom, left) = (
             margin(self.margin.top),

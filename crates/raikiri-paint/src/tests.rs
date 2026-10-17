@@ -3392,3 +3392,15 @@ fn empty_inline_block_before_resolves_a_percentage_height() {
         );
     }
 }
+
+/// In a vertical paragraph a percentage width refers to the paragraph's
+/// physical width, its block extent.
+#[test]
+fn empty_inline_block_before_in_a_vertical_paragraph_resolves_a_percentage_width() {
+    let scene = painted_html(
+        br#"<html><head><style>p{writing-mode:vertical-rl;width:200px;height:200px} p::before{content:'';display:inline-block;width:50%;height:10px;background:red}</style></head><body><p>abc</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!((fills[0].width() - 100.0).abs() < 0.01, "{fills:?}");
+}
