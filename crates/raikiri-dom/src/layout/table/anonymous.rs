@@ -445,17 +445,14 @@ fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent:
         let child_node = &doc.nodes[child];
         !child_node.is_in_document()
             || child_node.is_non_rendered_html_element()
-            || match child_node.kind() {
+            || if child_node.kind() == NodeKind::Text {
                 // White space that `white-space` preserves forms a line.
-                NodeKind::Text => {
-                    !crate::layout::ifc::assign::text_makes_a_line(doc, cascade, child)
-                }
-                NodeKind::Element => {
-                    let display = child_node.display();
-                    display == DisplayValue::None
-                        || (!display.is_inline_level() && display != DisplayValue::Contents)
-                }
-                _ => true,
+                !crate::layout::ifc::assign::text_makes_a_line(doc, cascade, child)
+            } else {
+                // Only text and elements are in the document.
+                let display = child_node.display();
+                display == DisplayValue::None
+                    || (!display.is_inline_level() && display != DisplayValue::Contents)
             }
     })
 }

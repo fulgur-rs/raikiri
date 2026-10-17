@@ -191,3 +191,29 @@ fn an_empty_row_group_keeps_its_place_across_layout_passes() {
     }
     assert_eq!(tops, vec![50.0; 3]);
 }
+
+#[test]
+fn multicol_and_generated_content_parents_keep_rows_blocks() {
+    for (sheet, body_css) in [
+        ("", "column-count:2"),
+        ("", "writing-mode:vertical-rl"),
+        ("body::before{content:'X';display:block}", ""),
+    ] {
+        let mut doc = Document::new();
+        let style = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(style, sheet);
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some(&format!("display:block;{body_css}")),
+        );
+        let row = div(&mut doc, body, "display:table-row");
+        div(&mut doc, row, "display:table-cell");
+        doc.mark_in_document_flags();
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+        assert!(doc.table_objects.tables.is_empty(), "{sheet}{body_css}");
+    }
+}
