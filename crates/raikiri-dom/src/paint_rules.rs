@@ -163,13 +163,16 @@ pub fn overflow_clip(
         return clip;
     }
     // A cell that spans a collapsed row keeps the rows that remain and clips
-    // the contents that no longer fit to its border box in the block axis
-    // (CSS Tables 3, "Visibility-collapse cell rendering").
+    // its contents to its border box (CSS Tables 3, "Visibility-collapse cell
+    // rendering"). An axis the element already clips keeps its own edges.
     let Some(mut clip) = clip else {
-        let mut clip = PaintClip::new(border_box);
-        clip.clip_x = false;
-        return Some(clip);
+        return Some(PaintClip::new(border_box));
     };
+    if !clip.clip_x {
+        clip.rect.x = border_box.x;
+        clip.rect.width = border_box.width;
+        clip.clip_x = true;
+    }
     if !clip.clip_y {
         clip.rect.y = border_box.y;
         clip.rect.height = border_box.height;

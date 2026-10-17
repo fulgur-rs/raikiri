@@ -450,7 +450,7 @@ pub struct Node {
     /// rendering"). Recomputed by the style bridge before every layout pass.
     pub(crate) collapses_table_rows: bool,
     /// Whether this table cell spans a collapsed row, so its contents are
-    /// clipped to its shrunken box in the block axis (CSS Tables 3,
+    /// clipped to its shrunken border box (CSS Tables 3,
     /// "Visibility-collapse cell rendering"). Set by table placement.
     pub(crate) clips_collapsed_table_span: bool,
     /// Computed caption position consumed by the native table layout.

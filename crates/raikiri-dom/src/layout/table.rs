@@ -517,6 +517,36 @@ fn compute_table_layout_checked(
         }
         previous_kept = Some(row);
     }
+    // A collapsed row at either end gives way to the outermost row that
+    // remains, so its cells' borders no longer form the table's outer edge.
+    if collapse && collapsed_rows.contains(&true) {
+        let first_kept = collapsed_rows.iter().position(|collapsed| !collapsed);
+        let last_kept = collapsed_rows.iter().rposition(|collapsed| !collapsed);
+        let edge = |kept: Option<usize>, side: fn(&Rect<f32>) -> f32, table_side: f32| {
+            grid.cells
+                .iter()
+                .filter(|cell| {
+                    kept.is_some_and(|row| {
+                        (cell.row as usize..cell.row as usize + cell.row_span as usize)
+                            .contains(&row)
+                    })
+                })
+                .map(|cell| {
+                    side(&cell_border_sides(
+                        doc,
+                        cell.node_id,
+                        inputs.parent_size.width,
+                    ))
+                })
+                .fold(table_side, f32_max_compat)
+        };
+        if first_kept != Some(0) {
+            collapsed.outer_top = edge(first_kept, |border| border.top, table_border.top);
+        }
+        if last_kept != Some(grid.rows.len() - 1) {
+            collapsed.outer_bottom = edge(last_kept, |border| border.bottom, table_border.bottom);
+        }
+    }
     let border_spacing = if collapse {
         (0.0, 0.0)
     } else {

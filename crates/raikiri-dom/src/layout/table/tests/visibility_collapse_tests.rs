@@ -268,3 +268,22 @@ fn the_first_remaining_row_carries_the_table_baseline() {
     // baseline sits 16px into its 20px line.
     assert_eq!(doc.nodes[table].table_first_baseline, Some(26.0));
 }
+
+#[test]
+fn collapsed_end_rows_leave_the_outer_edge_to_the_rows_that_remain() {
+    let (single, single_table, _) = collapsing_table(&[(ROW, "")]);
+    let single_height = single.nodes[single_table].unrounded_layout.size.height;
+    for rows in [
+        [(COLLAPSED, "border-top:10px solid black"), (ROW, "")],
+        [(ROW, ""), (COLLAPSED, "border-bottom:10px solid black")],
+    ] {
+        let (doc, table, _) = collapsing_table(&rows);
+        assert_eq!(
+            doc.nodes[table].unrounded_layout.size.height, single_height,
+            "{rows:?}"
+        );
+    }
+    // With no row left, only the table's own borders remain.
+    let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
+    assert_eq!(doc.nodes[table].unrounded_layout.size.height, 0.0);
+}

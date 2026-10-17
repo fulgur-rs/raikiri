@@ -134,23 +134,23 @@ fn overflow_clip_propagates_a_block_root_to_the_viewport() {
 }
 
 #[test]
-fn a_cell_spanning_a_collapsed_row_clips_its_block_axis() {
+fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box() {
     let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
     let no_border = PaintInsets::new(0.0, 0.0, 0.0, 0.0);
     for (css, expected) in [
-        // Visible overflow: only the block axis clips, at the border box.
-        ("display:block", {
-            let mut clip = PaintClip::new(border_box);
-            clip.clip_x = false;
-            clip
-        }),
-        // A clipped inline axis keeps its edges; the block axis joins it.
-        ("display:block;overflow-x:clip;overflow-y:visible", {
-            let mut clip = PaintClip::new(border_box);
-            clip.clip_y = true;
-            clip
-        }),
-        // A clipped block axis keeps its own edge.
+        // Visible overflow clips at the border box on both axes.
+        ("display:block", PaintClip::new(border_box)),
+        // A visible block axis joins a clipped inline axis.
+        (
+            "display:block;overflow-x:clip;overflow-y:visible",
+            PaintClip::new(border_box),
+        ),
+        // A visible inline axis joins a clipped block axis.
+        (
+            "display:block;overflow-x:visible;overflow-y:clip",
+            PaintClip::new(border_box),
+        ),
+        // Clipped axes keep their own edges.
         ("display:block;overflow:clip;overflow-clip-margin:5px", {
             PaintClip::new(PaintRect::new(5.0, 15.0, 110.0, 60.0))
         }),
