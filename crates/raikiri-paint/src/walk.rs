@@ -3631,31 +3631,48 @@ pub(crate) fn paint_document_impl(
                     // Resolve the source's natural dimensions first. SVG
                     // sources use the resulting concrete object dimensions
                     // for a bounded, size-specific raster request.
-                    if let Some(t) = trace.as_deref_mut()
-                        && (node.is_inline_svg_root()
-                            || document.is_canvas_element(node_id)
-                            || node.tag_name() == Some("img"))
-                    {
+                    let is_replaced = node.is_inline_svg_root()
+                        || document.is_canvas_element(node_id)
+                        || node.tag_name() == Some("img");
+                    // The replaced content paints inside its overflow clip,
+                    // the same clip the page paint order puts around it.
+                    let content_clip = is_replaced
+                        .then(|| {
+                            raikiri_dom::paint_rules::replaced_content_clip(
+                                cv,
+                                PaintRect::new(
+                                    paint_x,
+                                    paint_y,
+                                    layout.size.width,
+                                    layout.size.height,
+                                ),
+                                PaintInsets::new(
+                                    layout.border.top,
+                                    layout.border.right,
+                                    layout.border.bottom,
+                                    layout.border.left,
+                                ),
+                                PaintInsets::new(
+                                    layout.padding.top,
+                                    layout.padding.right,
+                                    layout.padding.bottom,
+                                    layout.padding.left,
+                                ),
+                            )
+                        })
+                        .flatten();
+                    if let Some(clip) = content_clip {
+                        let rect = push_overflow_clip(scene, clip, &page_box);
+                        if let Some(t) = trace.as_deref_mut() {
+                            t.push(crate::PaintTraceEvent::PushOverflowClip(
+                                node_id,
+                                [rect.x0, rect.y0, rect.x1, rect.y1],
+                            ));
+                        }
+                    }
+                    if is_replaced && let Some(t) = trace.as_deref_mut() {
                         t.push(crate::PaintTraceEvent::Replaced(node_id));
                     }
-                    let replaced_content_clip = |padding: &taffy::Rect<f32>| {
-                        raikiri_dom::paint_rules::replaced_content_clip(
-                            cv,
-                            PaintRect::new(paint_x, paint_y, layout.size.width, layout.size.height),
-                            PaintInsets::new(
-                                cv.border.top.width().px(),
-                                cv.border.right.width().px(),
-                                cv.border.bottom.width().px(),
-                                cv.border.left.width().px(),
-                            ),
-                            PaintInsets::new(
-                                padding.top,
-                                padding.right,
-                                padding.bottom,
-                                padding.left,
-                            ),
-                        )
-                    };
                     let painted_image = if node.is_inline_svg_root() {
                         paint_inline_svg(
                             scene,
@@ -3683,10 +3700,6 @@ pub(crate) fn paint_document_impl(
                             warnings,
                         )
                     } else if document.is_canvas_element(node_id) {
-                        let content_clip = replaced_content_clip(&paint_padding);
-                        if let Some(clip) = content_clip {
-                            push_overflow_clip(scene, clip, &page_box);
-                        }
                         let fallback_bitmap;
                         let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
                             bitmap
@@ -3697,7 +3710,7 @@ pub(crate) fn paint_document_impl(
                             fallback_bitmap = raikiri_dom::CanvasBitmap::transparent(w, h);
                             &fallback_bitmap
                         };
-                        let painted = paint_canvas(
+                        paint_canvas(
                             scene,
                             bitmap,
                             layout.size.width,
@@ -3709,20 +3722,12 @@ pub(crate) fn paint_document_impl(
                             cv.object_fit,
                             &cv.object_position,
                             cv.visibility != Visibility::Hidden,
-                        );
-                        if content_clip.is_some() {
-                            scene.pop_layer();
-                        }
-                        painted
+                        )
                     } else if let Some(source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
                         && let Some(intrinsic) = source.intrinsic_size(&src_url)
                     {
-                        let content_clip = replaced_content_clip(&layout.padding);
-                        if let Some(clip) = content_clip {
-                            push_overflow_clip(scene, clip, &page_box);
-                        }
-                        let painted = paint_image(
+                        paint_image(
                             image_cache,
                             scene,
                             source,
@@ -3739,14 +3744,16 @@ pub(crate) fn paint_document_impl(
                             cv.visibility != Visibility::Hidden,
                             node_id,
                             warnings,
-                        );
-                        if content_clip.is_some() {
-                            scene.pop_layer();
-                        }
-                        painted
+                        )
                     } else {
                         false
                     };
+                    if content_clip.is_some() {
+                        if let Some(t) = trace.as_deref_mut() {
+                            t.push(crate::PaintTraceEvent::PopClip);
+                        }
+                        scene.pop_layer();
+                    }
                     if !painted_image
                         && pixel_source.is_none()
                         && node.tag_name() == Some("img")
