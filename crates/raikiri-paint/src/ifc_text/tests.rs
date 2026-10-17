@@ -3186,6 +3186,25 @@ fn vertical_emphasis_marks_sit_beside_each_cluster_but_not_punctuation() {
 }
 
 #[test]
+fn vertical_emphasis_marks_default_to_the_text_color() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;\
+         text-emphasis:dot;color:rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    assert_eq!(placed.len(), 4, "two characters and two marks: {placed:?}");
+    assert!(
+        placed.iter().all(|g| g.3 == blue),
+        "marks take currentcolor: {placed:?}"
+    );
+}
+
+#[test]
 fn vertical_emphasis_marks_take_one_mark_per_combined_square() {
     let (mut doc, cascade, root) = paragraph(
         "writing-mode:vertical-rl;line-height:40px;text-emphasis:dot;\
