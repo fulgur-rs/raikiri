@@ -6,6 +6,8 @@ enum Column {
     Col(&'static str, Option<u32>),
     Group(&'static str, Vec<&'static str>),
     EmptyGroup(&'static str, Option<u32>),
+    /// A `<colgroup span>` that also holds `<col>` children.
+    SpannedGroup(&'static str, u32, Vec<&'static str>),
 }
 
 struct ColumnFixture {
@@ -19,6 +21,8 @@ struct ColumnFixture {
 
 const SEPARATE: &str = "display:table;border-spacing:10px";
 const COLLAPSING: &str = "display:table;border-collapse:collapse";
+const FIXED: &str = "display:table;table-layout:fixed;width:200px;border-spacing:10px";
+const MIN_WIDTH: &str = "display:table;min-width:300px;border-spacing:10px";
 const COL: &str = "display:table-column";
 const COLLAPSED_COL: &str = "display:table-column;visibility:collapse";
 const COLLAPSED_GROUP: &str = "display:table-column-group;visibility:collapse";
@@ -59,6 +63,13 @@ fn table_with(
             }
             Column::Group(css, children) => {
                 let group = doc.append_element(Some(table), "div", Style::default(), Some(*css));
+                for child in children {
+                    doc.append_element(Some(group), "div", Style::default(), Some(*child));
+                }
+            }
+            Column::SpannedGroup(css, span, children) => {
+                let group = doc.append_element(Some(table), "div", Style::default(), Some(*css));
+                set_attribute(&mut doc, group, "span", span);
                 for child in children {
                     doc.append_element(Some(group), "div", Style::default(), Some(*child));
                 }
@@ -336,7 +347,7 @@ fn a_collapsed_column_leaves_the_row_height_it_gave() {
 fn a_collapsed_column_lays_out_like_a_table_without_it() {
     // Both border models: the table is as wide as one that never had the
     // column, and the columns that remain sit where they would there.
-    for table_css in [SEPARATE, COLLAPSING] {
+    for table_css in [SEPARATE, COLLAPSING, FIXED, MIN_WIDTH] {
         for cell_css in ["", "border:2px solid black"] {
             let collapsed = table_with(
                 table_css,
@@ -395,4 +406,65 @@ fn collapsed_columns_resolve_borders_against_the_table_edge() {
     assert_eq!(wide.size.width, 0.0);
     let reference = three_columns(COLLAPSING, COL);
     assert!(table_size(&fixture).0 < table_size(&reference).0);
+}
+
+#[test]
+fn a_column_group_without_columns_adds_its_span_in_any_table() {
+    // Without a collapse, `<colgroup span=3>` still stands for three columns:
+    // two empty ones follow the cell's column, each with its own spacing.
+    let with_group = table_with(
+        SEPARATE,
+        &[Column::EmptyGroup(GROUP, Some(3))],
+        &[30.0],
+        1,
+        None,
+        "",
+    );
+    let without = table_with(SEPARATE, &[], &[30.0], 1, None, "");
+    assert_eq!(table_size(&without).0, 50.0);
+    assert_eq!(table_size(&with_group).0, 70.0);
+}
+
+#[test]
+fn the_span_of_a_group_with_columns_is_ignored_even_when_a_column_has_no_box() {
+    let hidden = "display:none";
+    let fixture = table_with(
+        SEPARATE,
+        &[Column::SpannedGroup(GROUP, 3, vec![hidden])],
+        &[30.0],
+        1,
+        None,
+        "",
+    );
+    assert_eq!(table_size(&fixture).0, 50.0);
+}
+
+#[test]
+fn a_table_whose_columns_all_collapse_shows_only_its_own_border() {
+    let table_css = "display:table;border-collapse:collapse;border:4px solid black";
+    let fixture = table_with(
+        table_css,
+        &[Column::Group(COLLAPSED_GROUP, vec![COL, COL])],
+        &[30.0, 40.0],
+        1,
+        None,
+        "border:10px solid black",
+    );
+    // No cell shows, so no cell border meets the table's.
+    assert_eq!(table_size(&fixture).0, 8.0);
+}
+
+#[test]
+fn a_vertical_table_keeps_its_collapsed_columns() {
+    let fixture = table_with(
+        "display:table;writing-mode:vertical-rl;border-spacing:10px",
+        &[Column::Col(COL, None), Column::Col(COLLAPSED_COL, None)],
+        &[30.0, 40.0],
+        1,
+        None,
+        "",
+    );
+    let layout = fixture.doc.nodes[fixture.cells[0][1]].unrounded_layout;
+    assert!(layout.size.width > 0.0 && layout.size.height > 0.0);
+    assert!(!fixture.doc.nodes[fixture.cells[0][1]].clips_collapsed_table_span);
 }

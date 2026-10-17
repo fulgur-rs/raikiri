@@ -1424,11 +1424,20 @@ fn collect_col_widths(
 ) -> Result<Vec<ColSizing>, raikiri_traits::LayoutError> {
     let mut out = Vec::new();
     each_column_run(doc, table_idx, |sizing_node, _, span| {
-        let st = &doc.layout_node_with_style(sizing_node).unwrap().style;
-        let sizing = ColSizing {
-            width: st.size.width,
-            min_width: st.min_size.width.into(),
-            max_width: st.max_size.width.into(),
+        let sizing = match sizing_node {
+            Some(col_id) => {
+                let st = &doc.layout_node_with_style(col_id).unwrap().style;
+                ColSizing {
+                    width: st.size.width,
+                    min_width: st.min_size.width.into(),
+                    max_width: st.max_size.width.into(),
+                }
+            }
+            None => ColSizing {
+                width: Dimension::auto(),
+                min_width: Dimension::auto(),
+                max_width: Dimension::auto(),
+            },
         };
         if span > usize::from(u16::MAX) - out.len() {
             return Err(table_column_error());
@@ -1460,15 +1469,15 @@ fn collapsed_columns(
 }
 
 /// Walks the table's `<col>` and `<colgroup>` children in grid order and
-/// calls `each` with the node that sizes a run of columns, whether the run
+/// calls `each` with the `<col>` that sizes a run of columns, whether the run
 /// is collapsed, and its length. `span` (HTML §4.9.8, max 1000) sets the
-/// length; a `<colgroup>` without `<col>` children stands for its own
-/// `span` columns. Direct `<col>` children (anonymous colgroup) are
-/// included in DOM order.
+/// length; a `<colgroup>` without `<col>` children stands for its own `span`
+/// columns, which have no `<col>` and so no authored sizing. Direct `<col>`
+/// children (anonymous colgroup) are included in DOM order.
 fn each_column_run(
     doc: &Document,
     table_idx: usize,
-    mut each: impl FnMut(usize, bool, usize) -> Result<(), raikiri_traits::LayoutError>,
+    mut each: impl FnMut(Option<usize>, bool, usize) -> Result<(), raikiri_traits::LayoutError>,
 ) -> Result<(), raikiri_traits::LayoutError> {
     fn col_span(doc: &Document, node_id: usize) -> usize {
         doc.ifc_layout_node(node_id)
@@ -1486,25 +1495,33 @@ fn each_column_run(
                 let group_collapsed = doc.nodes[child_id].collapses_table_columns;
                 let mut has_columns = false;
                 for &col_id in &doc.nodes[child_id].children {
-                    if !doc.nodes[col_id].is_in_document()
-                        || doc.nodes[col_id].display() != DisplayValue::TableColumn
-                    {
+                    if !doc.nodes[col_id].is_in_document() {
                         continue;
+                    }
+                    match doc.nodes[col_id].display() {
+                        DisplayValue::TableColumn => {}
+                        // A `<col>` that generates no box still ends the
+                        // group's own `span`.
+                        DisplayValue::None => {
+                            has_columns = true;
+                            continue;
+                        }
+                        _ => continue,
                     }
                     has_columns = true;
                     each(
-                        col_id,
+                        Some(col_id),
                         group_collapsed || doc.nodes[col_id].collapses_table_columns,
                         col_span(doc, col_id),
                     )?;
                 }
                 if !has_columns {
-                    each(child_id, group_collapsed, col_span(doc, child_id))?;
+                    each(None, group_collapsed, col_span(doc, child_id))?;
                 }
             }
             DisplayValue::TableColumn => {
                 each(
-                    child_id,
+                    Some(child_id),
                     doc.nodes[child_id].collapses_table_columns,
                     col_span(doc, child_id),
                 )?;

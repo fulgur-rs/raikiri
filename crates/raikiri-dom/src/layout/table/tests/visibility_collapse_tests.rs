@@ -416,3 +416,11 @@ fn a_row_inside_a_contents_wrapper_collapses_with_its_row_group() {
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     assert_eq!(cell_box(&doc, cell).1, 0.0);
 }
+
+#[test]
+fn a_table_whose_rows_all_collapse_shows_only_its_own_border() {
+    // No cell shows, so no cell border meets the table's on any side.
+    let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
+    let layout = doc.nodes[table].unrounded_layout;
+    assert_eq!((layout.size.width, layout.size.height), (20.0, 0.0));
+}
