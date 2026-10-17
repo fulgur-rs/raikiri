@@ -641,6 +641,31 @@ fn unpaginated_content_overflow(
         .collect()
 }
 
+/// Let the table boxes around the rows that pagination moved follow them,
+/// given where each row sat in its parent before pagination.
+///
+/// A row moves within its parent with the page it opens, and with the rows
+/// before it in the same table that opened one.
+fn follow_moved_table_rows(
+    document: &mut Document,
+    row_origins: Vec<(usize, f32)>,
+    table_headers: &HeaderRepeats,
+) {
+    let moved_table_rows: HashMap<usize, f32> = row_origins
+        .into_iter()
+        .filter_map(|(row, origin)| {
+            let delta = document.nodes[row].unrounded_layout.location.y - origin;
+            (delta > 0.001).then_some((row, delta))
+        })
+        .collect();
+    super::table::row_moves::follow_moved_rows(document, &moved_table_rows, |table| {
+        table_headers
+            .headers
+            .values()
+            .any(|header| header.table == table)
+    });
+}
+
 /// Extend auto-height block and flex boxes around their committed paginated
 /// content, from descendants to ancestors. Page shifts may have been inherited
 /// from a parallel flow rather than introduced at the box's own break.
@@ -5148,21 +5173,7 @@ fn paginate_flow(
         );
     }
 
-    // A row moves within its parent with the page it opens, and with the
-    // rows before it in the same table that opened one.
-    let moved_table_rows: HashMap<usize, f32> = table_row_origins
-        .into_iter()
-        .filter_map(|(row, origin)| {
-            let delta = document.nodes[row].unrounded_layout.location.y - origin;
-            (delta > 0.001).then_some((row, delta))
-        })
-        .collect();
-    super::table::row_moves::follow_moved_rows(document, &moved_table_rows, |table| {
-        table_headers
-            .headers
-            .values()
-            .any(|header| header.table == table)
-    });
+    follow_moved_table_rows(document, table_row_origins, &table_headers);
     super::table::headers::finish_boxes(document, &table_headers);
     update_paginated_block_heights(
         document,
