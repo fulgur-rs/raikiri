@@ -43,10 +43,11 @@ use crate::resolve::{
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
     ComputedLengthPercentageOrNormal, ComputedLetterSpacing, ComputedLineHeight, ComputedOutline,
-    ComputedTabSize, ComputedTextDecorationInset, ComputedTextDecorationThickness,
-    ComputedTextIndent, ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
-    ComputedWordSpacing, empty_computed_box_shadow_list, empty_computed_text_shadow_list,
-    empty_computed_transform_list, initial_computed_grid_auto_track_list,
+    ComputedOverflowClipMargin, ComputedTabSize, ComputedTextDecorationInset,
+    ComputedTextDecorationThickness, ComputedTextIndent, ComputedTextShadow,
+    ComputedTextUnderlineOffset, ComputedTransformFunction, ComputedWordSpacing,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list, empty_computed_transform_list,
+    initial_computed_grid_auto_track_list,
 };
 
 /// Pixel value corresponding to the CSS initial `font-size` value (`medium`).
@@ -1033,6 +1034,9 @@ pub struct ComputedValues {
     /// (CSS UI 3 §4.5 <https://www.w3.org/TR/css-ui-3/#outline-offset>).
     /// A negative value insets the outline within the border edge.
     pub outline_offset: ComputedLength,
+    /// `overflow-clip-margin`. **Not inherited**; initial: `0px` (CSS
+    /// Overflow 4 §3.2). Where a clipping axis stops painting.
+    pub overflow_clip_margin: ComputedOverflowClipMargin,
     /// `width`: preferred physical horizontal size (a writing-mode-neutral
     /// physical property corresponding to the block axis in vertical writing modes).
     /// **Not inherited**; initial: [`ComputedLengthPercentageOrAuto::Auto`]
@@ -2241,6 +2245,7 @@ impl ComputedValues {
             },
             // CSS UI 3 §4.5: initial outline-offset is `0`.
             outline_offset: ComputedLength::ZERO,
+            overflow_clip_margin: ComputedOverflowClipMargin::INITIAL,
             // CSS Sizing 3 §3.1.1: initial width is `auto`.
             width: ComputedLengthPercentageOrAuto::Auto,
             width_ch: None,

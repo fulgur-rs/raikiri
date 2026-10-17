@@ -474,6 +474,14 @@ img {
   display: inline-block;
 }
 
+/* CSS Overflow 3 §3.1 and CSS Overflow 4 §3.2: replaced elements clip
+ * their content at the content box by default, and authors can let it
+ * overflow with `overflow: visible`. */
+img, video, canvas, iframe, embed, object {
+  overflow: clip;
+  overflow-clip-margin: content-box;
+}
+
 /* HTML Living Standard "Rendering" §tables (15.3.8) + CSS 2.1 §17.2 / Appendix D
  * — table model display types. Each HTML table-related element maps to its
  * corresponding internal display value (CSS Display 3 §2 `<display-internal>`).

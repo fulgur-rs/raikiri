@@ -971,6 +971,10 @@ pub(super) fn absolutize_in_page_context(
                 resolve_length(v, font_size, own_line_height, ctx).px(),
             ))
         }
+        PropertyValue::OverflowClipMargin(v) => PropertyValue::OverflowClipMargin(crate::property::OverflowClipMargin {
+            visual_box: v.visual_box,
+            offset: Length::Px(resolve_length(v.offset, font_size, own_line_height, ctx).px()),
+        }),
         // ── width / height / max-* / min-* ──────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(basis.size_lpa(v)),
         PropertyValue::Height(v) => PropertyValue::Height(basis.size_lpa(v)),

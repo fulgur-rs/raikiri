@@ -323,6 +323,9 @@ pub struct SpecifiedValues {
     /// <https://www.w3.org/TR/css-ui-3/#outline-offset>). It is a non-inherited `<length>` with
     /// initial value `0`; negatives are allowed.
     pub outline_offset: Length,
+    /// **Specified** `overflow-clip-margin`; phase 3 absolutizes its length
+    /// (CSS Overflow 4 §3.2). Non-inherited, initial `0px`.
+    pub overflow_clip_margin: crate::property::OverflowClipMargin,
     /// **Specified** `width`; absolutized in phase 3.
     pub width: LengthOrAuto,
     /// **Specified** `height`; absolutized in phase 3.
@@ -890,6 +893,7 @@ impl SpecifiedValues {
             },
             // CSS UI 3 §4.5: outline-offset is initially `0`.
             outline_offset: Length::Px(0.0),
+            overflow_clip_margin: crate::property::OverflowClipMargin::INITIAL,
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             max_width: LengthOrAuto::Auto,
@@ -1376,6 +1380,7 @@ impl SpecifiedValues {
             },
             // CSS UI 3 §4.5: outline-offset is non-inherited, initially `0`.
             outline_offset: Length::Px(0.0),
+            overflow_clip_margin: crate::property::OverflowClipMargin::INITIAL,
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             max_width: LengthOrAuto::Auto,
@@ -2357,6 +2362,15 @@ impl SpecifiedValues {
             },
             outline: resolve_outline(self.outline, font_size, own_line_height, ctx),
             outline_offset: resolve_length(self.outline_offset, font_size, own_line_height, ctx),
+            overflow_clip_margin: crate::resolve::ComputedOverflowClipMargin {
+                visual_box: self.overflow_clip_margin.visual_box,
+                offset: resolve_length(
+                    self.overflow_clip_margin.offset,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+            },
             width: resolve_size_length_percentage_or_auto(
                 self.width,
                 font_size,

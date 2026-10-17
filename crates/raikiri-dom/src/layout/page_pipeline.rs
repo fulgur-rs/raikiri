@@ -2418,6 +2418,7 @@ pub(crate) fn project_slices_with_control(
                 node.table_grid_box.map_or(height, |rect| rect.height),
             );
             let border = layout.border;
+            let padding = layout.padding;
             let index = placement_overflow_clips.len();
             placement_overflow_clips.push(PlacementOverflowClipSource {
                 node: NodeId::new(node_id as u64),
@@ -2428,6 +2429,7 @@ pub(crate) fn project_slices_with_control(
                         &cascade.computed[node_id],
                         border_box,
                         PaintInsets::new(border.top, border.right, border.bottom, border.left),
+                        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
                     ),
                     is_repeat,
                 },
@@ -2969,6 +2971,7 @@ pub(crate) fn project_slices_with_control(
                 return None;
             }
             let border = document.nodes[id].unrounded_layout.border;
+            let padding = document.nodes[id].unrounded_layout.padding;
             let border_box =
                 PaintRect::new(source.abs_x, source.abs_y, source.width, source.height);
             Some((
@@ -2979,6 +2982,7 @@ pub(crate) fn project_slices_with_control(
                         &cascade.computed[id],
                         border_box,
                         PaintInsets::new(border.top, border.right, border.bottom, border.left),
+                        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
                     ),
                     is_repeat: source.is_repeat,
                 },

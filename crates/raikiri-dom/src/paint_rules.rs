@@ -5,8 +5,8 @@ use crate::Document;
 use crate::layout::{BoxParentScope, box_parent};
 use raikiri_style::property::{
     BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue, EmptyCellsValue,
-    FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse,
-    ZIndexValue,
+    FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, VisualBox,
+    WhiteSpaceCollapse, ZIndexValue,
 };
 use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
@@ -129,11 +129,12 @@ pub(crate) fn clips_element_overflow(
 /// Resolve the local overflow clip of a whole border box in paint coordinates.
 ///
 /// The caller supplies the box before page cuts and its used physical border
-/// widths. Percentages and overlap are resolved on that box before insetting;
-/// padding-edge curves are never normalized again after an opposite edge crops
-/// them. Open axes impose no bound and do not form rounded corners.
+/// widths; the padding comes from the node's layout. Percentages and overlap
+/// are resolved on that box before insetting; padding-edge curves are never
+/// normalized again after an opposite edge crops them. Open axes impose no
+/// bound and do not form rounded corners.
 ///
-/// The padding origin is floored to include pixel-snapped descendants. An
+/// The clip origin is floored to include pixel-snapped descendants. An
 /// `overflow: clip` far edge is floored too. Viewport-propagated overflow and
 /// ordinary inline boxes do not produce a local clip.
 pub fn overflow_clip(
@@ -146,30 +147,96 @@ pub fn overflow_clip(
     if !clips_element_overflow(document, cascade, node_id) {
         return None;
     }
-    Some(OverflowClipGeometry::new(&cascade.computed[node_id], border_box, border).at(border_box))
+    let padding = document.nodes[node_id].unrounded_layout.padding;
+    let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
+    Some(
+        OverflowClipGeometry::new(&cascade.computed[node_id], border_box, border, padding)
+            .at(border_box),
+    )
+}
+
+/// Resolve the clip of a replaced element's own content (its image or canvas
+/// bitmap) in paint coordinates, from its used border box, border widths and
+/// padding. Each clipping axis clips at the overflow clip edge, the content
+/// box under the UA default `overflow-clip-margin: content-box`; a visible
+/// axis lets the content paint outside its box (CSS Overflow 3 §3.1). The
+/// edges are not snapped, so the content keeps its exact placement.
+pub fn replaced_content_clip(
+    cv: &ComputedValues,
+    border_box: PaintRect,
+    border: PaintInsets,
+    padding: PaintInsets,
+) -> Option<PaintClip> {
+    if cv.overflow.x == OverflowValue::Visible && cv.overflow.y == OverflowValue::Visible {
+        return None;
+    }
+    Some(OverflowClipGeometry::new(cv, border_box, border, padding).clip(border_box, false))
 }
 
 /// Position-independent clip geometry shared by every placement of a source.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OverflowClipGeometry {
-    border: PaintInsets,
+    /// How far inside the border box each side of the clip edge lies; a
+    /// negative inset lies outside it.
+    edges: PaintInsets,
     overflow: OverflowXY,
     corner_radii: Option<[[f32; 2]; 4]>,
 }
 
 impl OverflowClipGeometry {
-    pub(crate) fn new(cv: &ComputedValues, border_box: PaintRect, border: PaintInsets) -> Self {
+    /// The clip edge is the padding box, except that an `overflow: clip`
+    /// axis clips at the overflow clip edge: the box and outset that
+    /// `overflow-clip-margin` names (CSS Overflow 4 §3.2).
+    pub(crate) fn new(
+        cv: &ComputedValues,
+        border_box: PaintRect,
+        border: PaintInsets,
+        padding: PaintInsets,
+    ) -> Self {
+        let margin = cv.overflow_clip_margin;
+        let margin_edge = |border: f32, padding: f32| {
+            let visual_box = match margin.visual_box {
+                VisualBox::BorderBox => 0.0,
+                VisualBox::ContentBox => border + padding,
+                _ => border,
+            };
+            visual_box - margin.offset.px()
+        };
+        let clips_x = cv.overflow.x == OverflowValue::Clip;
+        let clips_y = cv.overflow.y == OverflowValue::Clip;
+        let edges = PaintInsets::new(
+            if clips_y {
+                margin_edge(border.top, padding.top)
+            } else {
+                border.top
+            },
+            if clips_x {
+                margin_edge(border.right, padding.right)
+            } else {
+                border.right
+            },
+            if clips_y {
+                margin_edge(border.bottom, padding.bottom)
+            } else {
+                border.bottom
+            },
+            if clips_x {
+                margin_edge(border.left, padding.left)
+            } else {
+                border.left
+            },
+        );
         let corner_radii =
             if cv.overflow.x != OverflowValue::Visible && cv.overflow.y != OverflowValue::Visible {
                 let mut radii = cv.border_radius.used(border_box.width, border_box.height);
                 for (corner, [x, y]) in radii.iter_mut().zip([
-                    [border.left, border.top],
-                    [border.right, border.top],
-                    [border.right, border.bottom],
-                    [border.left, border.bottom],
+                    [edges.left, edges.top],
+                    [edges.right, edges.top],
+                    [edges.right, edges.bottom],
+                    [edges.left, edges.bottom],
                 ]) {
-                    let rx = (corner[0] - x).max(0.0);
-                    let ry = (corner[1] - y).max(0.0);
+                    let rx = adjusted_radius(corner[0], x);
+                    let ry = adjusted_radius(corner[1], y);
                     *corner = if rx > 0.0 && ry > 0.0 {
                         [rx, ry]
                     } else {
@@ -181,7 +248,7 @@ impl OverflowClipGeometry {
                 None
             };
         Self {
-            border,
+            edges,
             overflow: cv.overflow,
             corner_radii,
         }
@@ -189,17 +256,24 @@ impl OverflowClipGeometry {
 
     /// Snap edges only after translating the whole border box to its page.
     pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
-        let x0 = (border_box.x + self.border.left).floor();
-        let y0 = (border_box.y + self.border.top).floor();
-        let right = border_box.x + border_box.width - self.border.right;
-        let bottom = border_box.y + border_box.height - self.border.bottom;
+        self.clip(border_box, true)
+    }
+
+    /// The clip of `border_box`. With `snap`, the origin and an
+    /// `overflow: clip` far edge are floored.
+    fn clip(self, border_box: PaintRect, snap: bool) -> PaintClip {
+        let floor = |value: f32| if snap { value.floor() } else { value };
+        let x0 = floor(border_box.x + self.edges.left);
+        let y0 = floor(border_box.y + self.edges.top);
+        let right = border_box.x + border_box.width - self.edges.right;
+        let bottom = border_box.y + border_box.height - self.edges.bottom;
         let x1 = if self.overflow.x == OverflowValue::Clip {
-            right.floor()
+            floor(right)
         } else {
             right
         };
         let y1 = if self.overflow.y == OverflowValue::Clip {
-            bottom.floor()
+            floor(bottom)
         } else {
             bottom
         };
@@ -213,6 +287,27 @@ impl OverflowClipGeometry {
         clip.clip_y = self.overflow.y != OverflowValue::Visible;
         clip.corner_radii = self.corner_radii;
         clip
+    }
+}
+
+/// A border-edge corner radius moved `inset` inside the border edge, or
+/// outside it when `inset` is negative. Inside, the radius shrinks by the
+/// inset. Outside, it grows by the outset, less for a radius smaller than the
+/// outset so that a sharp corner stays sharp (CSS Backgrounds 3 §7.1.1, the
+/// rule for spread shadows).
+fn adjusted_radius(radius: f32, inset: f32) -> f32 {
+    if radius <= 0.0 {
+        return 0.0;
+    }
+    if inset >= 0.0 {
+        return (radius - inset).max(0.0);
+    }
+    let outset = -inset;
+    let ratio = radius / outset;
+    if ratio < 1.0 {
+        radius + outset * (1.0 + (ratio - 1.0).powi(3))
+    } else {
+        radius + outset
     }
 }
 

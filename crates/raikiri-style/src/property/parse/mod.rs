@@ -102,6 +102,7 @@ fn parse_value_with_black_currentcolor(
                 | PropertyKey::BackgroundColor
                 | PropertyKey::FontSize
                 | PropertyKey::VerticalAlign
+                | PropertyKey::OverflowClipMargin
                 | PropertyKey::BorderRadiusTopLeft
                 | PropertyKey::BorderRadiusTopRight
                 | PropertyKey::BorderRadiusBottomRight
@@ -1190,6 +1191,10 @@ pub(crate) fn parse_property_grammar(
         // CSS UI 3 §4.5 outline-offset — <length>, initial 0, non-inherited.
         // Negative values are accepted and offset from the border edge; `<percentage>` is outside the grammar.
         "outline-offset" => parse_length_allow_negative(input).map(PropertyValue::OutlineOffset),
+        // CSS Overflow 4 §3.2 overflow-clip-margin — `<visual-box> || <length [0,∞]>`.
+        "overflow-clip-margin" => {
+            parse_overflow_clip_margin(input).map(PropertyValue::OverflowClipMargin)
+        }
         // CSS Grid Layout Module Level 1 §7.2. The common WPT shorthand
         // form is `<grid-template-rows> / <grid-template-columns>`.
         "grid" => parse_grid_shorthand(input).map(PropertyValue::Grid),

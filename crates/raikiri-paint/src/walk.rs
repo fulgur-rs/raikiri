@@ -28,7 +28,7 @@ use raikiri_style::property::{
     BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient,
     CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient, GradientStopColor,
     HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
+    OutlineStyle, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
     UnboundedColor, VerticalAlign, Visibility, VisualBox, ZIndexValue,
 };
 use raikiri_style::{
@@ -3638,6 +3638,24 @@ pub(crate) fn paint_document_impl(
                     {
                         t.push(crate::PaintTraceEvent::Replaced(node_id));
                     }
+                    let replaced_content_clip = |padding: &taffy::Rect<f32>| {
+                        raikiri_dom::paint_rules::replaced_content_clip(
+                            cv,
+                            PaintRect::new(paint_x, paint_y, layout.size.width, layout.size.height),
+                            PaintInsets::new(
+                                cv.border.top.width().px(),
+                                cv.border.right.width().px(),
+                                cv.border.bottom.width().px(),
+                                cv.border.left.width().px(),
+                            ),
+                            PaintInsets::new(
+                                padding.top,
+                                padding.right,
+                                padding.bottom,
+                                padding.left,
+                            ),
+                        )
+                    };
                     let painted_image = if node.is_inline_svg_root() {
                         paint_inline_svg(
                             scene,
@@ -3665,6 +3683,10 @@ pub(crate) fn paint_document_impl(
                             warnings,
                         )
                     } else if document.is_canvas_element(node_id) {
+                        let content_clip = replaced_content_clip(&paint_padding);
+                        if let Some(clip) = content_clip {
+                            push_overflow_clip(scene, clip, &page_box);
+                        }
                         let fallback_bitmap;
                         let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
                             bitmap
@@ -3675,7 +3697,7 @@ pub(crate) fn paint_document_impl(
                             fallback_bitmap = raikiri_dom::CanvasBitmap::transparent(w, h);
                             &fallback_bitmap
                         };
-                        paint_canvas(
+                        let painted = paint_canvas(
                             scene,
                             bitmap,
                             layout.size.width,
@@ -3686,15 +3708,21 @@ pub(crate) fn paint_document_impl(
                             &paint_padding,
                             cv.object_fit,
                             &cv.object_position,
-                            cv.overflow.x,
-                            cv.overflow.y,
                             cv.visibility != Visibility::Hidden,
-                        )
+                        );
+                        if content_clip.is_some() {
+                            scene.pop_layer();
+                        }
+                        painted
                     } else if let Some(source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
                         && let Some(intrinsic) = source.intrinsic_size(&src_url)
                     {
-                        paint_image(
+                        let content_clip = replaced_content_clip(&layout.padding);
+                        if let Some(clip) = content_clip {
+                            push_overflow_clip(scene, clip, &page_box);
+                        }
+                        let painted = paint_image(
                             image_cache,
                             scene,
                             source,
@@ -3711,7 +3739,11 @@ pub(crate) fn paint_document_impl(
                             cv.visibility != Visibility::Hidden,
                             node_id,
                             warnings,
-                        )
+                        );
+                        if content_clip.is_some() {
+                            scene.pop_layer();
+                        }
+                        painted
                     } else {
                         false
                     };
@@ -4605,7 +4637,8 @@ fn used_padding_for_paint(
 }
 
 /// Draws a replaced element after asking the source for pixels at the concrete
-/// CSS object size selected by `object-fit`.
+/// CSS object size selected by `object-fit`. The caller clips it (see
+/// [`raikiri_dom::paint_rules::replaced_content_clip`]).
 #[allow(clippy::too_many_arguments)]
 fn paint_image(
     image_cache: &crate::walk::ImageBrushCache,
@@ -4681,13 +4714,6 @@ fn paint_image(
         return true;
     }
     let brush = image_cache.whole(&decoded);
-    let clip = Rect::new(
-        content_x,
-        content_y,
-        content_x + content_w,
-        content_y + content_h,
-    );
-    scene.push_clip_layer(Affine::IDENTITY, &clip);
     scene.fill(
         peniko::Fill::NonZero,
         Affine::translate((image_x, image_y))
@@ -4696,7 +4722,6 @@ fn paint_image(
         None,
         &Rect::new(0.0, 0.0, raster_w, raster_h),
     );
-    scene.pop_layer();
     true
 }
 
@@ -4708,10 +4733,8 @@ fn paint_image(
 /// black when script never painted), so unlike `paint_image` this never
 /// emits a resource warning: an empty bitmap simply paints nothing.
 ///
-/// Clipping respects `overflow`: `visible` on both axes paints the full
-/// positioned bitmap (CSS Overflow 3 §3.1 lets replaced-element overflow
-/// show, which `overflow-canvas.html` pins); any non-visible axis clips to
-/// the content box, the same box `paint_image` always uses.
+/// The caller clips it like an image (see
+/// [`raikiri_dom::paint_rules::replaced_content_clip`]).
 #[allow(clippy::too_many_arguments)]
 fn paint_canvas(
     scene: &mut impl PaintScene,
@@ -4724,8 +4747,6 @@ fn paint_canvas(
     padding: &taffy::Rect<f32>,
     object_fit: ObjectFit,
     object_position: &ComputedCssPosition,
-    overflow_x: OverflowValue,
-    overflow_y: OverflowValue,
     visible: bool,
 ) -> bool {
     let bl = border.left.width().px();
@@ -4781,17 +4802,6 @@ fn paint_canvas(
         height: bitmap.height,
     };
     let brush = peniko::ImageBrush::new(image_data);
-    let clips_overflow = !matches!(overflow_x, OverflowValue::Visible)
-        || !matches!(overflow_y, OverflowValue::Visible);
-    if clips_overflow {
-        let clip = Rect::new(
-            content_x,
-            content_y,
-            content_x + content_w,
-            content_y + content_h,
-        );
-        scene.push_clip_layer(Affine::IDENTITY, &clip);
-    }
     scene.fill(
         peniko::Fill::NonZero,
         Affine::translate((image_x, image_y))
@@ -4800,9 +4810,6 @@ fn paint_canvas(
         None,
         &Rect::new(0.0, 0.0, natural_w, natural_h),
     );
-    if clips_overflow {
-        scene.pop_layer();
-    }
     true
 }
 

@@ -1294,6 +1294,24 @@ pub struct ComputedBoxShadowItem {
     pub inset: bool,
 }
 
+/// Computed `overflow-clip-margin` (CSS Overflow 4 §3.2): the box keyword
+/// and the absolute outset from that box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedOverflowClipMargin {
+    /// `content-box`, `padding-box` or `border-box`.
+    pub visual_box: crate::property::VisualBox,
+    /// The outset in CSS px, negative for an inset.
+    pub offset: ComputedLength,
+}
+
+impl ComputedOverflowClipMargin {
+    /// The initial value, `0px`: the padding box.
+    pub const INITIAL: Self = Self {
+        visual_box: crate::property::VisualBox::PaddingBox,
+        offset: ComputedLength::ZERO,
+    };
+}
+
 /// Computed `outline` (CSS Basic User Interface Module Level 3 §4).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]

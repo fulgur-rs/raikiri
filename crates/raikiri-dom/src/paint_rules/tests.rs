@@ -564,3 +564,131 @@ fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_an_opacity_gro
     assert!(hoists_positioned_content(&doc, &cascade, passed));
     assert!(!hoists_positioned_content(&doc, &cascade, kept));
 }
+
+fn clip_of(style: &str, border: f32, padding: f32) -> Option<PaintClip> {
+    let mut doc = Document::new();
+    let node = doc.append_element(Some(doc.root_index()), "div", Style::default(), Some(style));
+    doc.mark_in_document_flags();
+    doc.nodes[node].unrounded_layout.padding = taffy::Rect {
+        left: padding,
+        right: padding,
+        top: padding,
+        bottom: padding,
+    };
+    let cascade = cascaded(&doc);
+    overflow_clip(
+        &doc,
+        &cascade,
+        node,
+        PaintRect::new(10.0, 20.0, 100.0, 50.0),
+        PaintInsets::new(border, border, border, border),
+    )
+}
+
+#[test]
+fn overflow_clip_margin_moves_the_clip_edge_of_a_clipping_axis() {
+    // content-box 5px: the content edge (border 2 + padding 3) moved 5px out
+    // is the border edge.
+    let clip = clip_of(
+        "display:block;overflow:clip;overflow-clip-margin:content-box 5px",
+        2.0,
+        3.0,
+    )
+    .unwrap();
+    assert_eq!(clip.rect, PaintRect::new(10.0, 20.0, 100.0, 50.0));
+    // border-box 4px on the block axis only; the open inline axis keeps its
+    // padding edge.
+    let clip = clip_of(
+        "display:block;overflow-x:visible;overflow-y:clip;overflow-clip-margin:border-box 4px",
+        2.0,
+        3.0,
+    )
+    .unwrap();
+    assert_eq!(clip.rect, PaintRect::new(12.0, 16.0, 96.0, 58.0));
+    assert!(!clip.clip_x && clip.clip_y);
+    // A scroll container keeps the padding edge.
+    let clip = clip_of(
+        "display:block;overflow:hidden;overflow-clip-margin:20px",
+        2.0,
+        3.0,
+    )
+    .unwrap();
+    assert_eq!(clip.rect, PaintRect::new(12.0, 22.0, 96.0, 46.0));
+}
+
+#[test]
+fn overflow_clip_margin_reshapes_the_corners_from_the_border_edge() {
+    // Outside the border edge the radius grows by the outset, less for a
+    // radius smaller than the outset.
+    let clip = clip_of(
+        "display:block;overflow:clip;border-radius:10px;overflow-clip-margin:border-box 20px",
+        2.0,
+        0.0,
+    )
+    .unwrap();
+    let ratio: f32 = 10.0 / 20.0;
+    let grown = 10.0 + 20.0 * (1.0 + (ratio - 1.0).powi(3));
+    assert_eq!(clip.corner_radii, Some([[grown; 2]; 4]));
+    let clip = clip_of(
+        "display:block;overflow:clip;border-radius:10px;overflow-clip-margin:border-box 5px",
+        2.0,
+        0.0,
+    )
+    .unwrap();
+    assert_eq!(clip.corner_radii, Some([[15.0; 2]; 4]));
+    // Inside, it shrinks by the inset and vanishes past the radius.
+    let clip = clip_of(
+        "display:block;overflow:clip;border-radius:10px;overflow-clip-margin:content-box",
+        2.0,
+        3.0,
+    )
+    .unwrap();
+    assert_eq!(clip.corner_radii, Some([[5.0; 2]; 4]));
+    let clip = clip_of(
+        "display:block;overflow:clip;border-radius:4px;overflow-clip-margin:content-box",
+        2.0,
+        3.0,
+    )
+    .unwrap();
+    assert_eq!(clip.corner_radii, None);
+}
+
+#[test]
+fn replaced_content_clip_follows_overflow_per_axis_without_snapping() {
+    let mut doc = Document::new();
+    let visible = doc.append_element(
+        Some(doc.root_index()),
+        "canvas",
+        Style::default(),
+        Some("overflow:visible"),
+    );
+    // The UA style sheet's rule for replaced elements.
+    let clipped = doc.append_element(
+        Some(doc.root_index()),
+        "canvas",
+        Style::default(),
+        Some("overflow:clip;overflow-clip-margin:content-box"),
+    );
+    let block_only = doc.append_element(
+        Some(doc.root_index()),
+        "canvas",
+        Style::default(),
+        Some("overflow:visible clip;overflow-clip-margin:content-box"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    let border_box = PaintRect::new(0.5, 0.25, 40.0, 30.0);
+    let border = PaintInsets::new(1.0, 1.0, 1.0, 1.0);
+    let padding = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
+    assert_eq!(
+        replaced_content_clip(&cascade.computed[visible], border_box, border, padding),
+        None
+    );
+    let clip =
+        replaced_content_clip(&cascade.computed[clipped], border_box, border, padding).unwrap();
+    assert_eq!(clip.rect, PaintRect::new(3.5, 3.25, 34.0, 24.0));
+    assert!(clip.clip_x && clip.clip_y);
+    let clip =
+        replaced_content_clip(&cascade.computed[block_only], border_box, border, padding).unwrap();
+    assert!(!clip.clip_x && clip.clip_y);
+}

@@ -362,6 +362,10 @@ fn non_initial_parent() -> ComputedValues {
             color: OutlineColor::Resolved(CssColor::BLACK),
         },
         outline_offset: ComputedLength(5.0),
+        overflow_clip_margin: crate::resolve::ComputedOverflowClipMargin {
+            visual_box: VisualBox::ContentBox,
+            offset: ComputedLength(3.0),
+        },
         width: ComputedLengthPercentageOrAuto::Px(200.0),
         width_ch: None,
         height: ComputedLengthPercentageOrAuto::Px(200.0),

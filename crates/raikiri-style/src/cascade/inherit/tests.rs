@@ -11360,3 +11360,23 @@ fn svg_font_size_calc_of_percent_and_em_exports_its_em_multiple() {
     // A calc with an absolute length keeps its computed px size.
     assert_eq!(font_size(b), Some(None));
 }
+
+#[test]
+fn overflow_clip_margin_inherits_explicitly() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("overflow-clip-margin: content-box 2em"));
+    let child = doc.push_element(parent, "div", Some("overflow-clip-margin: inherit"));
+    let reset = doc.push_element(child, "div", None);
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    let expected = crate::resolve::ComputedOverflowClipMargin {
+        visual_box: crate::property::VisualBox::ContentBox,
+        offset: crate::resolve::ComputedLength(32.0),
+    };
+    assert_eq!(r.computed[parent].overflow_clip_margin, expected);
+    assert_eq!(r.computed[child].overflow_clip_margin, expected);
+    assert_eq!(
+        r.computed[reset].overflow_clip_margin,
+        crate::resolve::ComputedOverflowClipMargin::INITIAL
+    );
+}
