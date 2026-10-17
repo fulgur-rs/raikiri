@@ -4653,13 +4653,7 @@ fn paginate_flow(
         // before any relative offset.
         let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
         let flow_y = effective_y - relative_offset;
-        // `break-inside` does not apply to inline boxes (CSS Fragmentation 3
-        // §3.2): the block boxes inside an avoiding inline box break as they
-        // would without it. An atomic inline, such as an inline table, is a
-        // single box in its line and still moves as a whole.
-        let page_overflow = avoids_page_break_inside(computed.break_inside)
-            && (!document.nodes[node_id].display().is_inline_flow()
-                || page_applies_to_box(document, node_id))
+        let page_overflow = box_avoids_page_break_inside(document, node_id, computed.break_inside)
             && avoided_box_moves(
                 flow_y,
                 margin_top,
@@ -6517,6 +6511,23 @@ fn avoided_run_moves(
         && effective_y > page_start
         && effective_y < page_end
         && effective_y + run_height > page_end
+}
+
+/// Whether the box `node_id`, whose `break-inside` is `break_inside`, avoids
+/// page breaks inside it.
+///
+/// `break-inside` does not apply to inline boxes (CSS Fragmentation 3 §3.2):
+/// the block boxes inside an avoiding inline box break as they would without
+/// it. An atomic inline, such as an inline table, is a single box in its line
+/// and still moves as a whole.
+fn box_avoids_page_break_inside(
+    document: &Document,
+    node_id: usize,
+    break_inside: raikiri_style::property::BreakInside,
+) -> bool {
+    avoids_page_break_inside(break_inside)
+        && (!document.nodes[node_id].display().is_inline_flow()
+            || page_applies_to_box(document, node_id))
 }
 
 /// Whether `break_inside` avoids page breaks inside its box.
