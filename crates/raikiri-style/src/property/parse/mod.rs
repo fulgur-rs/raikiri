@@ -1198,9 +1198,12 @@ pub(crate) fn parse_property_grammar(
         "overflow-clip-margin" => {
             parse_overflow_clip_margin(input).map(PropertyValue::OverflowClipMargin)
         }
-        // CSS Grid Layout Module Level 1 §7.2. The common WPT shorthand
-        // form is `<grid-template-rows> / <grid-template-columns>`.
+        // CSS Grid Layout Module Level 1 §7.8; only the `<'grid-template'>`
+        // alternative is supported.
         "grid" => parse_grid_shorthand(input).map(PropertyValue::Grid),
+        // CSS Grid Layout Module Level 1 §7.4
+        // <https://www.w3.org/TR/css-grid-1/#explicit-grid-shorthand>.
+        "grid-template" => parse_grid_template_shorthand(input).map(PropertyValue::GridTemplate),
         "grid-area" => {
             parse_grid_area_shorthand(input).map(|v| PropertyValue::GridArea(Arc::new(v)))
         }

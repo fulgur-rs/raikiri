@@ -8,7 +8,7 @@ use crate::property::{
     BackgroundSize, Border, BorderColor, BorderImageOutsetSide, BorderImageWidthSide, BorderRadius,
     BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset,
     FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand,
-    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridInflexibleBreadth, GridShorthand, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     LengthPercentageCalc, LengthPercentageOrCalc, Outline, OutlineColor, OutlineStyle, OverflowXY,
     PropertyValue, Sides, TextDecorationInset, TextDecorationShorthand, TextDecorationThickness,
@@ -224,6 +224,16 @@ impl PageLengthBasis<'_> {
             ComputedGridTemplateTracks::List(list) => {
                 GridTemplateTracks::List(Arc::new(grid_track_list_from_computed(&list)))
             }
+        }
+    }
+
+    /// Resolves the track lists of a `grid` / `grid-template` value with
+    /// [`Self::gtt`]; the named areas hold no lengths.
+    fn grid(self, specified: GridShorthand) -> GridShorthand {
+        GridShorthand {
+            rows: self.gtt(specified.rows),
+            columns: self.gtt(specified.columns),
+            areas: specified.areas,
         }
     }
     /// `grid-auto-columns` / `grid-auto-rows` — same round-trip shape as
@@ -555,7 +565,6 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::Color(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
-        | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::ContextualColor(_)
         | PropertyValue::ContextualShorthand(_)
@@ -1197,6 +1206,8 @@ pub(super) fn absolutize_in_page_context(
         // ── grid-template-columns / grid-template-rows ──────────────────────
         PropertyValue::GridTemplateColumns(v) => PropertyValue::GridTemplateColumns(basis.gtt(v)),
         PropertyValue::GridTemplateRows(v) => PropertyValue::GridTemplateRows(basis.gtt(v)),
+        PropertyValue::GridTemplate(t) => PropertyValue::GridTemplate(basis.grid(t)),
+        PropertyValue::Grid(g) => PropertyValue::Grid(basis.grid(g)),
         // ── grid-auto-columns / grid-auto-rows ───────────────────────────────
         PropertyValue::GridAutoColumns(v) => PropertyValue::GridAutoColumns(basis.gatl(&v)),
         PropertyValue::GridAutoRows(v) => PropertyValue::GridAutoRows(basis.gatl(&v)),

@@ -350,6 +350,7 @@ pub(crate) fn is_computed_shorthand(name: &str) -> bool {
             | "gap"
             | "grid"
             | "grid-area"
+            | "grid-template"
             | "grid-column"
             | "grid-row"
             | "grid-gap"

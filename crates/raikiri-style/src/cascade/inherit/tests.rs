@@ -2321,6 +2321,103 @@ fn author_grid_template_areas_computes_through_cascade() {
 }
 
 #[test]
+fn grid_template_shorthand_computes_like_its_longhands() {
+    let shorthand = cascade_with_ua(
+        "",
+        r#"div { font-size: 20px; grid-template: [a] "x y" 2em [b] / 1fr 10px; }"#,
+        "div",
+        None,
+    );
+    let longhands = cascade_with_ua(
+        "",
+        r#"div { font-size: 20px; grid-template-rows: [a] 40px [b];
+             grid-template-columns: 1fr 10px; grid-template-areas: "x y"; }"#,
+        "div",
+        None,
+    );
+    assert!(matches!(
+        shorthand.grid_template_areas,
+        crate::property::GridTemplateAreasValue::Areas(_)
+    ));
+    assert_eq!(shorthand.grid_template_rows, longhands.grid_template_rows);
+    assert_eq!(
+        shorthand.grid_template_columns,
+        longhands.grid_template_columns
+    );
+    assert_eq!(shorthand.grid_template_areas, longhands.grid_template_areas);
+}
+
+#[test]
+fn grid_shorthands_resolve_through_var() {
+    let via_var = cascade_with_ua(
+        "",
+        r#"div { --g: "a" 10px / 1fr; grid-auto-flow: column;
+             grid: var(--g); }"#,
+        "div",
+        None,
+    );
+    let literal = cascade_with_ua("", r#"div { grid: "a" 10px / 1fr; }"#, "div", None);
+    assert!(matches!(
+        literal.grid_template_areas,
+        crate::property::GridTemplateAreasValue::Areas(_)
+    ));
+    assert_eq!(via_var.grid_template_rows, literal.grid_template_rows);
+    assert_eq!(via_var.grid_template_columns, literal.grid_template_columns);
+    assert_eq!(via_var.grid_template_areas, literal.grid_template_areas);
+    assert_eq!(via_var.grid_auto_flow, literal.grid_auto_flow);
+}
+
+#[test]
+fn grid_shorthands_and_longhands_follow_declaration_order() {
+    // A later `grid` resets everything an earlier `grid-template` or
+    // longhand set, including the implicit grid.
+    let later_grid = cascade_with_ua(
+        "",
+        r#"div { grid-template: "x" 3px / 2px; grid-template-areas: "b";
+             grid-auto-flow: column; grid-row-start: 2; grid: none; }"#,
+        "div",
+        None,
+    );
+    let initial = cascade_with_ua("", "div { grid-row-start: 2; }", "div", None);
+    assert_eq!(later_grid.grid_template_rows, initial.grid_template_rows);
+    assert_eq!(
+        later_grid.grid_template_columns,
+        initial.grid_template_columns
+    );
+    assert_eq!(later_grid.grid_template_areas, initial.grid_template_areas);
+    assert_eq!(later_grid.grid_auto_flow, initial.grid_auto_flow);
+    // `grid` does not reset the placement properties.
+    assert_eq!(later_grid.grid_row_start, initial.grid_row_start);
+
+    // A later longhand overrides just its part of an earlier `grid`.
+    let later_longhand = cascade_with_ua(
+        "",
+        r#"div { grid: "a" 10px / 1fr; grid-template-rows: 20px; }"#,
+        "div",
+        None,
+    );
+    let expected = cascade_with_ua(
+        "",
+        r#"div { grid-template-rows: 20px; grid-template-columns: 1fr;
+             grid-template-areas: "a"; }"#,
+        "div",
+        None,
+    );
+    assert_eq!(
+        later_longhand.grid_template_rows,
+        expected.grid_template_rows
+    );
+    assert_eq!(
+        later_longhand.grid_template_columns,
+        expected.grid_template_columns
+    );
+    assert_eq!(
+        later_longhand.grid_template_areas,
+        expected.grid_template_areas
+    );
+}
+
+#[test]
 fn author_grid_auto_flow_and_placement_longhands_compute_through_cascade() {
     let cv = cascade_with_ua(
         "",
@@ -8202,13 +8299,15 @@ fn apply_value_direct_grid_shorthand_fall_through() {
     // above: `apply_value`'s `PropertyValue::Grid(shorthand)` arm is
     // unreachable via the cascade path for the same reason — not a
     // safety net, a canary that also checks the shorthand's documented
-    // sub-property reset behavior.
+    // sub-property reset behavior. The placement properties are not among
+    // them (CSS Grid Layout Module Level 1 §7.8).
     let mut cv = SpecifiedValues::initial();
     cv.grid_auto_flow = GridAutoFlowValue::Column;
     cv.grid_row_start = GridLineValue::Line(9);
     let shorthand = GridShorthand {
         rows: GridTemplateTracks::None,
         columns: GridTemplateTracks::None,
+        areas: GridTemplateAreasValue::None,
     };
     apply_value(PropertyValue::Grid(shorthand), &mut cv);
     assert_eq!(cv.grid_template_rows, GridTemplateTracks::None);
@@ -8217,10 +8316,7 @@ fn apply_value_direct_grid_shorthand_fall_through() {
     assert_eq!(cv.grid_auto_columns, initial_grid_auto_track_list());
     assert_eq!(cv.grid_auto_rows, initial_grid_auto_track_list());
     assert_eq!(cv.grid_auto_flow, GridAutoFlowValue::Row);
-    assert_eq!(cv.grid_row_start, GridLineValue::Auto);
-    assert_eq!(cv.grid_row_end, GridLineValue::Auto);
-    assert_eq!(cv.grid_column_start, GridLineValue::Auto);
-    assert_eq!(cv.grid_column_end, GridLineValue::Auto);
+    assert_eq!(cv.grid_row_start, GridLineValue::Line(9));
 }
 
 #[test]
@@ -8782,6 +8878,38 @@ fn apply_value_direct_flex_flow_shorthand_fall_through() {
     apply_value(PropertyValue::FlexFlow(f), &mut cv);
     assert_eq!(cv.flex_direction, FlexDirectionValue::RowReverse);
     assert_eq!(cv.flex_wrap, FlexWrapValue::Wrap);
+}
+
+#[test]
+fn apply_value_direct_grid_template_shorthand_fall_through() {
+    // Sibling of `apply_value_direct_gap_shorthand_fall_through` below:
+    // `expand_shorthand_into` expands `grid-template` into its three
+    // longhands before `apply_value` sees it — not a safety net, a canary.
+    let parsed = |name: &str, source: &str| {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        crate::property::parse_value(name, &mut parser).expect("valid value")
+    };
+    let mut shorthand = SpecifiedValues::initial();
+    shorthand.grid_auto_flow = GridAutoFlowValue::Column;
+    let mut longhands = shorthand.clone();
+    apply_value(parsed("grid-template", r#""a" 10px / 1fr"#), &mut shorthand);
+    for (name, source) in [
+        ("grid-template-rows", "10px"),
+        ("grid-template-columns", "1fr"),
+        ("grid-template-areas", r#""a""#),
+    ] {
+        apply_value(parsed(name, source), &mut longhands);
+    }
+    assert_eq!(shorthand.grid_template_rows, longhands.grid_template_rows);
+    assert_eq!(
+        shorthand.grid_template_columns,
+        longhands.grid_template_columns
+    );
+    assert_eq!(shorthand.grid_template_areas, longhands.grid_template_areas);
+    let cv = shorthand;
+    // Unlike `grid`, `grid-template` leaves the implicit grid alone.
+    assert_eq!(cv.grid_auto_flow, GridAutoFlowValue::Column);
 }
 
 #[test]

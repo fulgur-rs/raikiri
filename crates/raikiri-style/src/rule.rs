@@ -18,10 +18,11 @@ use crate::property::{
     DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride,
     FontOpticalSizing, FontShorthand, FontShorthandSize, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GapShorthand, GridLineShorthand, Length, LengthOrAuto, LengthPercentageOrCalc, Outline,
-    OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey,
-    PropertyValue, Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand,
-    consume_deferred_value, parse_consumer_text_value, parse_value,
+    GapShorthand, GridAutoFlowValue, GridLineShorthand, GridShorthand, Length, LengthOrAuto,
+    LengthPercentageOrCalc, Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand,
+    TextEmphasisShorthand, consume_deferred_value, initial_grid_auto_track_list,
+    parse_consumer_text_value, parse_value,
 };
 
 /// One property declaration = value + `!important` flag.
@@ -210,7 +211,7 @@ pub(crate) enum KeyClass {
     /// order, so it never becomes a cascade slot itself.
     Shorthand { longhands: &'static [PropertyKey] },
     /// A key that is its own cascade slot although it names a shorthand. A
-    /// `grid`, `grid-area` or `white-space` value always stays whole; a
+    /// `grid-area` or `white-space` value always stays whole; a
     /// `text-wrap` or `text-spacing` value stays whole only as a `var()` value,
     /// expanded after substitution (a literal one expands into its longhands,
     /// and `text-wrap`'s slot is also the `text-wrap-mode` longhand's); `all`
@@ -326,6 +327,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         GridRow => &[GridRowStart, GridRowEnd],
         GridColumn => &[GridColumnStart, GridColumnEnd],
         PlaceItems => &[AlignItems, JustifyItems],
+        GridTemplate => &[GridTemplateRows, GridTemplateColumns, GridTemplateAreas],
         PlaceSelf => &[AlignSelf, JustifySelf],
         // `BackgroundShorthand`'s own field order. Each key lands in its own
         // `SpecifiedValues` field, so the order does not affect the result.
@@ -339,7 +341,15 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
             BackgroundClip,
             BackgroundOrigin,
         ],
-        All | Grid | GridArea | WhiteSpace | TextWrap | TextSpacing => return KeyClass::Retained,
+        Grid => &[
+            GridTemplateRows,
+            GridTemplateColumns,
+            GridTemplateAreas,
+            GridAutoRows,
+            GridAutoColumns,
+            GridAutoFlow,
+        ],
+        All | GridArea | WhiteSpace | TextWrap | TextSpacing => return KeyClass::Retained,
         Color
         | BackgroundColor
         | FontFamily
@@ -783,7 +793,6 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         // Do not collapse this into `_` (see "Why there is no wildcard arm (contract)" above).
         // Adding a variant here asserts that it has no expansion target.
         PropertyValue::AllRevertLayer
-        | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::Color(_)
         | PropertyValue::ContextualColor(_)
@@ -1054,6 +1063,8 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, push_longhand),
         PropertyValue::GridColumn(ref shorthand) => expand_grid_column(shorthand, push_longhand),
         PropertyValue::PlaceItems(p) => expand_place_items(p, push_longhand),
+        PropertyValue::GridTemplate(ref t) => expand_grid_template(t, push_longhand),
+        PropertyValue::Grid(ref g) => expand_grid(g, push_longhand),
         PropertyValue::PlaceSelf(p) => expand_place_self(p, push_longhand),
         // `BackgroundShorthand` holds its layers in a boxed slice, which is
         // not `Copy` — same reason `GridLineShorthand`
@@ -1510,6 +1521,32 @@ pub(crate) fn expand_grid_column(
 ) {
     push(PropertyValue::GridColumnStart(shorthand.start.clone()));
     push(PropertyValue::GridColumnEnd(shorthand.end.clone()));
+}
+
+/// Cold helper expanding `grid-template` into `grid-template-rows` /
+/// `grid-template-columns` / `grid-template-areas` (see the
+/// [`GridShorthand`] docs). Takes the value by reference for the same reason
+/// as [`expand_grid_row`]; the clones only bump `Arc` counts.
+#[inline(never)]
+pub(crate) fn expand_grid_template(t: &GridShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::GridTemplateRows(t.rows.clone()));
+    push(PropertyValue::GridTemplateColumns(t.columns.clone()));
+    push(PropertyValue::GridTemplateAreas(t.areas.clone()));
+}
+
+/// Cold helper expanding `grid` into the explicit grid longhands (see
+/// [`expand_grid_template`]) and the implicit ones, which its supported
+/// `<'grid-template'>` alternative resets to their initial values (CSS Grid
+/// Layout Module Level 1 §7.8). It sets neither the gutters nor the
+/// placement properties.
+#[inline(never)]
+pub(crate) fn expand_grid(g: &GridShorthand, mut push: impl FnMut(PropertyValue)) {
+    expand_grid_template(g, &mut push);
+    push(PropertyValue::GridAutoRows(initial_grid_auto_track_list()));
+    push(PropertyValue::GridAutoColumns(
+        initial_grid_auto_track_list(),
+    ));
+    push(PropertyValue::GridAutoFlow(GridAutoFlowValue::Row));
 }
 
 /// Cold helper expanding `place-items` into two longhands, `align-items` /

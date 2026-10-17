@@ -2116,6 +2116,97 @@ fn grid_template_areas_rejects_empty_string_list() {
 // ── grid-auto-columns / grid-auto-rows (CSS Grid Layout Module Level 1
 //    §7.6) ──────────────────────────────────────────────────────────
 
+// ── grid-template shorthand (CSS Grid Layout Module Level 1 §7.4) ───
+
+/// Asserts that `source` parses as `grid-template` and expands into the
+/// longhands that `rows`, `columns` and `areas` parse to.
+fn assert_grid_template(source: &str, rows: &str, columns: &str, areas: &str) {
+    let mut longhands = Vec::new();
+    if let Some(PropertyValue::GridTemplate(template)) = parse_entire(source, "grid-template") {
+        crate::rule::expand_grid_template(&template, |v| longhands.push(Some(v)));
+    }
+    let expected = vec![
+        parse_entire(rows, "grid-template-rows"),
+        parse_entire(columns, "grid-template-columns"),
+        parse_entire(areas, "grid-template-areas"),
+    ];
+    assert!(expected.iter().all(Option::is_some), "fixtures must parse");
+    assert_eq!(longhands, expected, "{source}");
+}
+
+#[test]
+fn grid_template_none_clears_all_three_longhands() {
+    assert_grid_template("none", "none", "none", "none");
+}
+
+#[test]
+fn grid_template_rows_slash_columns() {
+    assert_grid_template("100px / [a] 1fr auto", "100px", "[a] 1fr auto", "none");
+    assert_grid_template("none / repeat(2, 10px)", "none", "repeat(2, 10px)", "none");
+}
+
+#[test]
+fn grid_template_areas_form_builds_rows_from_the_strings() {
+    assert_grid_template(
+        r#"[a] "x y" 10px [b] [c] "z z" [d] / [e] 1fr 2fr"#,
+        "[a] 10px [b c] auto [d]",
+        "[e] 1fr 2fr",
+        r#""x y" "z z""#,
+    );
+}
+
+#[test]
+fn grid_template_areas_form_without_columns_leaves_them_none() {
+    assert_grid_template(
+        r#""a" minmax(10px, 1fr)"#,
+        "minmax(10px, 1fr)",
+        "none",
+        r#""a""#,
+    );
+}
+
+#[test]
+fn grid_template_rejects_invalid_forms() {
+    for source in [
+        "100px",
+        "[a]",
+        "none / ",
+        r#""a" [b] [c]"#,
+        r#""a" "b c""#,
+        r#""a" / repeat(2, 1fr)"#,
+        r#""a" / none"#,
+        r#""a" ?"#,
+        r#""a" [b] []"#,
+        r#""a" [] []"#,
+        "100px / 1fr -10px",
+        r#""a" / 1fr -10px"#,
+    ] {
+        assert_eq!(parse_entire(source, "grid-template"), None, "{source}");
+    }
+}
+
+#[test]
+fn grid_shorthand_accepts_the_grid_template_areas_form() {
+    let template = parse_entire(r#""a" / 100px"#, "grid-template");
+    let grid = parse_entire(r#""a" / 100px"#, "grid");
+    assert!(matches!(
+        (template, grid),
+        (Some(PropertyValue::GridTemplate(t)), Some(PropertyValue::Grid(g))) if t == g
+            && matches!(g.areas, GridTemplateAreasValue::Areas(_))
+    ));
+}
+
+#[test]
+fn grid_track_lists_reject_a_trailing_negative_track() {
+    for (source, property) in [
+        ("1fr -10px", "grid-template-columns"),
+        ("repeat(2, 10px -5px)", "grid-template-rows"),
+        ("10px -5px", "grid-auto-rows"),
+    ] {
+        assert_eq!(parse_entire(source, property), None, "{property}: {source}");
+    }
+}
+
 #[test]
 fn grid_auto_columns_single_track() {
     assert_eq!(

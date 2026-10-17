@@ -538,6 +538,27 @@ fn deferred_projection_covers_supported_shorthands() {
             vec![PropertyKey::GridColumnStart, PropertyKey::GridColumnEnd],
         ),
         (
+            "grid",
+            r#""a" 10px / 1fr"#,
+            vec![
+                PropertyKey::GridTemplateRows,
+                PropertyKey::GridTemplateColumns,
+                PropertyKey::GridTemplateAreas,
+                PropertyKey::GridAutoRows,
+                PropertyKey::GridAutoColumns,
+                PropertyKey::GridAutoFlow,
+            ],
+        ),
+        (
+            "grid-template",
+            r#""a" 10px / 1fr"#,
+            vec![
+                PropertyKey::GridTemplateRows,
+                PropertyKey::GridTemplateColumns,
+                PropertyKey::GridTemplateAreas,
+            ],
+        ),
+        (
             "place-items",
             "center stretch",
             vec![PropertyKey::AlignItems, PropertyKey::JustifyItems],

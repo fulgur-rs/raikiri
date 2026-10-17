@@ -4335,11 +4335,13 @@ pub enum GridTemplateTracks {
     List(Arc<GridTrackList>),
 }
 
-/// The `grid` shorthand's explicit row/column track lists.
+/// The explicit grid that the `grid` and `grid-template` shorthands set: the
+/// row and column track lists and the named areas.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridShorthand {
     pub rows: GridTemplateTracks,
     pub columns: GridTemplateTracks,
+    pub areas: GridTemplateAreasValue,
 }
 
 /// The four-line `grid-area` placement shorthand.
@@ -10970,8 +10972,14 @@ pub enum PropertyValue {
     /// every element it applies to, and cloning an `Arc` only counts a
     /// reference.
     GridArea(Arc<GridAreaShorthand>),
-    /// `grid` shorthand — the supported explicit `rows / columns` form.
+    /// `grid` shorthand — its `<'grid-template'>` alternative, which also
+    /// resets the implicit grid and placement properties.
     Grid(GridShorthand),
+    /// `grid-template` shorthand (CSS Grid Layout Module Level 1 §7.4).
+    /// [`crate::rule::expand_shorthand_into`] expands it into
+    /// [`Self::GridTemplateRows`] / [`Self::GridTemplateColumns`] /
+    /// [`Self::GridTemplateAreas`].
+    GridTemplate(GridShorthand),
     /// `grid-template-columns` — non-inherited, initial:
     /// [`GridTemplateTracks::None`] (see [`GridTemplateTracks`]).
     GridTemplateColumns(GridTemplateTracks),
@@ -11528,6 +11536,8 @@ pub enum PropertyKey {
     Grid,
     /// `grid-area` placement shorthand.
     GridArea,
+    /// `grid-template` shorthand, expanded into its three longhands.
+    GridTemplate,
     CounterReset,
     CounterIncrement,
     CounterSet,
@@ -12076,6 +12086,7 @@ impl PropertyValue {
             PropertyValue::ContextualShorthand(value) => value.value.key(),
             PropertyValue::Grid(_) => PropertyKey::Grid,
             PropertyValue::GridArea(_) => PropertyKey::GridArea,
+            PropertyValue::GridTemplate(_) => PropertyKey::GridTemplate,
             PropertyValue::Color(_) => PropertyKey::Color,
             PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
@@ -13353,6 +13364,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "outline-color" => PropertyKey::OutlineColor,
         "outline-offset" => PropertyKey::OutlineOffset,
         "overflow-clip-margin" => PropertyKey::OverflowClipMargin,
+        "grid" => PropertyKey::Grid,
+        "grid-template" => PropertyKey::GridTemplate,
         "grid-template-columns" => PropertyKey::GridTemplateColumns,
         "grid-template-rows" => PropertyKey::GridTemplateRows,
         "grid-template-areas" => PropertyKey::GridTemplateAreas,
