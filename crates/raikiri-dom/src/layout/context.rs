@@ -1,30 +1,27 @@
 use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 
 use crate::document::Document;
 use crate::node::arena::BoxKey;
 
 // The next task routes layout entrypoints through these types.
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub(crate) struct LayoutContext {
     pub(crate) node_states: RefCell<HashMap<BoxKey, NodeLayoutState>>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct NodeLayoutState {
     pub(crate) box_key: BoxKey,
     pub(crate) taffy_child_walks: Option<Vec<taffy::NodeId>>,
 }
 
-#[allow(dead_code)]
 pub(crate) struct LayoutSession<'doc> {
     pub(crate) document: &'doc mut Document,
     pub(crate) context: LayoutContext,
 }
 
-#[allow(dead_code)]
 impl<'doc> LayoutSession<'doc> {
     pub(crate) fn new(document: &'doc mut Document) -> Self {
         Self {
@@ -40,9 +37,25 @@ impl<'doc> LayoutSession<'doc> {
             box_key,
             taffy_child_walks: None,
         });
-        Some(RefMut::map(states, |states| {
+        let state = RefMut::map(states, |states| {
             states.get_mut(&box_key).expect("state was inserted above")
-        }))
+        });
+        debug_assert_eq!(state.box_key, box_key);
+        Some(state)
+    }
+}
+
+impl Deref for LayoutSession<'_> {
+    type Target = Document;
+
+    fn deref(&self) -> &Self::Target {
+        self.document
+    }
+}
+
+impl DerefMut for LayoutSession<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.document
     }
 }
 

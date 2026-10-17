@@ -1,5 +1,5 @@
-//! Document arena — Vec-backed node arena that implements taffy layout traits
-//! (in `taffy_impl.rs`) and raikiri-traits::Dom (in `dom_impl.rs`).
+//! Document arena — Vec-backed node arena that implements raikiri-traits::Dom
+//! (in `dom_impl.rs`). Taffy layout traits are implemented by `LayoutSession`.
 //!
 //! # Flat tree membership contract
 //!
@@ -427,10 +427,6 @@ pub struct Document {
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
     pub(crate) layout_cascade_generation: Option<u64>,
-    /// The children of each container with many children whose walk by
-    /// index taffy has started and not finished, listed when taffy counted
-    /// them.
-    pub(crate) taffy_child_walks: std::cell::RefCell<HashMap<usize, Vec<taffy::NodeId>>>,
     /// Width and height of the page area of the most recent layout: the
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
@@ -741,7 +737,6 @@ impl Document {
             ifc: None,
             normal_line_height: None,
             layout_cascade_generation: None,
-            taffy_child_walks: Default::default(),
             fixed_page_area: None,
             in_flow_heights: HashMap::new(),
             pagination_on_transposed_axes: false,
@@ -2109,7 +2104,6 @@ impl Document {
             ifc,
             normal_line_height,
             layout_cascade_generation: _,
-            taffy_child_walks: _,
             fixed_page_area: _,
             in_flow_heights: _,
             pagination_on_transposed_axes: _,

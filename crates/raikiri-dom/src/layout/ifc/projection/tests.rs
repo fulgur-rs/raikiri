@@ -1089,8 +1089,10 @@ fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rt
             crate::layout::test_support::page_box_800x600(),
         )
         .unwrap();
-        let inputs =
-            crate::layout::ifc::boxes::intrinsics_of_boxes(&mut fixture.doc, fixture.root, 100.0);
+        let inputs = {
+            let mut session = crate::layout::context::LayoutSession::new(&mut fixture.doc);
+            crate::layout::ifc::boxes::intrinsics_of_boxes(&mut session, fixture.root, 100.0)
+        };
         let root = fixture.doc.nodes[fixture.root].ifc.as_ref().unwrap();
         let extents = root.paragraph.intrinsic_sizes(
             &mut LayoutContext::new(),

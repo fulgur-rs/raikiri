@@ -6,6 +6,7 @@ use super::flow::FlowGeometry;
 use super::inline_boxes::{BoxRect, InlineBoxPiece, forced_break_boxes, inline_box_pieces};
 use super::root::IfcRoot;
 use crate::Document;
+use crate::layout::context::LayoutSession;
 use raikiri_traits::NodeKind;
 use std::collections::HashMap;
 
@@ -49,7 +50,7 @@ fn inline_elements(tree: &Document, root: usize, ifc: &IfcRoot) -> Vec<usize> {
 /// The layout serves the readers that accumulate locations along the DOM
 /// parents; painting reads the pieces of each line instead.
 pub(crate) fn record_inline_boxes(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     root: usize,
     ifc: &IfcRoot,
     lines: &[shodo::Line],

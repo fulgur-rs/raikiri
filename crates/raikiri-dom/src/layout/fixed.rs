@@ -28,6 +28,7 @@
 
 use super::box_tree::BoxTree;
 use super::*;
+use crate::layout::context::LayoutSession;
 use crate::node::{BoxPropertiesRef, FormattingContext};
 use raikiri_style::property::WillChange;
 use taffy::util::{MaybeMath, MaybeResolve, ResolveOrZero};
@@ -276,7 +277,7 @@ fn is_vertical(document: &Document, id: usize) -> bool {
 /// ancestor's padding box. Run it after the root layout and before anything
 /// reads the positions of those boxes.
 pub(crate) fn place_fixed_boxes_in_page_area(
-    document: &mut Document,
+    document: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
     root: usize,
     area_size: Size<f32>,
@@ -321,7 +322,7 @@ pub(crate) fn place_fixed_boxes_in_page_area(
 /// Restore explicit fixed block insets after pagination moves ancestors,
 /// preserving the box's size, descendants, and existing layout corrections.
 pub(super) fn restore_fixed_box_block_positions(
-    document: &mut Document,
+    document: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
     root: usize,
     area_height: f32,
@@ -388,10 +389,10 @@ fn containing_block_of(
 /// descendants, with the origin its location is relative to and its
 /// containing block.
 fn visit_out_of_flow_boxes(
-    document: &mut Document,
+    document: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
     root: usize,
-    mut visit: impl FnMut(&mut Document, usize, Point<f32>, ContainingBlock),
+    mut visit: impl FnMut(&mut LayoutSession<'_>, usize, Point<f32>, ContainingBlock),
 ) {
     let root_origin = document
         .inclusive_ancestors(root)
@@ -504,7 +505,7 @@ fn visit_out_of_flow_boxes(
 /// Lay out the absolutely positioned box `id` against `area`, as taffy lays
 /// out the absolutely positioned children of a block container, and store
 /// its location relative to its parent at `parent_origin`.
-fn place_fixed_box(tree: &mut Document, id: usize, parent_origin: Point<f32>, area: Area) {
+fn place_fixed_box(tree: &mut LayoutSession<'_>, id: usize, parent_origin: Point<f32>, area: Area) {
     let Area {
         origin: area_origin,
         size: area_size,
@@ -799,7 +800,7 @@ fn resolve_sizing_keyword(style: Dimension, stretch: f32, basis: f32) -> Option<
 /// measuring the box `id` against the containing block of size `area_size`,
 /// as taffy sizes an absolutely positioned box against its parent.
 fn resolve_sizing_keywords(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     id: usize,
     known_dimensions: &mut Size<Option<f32>>,
     size_style: Size<Dimension>,
@@ -833,7 +834,7 @@ fn resolve_sizing_keywords(
         .then(|| resolve_sizing_keyword(size_style.height, stretch.height, area_size.height))
         .flatten();
     let node_id = TaffyNodeId::from(id);
-    let measure = |tree: &mut Document, known, available, axis| {
+    let measure = |tree: &mut LayoutSession<'_>, known, available, axis| {
         tree.compute_child_layout(
             node_id,
             LayoutInput {

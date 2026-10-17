@@ -963,8 +963,9 @@ fn record_candidate_pages(
 /// Each paragraph is broken at the content width of the nearest ancestor
 /// with an authored width, otherwise at `max_advance`.
 pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult, max_advance: f32) {
-    document.page_projection.clear();
-    crate::layout::ifc::flow::rebreak_roots(document, cascade, max_advance);
+    let mut session = super::context::LayoutSession::new(document);
+    session.page_projection.clear();
+    crate::layout::ifc::flow::rebreak_roots(&mut session, cascade, max_advance);
 }
 
 /// Correct the static position of grid abspos items whose placement is `auto`.
@@ -1108,7 +1109,8 @@ pub fn layout_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), LayoutError> {
-    layout_single_page_with_table_projection(document, cascade, page_box, false, false)
+    let mut session = super::context::LayoutSession::new(document);
+    layout_single_page_with_table_projection(&mut session, cascade, page_box, false, false)
 }
 
 /// The error a layout pass recorded on `document` while taffy ran: a
@@ -1128,7 +1130,7 @@ fn take_layout_failure(document: &mut Document) -> Result<(), LayoutError> {
 }
 
 fn layout_single_page_with_table_projection(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     page_box: PageBox,
     project_explicit_table_parts: bool,
@@ -1187,7 +1189,7 @@ fn layout_single_page_with_table_projection(
     document.fragmentation_stack.clear();
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
-    apply_computed_to_style(document, cascade)?;
+    super::bridge::apply_computed_to_style_in_session(document, cascade)?;
     if paged {
         if let Some(breaks) = &document.clearance_breaks {
             let breaks = breaks.applied_to(cascade);
@@ -3771,6 +3773,7 @@ pub fn layout_pages_with_page_geometry_and_control(
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
+    let mut session = super::context::LayoutSession::new(document);
     // A root with `display: none` generates no boxes, so there is nothing to
     // lay out or break into later pages: the document prints as a single
     // blank page.
@@ -3778,28 +3781,28 @@ pub fn layout_pages_with_page_geometry_and_control(
         == DisplayValue::None
     {
         // Fragments and a projection of an earlier layout no longer apply.
-        document.fragment_tree.clear();
-        document.column_rules.clear();
-        document.page_projection.clear();
+        session.fragment_tree.clear();
+        session.column_rules.clear();
+        session.page_projection.clear();
         return Ok(vec![PageSlice {
             page_index: 0,
             content_origin_y: 0.0,
             page_name: None,
         }]);
     }
-    layout_single_page_with_table_projection(document, cascade, page_box, true, true)?;
+    layout_single_page_with_table_projection(&mut session, cascade, page_box, true, true)?;
     control.check_page_index(0)?;
 
-    let body_id = super::initial_containing_block::root_element(document).ok_or_else(|| {
+    let body_id = super::initial_containing_block::root_element(&session).ok_or_else(|| {
         LayoutError::Internal {
             message: "no document element found".to_string(),
         }
     })?;
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    let Some(axes) = transposed_flow::FlowAxes::of_root(document, cascade) else {
+    let Some(axes) = transposed_flow::FlowAxes::of_root(&session, cascade) else {
         return paginate_flow(
-            document,
+            &mut session,
             cascade,
             body_id,
             PageFlowGeometry {
@@ -3818,14 +3821,14 @@ pub fn layout_pages_with_page_geometry_and_control(
     // transposed document. The pages keep the inline size of the first page
     // area.
     let transposed = transposed_flow::TransposedDocument::transpose(
-        document,
+        &mut session,
         body_id,
         axes,
         insets.page_area_width(margins, page_box),
     );
     let transposed_cascade = transposed.cascade(cascade);
     let pages = paginate_flow(
-        document,
+        &mut session,
         &transposed_cascade,
         body_id,
         PageFlowGeometry {
@@ -3837,7 +3840,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         &[],
         control,
     );
-    transposed.restore(document);
+    transposed.restore(&mut session);
     pages
 }
 
@@ -4034,7 +4037,7 @@ fn reset_inline_x_for_page_transition(
 /// page area, as for [`layout_pages_with_page_geometry_and_control`].
 #[allow(clippy::too_many_arguments)]
 fn paginate_flow(
-    document: &mut Document,
+    document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
     body_id: usize,
     geometry: PageFlowGeometry,

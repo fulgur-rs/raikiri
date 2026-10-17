@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 
 #[test]
 fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
@@ -45,11 +46,12 @@ fn whitespace_only_text_is_not_a_child_of_a_block_container() {
     let last = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
     tree.append_text(parent, "\n");
     let parent = NodeId::from(parent);
+    let session = LayoutSession::new(&mut tree);
 
-    let children: Vec<usize> = tree.child_ids(parent).map(usize::from).collect();
+    let children: Vec<usize> = session.child_ids(parent).map(usize::from).collect();
     assert_eq!(children, vec![first, text, last]);
-    assert_eq!(tree.child_count(parent), 3);
-    assert_eq!(usize::from(tree.get_child_id(parent, 1)), text);
+    assert_eq!(session.child_count(parent), 3);
+    assert_eq!(usize::from(session.get_child_id(parent, 1)), text);
 }
 
 #[test]
@@ -73,30 +75,38 @@ fn children_walked_by_index_match_the_child_iterator() {
     let other = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
     let e = tree.append_element(Some(other), "div", Style::default(), None::<&str>);
     let (parent, other) = (NodeId::from(parent), NodeId::from(other));
-    let children: Vec<usize> = tree.child_ids(parent).map(usize::from).collect();
+    let mut session = LayoutSession::new(&mut tree);
+    let children: Vec<usize> = session.child_ids(parent).map(usize::from).collect();
     assert_eq!(children, expected);
 
-    let count = tree.child_count(parent);
+    let count = session.child_count(parent);
     assert_eq!(count, 40);
     let mut walked = Vec::new();
     for index in 0..count {
-        walked.push(usize::from(tree.get_child_id(parent, index)));
+        walked.push(usize::from(session.get_child_id(parent, index)));
         // A walk of another container in between leaves this one's list.
-        assert_eq!(tree.child_count(other), 1);
-        assert_eq!(usize::from(tree.get_child_id(other, 0)), e);
+        assert_eq!(session.child_count(other), 1);
+        assert_eq!(usize::from(session.get_child_id(other, 0)), e);
     }
     assert_eq!(walked, expected);
     // The list goes when the walk ends, so a later change of the children
     // is seen without counting them again.
-    assert!(tree.taffy_child_walks.borrow().is_empty());
-    tree.nodes[expected[0]].set_display(DisplayValue::Contents);
-    assert_eq!(usize::from(tree.get_child_id(parent, 0)), expected[1]);
+    assert!(
+        session
+            .context
+            .node_states
+            .borrow()
+            .values()
+            .all(|state| state.taffy_child_walks.is_none())
+    );
+    session.nodes[expected[0]].set_display(DisplayValue::Contents);
+    assert_eq!(usize::from(session.get_child_id(parent, 0)), expected[1]);
     // Indices out of order read the same children.
-    tree.nodes[expected[0]].set_display(DisplayValue::Block);
-    tree.child_count(parent);
+    session.nodes[expected[0]].set_display(DisplayValue::Block);
+    session.child_count(parent);
     for index in [39, 2, 0, 38, 1] {
         assert_eq!(
-            usize::from(tree.get_child_id(parent, index)),
+            usize::from(session.get_child_id(parent, index)),
             expected[index]
         );
     }

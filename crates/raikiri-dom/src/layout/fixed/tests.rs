@@ -862,6 +862,7 @@ fn sizing_keywords_resolve_against_the_containing_block() {
 #[test]
 fn sizing_keywords_measure_the_box_in_each_axis() {
     let (mut doc, fixed) = laid_out_with_words("position:absolute;left:5px;top:6px;font:10px Ahem");
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
     let area = Size {
         width: 800.0,
         height: 600.0,
@@ -880,9 +881,9 @@ fn sizing_keywords_measure_the_box_in_each_axis() {
     };
     let mut resolve = |width: Dimension, height: Dimension, known: Size<Option<f32>>| {
         let mut known = known;
-        doc.nodes[fixed].style.size = Size { width, height };
+        session.nodes[fixed].style.size = Size { width, height };
         resolve_sizing_keywords(
-            &mut doc,
+            &mut session,
             fixed,
             &mut known,
             Size { width, height },

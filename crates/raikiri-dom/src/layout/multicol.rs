@@ -6,6 +6,7 @@ mod paragraph_group;
 pub(super) mod spanning;
 
 use super::*;
+use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
@@ -18,7 +19,7 @@ pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 /// layout.
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 pub(crate) fn compute_multicol_layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: TaffyNodeId,
     inputs: LayoutInput,
     block_ctx: Option<&mut BlockContext<'_>>,
@@ -348,7 +349,7 @@ pub(crate) fn compute_multicol_layout(
 /// and keep an auto `height` at the tallest such child. The foundational
 /// block path cannot break between them, so this approximates the columns.
 fn space_min_constrained_children(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     index: usize,
     available_height: Option<f32>,
     height_definite: bool,
@@ -477,7 +478,7 @@ fn column_child_known_width(tree: &Document, child: usize, column_width: f32) ->
 }
 
 pub(crate) fn multicol_definite_dimension(
-    tree: &Document,
+    _tree: &Document,
     value: Dimension,
     basis: Option<f32>,
 ) -> Option<f32> {
@@ -485,7 +486,7 @@ pub(crate) fn multicol_definite_dimension(
     let resolved = match value.expand() {
         ExpandedDimension::Length(px) => px,
         ExpandedDimension::Percent(percent) => basis * percent,
-        ExpandedDimension::Calc(pointer) => tree.resolve_calc_value(pointer, basis),
+        ExpandedDimension::Calc(pointer) => crate::taffy_impl::resolve_calc(pointer, basis),
         ExpandedDimension::Auto
         | ExpandedDimension::MinContent
         | ExpandedDimension::MaxContent
@@ -500,11 +501,11 @@ pub(crate) fn multicol_definite_dimension(
 }
 
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
-fn multicol_resolve_inset(tree: &Document, value: LengthPercentage, basis: f32) -> f32 {
+fn multicol_resolve_inset(_tree: &Document, value: LengthPercentage, basis: f32) -> f32 {
     let resolved = match value.expand() {
         ExpandedLengthPercentage::Length(px) => px,
         ExpandedLengthPercentage::Percent(percent) => basis * percent,
-        ExpandedLengthPercentage::Calc(pointer) => tree.resolve_calc_value(pointer, basis),
+        ExpandedLengthPercentage::Calc(pointer) => crate::taffy_impl::resolve_calc(pointer, basis),
     };
     if resolved.is_finite() {
         resolved.max(0.0)
@@ -741,7 +742,7 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
 }
 
 fn relayout_nested_multicol_children(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: TaffyNodeId,
     context: FragmentationContext,
     border_box_size: Size<f32>,
@@ -812,24 +813,25 @@ fn relayout_nested_multicol_children(
             false,
         )
     };
+    let fragment_height = if tree.nodes[index]
+        .multicol
+        .is_some_and(|style| style.height_definite)
+    {
+        fallback_height
+    } else if has_fragmentainer_height_constraint {
+        used.min(fallback_height)
+    } else {
+        used
+    };
     if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
-        fragment.rect.height = if tree.nodes[index]
-            .multicol
-            .is_some_and(|style| style.height_definite)
-        {
-            fallback_height
-        } else if has_fragmentainer_height_constraint {
-            used.min(fallback_height)
-        } else {
-            used
-        };
+        fragment.rect.height = fragment_height;
     } // cov:ignore: the successful try_push index remains stable throughout recursive group layout.
     used
 }
 
 #[allow(clippy::too_many_arguments)]
 fn layout_column_group(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     index: usize,
     children: &[usize],
     source_order: usize,
@@ -1443,7 +1445,10 @@ fn latest_root(tree: &Document, node: usize) -> Option<usize> {
 /// first row; each later row gets a box of its own in its outer column, so
 /// its background, border and overflow clip follow the row. Fragmentainers
 /// number the nested columns row by row.
-fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> Option<()> {
+fn apply_nested_continuation(
+    tree: &mut LayoutSession<'_>,
+    plan: &NestedContinuation,
+) -> Option<()> {
     let root = tree.fragment_tree.fragments[plan.root];
     tree.fragment_tree.fragments[plan.root].rect.height = plan.first_height;
     let replaced: std::collections::HashSet<usize> = plan.children.iter().copied().collect();
@@ -1643,7 +1648,7 @@ fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> 
 
 // cov:ignore: nested box and float fragment records are exercised by the ignored flex-float WPT.
 fn record_nested_ifc_box_fragments(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     subtree_root: usize,
     parent_fragment: usize,
     context: FragmentationContext,
@@ -2326,7 +2331,7 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
 
 // cov:ignore: nested text fragment refresh is exercised by ignored multicol WPT reftests.
 fn refresh_nested_text_fragments(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: usize,
     context: FragmentationContext,
 ) {
@@ -2364,7 +2369,7 @@ fn refresh_nested_text_fragments(
 /// paragraph. Both are carried down so that the subtree walk does not search
 /// ancestors or sibling placements again for every node.
 fn refresh_nested_text_fragments_in(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: usize,
     context: FragmentationContext,
     chain: FlexFloatChain,
@@ -2727,7 +2732,7 @@ pub(crate) fn root_column_fragments(
 /// which supplies their used widths, so they are not guessed from a page
 /// fallback. A replaced box keeps its natural width (CSS 2.1 §10.3.4).
 pub(crate) fn prepare_authored_block_widths(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
     fallback_width: f32,
 ) {

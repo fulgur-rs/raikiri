@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
+use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_style::property::BreakInside;
 
@@ -811,7 +812,7 @@ fn wrapper_pieces(first: &Piece, last: &Piece, column_height: f32) -> Vec<Piece>
 /// Record the pieces `pieces` of `leaf`, a block a wrapper holds, under the
 /// wrapper's pieces `parents` and their fragment `records`.
 fn push_wrapped_block(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     leaf: usize,
     pieces: &[Piece],
     parents: &[Piece],
@@ -1093,7 +1094,7 @@ fn fill_item_rows(
 /// border-box height of the container.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     parent: usize,
     children: &[usize],
     context: FragmentationContext,

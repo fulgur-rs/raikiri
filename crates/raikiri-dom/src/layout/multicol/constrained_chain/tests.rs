@@ -1,6 +1,19 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 use crate::layout::test_support::{page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
+
+fn layout(
+    tree: &mut Document,
+    parent: usize,
+    chain: &[usize],
+    context: FragmentationContext,
+    border_box: Size<f32>,
+    origin: Point<f32>,
+) -> Option<f32> {
+    let mut session = LayoutSession::new(tree);
+    super::layout(&mut session, parent, chain, context, border_box, origin)
+}
 
 fn fixture(depth: usize) -> (Document, usize, Vec<usize>) {
     let mut doc = Document::new();

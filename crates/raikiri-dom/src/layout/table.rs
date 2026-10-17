@@ -46,6 +46,7 @@ use taffy::{
 };
 
 use crate::document::Document;
+use crate::layout::context::LayoutSession;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
@@ -136,7 +137,7 @@ fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
     doc.nodes[doc.ifc_source_owner(table_idx)].used_writing_mode
 }
 
-fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool) -> f32 {
+fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertical: bool) -> f32 {
     let Some(caption) = doc.nodes[table]
         .children
         .iter()
@@ -189,7 +190,7 @@ fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool)
 }
 
 fn layout_table_caption(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     table_idx: usize,
     parent_width: f32,
     parent_height: Option<f32>,
@@ -392,7 +393,7 @@ fn position_table_caption(
 }
 
 pub fn compute_table_layout(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     table_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
@@ -406,7 +407,7 @@ pub fn compute_table_layout(
 }
 
 fn compute_table_layout_checked(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     table_id: NodeId,
     inputs: LayoutInput,
 ) -> Result<LayoutOutput, raikiri_traits::LayoutError> {
@@ -1580,7 +1581,7 @@ fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
 // Measure cells
 // ---------------------------------------------------------------------------
 
-fn measure_cell_inline(doc: &mut Document, cell_id: usize, axis: AvailableSpace) -> f32 {
+fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: AvailableSpace) -> f32 {
     // Only the width is read. A cell whose content is one horizontal
     // paragraph without boxes of its own gets it from the paragraph's
     // intrinsic widths, without breaking it into lines; the size cached for
@@ -1621,7 +1622,7 @@ fn measure_cell_inline(doc: &mut Document, cell_id: usize, axis: AvailableSpace)
 // ---------------------------------------------------------------------------
 
 fn resolve_column_widths(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     grid: &TableGrid,
     inputs: LayoutInput,
     padding_border_size: Size<f32>,
@@ -2028,7 +2029,7 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
 }
 
 fn resolve_row_heights(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
     column_widths: &[f32],
     spacing: (f32, f32),
@@ -2243,7 +2244,7 @@ fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
 }
 
 fn place_cells(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
     column_widths: &[f32],
     row_tracks: (&[f32], &[f32]),
@@ -2419,7 +2420,7 @@ fn place_cells(
 /// physical dimensions and aligned on their block axis. Orthogonal horizontal
 /// cells retain the normal pass's content layout.
 fn reposition_cells_for_vertical_writing(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
     row_heights: &[f32],
     cell_width: f32,

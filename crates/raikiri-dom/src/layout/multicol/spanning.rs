@@ -1,6 +1,7 @@
 //! Place full-width spanners between independently laid-out column groups.
 
 use super::*;
+use crate::layout::context::LayoutSession;
 use taffy::util::MaybeResolve;
 
 pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
@@ -13,7 +14,7 @@ pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
         && !node.style.float.is_floated()
 }
 
-pub(super) fn retire_preliminary_fragments(tree: &mut Document, children: &[usize]) {
+pub(super) fn retire_preliminary_fragments(tree: &mut LayoutSession<'_>, children: &[usize]) {
     // The preliminary block measurement lays out nested column containers.
     // Spanners are subsequently laid out outside the owner's column stack;
     // retire obsolete records without invalidating a caller's container index.
@@ -32,7 +33,7 @@ pub(super) fn retire_preliminary_fragments(tree: &mut Document, children: &[usiz
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     owner: usize,
     children: &[usize],
     container_fragment: usize,
@@ -201,7 +202,7 @@ pub(super) fn layout(
     block_offset + block_end_inset
 }
 
-fn clear_column_state(tree: &mut Document, root: usize) {
+fn clear_column_state(tree: &mut LayoutSession<'_>, root: usize) {
     let mut pending = vec![root];
     while let Some(node_id) = pending.pop() {
         let node = &mut tree.nodes[node_id];

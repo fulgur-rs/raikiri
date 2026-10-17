@@ -1,4 +1,5 @@
 use crate::document::Document;
+use crate::layout::context::LayoutSession;
 use raikiri_style::property::{
     Border, BorderColor, BorderStyle, CssColor, DisplayValue, Length, Sides,
 };
@@ -10,6 +11,69 @@ use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 mod anonymous_table_tests;
 mod cell_index_tests;
 mod rowspan_tests;
+
+fn with_layout_session<R>(
+    document: &mut Document,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let mut session = LayoutSession::new(document);
+    layout(&mut session)
+}
+
+fn compute_table_layout_in_session(
+    document: &mut Document,
+    table: taffy::NodeId,
+    inputs: LayoutInput,
+) -> taffy::LayoutOutput {
+    with_layout_session(document, |session| {
+        super::compute_table_layout(session, table, inputs)
+    })
+}
+
+fn resolve_column_widths_in_session(
+    document: &mut Document,
+    grid: &super::TableGrid,
+    inputs: LayoutInput,
+    padding_border_size: Size<f32>,
+    spacing: f32,
+) -> Vec<f32> {
+    with_layout_session(document, |session| {
+        super::resolve_column_widths(session, grid, inputs, padding_border_size, spacing)
+    })
+}
+
+fn resolve_row_heights_in_session(
+    document: &mut Document,
+    grid: &mut super::TableGrid,
+    column_widths: &[f32],
+    spacing: (f32, f32),
+) -> Result<Vec<f32>, raikiri_traits::LayoutError> {
+    with_layout_session(document, |session| {
+        super::resolve_row_heights(session, grid, column_widths, spacing)
+    })
+}
+
+fn place_cells_in_session(
+    document: &mut Document,
+    grid: &mut super::TableGrid,
+    column_widths: &[f32],
+    row_tracks: (&[f32], &[f32]),
+    origins: (&[f32], &[f32]),
+    spacing: (f32, f32),
+    vertical_writing: bool,
+) -> Result<(), raikiri_traits::LayoutError> {
+    with_layout_session(document, |session| {
+        super::place_cells(
+            session,
+            grid,
+            column_widths,
+            row_tracks,
+            origins,
+            spacing,
+            vertical_writing,
+        )
+    })
+}
 
 fn append_grid_part(
     doc: &mut Document,
@@ -251,7 +315,9 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
         );
         let mut inputs = column_probe_input();
         inputs.known_dimensions.width = Some(40.0);
-        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        let output = with_layout_session(&mut doc, |session| {
+            compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+        });
         assert_eq!(
             output.size,
             Size {
@@ -314,7 +380,9 @@ fn anonymous_block_direction_reaches_the_native_callback() {
         assert!(doc.ifc.is_none());
         let mut inputs = column_probe_input();
         inputs.known_dimensions.width = Some(100.0);
-        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        let output = with_layout_session(&mut doc, |session| {
+            compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+        });
         assert_eq!(
             output.size,
             Size {
@@ -365,8 +433,14 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     let mut inputs = column_probe_input();
     inputs.known_dimensions.width = Some(100.0);
     inputs.run_mode = taffy::RunMode::PerformLayout;
-    let output =
-        taffy::LayoutPartialTree::compute_child_layout(&mut doc, taffy::NodeId::from(key), inputs);
+    let output = {
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        taffy::LayoutPartialTree::compute_child_layout(
+            &mut session,
+            taffy::NodeId::from(key),
+            inputs,
+        )
+    };
     assert_eq!(
         output.size,
         Size {
@@ -430,8 +504,9 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
             .iter()
             .all(|cell| !cell.is_ifc_root())
     );
-    let output =
-        super::compute_table_layout(&mut doc, taffy::NodeId::from(table), column_probe_input());
+    let output = with_layout_session(&mut doc, |session| {
+        compute_table_layout_in_session(session, taffy::NodeId::from(table), column_probe_input())
+    });
     assert_eq!(
         output.size,
         Size {
@@ -483,7 +558,10 @@ fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     let mut grid = super::build_table_grid(&doc, table).unwrap();
-    let heights = super::resolve_row_heights(&mut doc, &mut grid, &[40.0], (0.0, 0.0)).unwrap();
+    let heights = with_layout_session(&mut doc, |session| {
+        resolve_row_heights_in_session(session, &mut grid, &[40.0], (0.0, 0.0))
+    })
+    .unwrap();
     assert_eq!(grid.cells[0].baseline, 32.0);
     assert_eq!(heights, [36.0, 4.0]);
 }
@@ -605,10 +683,14 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
             cells: vec![fixed_cell(0, start, span, Dimension::auto())],
             col_widths: vec![],
         };
-        assert!(super::resolve_row_heights(&mut doc, &mut grid, &[1.0, 1.0], (0.0, 0.0)).is_err());
+        let mut session = LayoutSession::new(&mut doc);
         assert!(
-            super::place_cells(
-                &mut doc,
+            resolve_row_heights_in_session(&mut session, &mut grid, &[1.0, 1.0], (0.0, 0.0))
+                .is_err()
+        );
+        assert!(
+            place_cells_in_session(
+                &mut session,
                 &mut grid,
                 &[1.0, 1.0],
                 (&[1.0], &[0.0]),
@@ -1965,7 +2047,9 @@ fn table_calc_minimum_sizes_resolve_against_the_containing_block() {
             width: Some(100.0),
             height: Some(80.0),
         };
-        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        let output = with_layout_session(&mut doc, |session| {
+            compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+        });
         assert_eq!(output.size, expected);
         assert_eq!(
             doc.nodes[cell].unrounded_layout.size,
@@ -2059,7 +2143,9 @@ fn fixed_table_calc_column_geometry(from_column: bool, width: &str) -> (f32, f32
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
     let mut inputs = column_probe_input();
     inputs.parent_size.width = Some(200.0);
-    let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+    let output = with_layout_session(&mut doc, |session| {
+        compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+    });
     assert_eq!(output.size.width, 200.0);
     (
         doc.nodes[first].unrounded_layout.size.width,
@@ -3140,7 +3226,7 @@ fn resolve_column_widths_colspan_one_percent_cell_sets_column_percentage() {
         },
         ..column_probe_input()
     };
-    let widths = super::resolve_column_widths(
+    let widths = resolve_column_widths_in_session(
         &mut doc,
         &grid,
         inputs,
@@ -3194,7 +3280,7 @@ fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets()
         },
         ..column_probe_input()
     };
-    let widths = super::resolve_column_widths(
+    let widths = resolve_column_widths_in_session(
         &mut doc,
         &grid,
         inputs,
@@ -3259,7 +3345,7 @@ fn resolve_column_widths_definite_avail_nonfit_keeps_colspan_minimum() {
         },
         ..column_probe_input()
     };
-    let widths = super::resolve_column_widths(
+    let widths = resolve_column_widths_in_session(
         &mut doc,
         &grid,
         inputs,
@@ -3305,7 +3391,7 @@ fn resolve_column_widths_col_percent_ignored_for_unoccupied_column() {
         },
         ..column_probe_input()
     };
-    let widths = super::resolve_column_widths(
+    let widths = resolve_column_widths_in_session(
         &mut doc,
         &grid,
         inputs,
@@ -3351,7 +3437,7 @@ fn resolve_column_widths_col_length_floors_even_unoccupied_column() {
         },
         ..column_probe_input()
     };
-    let widths = super::resolve_column_widths(
+    let widths = resolve_column_widths_in_session(
         &mut doc,
         &grid,
         inputs,
@@ -3396,7 +3482,7 @@ fn resolve_column_widths_col_min_over_max_resolves_to_min() {
         },
         ..column_probe_input()
     };
-    let widths = super::resolve_column_widths(
+    let widths = resolve_column_widths_in_session(
         &mut doc,
         &grid,
         inputs,
@@ -3437,7 +3523,7 @@ fn resolve_column_widths_col_width_clamped_by_max_width() {
         },
         ..column_probe_input()
     };
-    let widths = super::resolve_column_widths(
+    let widths = resolve_column_widths_in_session(
         &mut doc,
         &grid,
         inputs,

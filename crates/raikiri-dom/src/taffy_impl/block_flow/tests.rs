@@ -1,9 +1,19 @@
 use crate::Document;
-use crate::taffy_impl::block_layout;
+use crate::layout::context::LayoutSession;
 use taffy::{
     AvailableSpace, Dimension, Display, Float, LayoutInput, LengthPercentage, LengthPercentageAuto,
     Line, NodeId, RequestedAxis, RunMode, Size, SizingMode, Style,
 };
+
+fn block_layout(
+    tree: &mut Document,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    context: Option<&mut super::context::BlockContext<'_>>,
+) -> taffy::LayoutOutput {
+    let mut session = LayoutSession::new(tree);
+    crate::taffy_impl::block_layout(&mut session, node_id, inputs, context)
+}
 
 fn inputs() -> LayoutInput {
     LayoutInput {

@@ -23,6 +23,7 @@
 //! between adjacent siblings but not between a box and its children, and
 //! floats stay inside the box that holds them.
 
+use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
 
 use taffy::tree::{RequestedAxis, RunMode};
@@ -122,7 +123,9 @@ impl Document {
             block.placed.push(idx);
         }
     }
+}
 
+impl LayoutSession<'_> {
     /// Lay out `idx` on its physical axes when taffy asks for it as a child
     /// of the transposed container being laid out; `None` otherwise.
     ///
@@ -252,7 +255,7 @@ fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
 /// and bottom padding against the container's height, which is its
 /// physical width here, while percentages of padding refer to the inline
 /// size of the containing block on every side (CSS Writing Modes 4 §7.1).
-fn resolve_child_padding(tree: &mut Document, width: f32) {
+fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
     let block = tree
         .transposed_blocks
         .last_mut()
@@ -279,7 +282,7 @@ fn resolve_child_padding(tree: &mut Document, width: f32) {
 ///
 /// `inputs` are on physical axes, and so is the returned output.
 pub(super) fn compute_vertical_block(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
     right_to_left: bool,
@@ -360,7 +363,11 @@ fn shrinks_to_fit(tree: &Document, idx: usize, inputs: &LayoutInput) -> bool {
 /// The fit-content inline size of the transposed container `node_id`:
 /// its max-content size, unless the available space is smaller, then that
 /// space, but never below its min-content size (CSS Sizing 3 §5.1).
-fn fit_content_inline_size(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> f32 {
+fn fit_content_inline_size(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> f32 {
     let page_height = tree.fixed_page_area.unwrap_or_default().1;
     let style = &tree.nodes[usize::from(node_id)].style;
     // The transposed horizontal margins are the physical top and bottom.

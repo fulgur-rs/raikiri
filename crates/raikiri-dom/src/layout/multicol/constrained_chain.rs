@@ -1,5 +1,6 @@
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
+use crate::layout::context::LayoutSession;
 
 pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
     if tree.nodes[parent].ifc.is_some() || tree.nodes[parent].style.direction != TaffyDirection::Ltr
@@ -142,7 +143,7 @@ fn constrained_line_ranges(
 }
 
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     parent: usize,
     chain: &[usize],
     context: FragmentationContext,

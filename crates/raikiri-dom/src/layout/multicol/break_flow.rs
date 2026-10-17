@@ -1,5 +1,6 @@
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
+use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use crate::node::FormattingContext;
 use raikiri_style::property::BreakInside;
@@ -275,7 +276,7 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
 }
 
 fn collect(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     id: usize,
     context: FragmentationContext,
     ancestors: &mut Vec<usize>,
@@ -468,7 +469,7 @@ fn fragment(
 }
 
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     root: usize,
     context: FragmentationContext,
     fallback: Size<f32>,

@@ -1,6 +1,29 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
 use taffy::Style;
+
+fn layout(
+    tree: &mut Document,
+    root: usize,
+    context: FragmentationContext,
+    fallback: Size<f32>,
+    content_origin: Point<f32>,
+) -> f32 {
+    let mut session = LayoutSession::new(tree);
+    super::layout(&mut session, root, context, fallback, content_origin)
+}
+
+fn collect(
+    tree: &mut Document,
+    id: usize,
+    context: FragmentationContext,
+    ancestors: &mut Vec<usize>,
+    out: &mut Vec<super::FlowBox>,
+) {
+    let mut session = LayoutSession::new(tree);
+    super::collect(&mut session, id, context, ancestors, out)
+}
 
 fn fixture(markup: &str) -> (Document, raikiri_style::CascadeResult) {
     let options = raikiri_html::ParseOptions {

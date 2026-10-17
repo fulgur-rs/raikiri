@@ -5,13 +5,13 @@
 //! consumers keep locations relative to their layout parent.
 
 use super::BlockChildStyle;
-use crate::Document;
+use crate::layout::context::LayoutSession;
 use taffy::{
     ContainingBlockClaims, DetailedLayoutInfo, LayoutContainingBlock, LayoutOutput,
     LayoutPartialTree, NodeId, OofCandidate, OofPositioningArea,
 };
 
-impl LayoutContainingBlock for Document {
+impl LayoutContainingBlock for LayoutSession<'_> {
     type OofItemStyle<'a>
         = BlockChildStyle<'a>
     where
@@ -51,7 +51,11 @@ impl LayoutContainingBlock for Document {
     }
 }
 
-pub(super) fn layout_local_oof(tree: &mut Document, node: NodeId, output: &mut LayoutOutput) {
+pub(super) fn layout_local_oof(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    output: &mut LayoutOutput,
+) {
     let Some(area) = output.oof_positioning_area else {
         return;
     };
@@ -62,7 +66,7 @@ pub(super) fn layout_local_oof(tree: &mut Document, node: NodeId, output: &mut L
 }
 
 pub(super) fn layout_candidates(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     owner: NodeId,
     candidates: &[OofCandidate],
     area: OofPositioningArea,

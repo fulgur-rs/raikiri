@@ -14,6 +14,7 @@
 //! its columns, and lays it out at that width. Its inline size keeps
 //! following the available height the parent passes down.
 
+use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{AvailableSpace, LayoutInput, LayoutOutput, NodeId, Position as TaffyPosition, Size};
@@ -55,7 +56,7 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool
 /// An orthogonal flow establishes an independent formatting context (CSS
 /// Writing Modes 4 §7.3), so neither pass continues the parent's floats.
 pub(super) fn compute_orthogonal_block(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {

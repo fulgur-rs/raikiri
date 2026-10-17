@@ -1390,6 +1390,88 @@ fn relayout_nested_multicol_children_packs_block_children_into_columns() {
 }
 
 #[test]
+fn layout_pages_reuses_one_context_across_nested_multicol_placements() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let lead = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:20px"),
+    );
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;column-gap:20px;width:200px"),
+    );
+    let children: Vec<_> = (0..4)
+        .map(|_| {
+            doc.append_element(
+                Some(multicol),
+                "div",
+                Style::default(),
+                Some("display:block;height:30px"),
+            )
+        })
+        .collect();
+    let tail = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:50px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    assert_eq!(
+        pages,
+        [
+            PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            },
+            PageSlice {
+                page_index: 1,
+                content_origin_y: 100.0,
+                page_name: None,
+            },
+        ]
+    );
+
+    let fragmentainer_of = |node: usize| {
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .rev()
+            .find(|fragment| fragment.node_id == node && fragment.line_start.is_none())
+            .map(|fragment| fragment.fragmentainer)
+    };
+    assert_eq!(
+        children
+            .iter()
+            .map(|&child| fragmentainer_of(child))
+            .collect::<Vec<_>>(),
+        [Some(0), Some(0), Some(1), Some(1)]
+    );
+    assert_eq!(doc.nodes[lead].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 20.0);
+    assert_eq!(doc.nodes[tail].unrounded_layout.location.y, 80.0);
+    assert!((doc.nodes[children[0]].unrounded_layout.location.x - 0.0).abs() < 0.01);
+    assert!((doc.nodes[children[2]].unrounded_layout.location.x - 110.0).abs() < 0.01);
+}
+
+#[test]
 fn auto_fill_keeps_auto_height_block_children_in_source_order() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -3629,8 +3711,7 @@ fn lines_survive_a_second_layout_pass() {
 #[test]
 fn first_baseline_includes_the_top_padding_and_border() {
     use taffy::{
-        AvailableSpace, LayoutInput, LayoutPartialTree, Line, NodeId, RequestedAxis, RunMode, Size,
-        SizingMode,
+        AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
     };
     let (mut doc, cascade, root) = ahem_paragraph(
         "aa",
@@ -3638,31 +3719,35 @@ fn first_baseline_includes_the_top_padding_and_border() {
     );
     lay_out(&mut doc, &cascade);
     // Ask the root for its layout output again: the baselines are part of it.
-    let output = doc.compute_child_layout(
-        NodeId::from(root),
-        LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size {
-                width: None,
-                height: None,
+    let output = {
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        taffy::LayoutPartialTree::compute_child_layout(
+            &mut session,
+            NodeId::from(root),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size {
+                    width: None,
+                    height: None,
+                },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                parent_size: Size {
+                    width: Some(800.0),
+                    height: Some(600.0),
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(800.0),
+                    height: AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
             },
-            known_dimensions_are_definite: Size {
-                width: true,
-                height: true,
-            },
-            parent_size: Size {
-                width: Some(800.0),
-                height: Some(600.0),
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(800.0),
-                height: AvailableSpace::MaxContent,
-            },
-            vertical_margins_are_collapsible: Line::FALSE,
-        },
-    );
+        )
+    };
     // Ahem ascent 8px + 6px padding + 3px border, from the border-box top.
     assert_eq!(output.baselines.first, Some(17.0));
 }
@@ -3695,34 +3780,37 @@ fn a_floated_root_with_a_narrow_max_width_breaks_at_that_width() {
 #[test]
 fn an_inline_block_baseline_follows_the_last_ifc_line() {
     use taffy::{
-        AvailableSpace, LayoutInput, LayoutPartialTree, Line, NodeId, RequestedAxis, RunMode, Size,
-        SizingMode,
+        AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
     };
     let (mut doc, cascade, wrapper, _root) =
         ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;width:50px");
     lay_out(&mut doc, &cascade);
-    let output = doc.compute_child_layout(
-        NodeId::from(wrapper),
-        LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size::NONE,
-            known_dimensions_are_definite: Size {
-                width: true,
-                height: true,
+    let output = {
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        taffy::LayoutPartialTree::compute_child_layout(
+            &mut session,
+            NodeId::from(wrapper),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size::NONE,
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                parent_size: Size {
+                    width: Some(800.0),
+                    height: Some(600.0),
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(800.0),
+                    height: AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
             },
-            parent_size: Size {
-                width: Some(800.0),
-                height: Some(600.0),
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(800.0),
-                height: AvailableSpace::MaxContent,
-            },
-            vertical_margins_are_collapsible: Line::FALSE,
-        },
-    );
+        )
+    };
     // Three 10px lines: the last baseline is 20px + the 8px Ahem ascent.
     assert_eq!(output.baselines.first, Some(28.0));
 }

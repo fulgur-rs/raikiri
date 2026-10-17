@@ -1,11 +1,12 @@
 //! Truncate leading margins using the positions produced by normal block layout.
 
 use super::*;
+use crate::layout::context::LayoutSession;
 use taffy::TraversePartialTree;
 
 /// Truncate the root and descendant leading margins for one pagination pass.
 pub(super) fn truncate_flow(
-    document: &mut Document,
+    document: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
     root: usize,
     pages: &PageOrigins,
@@ -26,7 +27,7 @@ pub(super) fn truncate_flow(
 /// The parent's content edge and the child's used location already include
 /// ordinary margin collapse; no CSS margin set is recomputed here.
 pub(super) fn truncate(
-    document: &mut Document,
+    document: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
     root: usize,
     pages: &PageOrigins,

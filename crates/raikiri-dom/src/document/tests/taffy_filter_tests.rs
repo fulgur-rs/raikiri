@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 use taffy::TraversePartialTree;
 
 #[test]
@@ -23,26 +24,28 @@ fn taffy_child_ids_keep_template_real_children_but_not_contents_fragment() {
 
     let body_id = taffy::NodeId::from(body);
     let tmpl_id = taffy::NodeId::from(tmpl);
+    let session = LayoutSession::new(&mut doc);
 
     // The body directly contains one template child (taffy count).
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, body_id),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, body_id),
         1,
         "body has template as its one filtered child"
     );
     let body_children: Vec<taffy::NodeId> =
-        <Document as TraversePartialTree>::child_ids(&doc, body_id).collect();
+        <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, body_id).collect();
     assert_eq!(body_children, vec![tmpl_id]);
 
     // The template's real <p> child is part of the flat tree.
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, tmpl_id),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, tmpl_id),
         1,
         "template real children stay in the taffy layout tree"
     );
     let tmpl_children: Vec<taffy::NodeId> =
-        <Document as TraversePartialTree>::child_ids(&doc, tmpl_id).collect();
+        <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, tmpl_id).collect();
     assert_eq!(tmpl_children, vec![taffy::NodeId::from(inner)]);
+    drop(session);
 
     // The contents fragment subtree appears in no reachable child list.
     assert!(
@@ -65,8 +68,9 @@ fn a_flex_container_drops_a_white_space_only_child() {
     doc.mark_in_document_flags();
 
     let parent_id = taffy::NodeId::from(parent);
+    let session = LayoutSession::new(&mut doc);
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, parent_id),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, parent_id),
         0,
     );
 }
@@ -116,18 +120,19 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
     // (b) The body has only one child (<p>) in the taffy layout tree.
     let body_taffy = taffy::NodeId::from(body);
     let p_taffy = taffy::NodeId::from(p);
+    let session = LayoutSession::new(&mut doc);
     assert_eq!(
-        <Document as TraversePartialTree>::child_count(&doc, body_taffy),
+        <LayoutSession<'_> as TraversePartialTree>::child_count(&session, body_taffy),
         1,
         "body's taffy child_count must be 1 (only <p>), Comment/PI filtered"
     );
     let kids: Vec<taffy::NodeId> =
-        <Document as TraversePartialTree>::child_ids(&doc, body_taffy).collect();
+        <LayoutSession<'_> as TraversePartialTree>::child_ids(&session, body_taffy).collect();
     assert_eq!(kids, vec![p_taffy]);
 
     // (c) get_child_id also agrees with the filtered view (index 0 = <p>).
     assert_eq!(
-        <Document as TraversePartialTree>::get_child_id(&doc, body_taffy, 0),
+        <LayoutSession<'_> as TraversePartialTree>::get_child_id(&session, body_taffy, 0),
         p_taffy
     );
 }
