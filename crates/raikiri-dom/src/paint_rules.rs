@@ -1103,12 +1103,10 @@ pub fn inline_stacking_group(
     else {
         return false;
     };
-    let Some(parent) = document.parent_of(id) else {
-        return false; // cov:ignore: an inline element of a paragraph has a parent
-    };
     let owner = document.ifc_source_owner(root);
     match document
-        .inclusive_ancestors(parent)
+        .inclusive_ancestors(id)
+        .skip(1)
         .take_while(|&ancestor| ancestor != root && ancestor != owner)
         .find(|&ancestor| !forms_no_inline_stacking_context(document, cascade, ancestor))
     {
