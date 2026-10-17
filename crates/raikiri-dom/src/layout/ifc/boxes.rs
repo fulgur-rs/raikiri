@@ -1637,7 +1637,7 @@ fn layout_block_child(
         }
         break (output, floats_bottom, top, after, has_clearance, top_set);
     };
-    ctx.add_child_floated_content_height_contribution(guess + floats_bottom);
+    ctx.add_child_floated_content_height_contribution(geometry.top_edge + guess + floats_bottom);
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.
