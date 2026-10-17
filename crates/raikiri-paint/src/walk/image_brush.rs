@@ -5,11 +5,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Shares decoded pixels and isolated border slices during one paint call,
-/// and resolves the image URLs of that call against the document base URL.
+/// resolves the image URLs of that call against the document base URL, and
+/// knows the raster output scale border images snap their seams to.
 #[derive(Default)]
 pub(crate) struct ImageBrushCache {
     brushes: RefCell<HashMap<(usize, PixelCrop), CachedBrush>>,
     base_url: Option<url::Url>,
+    device_scale: Option<f64>,
 }
 
 struct CachedBrush {
@@ -32,7 +34,20 @@ impl ImageBrushCache {
         Self {
             brushes: RefCell::default(),
             base_url: document.base_url().cloned(),
+            device_scale: None,
         }
+    }
+
+    /// This cache for a raster output with `device_scale` device pixels per
+    /// CSS pixel, or for a vector output with `None`.
+    pub(crate) fn with_device_scale(mut self, device_scale: Option<f32>) -> Self {
+        self.device_scale = device_scale.map(f64::from);
+        self
+    }
+
+    /// The device pixels per CSS pixel of a raster output.
+    pub(crate) fn device_scale(&self) -> Option<f64> {
+        self.device_scale
     }
 
     /// The URL a computed `url()` value names.

@@ -20,7 +20,8 @@ use peniko::color::{
 };
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
-    background_image_dimensions, background_tiles, border_image_geometry, position_offset,
+    background_image_dimensions, background_tiles, border_image_geometry,
+    border_image_geometry_on_device_pixels, position_offset,
 };
 use raikiri_dom::{CounterSnapshots, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
@@ -1380,7 +1381,8 @@ fn paint_list_marker(
     let snapshots = raikiri_dom::counter_snapshots(document, cascade)
         .expect("test counter snapshots stay within budget");
     paint_list_marker_with_snapshots(
-        &crate::walk::ImageBrushCache::for_document(document),
+        &crate::walk::ImageBrushCache::for_document(document)
+            .with_device_scale(cascade.border_width_device_scale()),
         scene,
         document,
         cascade,
@@ -5765,6 +5767,12 @@ fn paint_border_image_within(
         bottom: f64::from(border.bottom.width().px()),
         left: f64::from(border.left.width().px()),
     };
+    let geometry = |natural| match image_cache.device_scale() {
+        Some(scale) => {
+            border_image_geometry_on_device_pixels(border_box, widths, image, natural, scale)
+        }
+        None => border_image_geometry(border_box, widths, image, natural),
+    };
     match &image.source {
         BackgroundImage::Url(raw_url) => {
             let Some((url, pixel_source)) = image_cache.image_url(raw_url).zip(pixel_source) else {
@@ -5773,8 +5781,7 @@ fn paint_border_image_within(
             let Some(natural) = pixel_source.intrinsic_size(&url) else {
                 return false;
             };
-            let Some(geometry) = border_image_geometry(border_box, widths, image, Some(natural))
-            else {
+            let Some(geometry) = geometry(Some(natural)) else {
                 // A displayable image that draws nothing still replaces the
                 // border styles.
                 return true;
@@ -5901,7 +5908,7 @@ fn paint_border_image_within(
             true
         }
         BackgroundImage::Gradient(gradient) => {
-            let Some(geometry) = border_image_geometry(border_box, widths, image, None) else {
+            let Some(geometry) = geometry(None) else {
                 return true;
             };
             let Some(color) = gradient_first_color(gradient, cv.color) else {

@@ -71,11 +71,46 @@ const MAX_OUTSET: f64 = 1.0e7;
 /// outsets multiply. `natural` is the image's natural size, `None` for an
 /// image without one, such as a gradient. Returns `None` when nothing is
 /// drawn.
+///
+/// The geometry keeps fractional CSS pixels, so moving a box moves its
+/// border image without changing its shape. A raster painter that knows its
+/// output scale uses [`border_image_geometry_on_device_pixels`] instead.
 pub fn border_image_geometry(
     border_box: Rect,
     border_widths: Sides<f64>,
     image: &ComputedBorderImage,
     natural: Option<ImageIntrinsicSize>,
+) -> Option<BorderImageGeometry> {
+    geometry(border_box, border_widths, image, natural, None)
+}
+
+/// [`border_image_geometry`] for a raster output with
+/// `device_pixels_per_css_pixel` device pixels per CSS pixel.
+///
+/// Opposite widths that overlap are scaled down together, which leaves the
+/// inner edges of the corners at fractions of a device pixel even for
+/// whole-pixel widths. Those edges move to the nearest device pixel, so
+/// neighbouring parts share an edge instead of both half-covering one pixel
+/// and letting the background bleed through the seam. Coordinates are
+/// taken to be in the output's device space up to that scale. A scale that
+/// is not finite and positive leaves the geometry unsnapped.
+pub fn border_image_geometry_on_device_pixels(
+    border_box: Rect,
+    border_widths: Sides<f64>,
+    image: &ComputedBorderImage,
+    natural: Option<ImageIntrinsicSize>,
+    device_pixels_per_css_pixel: f64,
+) -> Option<BorderImageGeometry> {
+    let scale = Some(device_pixels_per_css_pixel).filter(|scale| scale.is_finite() && *scale > 0.0);
+    geometry(border_box, border_widths, image, natural, scale)
+}
+
+fn geometry(
+    border_box: Rect,
+    border_widths: Sides<f64>,
+    image: &ComputedBorderImage,
+    natural: Option<ImageIntrinsicSize>,
+    device_scale: Option<f64>,
 ) -> Option<BorderImageGeometry> {
     let (x, y, width, height) = border_box;
     if ![x, y, width, height].into_iter().all(f64::is_finite) {
@@ -202,20 +237,19 @@ pub fn border_image_geometry(
             has_natural_width,
         ),
     };
-    // Opposite widths that overlap are scaled down together. Scaling leaves
-    // the inner edges of the corners at fractions of a pixel even for
-    // whole-pixel widths; those edges round to whole pixels, so neighbouring
-    // parts share an edge instead of both half-covering one pixel and
-    // letting the background bleed through the seam. Rounding keeps the
-    // edges in order, and edges that met before still meet.
+    // Opposite widths that overlap are scaled down together (§6.3). On a
+    // raster output the inner edges then move to the nearest device pixel,
+    // see `border_image_geometry_on_device_pixels`. Rounding keeps the edges
+    // in order, and edges that met before still meet.
     let factor = (area_w / (widths.left + widths.right))
         .min(area_h / (widths.top + widths.bottom))
         .min(1.0);
     if factor < 1.0 {
-        let inner_left = (area_x + widths.left * factor).round();
-        let inner_right = (area_x + area_w - widths.right * factor).round();
-        let inner_top = (area_y + widths.top * factor).round();
-        let inner_bottom = (area_y + area_h - widths.bottom * factor).round();
+        let snap = |edge: f64| device_scale.map_or(edge, |scale| (edge * scale).round() / scale);
+        let inner_left = snap(area_x + widths.left * factor);
+        let inner_right = snap(area_x + area_w - widths.right * factor);
+        let inner_top = snap(area_y + widths.top * factor);
+        let inner_bottom = snap(area_y + area_h - widths.bottom * factor);
         widths = Sides {
             top: (inner_top - area_y).clamp(0.0, area_h),
             right: (area_x + area_w - inner_right).clamp(0.0, area_w),

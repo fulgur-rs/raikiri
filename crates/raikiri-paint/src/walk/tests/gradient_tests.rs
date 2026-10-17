@@ -1584,3 +1584,44 @@ fn page_border_image_inherits_current_color_from_the_root() {
     );
     assert_eq!(pixel(&rgba, 100, 15, 50), BLUE);
 }
+
+/// Paint a border image with `style` over a 10px by 20px box at x = 0.3 and
+/// rasterize it at `scale` device pixels per CSS pixel.
+fn raster_scaled_border_image(style: &str, device_scale: Option<f32>, scale: f64) -> Vec<u8> {
+    let cv = computed_for(style);
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    assert!(paint_element_border_image(
+        &ImageBrushCache::default().with_device_scale(device_scale),
+        &mut scene,
+        10.0,
+        20.0,
+        0.3,
+        0.0,
+        &cv,
+        &cv.border_image,
+        &cv.border,
+        None,
+        &mut warnings,
+    ));
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::scale(scale)),
+        40,
+        40,
+    )
+}
+
+#[test]
+fn scaled_down_border_image_edges_meet_on_device_pixels() {
+    // 7px edges on a 10px wide box scale down to 5px, so the left and right
+    // edges meet at x = 5.3: device pixel 10.6 at 2x.
+    let style = "border: 7px solid blue; border-image: linear-gradient(red, red) 1 / 7px";
+    let snapped = raster_scaled_border_image(style, Some(2.0), 2.0);
+    // The edges meet on a device pixel boundary, so no background shows
+    // through the seam.
+    assert_eq!(pixel(&snapped, 40, 10, 20), RED);
+    assert_eq!(pixel(&snapped, 40, 11, 20), RED);
+    // Without an output scale the edges keep their fractional positions.
+    let exact = raster_scaled_border_image(style, None, 2.0);
+    assert!(pixel(&exact, 40, 10, 20)[3] < 255);
+}
