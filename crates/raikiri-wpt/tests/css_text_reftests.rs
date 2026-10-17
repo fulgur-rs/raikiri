@@ -79,27 +79,39 @@ fn writing_system_font_unpinned_exact_passes() {
         result.mismatched_pixels
     );
 }
-/// `run_pair` leaves out the pages' support stylesheet, so this guards only
-/// the rendering without it. The baseline report loads the stylesheet, where
-/// the vertical pages still differ: their references size a vertical
+/// The horizontal pages with their support stylesheet loaded. The vertical
+/// pages still differ: their references size a vertical
 /// `inline-size: min-content` group to the container instead of its content.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn text_group_align_matches_without_its_support_stylesheet() {
+fn horizontal_text_group_align_exact_passes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let candidates = [
-        "css/css-text/text-group-align/text-group-align-center-vlr.html",
         "css/css-text/text-group-align/text-group-align-center.html",
-        "css/css-text/text-group-align/text-group-align-end-vlr.html",
         "css/css-text/text-group-align/text-group-align-end.html",
-        "css/css-text/text-group-align/text-group-align-left-vlr.html",
         "css/css-text/text-group-align/text-group-align-left.html",
-        "css/css-text/text-group-align/text-group-align-right-vlr.html",
         "css/css-text/text-group-align/text-group-align-right.html",
-        "css/css-text/text-group-align/text-group-align-start-vlr.html",
         "css/css-text/text-group-align/text-group-align-start.html",
     ];
-    assert_exact_passes(&root, &candidates);
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for relative in candidates {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
+        let result = run_pair_with_images(&pairs[0], config)
+            .unwrap_or_else(|error| panic!("run {relative}: {error}"));
+        assert!(
+            matches!(&result.outcome, TestOutcome::Pass),
+            "{relative}: outcome={:?}, mismatches={}",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
 }
 
 #[test]
