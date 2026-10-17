@@ -22,7 +22,7 @@ use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mi
 use raikiri_dom::image_geometry::{
     background_image_dimensions, background_tiles, border_image_geometry, position_offset,
 };
-use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
+use raikiri_dom::{CounterSnapshots, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor,
     BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient,
@@ -1100,7 +1100,7 @@ fn generated_pseudo_content_with_snapshots<'a>(
     cascade: &'a CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     raikiri_dom::generated_content::generated_text(document, cascade, node_id, pseudo, snapshots)
 }
@@ -1124,7 +1124,7 @@ fn generated_pseudo_text_advance(
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> f32 {
     if laid_out_in_lines(document, cascade, node_id, pseudo) {
         return 0.0;
@@ -1154,7 +1154,7 @@ fn generated_flow_height(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
     cache: &mut std::collections::HashMap<usize, f32>,
 ) -> f32 {
     if let Some(height) = cache.get(&node_id) {
@@ -1286,7 +1286,7 @@ fn generated_pseudo_text_height(
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> f32 {
     if laid_out_in_lines(document, cascade, node_id, pseudo) {
         return 0.0;
@@ -1323,7 +1323,7 @@ fn paint_generated_pseudo(
     y: f32,
     width: f32,
     height: f32,
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
 ) -> f32 {
     if laid_out_in_lines(document, cascade, node_id, pseudo) {
         return 0.0;
@@ -1410,7 +1410,7 @@ fn paint_list_marker_with_snapshots(
     height: f32,                 // cov:ignore: signature line has no executable mapping
     padding_left: f32,           // cov:ignore: signature line has no executable mapping
     page_flow: (f32, f32, bool), // cov:ignore: signature line has no executable mapping
-    snapshots: &[CounterSnapshot],
+    snapshots: &CounterSnapshots,
     pixel_source: Option<&dyn ImagePixelSource>,
 ) {
     if raikiri_dom::generated_content::inside_marker_in_flow(cascade, node_id)
@@ -1863,7 +1863,7 @@ pub(crate) fn paint_document(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    counter_snapshots: &[CounterSnapshot],
+    counter_snapshots: &CounterSnapshots,
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
@@ -1896,7 +1896,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    counter_snapshots: &[CounterSnapshot],
+    counter_snapshots: &CounterSnapshots,
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
@@ -1930,7 +1930,7 @@ pub(crate) fn paint_document_impl(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    counter_snapshots: &[CounterSnapshot],
+    counter_snapshots: &CounterSnapshots,
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,

@@ -114,7 +114,7 @@ fn generated_content_resolves_dom_attributes_and_fallbacks() {
         &components,
         &[] as &[(&str, &str)],
         false,
-        &CounterSnapshot::default(),
+        &raikiri_dom::CounterSnapshot::default(),
         &registry,
     );
     assert_eq!(rendered.as_deref(), Some("Fallback Actual "));
@@ -4522,7 +4522,7 @@ fn a_generated_run_is_measured_with_the_document_font() {
             doc.append_text(div, "x");
         },
     );
-    let snapshots: Vec<CounterSnapshot> = Vec::new();
+    let snapshots = raikiri_dom::CounterSnapshots::default();
     let height = generated_pseudo_text_height(
         &document,
         &cascade,
@@ -4604,7 +4604,7 @@ fn explicit_marker_content_suppresses_legacy_image_paint() {
             30.0,
             0.0,
             (0.0, f32::INFINITY, false),
-            &[],
+            &raikiri_dom::CounterSnapshots::default(),
             Some(&Pixels),
         );
         assert!(!scene.commands.iter().any(|command| matches!(command,
@@ -4753,7 +4753,13 @@ fn generated_flow_height_skips_a_node_already_queued_from_a_duplicate_child() {
     let mut cache = std::collections::HashMap::new();
 
     assert_eq!(
-        generated_flow_height(&document, &cascade, parent, &[], &mut cache),
+        generated_flow_height(
+            &document,
+            &cascade,
+            parent,
+            &raikiri_dom::CounterSnapshots::default(),
+            &mut cache
+        ),
         0.0
     );
 }
@@ -4766,7 +4772,13 @@ fn generated_flow_height_caches_zero_for_an_unknown_node_id() {
     let mut cache = std::collections::HashMap::new();
 
     assert_eq!(
-        generated_flow_height(&document, &cascade, usize::MAX, &[], &mut cache),
+        generated_flow_height(
+            &document,
+            &cascade,
+            usize::MAX,
+            &raikiri_dom::CounterSnapshots::default(),
+            &mut cache
+        ),
         0.0
     );
     assert_eq!(cache.get(&usize::MAX), Some(&0.0));

@@ -872,3 +872,130 @@ fn counter_set_without_a_counter_in_scope_instantiates_one() {
     doc.mark_in_document_flags();
     assert_eq!(innermost_values(&doc, &[set, following], "c"), [3, 4]);
 }
+
+/// The text of the `pseudo` of `element`, with the walk's counters.
+fn pseudo_text(doc: &Document, element: usize, pseudo: raikiri_style::PseudoElem) -> String {
+    let rules = build_rule_tree(doc);
+    let cr = cascade(doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(doc, &cr).expect("counter snapshots");
+    crate::generated_content::generated_text(doc, &cr, element, pseudo, &snapshots)
+        .expect("pseudo content")
+        .1
+}
+
+/// A document whose `<style>` holds `css`.
+fn styled_document(css: &str) -> Document {
+    let mut doc = Document::new();
+    let style = doc.append_element(
+        Some(doc.root_index()),
+        "style",
+        Style::default(),
+        None::<&str>,
+    );
+    doc.append_text(style, css);
+    doc
+}
+
+#[test]
+fn after_reads_the_before_and_child_directives() {
+    let mut doc = styled_document(
+        "div { counter-reset: c } \
+         div::before { counter-increment: c; content: counter(c) } \
+         div::after { content: counter(c) }",
+    );
+    let host = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        None::<&str>,
+    );
+    doc.append_element(
+        Some(host),
+        "span",
+        Style::default(),
+        Some("counter-increment: c 10"),
+    );
+    doc.mark_in_document_flags();
+    assert_eq!(
+        pseudo_text(&doc, host, raikiri_style::PseudoElem::Before),
+        "1"
+    );
+    assert_eq!(
+        pseudo_text(&doc, host, raikiri_style::PseudoElem::After),
+        "11"
+    );
+}
+
+#[test]
+fn before_reversed_reset_counts_its_whole_scope() {
+    let mut doc = styled_document(
+        "div::before { counter-reset: reversed(c); content: counter(c) } \
+         span { counter-increment: c }",
+    );
+    let host = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        None::<&str>,
+    );
+    for _ in 0..3 {
+        doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+    }
+    doc.mark_in_document_flags();
+    // The scope holds the three spans' increments of 1: the start is their
+    // negated sum plus the last negated increment (CSS Lists 3 §4.4.2).
+    assert_eq!(
+        pseudo_text(&doc, host, raikiri_style::PseudoElem::Before),
+        "-4"
+    );
+}
+
+#[test]
+fn list_item_pseudo_counts_down_in_a_reversed_list() {
+    let mut doc = styled_document(
+        "div::before { display: list-item; list-style: none; content: counter(list-item) }",
+    );
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "section",
+        Style::default(),
+        Some("counter-reset: reversed(list-item)"),
+    );
+    let items: Vec<_> = (0..3)
+        .map(|_| doc.append_element(Some(list), "div", Style::default(), None::<&str>))
+        .collect();
+    doc.mark_in_document_flags();
+    let texts: Vec<_> = items
+        .iter()
+        .map(|&item| pseudo_text(&doc, item, raikiri_style::PseudoElem::Before))
+        .collect();
+    assert_eq!(texts, ["3", "2", "1"]);
+}
+
+#[test]
+fn only_pseudos_that_read_counters_get_snapshots() {
+    let mut doc = styled_document(
+        "div::before { counter-increment: c; content: \"x\" } \
+         div::after { content: \"y\" / counter(c) }",
+    );
+    let host = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        None::<&str>,
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    assert!(
+        snapshots
+            .pseudo(host, raikiri_style::PseudoElem::Before)
+            .is_none()
+    );
+    // The alternative text reads the counter, so `::after` has a snapshot.
+    assert_eq!(
+        snapshots.pseudo(host, raikiri_style::PseudoElem::After),
+        Some(&HashMap::from([(Symbol::new("c"), vec![1])]))
+    );
+}

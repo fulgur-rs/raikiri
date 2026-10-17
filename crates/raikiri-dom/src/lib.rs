@@ -136,7 +136,7 @@ pub use page_projection::text_runs::{
 pub use raikiri_traits::{NodeKind, QuirksMode};
 // cov:ignore: public re-exports have no executable coverage mapping.
 pub use target::{
-    CounterSnapshot, CounterSnapshotBudget, CounterSnapshotLimitExceeded,
+    CounterSnapshot, CounterSnapshotBudget, CounterSnapshotLimitExceeded, CounterSnapshots,
     MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES, counter_snapshots, counter_snapshots_with_budget,
 };
 

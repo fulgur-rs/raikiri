@@ -605,6 +605,70 @@ impl CounterScopes {
 /// that counter implicitly (CSS Lists 3 §4.6).
 pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
 
+/// The named-counter snapshots of a document: one [`CounterSnapshot`] per
+/// arena node (the slice this dereferences to, indexed by node), and one
+/// for each `::before` / `::after` whose content reads a counter.
+///
+/// A pseudo-element's snapshot is taken right after the walk applies that
+/// pseudo-element's own directives, so it carries the directives before it
+/// in document order: a `::before` follows its element's, and an `::after`
+/// follows the `::before` and every real child.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CounterSnapshots {
+    nodes: Vec<CounterSnapshot>,
+    pseudos: HashMap<(usize, PseudoElem), CounterSnapshot>,
+}
+
+impl CounterSnapshots {
+    /// The counters that the content of the `pseudo` of `element` reads, or
+    /// `None` when the walk took no snapshot for it: the pseudo-element
+    /// generates no box, or its content reads no counter.
+    pub fn pseudo(&self, element: usize, pseudo: PseudoElem) -> Option<&CounterSnapshot> {
+        self.pseudos.get(&(element, pseudo))
+    }
+}
+
+impl From<Vec<CounterSnapshot>> for CounterSnapshots {
+    fn from(nodes: Vec<CounterSnapshot>) -> Self {
+        Self {
+            nodes,
+            pseudos: HashMap::new(),
+        }
+    }
+}
+
+impl std::ops::Deref for CounterSnapshots {
+    type Target = [CounterSnapshot];
+
+    fn deref(&self) -> &Self::Target {
+        &self.nodes
+    }
+}
+
+/// Where the walk is when it hands its counters to a consumer.
+#[derive(Clone, Copy)]
+enum CounterTarget {
+    /// Right after the element's own directives, before its `::before`.
+    Element(usize),
+    /// Right after the directives of this pseudo-element of the element.
+    Pseudo(usize, PseudoElem),
+}
+
+/// Whether the content of the pseudo-element `cv`, or its alternative text,
+/// reads a counter.
+fn content_reads_counters(cv: &raikiri_style::ComputedValues) -> bool {
+    use raikiri_style::property::ContentComponent;
+    cv.content
+        .iter()
+        .chain(cv.content.alt().into_iter().flatten())
+        .any(|component| {
+            matches!(
+                component,
+                ContentComponent::Counter { .. } | ContentComponent::Counters { .. }
+            )
+        })
+}
+
 /// Build named-counter snapshots in document order for marker and generated
 /// content consumers.
 ///
@@ -617,14 +681,14 @@ pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
 pub fn counter_snapshots(
     doc: &Document,
     cascade: &CascadeResult,
-) -> Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded> {
+) -> Result<CounterSnapshots, CounterSnapshotLimitExceeded> {
     counter_snapshots_with_budget(doc, cascade, &mut CounterSnapshotBudget::default())
 }
 
 /// Counter snapshots shared between the stages that render one layout, or
 /// the limit error that building them hit.
 pub(crate) type SharedCounterSnapshots =
-    Result<std::sync::Arc<Vec<CounterSnapshot>>, CounterSnapshotLimitExceeded>;
+    Result<std::sync::Arc<CounterSnapshots>, CounterSnapshotLimitExceeded>;
 
 impl Document {
     /// The [`counter_snapshots`] of this document for `cascade`, built once
@@ -641,7 +705,7 @@ impl Document {
     pub fn shared_counter_snapshots(
         &self,
         cascade: &CascadeResult,
-    ) -> Result<std::sync::Arc<Vec<CounterSnapshot>>, CounterSnapshotLimitExceeded> {
+    ) -> Result<std::sync::Arc<CounterSnapshots>, CounterSnapshotLimitExceeded> {
         let generation = cascade.element_generation();
         // The vector moves into the `Arc` without a copy, so the build peaks
         // at the one array its budget charged.
@@ -667,7 +731,7 @@ pub fn counter_snapshots_with_budget(
     doc: &Document,
     cascade: &CascadeResult,
     budget: &mut CounterSnapshotBudget,
-) -> Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded> {
+) -> Result<CounterSnapshots, CounterSnapshotLimitExceeded> {
     budget.charge_base(doc.node_count())?;
     let mut scopes = CounterScopes::default();
     if has_calculated_reversed_reset(cascade) {
@@ -683,9 +747,15 @@ pub fn counter_snapshots_with_budget(
             };
         }
     }
-    let mut snapshots = vec![HashMap::new(); doc.node_count()];
-    walk_counter_scopes(doc, cascade, &mut scopes, |idx, scopes| {
-        snapshots[idx] = scopes.snapshot(budget)?;
+    let mut snapshots = CounterSnapshots::from(vec![HashMap::new(); doc.node_count()]);
+    walk_counter_scopes(doc, cascade, &mut scopes, |target, scopes| {
+        let snapshot = scopes.snapshot(budget)?;
+        match target {
+            CounterTarget::Element(idx) => snapshots.nodes[idx] = snapshot,
+            CounterTarget::Pseudo(idx, pseudo) => {
+                snapshots.pseudos.insert((idx, pseudo), snapshot);
+            }
+        }
         Ok(())
     })?;
     Ok(snapshots)
@@ -707,12 +777,14 @@ fn has_calculated_reversed_reset(cascade: &CascadeResult) -> bool {
 
 /// Walk the tree in document order, applying every counter directive to
 /// `scopes` and calling `visit` with each element whose box takes part in
-/// counting, right after its own directives and before its `::before`.
+/// counting, right after its own directives and before its `::before`, and
+/// with each `::before` / `::after` whose content reads a counter, right
+/// after that pseudo-element's directives.
 fn walk_counter_scopes(
     doc: &Document,
     cascade: &CascadeResult,
     scopes: &mut CounterScopes,
-    mut visit: impl FnMut(usize, &CounterScopes) -> Result<(), CounterSnapshotLimitExceeded>,
+    mut visit: impl FnMut(CounterTarget, &CounterScopes) -> Result<(), CounterSnapshotLimitExceeded>,
 ) -> Result<(), CounterSnapshotLimitExceeded> {
     enum WalkStep {
         Enter(usize),
@@ -750,9 +822,8 @@ fn walk_counter_scopes(
                 // Keep the element snapshot before its own `::before`
                 // directives. The generated pseudo is a child of the element,
                 // so a counter scope it creates must be visible to the
-                // element's real children, while the pseudo's own content
-                // applies those directives locally in paint.
-                visit(idx, scopes)?;
+                // element's real children.
+                visit(CounterTarget::Element(idx), scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
                 if let Some(before) = generated_pseudo(cascade, idx, PseudoElem::Before) {
@@ -761,6 +832,9 @@ fn walk_counter_scopes(
                         before.display == DisplayValue::ListItem,
                         pending_pops.last_mut(),
                     );
+                    if content_reads_counters(before) {
+                        visit(CounterTarget::Pseudo(idx, PseudoElem::Before), scopes)?;
+                    }
                 }
                 let children_start = stack.len();
                 stack.extend(node.children.iter().map(|&child| WalkStep::Enter(child)));
@@ -776,6 +850,9 @@ fn walk_counter_scopes(
                         after.display == DisplayValue::ListItem,
                         pending_pops.last_mut(),
                     );
+                    if content_reads_counters(after) {
+                        visit(CounterTarget::Pseudo(idx, PseudoElem::After), scopes)?;
+                    }
                 }
                 if let Some(names) = pending_pops.pop() {
                     scopes.pop(&names);

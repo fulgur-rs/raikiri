@@ -20,7 +20,7 @@ use crate::generated_content::{
     is_in_flow_generated_text,
 };
 use crate::node::BoxPropertiesRef;
-use crate::target::{CounterSnapshot, CounterSnapshotLimitExceeded};
+use crate::target::{CounterSnapshotLimitExceeded, CounterSnapshots};
 use raikiri_style::property::{
     ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
 };
@@ -206,12 +206,12 @@ impl GeneratedCounters {
         &self,
         doc: &Document,
         cascade: &CascadeResult,
-    ) -> Result<&[CounterSnapshot], CounterSnapshotLimitExceeded> {
+    ) -> Result<&CounterSnapshots, CounterSnapshotLimitExceeded> {
         match self
             .counters
             .get_or_init(|| doc.shared_counter_snapshots(cascade))
         {
-            Ok(snapshots) => Ok(snapshots.as_slice()),
+            Ok(snapshots) => Ok(snapshots),
             Err(error) => Err(*error),
         }
     }
