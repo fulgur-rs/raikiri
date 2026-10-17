@@ -4313,7 +4313,7 @@ property_key_samples! {
     OutlineColor => PropertyValue::OutlineColor(OutlineColor::Resolved(GREEN)),
     OutlineOffset => PropertyValue::OutlineOffset(Length::Em(0.5)),
     OverflowClipMargin => PropertyValue::OverflowClipMargin(crate::property::OverflowClipMargin {
-        visual_box: crate::property::VisualBox::ContentBox,
+        visual_box: Some(crate::property::VisualBox::ContentBox),
         offset: Length::Em(0.5),
     }),
     // Non-initial writing mode remains available to margin-box layout.

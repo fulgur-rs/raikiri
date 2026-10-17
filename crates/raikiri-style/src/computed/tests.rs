@@ -363,7 +363,7 @@ fn non_initial_parent() -> ComputedValues {
         },
         outline_offset: ComputedLength(5.0),
         overflow_clip_margin: crate::resolve::ComputedOverflowClipMargin {
-            visual_box: VisualBox::ContentBox,
+            visual_box: Some(VisualBox::ContentBox),
             offset: ComputedLength(3.0),
         },
         width: ComputedLengthPercentageOrAuto::Px(200.0),

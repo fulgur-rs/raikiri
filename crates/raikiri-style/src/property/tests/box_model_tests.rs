@@ -3888,7 +3888,7 @@ fn overflow_clip_margin_parses_and_serializes_in_shortest_form() {
     assert_eq!(
         parse("2em", "overflow-clip-margin"),
         Some(PropertyValue::OverflowClipMargin(OverflowClipMargin {
-            visual_box: VisualBox::PaddingBox,
+            visual_box: None,
             offset: Length::Em(2.0),
         }))
     );

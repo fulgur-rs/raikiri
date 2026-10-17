@@ -1298,16 +1298,17 @@ pub struct ComputedBoxShadowItem {
 /// and the absolute outset from that box.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedOverflowClipMargin {
-    /// `content-box`, `padding-box` or `border-box`.
-    pub visual_box: crate::property::VisualBox,
+    /// `content-box`, `padding-box` or `border-box`; `None` when omitted
+    /// (see [`crate::property::OverflowClipMargin::visual_box`]).
+    pub visual_box: Option<crate::property::VisualBox>,
     /// The outset in CSS px, negative for an inset.
     pub offset: ComputedLength,
 }
 
 impl ComputedOverflowClipMargin {
-    /// The initial value, `0px`: the padding box.
+    /// The initial value, `0px`.
     pub const INITIAL: Self = Self {
-        visual_box: crate::property::VisualBox::PaddingBox,
+        visual_box: None,
         offset: ComputedLength::ZERO,
     };
 }

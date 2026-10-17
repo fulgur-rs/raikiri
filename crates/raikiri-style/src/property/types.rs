@@ -8749,17 +8749,18 @@ pub enum VisualBox {
 /// overflow clip edge starts from and how far outside it the edge lies.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OverflowClipMargin {
-    /// `content-box`, `padding-box` or `border-box`; `padding-box` when
-    /// omitted.
-    pub visual_box: VisualBox,
+    /// `content-box`, `padding-box` or `border-box`; `None` when omitted,
+    /// which means `content-box` on a replaced element and `padding-box`
+    /// otherwise.
+    pub visual_box: Option<VisualBox>,
     /// The `<length>` outset, negative for an inset; `0px` when omitted.
     pub offset: Length,
 }
 
 impl OverflowClipMargin {
-    /// The initial value, `0px`: the padding box.
+    /// The initial value, `0px`.
     pub const INITIAL: Self = Self {
-        visual_box: VisualBox::PaddingBox,
+        visual_box: None,
         offset: Length::Px(0.0),
     };
 }

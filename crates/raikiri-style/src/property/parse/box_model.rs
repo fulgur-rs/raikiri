@@ -1500,8 +1500,8 @@ fn parse_outline_style_res<'i>(
 }
 
 /// `overflow-clip-margin: <visual-box> || <length>` (CSS Overflow 4 §3.2).
-/// Either component may come first; an omitted box is `padding-box` and an
-/// omitted length is `0px`. A negative length moves the edge inward.
+/// Either component may come first; an omitted box stays unset (see
+/// [`OverflowClipMargin::visual_box`]) and an omitted length is `0px`. A negative length moves the edge inward.
 pub(super) fn parse_overflow_clip_margin(input: &mut Parser<'_, '_>) -> Option<OverflowClipMargin> {
     let mut visual_box = None;
     let mut offset = None;
@@ -1522,7 +1522,7 @@ pub(super) fn parse_overflow_clip_margin(input: &mut Parser<'_, '_>) -> Option<O
         return None; // cov:ignore: the dispatcher never parses an empty value
     }
     Some(OverflowClipMargin {
-        visual_box: visual_box.unwrap_or(VisualBox::PaddingBox),
+        visual_box,
         offset: offset.unwrap_or(Length::Px(0.0)),
     })
 }

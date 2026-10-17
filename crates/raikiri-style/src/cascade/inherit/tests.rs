@@ -11371,7 +11371,7 @@ fn overflow_clip_margin_inherits_explicitly() {
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
     let expected = crate::resolve::ComputedOverflowClipMargin {
-        visual_box: crate::property::VisualBox::ContentBox,
+        visual_box: Some(crate::property::VisualBox::ContentBox),
         offset: crate::resolve::ComputedLength(32.0),
     };
     assert_eq!(r.computed[parent].overflow_clip_margin, expected);

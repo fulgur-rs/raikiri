@@ -1494,8 +1494,8 @@ pub(crate) fn serialize_start_end<T: PartialEq>(
 /// Overflow 4 §3.2; CSSOM shortest serialization).
 fn serialize_overflow_clip_margin(margin: &OverflowClipMargin) -> String {
     let visual_box = match margin.visual_box {
-        VisualBox::ContentBox => Some("content-box"),
-        VisualBox::BorderBox => Some("border-box"),
+        Some(VisualBox::ContentBox) => Some("content-box"),
+        Some(VisualBox::BorderBox) => Some("border-box"),
         _ => None,
     };
     let zero = margin.offset.payload() == 0.0;

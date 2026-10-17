@@ -150,9 +150,27 @@ pub fn overflow_clip(
     let padding = document.nodes[node_id].unrounded_layout.padding;
     let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
     Some(
-        OverflowClipGeometry::new(&cascade.computed[node_id], border_box, border, padding)
-            .at(border_box),
+        OverflowClipGeometry::new(
+            &cascade.computed[node_id],
+            border_box,
+            border,
+            padding,
+            is_replaced_element(document, node_id),
+        )
+        .at(border_box),
     )
+}
+
+/// Whether the element is a replaced element, whose overflow and
+/// `overflow-clip-margin` resolve differently (CSS Overflow 4 §3.1, §3.2).
+pub(crate) fn is_replaced_element(document: &Document, node_id: usize) -> bool {
+    document.get_node(node_id).is_some_and(|node| {
+        node.is_inline_svg_root()
+            || matches!(
+                node.tag_name(),
+                Some("img" | "canvas" | "video" | "iframe" | "embed" | "object")
+            )
+    })
 }
 
 /// Resolve the clip of a replaced element's own content (its image or canvas
@@ -171,7 +189,7 @@ pub fn replaced_content_clip(
     if cv.overflow.x == OverflowValue::Visible && cv.overflow.y == OverflowValue::Visible {
         return None;
     }
-    Some(OverflowClipGeometry::new(cv, border_box, border, padding).at(border_box))
+    Some(OverflowClipGeometry::new(cv, border_box, border, padding, true).at(border_box))
 }
 
 /// Position-independent clip geometry shared by every placement of a source.
@@ -187,24 +205,43 @@ pub(crate) struct OverflowClipGeometry {
 impl OverflowClipGeometry {
     /// The clip edge is the padding box, except that an `overflow: clip`
     /// axis clips at the overflow clip edge: the box and outset that
-    /// `overflow-clip-margin` names (CSS Overflow 4 §3.2).
+    /// `overflow-clip-margin` names (CSS Overflow 4 §3.2). On a `replaced`
+    /// element every non-`visible` axis is used as `clip` (CSS Overflow 4
+    /// §3.1), and an omitted box is the content box.
     pub(crate) fn new(
         cv: &ComputedValues,
         border_box: PaintRect,
         border: PaintInsets,
         padding: PaintInsets,
+        replaced: bool,
     ) -> Self {
+        let used = |overflow| {
+            if replaced && overflow != OverflowValue::Visible {
+                OverflowValue::Clip
+            } else {
+                overflow
+            }
+        };
+        let overflow = OverflowXY {
+            x: used(cv.overflow.x),
+            y: used(cv.overflow.y),
+        };
         let margin = cv.overflow_clip_margin;
+        let visual_box = margin.visual_box.unwrap_or(if replaced {
+            VisualBox::ContentBox
+        } else {
+            VisualBox::PaddingBox
+        });
         let margin_edge = |border: f32, padding: f32| {
-            let visual_box = match margin.visual_box {
+            let inset = match visual_box {
                 VisualBox::BorderBox => 0.0,
                 VisualBox::ContentBox => border + padding,
                 _ => border,
             };
-            visual_box - margin.offset.px()
+            inset - margin.offset.px()
         };
-        let clips_x = cv.overflow.x == OverflowValue::Clip;
-        let clips_y = cv.overflow.y == OverflowValue::Clip;
+        let clips_x = overflow.x == OverflowValue::Clip;
+        let clips_y = overflow.y == OverflowValue::Clip;
         let edges = PaintInsets::new(
             if clips_y {
                 margin_edge(border.top, padding.top)
@@ -228,7 +265,7 @@ impl OverflowClipGeometry {
             },
         );
         let corner_radii =
-            if cv.overflow.x != OverflowValue::Visible && cv.overflow.y != OverflowValue::Visible {
+            if overflow.x != OverflowValue::Visible && overflow.y != OverflowValue::Visible {
                 let mut radii = cv.border_radius.used(border_box.width, border_box.height);
                 for (corner, [x, y]) in radii.iter_mut().zip([
                     [edges.left, edges.top],
@@ -250,7 +287,7 @@ impl OverflowClipGeometry {
             };
         Self {
             edges,
-            overflow: cv.overflow,
+            overflow,
             corner_radii,
         }
     }
