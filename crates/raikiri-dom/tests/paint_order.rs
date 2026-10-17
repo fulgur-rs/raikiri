@@ -96,6 +96,46 @@ fn negative_z_index_paints_before_in_flow_siblings() {
 }
 
 #[test]
+fn negative_inline_content_paints_below_paragraph_blocks_and_lines_above() {
+    // The negative span paints first, then the block inside the paragraph,
+    // then the paragraph's other text, whether the paragraph defers its
+    // content or forms the stacking context itself.
+    for style in ["", "position:relative;z-index:0"] {
+        let events = order(
+            &format!(
+                "<div id=m style='{style}'>over<span id=n style='position:relative;z-index:-1'>x</span>\
+                 <div id=k style='background:gray;height:10px'></div>tail</div>"
+            ),
+            0,
+        );
+        let (n, k, m) = (
+            position(&events, "Text(n)"),
+            position(&events, "Box(k)"),
+            position(&events, "Text(m)"),
+        );
+        assert!(n < k && k < m, "{style}: {events:?}");
+    }
+}
+
+#[test]
+fn negative_inline_content_inside_an_inline_stacking_context_stays_in_it() {
+    // The negative span is inside a span that forms a stacking context, so
+    // it stays in the lines with that span, after the block.
+    let events = order(
+        "<div id=m>over<span id=s style='position:relative;z-index:0'>\
+         <span id=n style='position:relative;z-index:-1'>x</span></span>\
+         <div id=k style='background:gray;height:10px'></div></div>",
+        0,
+    );
+    let (k, m, n) = (
+        position(&events, "Box(k)"),
+        position(&events, "Text(m)"),
+        position(&events, "Text(n)"),
+    );
+    assert!(k < m && m < n, "{events:?}");
+}
+
+#[test]
 fn opacity_and_overflow_nest_around_children() {
     let events = order(
         "<body><div id=o style='opacity:.5;overflow:hidden;height:40px'><p id=c>x</p></div></body>",

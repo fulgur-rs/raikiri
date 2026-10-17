@@ -735,15 +735,39 @@ fn blocks_inside_paragraphs_paint_before_the_lines() {
     }
 }
 
-/// A paragraph with content positioned below its blocks keeps the blocks
-/// with that content.
+/// A paragraph with content positioned below its blocks paints that
+/// content, then the blocks, then the rest of its lines, whether it defers
+/// its content or not.
 #[test]
-fn blocks_inside_paragraphs_with_negative_content_stay_with_it() {
+fn blocks_inside_paragraphs_paint_between_negative_content_and_the_lines() {
+    for style in ["", "position: relative; z-index: 0"] {
+        let result = same_order(&format!(
+            "<div id=m style=\"{style}\">over\
+             <span style=\"position: relative; z-index: -1\">x</span>\
+             <div id=k style=\"background: gray; height: 10px\"></div>tail</div>"
+        ));
+        let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+        let page = result.pages().next().expect("a page");
+        let steps = walker_steps(&page);
+        let at = step_at(&result, Step::Box(k));
+        assert_eq!(steps[at - 1], Step::Text(m), "{style}");
+        assert_eq!(steps[at + 1], Step::Text(m), "{style}");
+    }
+}
+
+/// A paragraph whose only text is positioned below its blocks traces that
+/// text once, before the blocks.
+#[test]
+fn negative_text_alone_is_traced_before_the_blocks() {
     let result = same_order(
-        "<div id=m>over<span style=\"position: relative; z-index: -1\">x</span>\
+        "<div id=m><span style=\"position: relative; z-index: -1\">x</span>\
          <div id=k style=\"background: gray; height: 10px\"></div></div>",
     );
     let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let texts = steps.iter().filter(|s| **s == Step::Text(m)).count();
+    assert_eq!(texts, 1, "{}", describe(&page, &steps));
     assert!(step_at(&result, Step::Text(m)) < step_at(&result, Step::Box(k)));
 }
 
@@ -1267,4 +1291,62 @@ fn stacking_contexts_across_boxes_keep_native_and_public_order() {
         ),
         "",
     );
+}
+
+/// The pixels of the first page of `result`, 300×200 like [`PAGE`].
+fn render_first_page(result: &DocumentLayout) -> Vec<u8> {
+    let page = result.pages().next().expect("a page");
+    let (document, cascade, page_box, origin) = page.paint_inputs();
+    let mut scene = anyrender::Scene::new();
+    raikiri_paint::paint_single_page_with_origin(&mut scene, document, cascade, page_box, origin)
+        .expect("paint");
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| {
+            use anyrender::PaintScene;
+            out.append_scene(scene, kurbo::Affine::IDENTITY);
+        },
+        300,
+        200,
+    )
+}
+
+/// How many pixels of `pixels` are exactly `rgb`.
+fn pixels_of(pixels: &[u8], rgb: [u8; 3]) -> usize {
+    pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[..3] == rgb)
+        .count()
+}
+
+/// A block inside a paragraph covers the text positioned below it and stays
+/// below the paragraph's other text.
+#[test]
+fn paragraph_blocks_cover_negative_text_and_stay_below_the_rest() {
+    for style in ["", "position: relative; z-index: 0"] {
+        let result = lay_out(
+            &format!(
+                "<div style=\"{style}; color: black\">AA\
+                 <span style=\"position: relative; z-index: -1; color: red\">BB</span>CC\
+                 <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+            ),
+            "",
+        );
+        let pixels = render_first_page(&result);
+        assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{style}");
+        assert_eq!(pixels_of(&pixels, [0, 0, 0]), 400, "{style}");
+    }
+}
+
+/// Inline elements positioned below a paragraph's blocks paint in stack
+/// level order, not tree order.
+#[test]
+fn negative_inline_elements_paint_by_stack_level() {
+    let result = lay_out(
+        "<div>A<span style=\"position: relative; z-index: -1; color: lime\">BB</span>\
+         <span style=\"position: relative; z-index: -2; left: -20px; color: red\">CC</span></div>",
+        "",
+    );
+    let pixels = render_first_page(&result);
+    assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0);
+    assert_eq!(pixels_of(&pixels, [0, 255, 0]), 200);
 }

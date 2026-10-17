@@ -546,7 +546,8 @@ fn negative_pseudo_opacity_groups_paint_below_the_paragraph_text() {
 }
 
 /// In an anonymous paragraph, too, a group with a negative stack level
-/// paints below the paragraph's text.
+/// paints below the paragraph's text, and below the block inside the
+/// paragraph, which paints below that text.
 #[test]
 fn negative_opacity_groups_paint_below_anonymous_paragraph_text() {
     assert_eq!(
@@ -560,8 +561,8 @@ fn negative_opacity_groups_paint_below_anonymous_paragraph_text() {
             "box group",
             "text group",
             "pop",
-            "text",
             "box p",
+            "text",
             "text"
         ]
     );

@@ -138,7 +138,8 @@ pub(super) struct TypographicPaint {
 
 impl TypographicPaint {
     /// A non-atomic inline element with an opacity below one composites its
-    /// fragments on the paragraph's lines as one group, and so do the
+    /// fragments on the paragraph's lines as one group, as does one
+    /// positioned below the paragraph's blocks, and so do the
     /// `::before`, `::after` and `::first-letter` boxes (CSS Color 4 §3.3).
     /// An atomic `::before` or `::after` with a transform is a group too,
     /// turned as a whole (CSS Transforms 1 §6). The groups nest as their
@@ -268,7 +269,9 @@ impl TypographicPaint {
     }
 
     /// The innermost group of a translucent inline element of `paragraph`
-    /// around `id`, an element or generated box, `id` included. The walk up
+    /// around `id`, an element or generated box, `id` included, or of one
+    /// positioned below the paragraph's blocks (see
+    /// [`raikiri_dom::paint_rules::negative_inline_group`]). The walk up
     /// stops at the paragraph root and at any box that is not an inline
     /// element. Elements with `display: contents` form no group.
     pub(super) fn element_group(&mut self, paragraph: Paragraph<'_>, id: usize) -> Option<usize> {
@@ -286,11 +289,18 @@ impl TypographicPaint {
         // Allocate the outer groups first, in the order their elements are
         // first painted.
         for (id, opacity) in path.into_iter().rev() {
-            if let Some(opacity) = opacity {
+            if opacity.is_some()
+                || raikiri_dom::paint_rules::negative_inline_group(
+                    paragraph.document,
+                    paragraph.cascade,
+                    paragraph.root_id,
+                    id,
+                )
+            {
                 let index = self.groups.len();
                 self.groups.push(Group {
                     scene: Scene::new(),
-                    opacity: Some(opacity),
+                    opacity,
                     transform: None,
                     level: element_stack_level(paragraph.cascade, id),
                     parent: group,
@@ -385,6 +395,15 @@ impl TypographicPaint {
             Some(index) => self.groups[index].children.push(child),
             None => self.root_children.push(child),
         }
+    }
+
+    /// Place the paint of an in-flow block inside the paragraph's inline
+    /// content: above the groups and boxes with negative stack levels
+    /// outside every group, below the rest of the paragraph's paint (CSS 2.1
+    /// Appendix E steps 3, 4 and 7). Blocks keep the order they are placed
+    /// in.
+    pub(super) fn add_block(&mut self, content: Scene) {
+        self.root_children.push((0, 0, 0, content));
     }
 
     /// Whether the paragraph composites any group.

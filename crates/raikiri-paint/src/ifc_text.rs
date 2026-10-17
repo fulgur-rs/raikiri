@@ -189,6 +189,19 @@ impl HeldLines<'_> {
         paint.add_box(group, positioned, local);
     }
 
+    /// Place the paint of an in-flow block inside the paragraph's inline
+    /// content, painted in page space, above the content positioned below
+    /// the paragraph's blocks and below the rest of the lines.
+    pub(crate) fn place_block(&mut self, content: Scene) {
+        let inverse = self.paint_transform.inverse();
+        // A singular transform leaves no two-dimensional ink to place.
+        if inverse.as_coeffs().iter().all(|value| value.is_finite()) {
+            let mut local = Scene::new();
+            local.append_scene(content, inverse);
+            self.rest.add_block(local);
+        }
+    }
+
     /// The transform the lines were painted in, which [`Self::finish`]
     /// expects on `scene`.
     pub(crate) fn paint_transform(&self) -> Affine {

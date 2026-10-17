@@ -2043,6 +2043,11 @@ pub(crate) fn paint_document_impl(
             node_id: usize,
             early: bool,
         },
+        /// Trace the text of paragraph `root` positioned below its blocks,
+        /// which its held lines paint below the blocks placed in them.
+        TraceBelowBlocks {
+            root: usize,
+        },
         /// Composite the held lines of `root` and the boxes placed in them.
         FinishLines {
             root: usize,
@@ -2193,6 +2198,8 @@ pub(crate) fn paint_document_impl(
     // Boxes recorded before the lines of their paragraph, which place them:
     // the paragraph root, the box and its paint.
     let mut early_boxes: Vec<(usize, usize, anyrender::Scene)> = Vec::new();
+    // Paragraphs whose text below their blocks was traced before the blocks.
+    let mut traced_below = std::collections::HashSet::new();
     // How an open layer ends once its subtree is done.
     #[derive(Clone, Copy)]
     enum LayerClose {
@@ -2591,17 +2598,12 @@ pub(crate) fn paint_document_impl(
                 }
                 // A paragraph whose lines carry no visible text (only
                 // atomic inlines and whitespace) is not traced as text,
-                // as its whitespace-only text nodes have no fragments.
+                // as its whitespace-only text nodes have no fragments. The
+                // text traced below the paragraph's blocks is not traced
+                // again.
+                let below = traced_below.remove(&node_id);
                 if let Some(t) = trace.as_deref_mut()
-                    && document
-                        .ifc_text_lines_by_node(node_id)
-                        .keys()
-                        .any(|&owner| {
-                            document
-                                .get_node(owner)
-                                .and_then(|text| text.text_content())
-                                .is_some_and(|text| !text.trim().is_empty())
-                        })
+                    && traced_text(document, cascade, node_id, |negative| !below || !negative)
                 {
                     t.push(crate::PaintTraceEvent::Text(node_id));
                 }
@@ -2631,7 +2633,13 @@ pub(crate) fn paint_document_impl(
                     match lines {
                         Some(mut lines) if boxes_in_groups || lines.has_groups() => {
                             for (_, id, content) in early {
-                                lines.place_box(id, content);
+                                if raikiri_dom::paint_rules::paints_before_paragraph_lines(
+                                    document, cascade, node_id, id,
+                                ) {
+                                    lines.place_block(content);
+                                } else {
+                                    lines.place_box(id, content);
+                                }
                             }
                             held_lines.push(lines);
                         }
@@ -2745,6 +2753,15 @@ pub(crate) fn paint_document_impl(
                     .filter(|lines| lines.root_id() == root)
                 {
                     lines.place_box(node_id, scene.scene.end_capture());
+                }
+                continue;
+            }
+            PaintFrame::TraceBelowBlocks { root } => {
+                if let Some(t) = trace.as_deref_mut() {
+                    traced_below.insert(root);
+                    if traced_text(document, cascade, root, |negative| negative) {
+                        t.push(crate::PaintTraceEvent::Text(root));
+                    }
                 }
                 continue;
             }
@@ -4153,11 +4170,15 @@ pub(crate) fn paint_document_impl(
                 // In-flow blocks inside the paragraph's inline content, whose
                 // backgrounds paint before its lines.
                 let mut block_frames = Vec::new();
-                let blocks_first = node.is_ifc_root()
-                    && !children.is_empty()
-                    && !raikiri_dom::paint_rules::holds_negative_stack_level(
+                // With content positioned below the blocks, the held lines
+                // place the blocks between that content and the rest. Lines
+                // that are not held keep the blocks with their content.
+                let negative_content = node.is_ifc_root()
+                    && raikiri_dom::paint_rules::holds_negative_stack_level(
                         document, cascade, node_id,
                     );
+                let blocks_first =
+                    node.is_ifc_root() && !children.is_empty() && (!negative_content || hold_lines);
                 for child in children.into_iter().rev() {
                     if let Some(cell) = document.anonymous_table_cell(child) {
                         child_frames.push(PaintFrame::AnonymousParagraph {
@@ -4261,11 +4282,12 @@ pub(crate) fn paint_document_impl(
                     // A box beside held lines joins the groups of the
                     // paragraph, which composite it with the rest of their
                     // paint once the lines and boxes are all recorded.
-                    if hold_lines && !block {
+                    let captured = hold_lines && (!block || negative_content);
+                    if captured {
                         frames.push(PaintFrame::EndBox {
                             root: node_id,
                             node_id: child,
-                            early: below_lines,
+                            early: below_lines || block,
                         });
                     }
                     frames.extend(inline_opacities.iter().map(|_| PaintFrame::PopOpacity));
@@ -4298,11 +4320,11 @@ pub(crate) fn paint_document_impl(
                             .rev()
                             .map(|&(node_id, alpha)| PaintFrame::PushOpacity { node_id, alpha }),
                     );
-                    if hold_lines && !block {
+                    if captured {
                         frames.push(PaintFrame::BeginBox {
                             root: node_id,
                             node_id: child,
-                            early: below_lines,
+                            early: below_lines || block,
                         });
                     }
                 }
@@ -4330,6 +4352,10 @@ pub(crate) fn paint_document_impl(
                     if let Some(layer) = deferral_scopes.last_mut() {
                         let pending = &mut layer.pending;
                         pending.extend(below_lines_frames.into_iter().rev());
+                        if negative_content && !block_frames.is_empty() {
+                            pending.push(PaintFrame::TraceBelowBlocks { root: node_id });
+                            pending.extend(std::mem::take(&mut block_frames).into_iter().rev());
+                        }
                         pending.extend(lines_frame);
                         pending.extend(child_frames.into_iter().rev());
                         pending.extend(finish_lines);
@@ -4343,6 +4369,10 @@ pub(crate) fn paint_document_impl(
                     stack.extend(finish_lines);
                     stack.extend(child_frames);
                     stack.extend(lines_frame);
+                    if negative_content && !block_frames.is_empty() {
+                        stack.extend(std::mem::take(&mut block_frames));
+                        stack.push(PaintFrame::TraceBelowBlocks { root: node_id });
+                    }
                     stack.extend(below_lines_frames);
                 }
                 stack.extend(block_frames);
@@ -4415,6 +4445,32 @@ pub(crate) fn paint_document_impl(
 }
 
 /// The first in-document text node below `root`, in document order.
+/// Whether paragraph `root` has visible text for which `admits` holds,
+/// told whether the text is inside an inline element positioned below the
+/// paragraph's blocks (see
+/// [`raikiri_dom::paint_rules::negative_inline_group`]).
+fn traced_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    admits: impl Fn(bool) -> bool,
+) -> bool {
+    document.ifc_text_lines_by_node(root).keys().any(|&owner| {
+        document
+            .get_node(owner)
+            .and_then(|text| text.text_content())
+            .is_some_and(|text| !text.trim().is_empty())
+            && admits(
+                document
+                    .inclusive_ancestors(owner)
+                    .take_while(|&id| id != root)
+                    .any(|id| {
+                        raikiri_dom::paint_rules::negative_inline_group(document, cascade, root, id)
+                    }),
+            )
+    })
+}
+
 fn first_text_descendant(document: &Document, root: usize) -> Option<usize> {
     let mut stack: Vec<usize> = document
         .get_node(root)?

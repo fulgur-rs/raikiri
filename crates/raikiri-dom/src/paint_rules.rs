@@ -881,10 +881,10 @@ fn is_z_indexed_item(
 /// Its background is a block background of the layer (CSS 2.1 Appendix E
 /// step 4), below the lines around it (step 7), and its own inline content
 /// defers like any other block's. Blocks inside an inline element, or on
-/// the first line, stay with the paragraph's content and its groups. The
-/// painters keep all blocks of a paragraph with the paragraph's content when
-/// [`holds_negative_stack_level`] says it holds content that paints below
-/// the blocks.
+/// the first line, stay with the paragraph's content and its groups. When
+/// [`holds_negative_stack_level`] says the paragraph holds content that
+/// paints below the blocks, the painters paint the blocks with the
+/// paragraph's content, after that content and before the rest.
 pub fn paints_before_paragraph_lines(
     document: &Document,
     cascade: &CascadeResult,
@@ -914,10 +914,10 @@ pub fn paints_before_paragraph_lines(
 ///
 /// Such content paints below the in-flow blocks of the layer (CSS 2.1
 /// Appendix E step 3), and the painters list it with the paragraph, so the
-/// blocks inside the paragraph (see [`paints_before_paragraph_lines`]) stay
-/// there too. Only the paragraph's own inline content is searched, not the
-/// blocks inside it or the content of inline boxes that form stacking
-/// contexts.
+/// blocks inside the paragraph (see [`paints_before_paragraph_lines`]) are
+/// listed there too, between that content and the rest. Only the
+/// paragraph's own inline content is searched, not the blocks inside it or
+/// the content of inline boxes that form stacking contexts.
 pub fn holds_negative_stack_level(
     document: &Document,
     cascade: &CascadeResult,
@@ -969,6 +969,49 @@ pub fn holds_negative_stack_level(
         }
     }
     false
+}
+
+/// Whether inline element `id` of paragraph `root` is positioned with a
+/// negative `z-index` outside every inline box of the paragraph that forms
+/// a stacking context.
+///
+/// Its boxes and text paint as a group below the in-flow blocks inside the
+/// paragraph and the rest of its lines (CSS 2.1 Appendix E steps 3, 4 and
+/// 7). Such an element is part of the content
+/// [`holds_negative_stack_level`] finds.
+pub fn negative_inline_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> bool {
+    let inline = |id: usize| {
+        document
+            .get_node(id)
+            .is_some_and(|node| node.kind() == NodeKind::Element)
+            .then(|| cascade.computed.get(id))
+            .flatten()
+            .filter(|cv| cv.display.is_inline_flow() || cv.display == DisplayValue::Contents)
+    };
+    if !inline(id).is_some_and(|cv| {
+        cv.display.is_inline_flow()
+            && !matches!(cv.position, PositionValue::Static)
+            && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0)
+    }) {
+        return false;
+    }
+    let owner = document.ifc_source_owner(root);
+    document
+        .inclusive_ancestors(id)
+        .skip(1)
+        .take_while(|&ancestor| ancestor != root && ancestor != owner)
+        .all(|ancestor| {
+            inline(ancestor).is_some_and(|cv| {
+                !establishes_stacking_context(document, ancestor, cv)
+                    && (matches!(cv.position, PositionValue::Static)
+                        || !matches!(cv.z_index, ZIndexValue::Integer(_)))
+            })
+        })
 }
 
 /// Whether the inline content deferred in front of an element paints
