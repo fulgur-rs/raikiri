@@ -4201,34 +4201,17 @@ fn paginate_flow(
         let float_edges = float_shifts.edges_for(document, cascade, node_id, body_id);
         if let Some((float_context, float_edges)) = float_edges {
             let floating = is_floating_box_for_pagination(document, cascade, node_id);
-            let computed = &cascade.computed[node_id];
-            // A later float's outer top stays not above an earlier float
-            // (CSS 2.1 §9.5.1), and below the floats it does not fit beside
-            // in the context. An in-flow box's border box stays below a float
-            // it clears (CSS 2.1 §9.5.2).
-            let layout = &document.nodes[node_id].unrounded_layout;
-            let outer_width = layout.size.width + layout.margin.left + layout.margin.right;
-            let context_width = document.nodes[float_context]
-                .unrounded_layout
-                .content_box_width();
-            let cleared = float_edges
-                .iter()
-                .filter(|edge| {
-                    clears_float_side(
-                        computed.clear,
-                        [FloatValue::Left, FloatValue::Right][edge.side],
-                    )
-                })
-                .map(|edge| edge.bottom)
-                .reduce(f32::max);
-            let floor = if floating {
-                let outer_height = layout.size.height + layout.margin.top + layout.margin.bottom;
-                let top = float_top_beside(&float_edges, outer_width, outer_height, context_width);
-                Some(top.max(cleared.unwrap_or(f32::NEG_INFINITY)))
-            } else if candidate.is_float_descendant {
+            let floor = if !floating && candidate.is_float_descendant {
                 None
             } else {
-                cleared
+                float_floor(
+                    document,
+                    cascade,
+                    node_id,
+                    float_context,
+                    &float_edges,
+                    floating,
+                )
             };
             let margin_top = if floating {
                 document.nodes[node_id].unrounded_layout.margin.top
@@ -4259,7 +4242,7 @@ fn paginate_flow(
                                 side: index,
                                 top: top - layout.margin.top,
                                 bottom: top + layout.size.height + layout.margin.bottom,
-                                width: outer_width,
+                                width: layout.size.width + layout.margin.left + layout.margin.right,
                             },
                         );
                     }
@@ -7619,6 +7602,44 @@ fn moved_float_edge(
         bottom: outer_bottom,
         width: layout.size.width + layout.margin.left + layout.margin.right,
     }
+}
+
+/// The flow position that `node_id` may not start above, given the moved
+/// float `edges` of its formatting context `float_context`, or `None` when
+/// they do not constrain it.
+///
+/// A later float's outer top stays not above an earlier float (CSS 2.1
+/// §9.5.1), and below the floats it does not fit beside in the context. An
+/// in-flow box's border box stays below a float it clears (CSS 2.1 §9.5.2).
+fn float_floor(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    float_context: usize,
+    edges: &[FloatEdge],
+    floating: bool,
+) -> Option<f32> {
+    let cleared = edges
+        .iter()
+        .filter(|edge| {
+            clears_float_side(
+                cascade.computed[node_id].clear,
+                [FloatValue::Left, FloatValue::Right][edge.side],
+            )
+        })
+        .map(|edge| edge.bottom)
+        .reduce(f32::max);
+    if !floating {
+        return cleared;
+    }
+    let layout = &document.nodes[node_id].unrounded_layout;
+    let outer_width = layout.size.width + layout.margin.left + layout.margin.right;
+    let outer_height = layout.size.height + layout.margin.top + layout.margin.bottom;
+    let context_width = document.nodes[float_context]
+        .unrounded_layout
+        .content_box_width();
+    let top = float_top_beside(edges, outer_width, outer_height, context_width);
+    Some(top.max(cleared.unwrap_or(f32::NEG_INFINITY)))
 }
 
 /// The highest outer top, at or below the highest top of `edges`, from
