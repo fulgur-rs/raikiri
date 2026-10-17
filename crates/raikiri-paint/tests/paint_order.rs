@@ -1427,3 +1427,20 @@ fn paragraph_blocks_cover_negative_pseudo_elements() {
         }
     }
 }
+
+/// A `display: contents` element forms no stacking context, so the negative
+/// span inside it still paints below the paragraph's block in both orders.
+#[test]
+fn negative_content_inside_display_contents_paints_below_the_blocks() {
+    let result = same_order(
+        "<div id=m>over<span style=\"display: contents; position: relative; z-index: 0\">\
+         <span style=\"position: relative; z-index: -1\">x</span></span>\
+         <div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = step_at(&result, Step::Box(k));
+    assert_eq!(steps[at - 1], Step::Text(m));
+    assert_eq!(steps[at + 1], Step::Text(m));
+}

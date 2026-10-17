@@ -118,6 +118,25 @@ fn negative_inline_content_paints_below_paragraph_blocks_and_lines_above() {
 }
 
 #[test]
+fn negative_inline_content_inside_a_display_contents_element_paints_below_paragraph_blocks() {
+    // A `display: contents` element has no box, so its position and
+    // `z-index` form no stacking context and the negative span inside it
+    // still paints below the block.
+    let events = order(
+        "<div id=m>over<span style='display:contents;position:relative;z-index:0'>\
+         <span id=n style='position:relative;z-index:-1'>x</span></span>\
+         <div id=k style='background:gray;height:10px'></div>tail</div>",
+        0,
+    );
+    let (n, k, m) = (
+        position(&events, "Text(n)"),
+        position(&events, "Box(k)"),
+        position(&events, "Text(m)"),
+    );
+    assert!(n < k && k < m, "{events:?}");
+}
+
+#[test]
 fn negative_inline_content_inside_an_inline_stacking_context_stays_in_it() {
     // The negative span is inside a span that forms a stacking context, so
     // it stays in the lines with that span, after the block.

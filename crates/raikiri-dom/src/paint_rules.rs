@@ -947,17 +947,22 @@ pub fn holds_negative_stack_level(
         else {
             continue;
         };
-        if negative(id) {
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: elements in a laid-out paragraph have computed values
+        };
+        // A `display: contents` element has no box, so it neither paints at
+        // a level of its own nor forms a stacking context (CSS Display 3
+        // §2.5).
+        let contents = cv.display == DisplayValue::Contents;
+        if !contents && negative(id) {
             return true;
         }
         // Content inside an inline box that forms a stacking context paints
         // within that box, not below the paragraph's blocks.
-        let Some(cv) = cascade.computed.get(id) else {
-            continue; // cov:ignore: elements in a laid-out paragraph have computed values
-        };
-        let stacking = establishes_stacking_context(document, id, cv)
-            || (!matches!(cv.position, PositionValue::Static)
-                && matches!(cv.z_index, ZIndexValue::Integer(_)));
+        let stacking = !contents
+            && (establishes_stacking_context(document, id, cv)
+                || (!matches!(cv.position, PositionValue::Static)
+                    && matches!(cv.z_index, ZIndexValue::Integer(_))));
         if stacking {
             continue;
         }
@@ -1037,10 +1042,13 @@ fn outside_inline_stacking_contexts(
                 .get_node(ancestor)
                 .is_some_and(|node| node.kind() == NodeKind::Element)
                 && cascade.computed.get(ancestor).is_some_and(|cv| {
-                    (cv.display.is_inline_flow() || cv.display == DisplayValue::Contents)
-                        && !establishes_stacking_context(document, ancestor, cv)
-                        && (matches!(cv.position, PositionValue::Static)
-                            || !matches!(cv.z_index, ZIndexValue::Integer(_)))
+                    // A `display: contents` element has no box to form a
+                    // stacking context with (CSS Display 3 §2.5).
+                    cv.display == DisplayValue::Contents
+                        || (cv.display.is_inline_flow()
+                            && !establishes_stacking_context(document, ancestor, cv)
+                            && (matches!(cv.position, PositionValue::Static)
+                                || !matches!(cv.z_index, ZIndexValue::Integer(_))))
                 })
         })
 }
