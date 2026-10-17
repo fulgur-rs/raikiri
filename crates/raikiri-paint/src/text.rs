@@ -79,7 +79,10 @@ pub(crate) fn missing_glyph_origins(
     glyphs: impl IntoIterator<Item = (u32, f32, f32)>,
 ) -> Vec<(f32, f32)> {
     let size = run.font_size();
-    let glyphs: Vec<_> = glyphs.into_iter().collect();
+    // Sorted by text offset, so each cluster finds its glyphs by search
+    // rather than by a scan of the whole run.
+    let mut glyphs: Vec<_> = glyphs.into_iter().collect();
+    glyphs.sort_by_key(|&(offset, ..)| offset);
     let mut origins = Vec::new();
     for cluster in run.clusters() {
         let boxes = (cluster.shaping_advance / size).round();
@@ -87,11 +90,12 @@ pub(crate) fn missing_glyph_origins(
         if boxes.is_nan() || boxes < 1.0 {
             continue;
         }
-        let mut points: Vec<(f32, f32)> = glyphs
-            .iter()
-            .filter(|(offset, ..)| cluster.text_range.contains(&(*offset as usize)))
-            .map(|&(_, x, y)| (x, y))
-            .collect();
+        let start =
+            glyphs.partition_point(|&(offset, ..)| (offset as usize) < cluster.text_range.start);
+        let end =
+            glyphs.partition_point(|&(offset, ..)| (offset as usize) < cluster.text_range.end);
+        let mut points: Vec<(f32, f32)> =
+            glyphs[start..end].iter().map(|&(_, x, y)| (x, y)).collect();
         points.sort_by(|a, b| a.0.total_cmp(&b.0));
         points.dedup_by(|b, a| (b.0 - a.0).abs() < size * 1e-3);
         origins.extend(points.into_iter().take(boxes as usize));
