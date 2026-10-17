@@ -841,6 +841,29 @@ impl LastNamedBox {
     }
 }
 
+/// Whether the fixed-height box `node_id`, placed at `top`, fits on the
+/// physical paper of a page that starts at `page_top` and has page border or
+/// padding.
+///
+/// Page border and padding reduce the fragmentainer's content height, but
+/// must not make such a box manufacture a second page merely to expose its
+/// overflow into the page decoration area.
+fn fits_decorated_paper(
+    document: &Document,
+    node_id: usize,
+    insets: PageContentInsets,
+    page_top: f32,
+    paper_height: f32,
+    top: f32,
+    height: f32,
+) -> bool {
+    (insets.top > 0.0 || insets.right > 0.0 || insets.bottom > 0.0 || insets.left > 0.0)
+        && top >= page_top
+        && top + height <= page_top + paper_height + 0.001
+        && style_dimension_length(document.nodes[node_id].style.size.height)
+            .is_some_and(|value| value >= 0.0)
+}
+
 /// The flow end of a candidate box placed at `effective_y`, or `None` when
 /// the box has no height or no usable position and so cannot run on past
 /// its start page.
@@ -5125,20 +5148,18 @@ fn paginate_flow(
         }
         check_candidate_page!('candidate_loop, current_page);
         // A fixed-height direct block that fits on the physical paper is
-        // monolithic in this minimal paginator.  Page border/padding reduce
-        // the fragmentainer's content height, but must not make the block
-        // manufacture a second page merely to expose its overflow into the
-        // page decoration area.
+        // monolithic in this minimal paginator.
         let monolithic_paper_fit = || {
             candidate.is_direct_body_element
-                && (insets.top > 0.0
-                    || insets.right > 0.0
-                    || insets.bottom > 0.0
-                    || insets.left > 0.0)
-                && effective_y >= page_origin(current_page)
-                && effective_y + height <= page_origin(current_page) + page_box.height + 0.001
-                && style_dimension_length(document.nodes[node_id].style.size.height)
-                    .is_some_and(|value| value >= 0.0)
+                && fits_decorated_paper(
+                    document,
+                    node_id,
+                    insets,
+                    page_origin(current_page),
+                    page_box.height,
+                    effective_y,
+                    height,
+                )
         };
         let end_page = candidate_flow_end(effective_y, height)
             .filter(|_| !monolithic_paper_fit())
