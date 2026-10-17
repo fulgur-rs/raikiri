@@ -114,7 +114,7 @@ pub(crate) fn draw(
             let Fragment::GlyphRun(run) = fragment else {
                 continue;
             };
-            let Some(font) = run.font_data().filter(crate::text::has_glyph_outlines) else {
+            let Some(font) = run.font_data() else {
                 continue;
             };
             let glyphs: Vec<AnyrenderGlyph> = run
@@ -130,6 +130,19 @@ pub(crate) fn draw(
                 continue;
             }
             let font_size = run.font_size();
+            if !crate::text::has_glyph_outlines(&font) {
+                // Horizontal lines only, as in paragraph text.
+                if line.writing_mode() == shodo::geometry::WritingMode::HorizontalTb {
+                    crate::text::draw_missing_glyph_boxes(
+                        scene,
+                        glyphs.iter().map(|glyph| (glyph.x, glyph.y)),
+                        font_size,
+                        color,
+                        transform,
+                    );
+                }
+                continue;
+            }
             // shodo's normalized coordinates are `F2Dot14` newtypes; the scene
             // takes the raw `i16` bits.
             let coords: Vec<i16> = run

@@ -3644,27 +3644,16 @@ fn missing_glyph_boxes_keep_their_size_under_negative_letter_spacing() {
 #[test]
 fn missing_glyph_boxes_skip_non_finite_positions_and_sizes() {
     let mut scene = Scene::new();
-    let glyph = |x, y| raikiri_dom::LineGlyph {
-        id: 0,
-        x,
-        y,
-        advance: 10.0,
-        cluster: 0,
-    };
     crate::text::draw_missing_glyph_boxes(
         &mut scene,
-        &[
-            glyph(f32::NAN, 20.0),
-            glyph(0.0, f32::INFINITY),
-            glyph(4.0, 20.0),
-        ],
+        [(f32::NAN, 20.0), (0.0, f32::INFINITY), (4.0, 20.0)],
         10.0,
         peniko::Color::BLACK,
         Affine::IDENTITY,
     );
     crate::text::draw_missing_glyph_boxes(
         &mut scene,
-        &[glyph(0.0, 20.0)],
+        [(0.0, 20.0)],
         0.0,
         peniko::Color::BLACK,
         Affine::IDENTITY,

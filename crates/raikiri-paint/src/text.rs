@@ -30,12 +30,12 @@ pub(crate) fn has_glyph_outlines(font: &peniko::FontData) -> bool {
 /// Draw the missing-glyph boxes of a run shaped with shodo's stub face, as
 /// browsers draw a box for a character no font covers. Each glyph gets an
 /// outlined box inside the stub glyph's natural advance of one em, rising
-/// from the baseline, in the coordinates of the run's glyph positions. The
+/// from the baseline at its glyph origin, in the run's coordinates. The
 /// box ignores the spacing in the layout advance, as glyph ink does when
 /// `letter-spacing` or justification widens or narrows it.
 pub(crate) fn draw_missing_glyph_boxes(
     scene: &mut impl PaintScene,
-    glyphs: &[raikiri_dom::LineGlyph],
+    origins: impl IntoIterator<Item = (f32, f32)>,
     font_size: f32,
     color: Color,
     transform: Affine,
@@ -49,8 +49,8 @@ pub(crate) fn draw_missing_glyph_boxes(
     // Inset by half the line width plus a gap, so neighboring boxes and
     // their strokes stay apart.
     let inset = size * 0.1 + line / 2.0;
-    for glyph in glyphs {
-        let (x, y) = (f64::from(glyph.x), f64::from(glyph.y));
+    for (x, y) in origins {
+        let (x, y) = (f64::from(x), f64::from(y));
         if !(x.is_finite() && y.is_finite()) {
             continue;
         }

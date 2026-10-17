@@ -522,3 +522,52 @@ fn margin_text_no_font_covers_draws_no_glyphs() {
     );
     assert!(glyph_positions(&scene).is_empty());
 }
+
+/// Bounds of every recorded stroke, in the page's coordinates.
+fn stroke_bounds(scene: &Scene) -> Vec<kurbo::Rect> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Stroke(stroke) => Some(kurbo::Shape::bounding_box(
+                &(stroke.transform * stroke.shape.clone()),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn characters_no_font_covers_draw_missing_glyph_boxes_on_horizontal_lines() {
+    use crate::text::MarginTextVerticalAlign::Top;
+    use shodo::geometry::{Direction::Ltr, WritingMode::*};
+    use shodo::style::TextOrientation::Mixed;
+    // U+FDD0 is a noncharacter, which only shodo's stub face shapes.
+    let scene = styled_scene(
+        "\u{FDD0}a",
+        HorizontalTb,
+        Mixed,
+        Ltr,
+        StandaloneAlign::Start,
+        Top,
+    );
+    let boxes = stroke_bounds(&scene);
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    assert_eq!(
+        glyph_positions(&scene).len(),
+        1,
+        "the covered letter still draws"
+    );
+    // Inside the first em of the line at x 5, above the baseline at y 15.
+    assert!(boxes[0].x0 > 5.0 && boxes[0].x1 < 15.0, "{boxes:?}");
+    assert!(boxes[0].y1 < 15.0 && boxes[0].y0 > 7.0, "{boxes:?}");
+    let scene = styled_scene(
+        "\u{FDD0}",
+        VerticalRl,
+        Mixed,
+        Ltr,
+        StandaloneAlign::Start,
+        Top,
+    );
+    assert!(stroke_bounds(&scene).is_empty());
+}

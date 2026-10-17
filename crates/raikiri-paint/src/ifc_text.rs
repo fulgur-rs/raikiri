@@ -723,7 +723,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                     // down the line, which the boxes do not follow yet.
                     crate::text::draw_missing_glyph_boxes(
                         scene,
-                        &draw.glyphs,
+                        draw.glyphs.iter().map(|glyph| (glyph.x, glyph.y)),
                         font_size,
                         draw.color,
                         run_transform,
@@ -1085,7 +1085,7 @@ fn draw_shadow(
     } else if run.missing_glyph_boxes {
         crate::text::draw_missing_glyph_boxes(
             scene,
-            &run.draw.glyphs,
+            run.draw.glyphs.iter().map(|glyph| (glyph.x, glyph.y)),
             font_size,
             css_color_to_peniko(color),
             shadow_transform,
