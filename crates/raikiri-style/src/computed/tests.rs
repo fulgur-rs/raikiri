@@ -322,6 +322,7 @@ fn non_initial_parent() -> ComputedValues {
         cssom_writing_mode: WritingMode::VerticalRl,
         multicol_flow: true,
         horizontal_children: true,
+        ruby_writing_mode: WritingMode::VerticalLr,
         ruby_position: RubyPosition::Under,
         // CSS Text 3 §8.1: differs from the initial `0`
         // (as required for every field of non_initial_parent).

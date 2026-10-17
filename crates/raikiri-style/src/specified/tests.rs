@@ -339,6 +339,7 @@ fn parent_fixture() -> ComputedValues {
         cssom_writing_mode: WritingMode::VerticalRl,
         multicol_flow: true,
         horizontal_children: true,
+        ruby_writing_mode: WritingMode::VerticalLr,
         ruby_position: RubyPosition::Under,
         text_indent: ComputedTextIndent::Px(9.0),
         text_indent_ch_factor: None,

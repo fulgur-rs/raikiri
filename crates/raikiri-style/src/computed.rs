@@ -883,6 +883,11 @@ pub struct ComputedValues {
     /// or a multicol flow. A `display: contents` or `display: none` element
     /// has no box, so it passes on its parent's value. Not a CSS property.
     pub horizontal_children: bool,
+    /// The writing mode of the ruby that this element's ruby annotations
+    /// belong to: the parent's value for a ruby annotation container, which
+    /// `writing-mode` does not apply to (CSS Writing Modes 4 §3.2), and the
+    /// element's own computed `writing-mode` otherwise. Not a CSS property.
+    pub ruby_writing_mode: WritingMode,
     /// CSSOM-facing computed `writing-mode` keyword. **inherited**, initial:
     /// [`WritingMode::HorizontalTb`] (CSS Writing Modes 4 §3.2). This retains the
     /// specified keyword while [`Self::writing_mode`] stays renderer-facing.
@@ -2188,6 +2193,7 @@ impl ComputedValues {
             cssom_writing_mode: WritingMode::HorizontalTb,
             multicol_flow: false,
             horizontal_children: false,
+            ruby_writing_mode: WritingMode::HorizontalTb,
             ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: initial text-indent is `0`.
             text_indent: ComputedTextIndent::Px(0.0),

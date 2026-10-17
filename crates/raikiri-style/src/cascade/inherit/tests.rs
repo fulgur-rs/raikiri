@@ -3932,6 +3932,61 @@ fn inter_character_ruby_annotations_compute_to_vertical_rl() {
 }
 
 #[test]
+fn inter_character_annotations_follow_the_ruby_writing_mode_past_their_container() {
+    // `writing-mode` does not apply to an annotation container, so the
+    // ruby's writing mode decides whether the annotations are forced.
+    let mut doc = TestDoc::new();
+    let horizontal = doc.push_element(
+        0,
+        "ruby",
+        Some("display: ruby; ruby-position: inter-character"),
+    );
+    let vertical_rtc = doc.push_element(
+        horizontal,
+        "rtc",
+        Some("display: ruby-text-container; writing-mode: vertical-lr"),
+    );
+    let forced = doc.push_element(
+        vertical_rtc,
+        "rt",
+        Some("display: ruby-text; margin-inline-start: 5px"),
+    );
+    let vertical = doc.push_element(
+        0,
+        "ruby",
+        Some("display: ruby; ruby-position: inter-character; writing-mode: vertical-rl"),
+    );
+    let horizontal_rtc = doc.push_element(
+        vertical,
+        "rtc",
+        Some("display: ruby-text-container; writing-mode: horizontal-tb"),
+    );
+    let kept = doc.push_element(horizontal_rtc, "rt", Some("display: ruby-text"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[vertical_rtc].ruby_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert_eq!(
+        r.computed[forced].cssom_writing_mode,
+        WritingMode::VerticalRl
+    );
+    assert_eq!(
+        r.computed[forced].margin.top,
+        ComputedLengthPercentageOrAuto::Px(5.0)
+    );
+    assert_eq!(
+        r.computed[horizontal_rtc].ruby_writing_mode,
+        WritingMode::VerticalRl
+    );
+    assert_eq!(
+        r.computed[kept].cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
+}
+
+#[test]
 fn inter_character_annotations_map_logical_sides_after_display_rollback() {
     // An author `display: revert` rolls back to the UA `ruby-text`, and
     // `display: inherit` takes the parent's `ruby-text`, so both annotations

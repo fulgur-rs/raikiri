@@ -769,6 +769,9 @@ pub struct SpecifiedValues {
     /// The parent's [`ComputedValues::horizontal_children`]. Not a CSS
     /// property.
     pub(crate) parent_horizontal_children: bool,
+    /// The parent's [`ComputedValues::ruby_writing_mode`]. Not a CSS
+    /// property.
+    pub(crate) parent_ruby_writing_mode: WritingMode,
 }
 
 /// Cascade sort key of a winning declaration: origin and importance rank,
@@ -1128,6 +1131,7 @@ impl SpecifiedValues {
             column_width: ColumnWidthValue::Auto,
             inside_multicol: false,
             parent_horizontal_children: false,
+            parent_ruby_writing_mode: WritingMode::HorizontalTb,
         }
     }
 
@@ -1300,6 +1304,7 @@ impl SpecifiedValues {
             column_width: ColumnWidthValue::Auto,
             inside_multicol: parent.multicol_flow,
             parent_horizontal_children: parent.horizontal_children,
+            parent_ruby_writing_mode: parent.ruby_writing_mode,
             // CSS Text 3 §5.3: hyphens is inherited.
             hyphens: parent.hyphens,
             // CSS Text 4: hyphenate-character is inherited.
@@ -2220,6 +2225,13 @@ impl SpecifiedValues {
         } else {
             self.parent_horizontal_children
         };
+        // `writing-mode` does not apply to a ruby annotation container, so its
+        // annotations follow the writing mode of the ruby around it.
+        let ruby_writing_mode = if display == DisplayValue::RubyTextContainer {
+            self.parent_ruby_writing_mode
+        } else {
+            self.writing_mode
+        };
         let mut running_templates = std::mem::take(&mut self.running_templates);
         ComputedValues {
             color: self.color,
@@ -2842,6 +2854,7 @@ impl SpecifiedValues {
             column_width,
             multicol_flow,
             horizontal_children,
+            ruby_writing_mode,
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),
         }
@@ -2936,14 +2949,16 @@ pub(crate) struct BackgroundLists<'a> {
 /// `ruby-position` applies to annotation containers. An annotation reads
 /// its explicit container's value from its parent; an annotation directly
 /// in its ruby sits in an anonymous container, which inherits the ruby's
-/// value, so the parent's value is the container's either way.
+/// value, so the parent's value is the container's either way. The ruby's
+/// writing mode comes from [`ComputedValues::ruby_writing_mode`], which an
+/// explicit container passes through from the ruby.
 pub(crate) fn is_inter_character_annotation(
     display: DisplayValue,
     parent: &ComputedValues,
 ) -> bool {
     display == DisplayValue::RubyText
         && parent.ruby_position == RubyPosition::InterCharacter
-        && !parent.cssom_writing_mode.is_vertical()
+        && !parent.ruby_writing_mode.is_vertical()
 }
 
 /// Computes the background layers from the specified per-layer lists (CSS
