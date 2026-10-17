@@ -287,3 +287,88 @@ fn collapsed_end_rows_leave_the_outer_edge_to_the_rows_that_remain() {
     let (doc, table, _) = collapsing_table(&[(COLLAPSED, "border:10px solid black")]);
     assert_eq!(doc.nodes[table].unrounded_layout.size.height, 0.0);
 }
+
+#[test]
+fn a_table_whose_rows_all_collapse_keeps_no_spacing() {
+    let fixture = fixture(SEPARATE, GROUP, &[COLLAPSED, COLLAPSED], None);
+    let group = fixture.doc.nodes[fixture.rows[0]].parent.unwrap();
+    let table = fixture.doc.nodes[group].parent.unwrap();
+    assert_eq!(fixture.doc.nodes[table].unrounded_layout.size.height, 0.0);
+}
+
+#[test]
+fn the_row_after_a_collapsed_first_row_resolves_against_the_table_edge() {
+    // The collapsed row's wide bottom border would win the line between the
+    // rows; once it is gone the second row's top border meets the table's.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;border-collapse:collapse;border-top:2px solid black"),
+    );
+    let mut cells = Vec::new();
+    for (row_css, cell_css) in [
+        (COLLAPSED, "border-bottom:10px solid black"),
+        (ROW, "border-top:4px solid black"),
+    ] {
+        let row = doc.append_element(Some(table), "div", Style::default(), Some(row_css));
+        cells.push(doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some(format!(
+                "display:table-cell;width:20px;height:20px;{cell_css}"
+            )),
+        ));
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    let top = doc.nodes[cells[1]].collapsed_border().unwrap().top;
+    assert_eq!(top.width(), ComputedLength(4.0));
+}
+
+#[test]
+fn a_spanning_cell_moved_past_a_collapsed_row_aligns_with_its_new_row() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    let mut cells = Vec::new();
+    for (row_css, font_size, span) in [(COLLAPSED, 40, true), (ROW, 20, false)] {
+        let row = doc.append_element(Some(table), "div", Style::default(), Some(row_css));
+        let cell = doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some(format!(
+                "display:table-cell;padding:0;vertical-align:baseline;font-family:Ahem;font-size:{font_size}px;line-height:{font_size}px"
+            )),
+        );
+        if span {
+            doc.set_element_attributes(cell, vec![("rowspan".into(), "2".into())]);
+        }
+        doc.append_text(cell, "X");
+        cells.push(cell);
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    // The moved 40px cell's baseline sits 32px down and now sets the second
+    // row's baseline, so the 20px cell there (16px down) shifts by 16px.
+    assert_eq!(doc.nodes[cells[1]].unrounded_layout.padding.top, 16.0);
+}
