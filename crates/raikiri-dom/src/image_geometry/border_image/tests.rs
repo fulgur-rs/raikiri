@@ -395,18 +395,41 @@ fn an_infinite_outset_of_a_zero_border_extends_nothing() {
     assert!(w.is_finite() && h == 90.0);
 }
 
-#[test]
-fn scaled_down_widths_meet_on_whole_pixels() {
-    // Overlapping widths scaled by 2/3 put the inner edges at 66.67px and
-    // 133.33px; they round so neighbouring parts share an edge.
+/// A stretched image whose top, right, bottom and left widths overlap.
+fn overlapping(top: f32, right: f32, bottom: f32, left: f32) -> ComputedBorderImage {
     let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
     let px = |px| BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(px));
     image.width = Sides {
-        top: px(100.0),
-        right: px(100.0),
-        bottom: px(200.0),
-        left: px(150.0),
+        top: px(top),
+        right: px(right),
+        bottom: px(bottom),
+        left: px(left),
     };
+    image
+}
+
+#[test]
+fn scaled_down_widths_meet_on_whole_pixels() {
+    // Overlapping widths scaled by 2/3 put the inner edges at 66.67px and
+    // 133.33px; at 1x they round so neighbouring parts share an edge.
+    let image = overlapping(100.0, 100.0, 200.0, 150.0);
+    let geometry = border_image_geometry_on_device_pixels(
+        (0.0, 0.0, 200.0, 200.0),
+        Sides::all(100.0),
+        &image,
+        natural(81.0, 81.0),
+        DeviceGrid::uniform(1.0),
+    )
+    .expect("geometry");
+    part(&geometry, (0.0, 0.0, 100.0, 67.0));
+    part(&geometry, (0.0, 67.0, 100.0, 133.0));
+    part(&geometry, (133.0, 0.0, 67.0, 67.0));
+    part(&geometry, (100.0, 67.0, 33.0, 133.0));
+}
+
+#[test]
+fn scaled_down_widths_keep_fractions_without_a_device_scale() {
+    let image = overlapping(100.0, 100.0, 200.0, 150.0);
     let geometry = border_image_geometry(
         (0.0, 0.0, 200.0, 200.0),
         Sides::all(100.0),
@@ -414,8 +437,112 @@ fn scaled_down_widths_meet_on_whole_pixels() {
         natural(81.0, 81.0),
     )
     .expect("geometry");
-    part(&geometry, (0.0, 0.0, 100.0, 67.0));
-    part(&geometry, (0.0, 67.0, 100.0, 133.0));
-    part(&geometry, (133.0, 0.0, 67.0, 67.0));
-    part(&geometry, (100.0, 67.0, 33.0, 133.0));
+    let third = 200.0 / 3.0;
+    let top_left = &geometry.parts[0];
+    assert_eq!(top_left.area.2, 100.0);
+    assert!((top_left.area.3 - third).abs() < 1e-9);
+    // An invalid scale leaves the geometry unsnapped as well.
+    let unsnapped = border_image_geometry_on_device_pixels(
+        (0.0, 0.0, 200.0, 200.0),
+        Sides::all(100.0),
+        &image,
+        natural(81.0, 81.0),
+        DeviceGrid::uniform(f64::NAN),
+    );
+    assert_eq!(unsnapped, Some(geometry));
+}
+
+#[test]
+fn a_subpixel_box_splits_overlapping_widths_evenly_wherever_it_sits() {
+    // Equal opposite widths on a 0.5px wide box each get 0.25px, at a
+    // fractional origin as at a whole one.
+    let image = overlapping(1.0, 1.0, 1.0, 1.0);
+    for x in [0.0, 0.4, 10.15] {
+        let geometry = border_image_geometry(
+            (x, 0.0, 0.5, 2.0),
+            Sides::all(1.0),
+            &image,
+            natural(81.0, 81.0),
+        )
+        .expect("geometry");
+        let widths: Vec<f64> = geometry.parts.iter().map(|part| part.area.2).collect();
+        assert!(
+            widths.iter().all(|width| (width - 0.25).abs() < 1e-9),
+            "{x}: {widths:?}"
+        );
+    }
+}
+
+#[test]
+fn scaled_down_widths_snap_to_the_device_grid_of_any_scale() {
+    // Widths scaled by 2/3 meet at y = 66.67px, and the right edge starts at
+    // x = 133.33px.
+    let image = overlapping(100.0, 100.0, 200.0, 150.0);
+    for (scale, inner_y, inner_right) in [(2.0, 66.5, 133.5), (1.25, 66.4, 133.6)] {
+        let geometry = border_image_geometry_on_device_pixels(
+            (0.0, 0.0, 200.0, 200.0),
+            Sides::all(100.0),
+            &image,
+            natural(81.0, 81.0),
+            DeviceGrid::uniform(scale),
+        )
+        .expect("geometry");
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        let top_left = &geometry.parts[0];
+        assert!(near(top_left.area.3, inner_y), "{scale}");
+        assert!(geometry.parts.iter().any(|part| {
+            let (x, y, _, _) = part.area;
+            x == 0.0 && near(y, inner_y)
+        }));
+        assert!(geometry.parts.iter().any(|part| {
+            let (x, y, _, _) = part.area;
+            y == 0.0 && near(x, inner_right)
+        }));
+        // Each edge lies on a device pixel.
+        for part in &geometry.parts {
+            let (x, y, w, h) = part.area;
+            for edge in [x, y, x + w, y + h] {
+                let device = edge * scale;
+                assert!((device - device.round()).abs() < 1e-9, "{scale}: {edge}");
+            }
+        }
+    }
+}
+
+#[test]
+fn snapping_follows_the_offset_and_scale_of_each_axis() {
+    // Under a 1.5x scale moved by 0.25 device pixels along x, the right
+    // edge's start at x = 133.33px lies at device pixel 200.25, which
+    // snaps to 200: x = (200 - 0.25) / 1.5.
+    let image = overlapping(100.0, 100.0, 200.0, 150.0);
+    let grid = DeviceGrid {
+        scale_x: 1.5,
+        offset_x: 0.25,
+        scale_y: 3.0,
+        offset_y: 0.0,
+    };
+    let geometry = border_image_geometry_on_device_pixels(
+        (0.0, 0.0, 200.0, 200.0),
+        Sides::all(100.0),
+        &image,
+        natural(81.0, 81.0),
+        grid,
+    )
+    .expect("geometry");
+    for part in &geometry.parts {
+        let (x, y, w, h) = part.area;
+        let right = x + w;
+        let device = right * 1.5 + 0.25;
+        if right != 200.0 {
+            assert!((device - device.round()).abs() < 1e-9, "{right}");
+        }
+        for edge in [y, y + h] {
+            let device = edge * 3.0;
+            assert!((device - device.round()).abs() < 1e-9, "{edge}");
+        }
+    }
+    assert!(geometry.parts.iter().any(|part| {
+        let (x, y, _, _) = part.area;
+        y == 0.0 && (x - 199.75 / 1.5).abs() < 1e-9
+    }));
 }

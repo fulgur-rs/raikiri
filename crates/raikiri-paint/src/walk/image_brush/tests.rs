@@ -103,3 +103,27 @@ fn a_whole_brush_does_not_hide_missing_crop_pixels() {
             .is_none()
     );
 }
+
+#[test]
+fn the_device_grid_follows_the_root_and_paint_transforms() {
+    let cache = ImageBrushCache::default();
+    // A vector output has no device pixels, nor does an invalid scale.
+    assert_eq!(cache.device_grid(Affine::IDENTITY), None);
+    for invalid in [-1.0, 0.0, f32::NAN] {
+        let cache = ImageBrushCache::default().with_device_scale(Some(invalid));
+        assert_eq!(cache.device_grid(Affine::IDENTITY), None);
+    }
+    let cache = cache.with_device_scale(Some(2.0));
+    cache.set_root_transform(Affine::translate((0.25, 0.0)));
+    assert_eq!(
+        cache.device_grid(Affine::scale_non_uniform(1.5, 3.0)),
+        Some(DeviceGrid {
+            scale_x: 3.0,
+            offset_x: 0.5,
+            scale_y: 6.0,
+            offset_y: 0.0,
+        })
+    );
+    // A rotation leaves no axis-aligned grid to snap to.
+    assert_eq!(cache.device_grid(Affine::rotate(0.5)), None);
+}

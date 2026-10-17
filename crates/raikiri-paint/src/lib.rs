@@ -415,7 +415,8 @@ fn paint_single_page_with_origin_and_page_context_impl(
         return Ok(());
     }
     let counter_snapshots = shared_counter_snapshots(document, cascade)?;
-    let image_cache = walk::ImageBrushCache::for_document(document);
+    let image_cache = walk::ImageBrushCache::for_document(document)
+        .with_device_scale(cascade.border_width_device_scale());
     let root = raikiri_dom::root_box(document, cascade, page_box, content_origin_y, page_count);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(
@@ -543,7 +544,8 @@ pub fn trace_paint_order(
     let mut warnings = Vec::new();
     let mut events = Vec::new();
     walk::paint_document_impl(
-        &crate::walk::ImageBrushCache::for_document(document),
+        &crate::walk::ImageBrushCache::for_document(document)
+            .with_device_scale(cascade.border_width_device_scale()),
         &mut scene,
         document,
         cascade,
@@ -604,7 +606,8 @@ pub fn paint_single_page_with_images_and_warnings(
     // non-goals) — mirrors `paint_single_page`'s own single-page defaults
     // (page 0 of 1, no named-page filtering, unpaired) rather than joining
     // the `paint_single_page_with_origin_and_page_context*` chain.
-    let image_cache = walk::ImageBrushCache::for_document(document);
+    let image_cache = walk::ImageBrushCache::for_document(document)
+        .with_device_scale(cascade.border_width_device_scale());
     let root = raikiri_dom::root_box(document, cascade, page_box, 0.0, 1);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(

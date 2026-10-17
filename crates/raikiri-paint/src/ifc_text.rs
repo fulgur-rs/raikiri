@@ -400,6 +400,7 @@ pub(crate) fn hold_ifc_lines<'a>(
             y,
             pixel_source,
             warnings,
+            paint_transform,
         );
     }
     for positioned_line in positioned.lines() {
@@ -477,19 +478,18 @@ pub(crate) fn hold_ifc_lines<'a>(
             let group = paint.piece_group(piece);
             // An atomic `::before` or `::after` turns about its own box, as
             // painted here (CSS Transforms 1 §6).
+            let mut piece_transform = paint_transform;
             if let Some(turned) = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node) {
                 let outer = piece.border_box;
-                paint.turn(
-                    group,
-                    piece,
-                    crate::walk::element_transform(
-                        turned,
-                        position.x + dx + outer.x,
-                        position.y + position.shift_y + dy - line_shift + outer.y,
-                        outer.width,
-                        outer.height,
-                    ),
+                let turn = crate::walk::element_transform(
+                    turned,
+                    position.x + dx + outer.x,
+                    position.y + position.shift_y + dy - line_shift + outer.y,
+                    outer.width,
+                    outer.height,
                 );
+                piece_transform *= turn;
+                paint.turn(group, piece, turn);
             }
             crate::walk::paint_inline_box(
                 image_cache,
@@ -506,6 +506,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 position.y + position.shift_y + dy - line_shift,
                 pixel_source,
                 warnings,
+                piece_transform,
             );
         }
         // Images of `::before` and `::after` content are replaced content
@@ -789,7 +790,8 @@ pub(crate) fn draw_ifc_lines(
     custom_highlights: &[crate::TextHighlightRange],
 ) {
     draw_ifc_lines_with_resources(
-        &crate::walk::ImageBrushCache::for_document(document),
+        &crate::walk::ImageBrushCache::for_document(document)
+            .with_device_scale(cascade.border_width_device_scale()),
         scene,
         document,
         cascade,
