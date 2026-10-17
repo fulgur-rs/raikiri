@@ -2,12 +2,14 @@ use super::box_tree::BoxTree;
 use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
+mod footnotes;
 mod leading_margins;
 mod link_events;
 mod sibling_shifts;
 mod transposed_flow;
 use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant};
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
+use footnotes::FootnoteAreas;
 pub(crate) use link_events::page_fragment_events_from_pages;
 
 use super::ifc::boxes::IfcBoxKind;
@@ -4634,21 +4636,17 @@ fn paginate_flow(
         // anchor's page, stack multiple notes from the bottom, and remove the
         // note's ordinary-flow footprint so following content can continue.
         if matches!(computed.float, FloatValue::Footnote) {
-            let raw_y = candidate.raw_y;
-            let height = candidate.height;
-            let effective_y = raw_y + flow_shift;
-            let anchor_page = page_index_in_flow(effective_y).unwrap_or(current_page);
-            let note_page = current_page.max(anchor_page);
-            check_candidate_page!('candidate_loop, note_page);
-            let target_y = footnote_areas.stack(
-                note_page,
-                page_origin(note_page),
-                page_origin(note_page) + page_step_at(note_page),
-                height,
+            let placement = footnote_areas.candidate(
+                candidate.raw_y,
+                candidate.height,
+                flow_shift,
+                current_page,
+                &page_origins,
             );
-            materialize_y(document, node_id, target_y);
-            flow_shift -= height;
-            reach.include(note_page, false);
+            check_candidate_page!('candidate_loop, placement.page);
+            footnote_areas.place(document, node_id, placement, &page_origins);
+            flow_shift -= placement.height;
+            reach.include(placement.page, false);
             saw_child = true;
             continue;
         }
@@ -6419,25 +6417,6 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
-}
-
-/// The footnote area at the bottom of each page, filled upward in source order.
-#[derive(Default)]
-struct FootnoteAreas {
-    /// The height of the notes already stacked on each page.
-    used: HashMap<u32, f32>,
-}
-
-impl FootnoteAreas {
-    /// Stacks a note of `height` on `page`, whose box spans `page_start` to
-    /// `page_end`, and returns the note's top: just above the notes already
-    /// there, but not above the page start.
-    fn stack(&mut self, page: u32, page_start: f32, page_end: f32, height: f32) -> f32 {
-        let used = self.used.entry(page).or_insert(0.0);
-        let top = (page_end - *used - height).max(page_start);
-        *used += height;
-        top
-    }
 }
 
 /// A forced break after a box, kept attached to that box until its
