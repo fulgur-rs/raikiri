@@ -10,7 +10,7 @@ use raikiri_traits::ImageIntrinsicSize;
 
 mod border_image;
 pub use border_image::{
-    BorderImageGeometry, BorderImagePart, border_image_geometry,
+    BorderImageGeometry, BorderImagePart, DeviceGrid, border_image_geometry,
     border_image_geometry_on_device_pixels,
 };
 

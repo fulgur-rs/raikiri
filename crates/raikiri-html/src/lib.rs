@@ -100,8 +100,9 @@ pub use shodo::font::FontCollection;
 pub mod image_geometry {
     // cov:ignore: re-exports have no executable code or lcov record.
     pub use raikiri_dom::image_geometry::{
-        BackgroundTiles, BorderImageGeometry, BorderImagePart, background_image_dimensions,
-        background_tiles, border_image_geometry, border_image_geometry_on_device_pixels,
+        BackgroundTiles, BorderImageGeometry, BorderImagePart, DeviceGrid,
+        background_image_dimensions, background_tiles, border_image_geometry,
+        border_image_geometry_on_device_pixels,
     };
 }
 

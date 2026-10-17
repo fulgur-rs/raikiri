@@ -418,7 +418,7 @@ fn scaled_down_widths_meet_on_whole_pixels() {
         Sides::all(100.0),
         &image,
         natural(81.0, 81.0),
-        1.0,
+        DeviceGrid::uniform(1.0),
     )
     .expect("geometry");
     part(&geometry, (0.0, 0.0, 100.0, 67.0));
@@ -447,7 +447,7 @@ fn scaled_down_widths_keep_fractions_without_a_device_scale() {
         Sides::all(100.0),
         &image,
         natural(81.0, 81.0),
-        f64::NAN,
+        DeviceGrid::uniform(f64::NAN),
     );
     assert_eq!(unsnapped, Some(geometry));
 }
@@ -484,7 +484,7 @@ fn scaled_down_widths_snap_to_the_device_grid_of_any_scale() {
             Sides::all(100.0),
             &image,
             natural(81.0, 81.0),
-            scale,
+            DeviceGrid::uniform(scale),
         )
         .expect("geometry");
         let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
@@ -507,4 +507,43 @@ fn scaled_down_widths_snap_to_the_device_grid_of_any_scale() {
             }
         }
     }
+}
+
+#[test]
+fn snapping_follows_the_offset_and_scale_of_each_axis() {
+    // Under a 1.5x scale moved by 0.25 device pixels along x, the right
+    // edge's start at x = 133.33px lies at device pixel 200.25, which
+    // snaps to 200: x = (200 - 0.25) / 1.5.
+    let image = overlapping(100.0, 100.0, 200.0, 150.0);
+    let grid = DeviceGrid {
+        scale_x: 1.5,
+        offset_x: 0.25,
+        scale_y: 3.0,
+        offset_y: 0.0,
+    };
+    let geometry = border_image_geometry_on_device_pixels(
+        (0.0, 0.0, 200.0, 200.0),
+        Sides::all(100.0),
+        &image,
+        natural(81.0, 81.0),
+        grid,
+    )
+    .expect("geometry");
+    for part in &geometry.parts {
+        let (x, y, w, h) = part.area;
+        for edge in [x + w] {
+            let device = edge * 1.5 + 0.25;
+            if edge != 200.0 {
+                assert!((device - device.round()).abs() < 1e-9, "{edge}");
+            }
+        }
+        for edge in [y, y + h] {
+            let device = edge * 3.0;
+            assert!((device - device.round()).abs() < 1e-9, "{edge}");
+        }
+    }
+    assert!(geometry.parts.iter().any(|part| {
+        let (x, y, _, _) = part.area;
+        y == 0.0 && (x - 199.75 / 1.5).abs() < 1e-9
+    }));
 }

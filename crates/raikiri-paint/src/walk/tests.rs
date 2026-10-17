@@ -6614,6 +6614,7 @@ fn inline_border_image_tile_ends(
         0.0,
         None,
         &mut Vec::new(),
+        Affine::IDENTITY,
     );
     scene
         .commands

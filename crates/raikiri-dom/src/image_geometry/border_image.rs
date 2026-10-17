@@ -84,25 +84,60 @@ pub fn border_image_geometry(
     geometry(border_box, border_widths, image, natural, None)
 }
 
-/// [`border_image_geometry`] for a raster output with
-/// `device_pixels_per_css_pixel` device pixels per CSS pixel.
+/// A raster output's device pixel grid along each axis: the CSS pixel
+/// coordinate `x` lies at device pixel `x * scale_x + offset_x`, and likewise
+/// for `y`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeviceGrid {
+    /// Device pixels per CSS pixel along x.
+    pub scale_x: f64,
+    /// The device pixel position of x = 0.
+    pub offset_x: f64,
+    /// Device pixels per CSS pixel along y.
+    pub scale_y: f64,
+    /// The device pixel position of y = 0.
+    pub offset_y: f64,
+}
+
+impl DeviceGrid {
+    /// A grid of `scale` device pixels per CSS pixel with its origin at the
+    /// CSS origin.
+    pub fn uniform(scale: f64) -> Self {
+        Self {
+            scale_x: scale,
+            offset_x: 0.0,
+            scale_y: scale,
+            offset_y: 0.0,
+        }
+    }
+
+    fn is_usable(self) -> bool {
+        [self.scale_x, self.offset_x, self.scale_y, self.offset_y]
+            .into_iter()
+            .all(f64::is_finite)
+            && self.scale_x != 0.0
+            && self.scale_y != 0.0
+    }
+}
+
+/// [`border_image_geometry`] for a raster output whose device pixels lie on
+/// `grid`.
 ///
 /// Opposite widths that overlap are scaled down together, which leaves the
 /// inner edges of the corners at fractions of a device pixel even for
 /// whole-pixel widths. Those edges move to the nearest device pixel, so
 /// neighbouring parts share an edge instead of both half-covering one pixel
-/// and letting the background bleed through the seam. Coordinates are
-/// taken to be in the output's device space up to that scale. A scale that
-/// is not finite and positive leaves the geometry unsnapped.
+/// and letting the background bleed through the seam. A grid with a zero or
+/// non-finite component leaves the geometry unsnapped.
 pub fn border_image_geometry_on_device_pixels(
     border_box: Rect,
     border_widths: Sides<f64>,
     image: &ComputedBorderImage,
     natural: Option<ImageIntrinsicSize>,
-    device_pixels_per_css_pixel: f64,
+    grid: DeviceGrid,
 ) -> Option<BorderImageGeometry> {
-    let scale = Some(device_pixels_per_css_pixel).filter(|scale| scale.is_finite() && *scale > 0.0);
-    geometry(border_box, border_widths, image, natural, scale)
+    let grid = Some(grid).filter(|grid| grid.is_usable());
+    geometry(border_box, border_widths, image, natural, grid)
 }
 
 fn geometry(
@@ -110,7 +145,7 @@ fn geometry(
     border_widths: Sides<f64>,
     image: &ComputedBorderImage,
     natural: Option<ImageIntrinsicSize>,
-    device_scale: Option<f64>,
+    grid: Option<DeviceGrid>,
 ) -> Option<BorderImageGeometry> {
     let (x, y, width, height) = border_box;
     if ![x, y, width, height].into_iter().all(f64::is_finite) {
@@ -245,11 +280,14 @@ fn geometry(
         .min(area_h / (widths.top + widths.bottom))
         .min(1.0);
     if factor < 1.0 {
-        let snap = |edge: f64| device_scale.map_or(edge, |scale| (edge * scale).round() / scale);
-        let inner_left = snap(area_x + widths.left * factor);
-        let inner_right = snap(area_x + area_w - widths.right * factor);
-        let inner_top = snap(area_y + widths.top * factor);
-        let inner_bottom = snap(area_y + area_h - widths.bottom * factor);
+        let snap =
+            |edge: f64, scale: f64, offset: f64| ((edge * scale + offset).round() - offset) / scale;
+        let snap_x = |x: f64| grid.map_or(x, |grid| snap(x, grid.scale_x, grid.offset_x));
+        let snap_y = |y: f64| grid.map_or(y, |grid| snap(y, grid.scale_y, grid.offset_y));
+        let inner_left = snap_x(area_x + widths.left * factor);
+        let inner_right = snap_x(area_x + area_w - widths.right * factor);
+        let inner_top = snap_y(area_y + widths.top * factor);
+        let inner_bottom = snap_y(area_y + area_h - widths.bottom * factor);
         widths = Sides {
             top: (inner_top - area_y).clamp(0.0, area_h),
             right: (area_x + area_w - inner_right).clamp(0.0, area_w),

@@ -340,6 +340,7 @@ pub(crate) fn paint_page_border(
             &borders,
             pixel_source,
             warnings,
+            Affine::IDENTITY,
         ) {
             return;
         }
@@ -2025,6 +2026,7 @@ pub(crate) fn paint_document_impl(
     root_transform: Affine,
     mut trace: Option<&mut Vec<crate::PaintTraceEvent>>,
 ) {
+    image_cache.set_root_transform(root_transform);
     let Some(root_id) = document.document_element_index() else {
         return;
     };
@@ -3686,6 +3688,7 @@ pub(crate) fn paint_document_impl(
                                 painted_border,
                                 pixel_source,
                                 warnings,
+                                scene.transform,
                             );
                             scene.pop_layer();
                             drawn
@@ -3702,6 +3705,7 @@ pub(crate) fn paint_document_impl(
                                 painted_border,
                                 pixel_source,
                                 warnings,
+                                scene.transform,
                             )
                         };
                     let border_covered_by_background =
@@ -5699,7 +5703,8 @@ fn paint_background_image(
 }
 
 /// Paint the border image of a box whose border box is `width` × `height`
-/// at (`abs_x`, `abs_y`) (CSS Backgrounds 3 §6).
+/// at (`abs_x`, `abs_y`) (CSS Backgrounds 3 §6), painted through
+/// `transform` inside the root element's transform.
 ///
 /// Returns whether a border image was drawn. When it was, it replaces the
 /// box's border styles; when the source is `none` or cannot be displayed,
@@ -5719,6 +5724,7 @@ pub(crate) fn paint_element_border_image(
     border: &Sides<raikiri_style::resolve::ComputedBorder>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
+    transform: Affine,
 ) -> bool {
     paint_border_image_within(
         image_cache,
@@ -5730,6 +5736,7 @@ pub(crate) fn paint_element_border_image(
         border,
         pixel_source,
         warnings,
+        transform,
         (
             (f64::NEG_INFINITY, f64::INFINITY),
             (f64::NEG_INFINITY, f64::INFINITY),
@@ -5751,6 +5758,7 @@ fn paint_border_image_within(
     border: &Sides<raikiri_style::resolve::ComputedBorder>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
+    transform: Affine,
     (visible_x, visible_y): ((f64, f64), (f64, f64)),
 ) -> bool {
     let crosses = |x: f64, width: f64| x <= visible_x.1 && x + width >= visible_x.0;
@@ -5767,9 +5775,9 @@ fn paint_border_image_within(
         bottom: f64::from(border.bottom.width().px()),
         left: f64::from(border.left.width().px()),
     };
-    let geometry = |natural| match image_cache.device_scale() {
-        Some(scale) => {
-            border_image_geometry_on_device_pixels(border_box, widths, image, natural, scale)
+    let geometry = |natural| match image_cache.device_grid(transform) {
+        Some(grid) => {
+            border_image_geometry_on_device_pixels(border_box, widths, image, natural, grid)
         }
         None => border_image_geometry(border_box, widths, image, natural),
     };
@@ -6293,7 +6301,8 @@ impl InlineProgression {
 /// Paint the shadows, background, borders and outline of one piece of an
 /// inline element, the way the element visit paints a box. `x` and `y` are
 /// the page position of the paragraph's content box; `progression` gives the
-/// axis the element's pieces run along.
+/// axis the element's pieces run along; `transform` is what the piece is
+/// painted through inside the root element's transform.
 ///
 /// A side whose edge the piece does not carry (the element continues on
 /// another line there) has no border, padding or corner radius: the box is
@@ -6312,6 +6321,7 @@ pub(crate) fn paint_inline_box(
     y: f32,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
+    transform: Affine,
 ) {
     let outer = piece.border_box;
     let content = piece.content_box;
@@ -6555,6 +6565,7 @@ pub(crate) fn paint_inline_box(
             &cv.border,
             pixel_source,
             warnings,
+            transform,
             if progression.vertical {
                 ((f64::NEG_INFINITY, f64::INFINITY), (low, high))
             } else {
@@ -6610,6 +6621,7 @@ pub(crate) fn paint_inline_box(
             &border,
             pixel_source,
             warnings,
+            transform,
         )
     };
     if !border_image_drawn {

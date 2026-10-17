@@ -1,17 +1,23 @@
 use super::PixelCrop;
+use kurbo::Affine;
+use raikiri_dom::image_geometry::DeviceGrid;
 use raikiri_traits::DecodedImage;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Shares decoded pixels and isolated border slices during one paint call,
 /// resolves the image URLs of that call against the document base URL, and
-/// knows the raster output scale border images snap their seams to.
+/// knows the raster output's device pixels, which border images snap their
+/// seams to.
 #[derive(Default)]
 pub(crate) struct ImageBrushCache {
     brushes: RefCell<HashMap<(usize, PixelCrop), CachedBrush>>,
     base_url: Option<url::Url>,
     device_scale: Option<f64>,
+    /// The root element's transform, which the document paints through
+    /// once the page's own decorations are drawn.
+    root_transform: Cell<Affine>,
 }
 
 struct CachedBrush {
@@ -35,6 +41,7 @@ impl ImageBrushCache {
             brushes: RefCell::default(),
             base_url: document.base_url().cloned(),
             device_scale: None,
+            root_transform: Cell::new(Affine::IDENTITY),
         }
     }
 
@@ -45,9 +52,25 @@ impl ImageBrushCache {
         self
     }
 
-    /// The device pixels per CSS pixel of a raster output.
-    pub(crate) fn device_scale(&self) -> Option<f64> {
-        self.device_scale
+    /// Paint what follows through the root element's `transform`.
+    pub(crate) fn set_root_transform(&self, transform: Affine) {
+        self.root_transform.set(transform);
+    }
+
+    /// The device pixel grid of a raster output for what is painted through
+    /// `transform` inside the root element's transform, or `None` for a
+    /// vector output or a transform that rotates or skews, whose seams
+    /// cannot meet on device pixels.
+    pub(crate) fn device_grid(&self, transform: Affine) -> Option<DeviceGrid> {
+        let scale = self.device_scale?;
+        let [a, b, c, d, e, f] =
+            (Affine::scale(scale) * self.root_transform.get() * transform).as_coeffs();
+        (b == 0.0 && c == 0.0).then_some(DeviceGrid {
+            scale_x: a,
+            offset_x: e,
+            scale_y: d,
+            offset_y: f,
+        })
     }
 
     /// The URL a computed `url()` value names.

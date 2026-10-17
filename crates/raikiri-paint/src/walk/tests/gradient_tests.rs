@@ -1603,6 +1603,7 @@ fn raster_scaled_border_image(style: &str, device_scale: Option<f32>, scale: f64
         &cv.border,
         None,
         &mut warnings,
+        Affine::IDENTITY,
     ));
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::scale(scale)),
