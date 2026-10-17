@@ -285,9 +285,9 @@ impl TypographicPaint {
     /// The innermost group of a translucent inline element of `paragraph`
     /// around `id`, an element or generated box, `id` included, or of one
     /// positioned below the paragraph's blocks (see
-    /// [`raikiri_dom::paint_rules::negative_inline_group`]), or of one with a
-    /// stack level inside another inline stacking context (see
-    /// [`raikiri_dom::paint_rules::nested_inline_stacking_group`]). The walk up
+    /// [`raikiri_dom::paint_rules::negative_inline_group`]), or of one
+    /// positioned with a stack level of its own (see
+    /// [`raikiri_dom::paint_rules::inline_stacking_group`]). The walk up
     /// stops at the paragraph root and at any box that is not an inline
     /// element. Elements with `display: contents` form no group.
     pub(super) fn element_group(&mut self, paragraph: Paragraph<'_>, id: usize) -> Option<usize> {
@@ -312,7 +312,7 @@ impl TypographicPaint {
                     paragraph.root_id,
                     id,
                 )
-                || raikiri_dom::paint_rules::nested_inline_stacking_group(
+                || raikiri_dom::paint_rules::inline_stacking_group(
                     paragraph.document,
                     paragraph.cascade,
                     paragraph.root_id,
