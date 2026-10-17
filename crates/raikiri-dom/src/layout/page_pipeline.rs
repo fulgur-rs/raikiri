@@ -4613,9 +4613,7 @@ fn paginate_flow(
         let mut starts_after_forced_break = false;
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
-        let margins_collapse_through = height <= 0.0
-            && margins_may_collapse_through(document, cascade, node_id)
-            && !has_in_flow_content(document, cascade, node_id);
+        let margins_collapse_through = collapses_through(document, cascade, node_id, height);
         let (margin_top, trailing_margin) =
             break_margins(document, cascade, node_id, content_width);
         let page_start = page_origin(current_page);
@@ -5959,9 +5957,12 @@ fn forced_margin_reaches(
     while id != previous {
         match BoxTree::for_layout(document).parent(id, BoxParentScope::Document) {
             Some(parent)
-                if document.nodes[parent].unrounded_layout.size.height <= 0.0
-                    && margins_may_collapse_through(document, cascade, parent)
-                    && !has_in_flow_content(document, cascade, parent) =>
+                if collapses_through(
+                    document,
+                    cascade,
+                    parent,
+                    document.nodes[parent].unrounded_layout.size.height,
+                ) =>
             {
                 id = parent;
             }
@@ -6101,6 +6102,21 @@ fn adjoining_margin(document: &Document, cascade: &CascadeResult, id: usize, sta
     } else {
         own
     }
+}
+
+/// Whether the block-start and block-end margins of `id`, a box with block
+/// size `block_size`, collapse through it (CSS 2 §8.3.1): it has no block
+/// size, it is a block box that establishes no independent formatting
+/// context, and it has no in-flow content.
+fn collapses_through(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    block_size: f32,
+) -> bool {
+    block_size <= 0.0
+        && margins_may_collapse_through(document, cascade, id)
+        && !has_in_flow_content(document, cascade, id)
 }
 
 /// Whether `id` is a block box (a list item included) that establishes no
