@@ -2,6 +2,8 @@
 //! CSS painting order) and the text of page-margin boxes and generated
 //! content, which lies outside the paragraphs of the document.
 
+use std::collections::HashMap;
+
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use peniko::{Color, Fill};
@@ -110,23 +112,25 @@ pub(crate) fn missing_glyph_origins(
             let step = steps.round();
             (steps - step).abs() < 1e-3 && step >= 0.0 && (step as usize) < count
         };
-        let anchor = points
-            .iter()
-            .map(|&(anchor, _)| {
-                let matches = points.iter().filter(|&&(x, _)| on_grid(anchor, x)).count();
-                (matches, anchor)
-            })
-            .fold(
-                None,
-                |best: Option<(usize, f32)>, (matches, anchor)| match best {
-                    Some((most, _)) if most >= matches => best,
-                    _ => Some((matches, anchor)),
-                },
-            )
-            .map(|(_, anchor)| anchor);
-        if let Some(anchor) = anchor {
-            origins.extend(points.into_iter().filter(|&(x, _)| on_grid(anchor, x)));
+        // Origins on one grid share their offset from the first origin modulo
+        // an em, so a single pass sorts them into grids, each anchored at its
+        // leftmost origin.
+        let first = points.first().map_or(0.0, |&(x, _)| x);
+        let mut grids: HashMap<i64, (f32, usize)> = HashMap::new();
+        for &(x, _) in &points {
+            let phase = ((x - first) / size).rem_euclid(1.0);
+            let key = (phase * 1000.0).round() as i64 % 1000;
+            let (anchor, matches) = grids.entry(key).or_insert((x, 0));
+            if on_grid(*anchor, x) {
+                *matches += 1;
+            }
         }
+        let anchor = grids
+            .into_values()
+            .max_by(|a, b| a.1.cmp(&b.1).then(b.0.total_cmp(&a.0)))
+            // A cluster with no glyph has no grid, and no origin is on NaN.
+            .map_or(f32::NAN, |(anchor, _)| anchor);
+        origins.extend(points.into_iter().filter(|&(x, _)| on_grid(anchor, x)));
     }
     origins
 }
