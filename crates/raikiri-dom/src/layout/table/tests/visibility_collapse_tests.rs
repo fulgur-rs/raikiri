@@ -1,14 +1,14 @@
 use super::*;
 
-/// A table of `rows` row styles, each holding one 20px-tall cell (or an
-/// extra spanning cell in the first row when `span` is set). Returns the
-/// table, its row ids and its cell ids in document order.
+/// A laid-out table with its row ids and its cell ids in document order.
 struct Fixture {
     doc: Document,
     rows: Vec<usize>,
     cells: Vec<usize>,
 }
 
+/// A table whose rows take `rows` styles, each holding one 20px-tall cell.
+/// With `span` set, the first row also holds a cell spanning that many rows.
 fn fixture(table_css: &str, group_css: &str, rows: &[&str], span: Option<u32>) -> Fixture {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -121,49 +121,150 @@ fn a_cell_spanning_only_collapsed_rows_has_no_block_extent() {
     assert_eq!(cell_box(doc, fixture.cells[3]), (10.0, 20.0));
 }
 
+/// A collapsing-border table with one 20px cell per `(row, cell)` style
+/// pair. Returns the document, the table and the cells in row order.
+fn collapsing_table(rows: &[(&str, &str)]) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;border-collapse:collapse"),
+    );
+    let cells = rows
+        .iter()
+        .map(|(row_css, cell_css)| {
+            let row = doc.append_element(Some(table), "div", Style::default(), Some(*row_css));
+            doc.append_element(
+                Some(row),
+                "div",
+                Style::default(),
+                Some(format!(
+                    "display:table-cell;width:20px;height:20px;padding:0;box-sizing:border-box;{cell_css}"
+                )),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    (doc, table, cells)
+}
+
+const BORDERED: &str = "border:2px solid black";
+
 #[test]
 fn collapsed_rows_join_the_lines_on_either_side_in_the_collapsing_model() {
-    // 2px cell borders collapse to 2px lines. The middle row's two lines
-    // become one, and a collapsed last row leaves the line before it alone.
-    let table = "display:table;border-collapse:collapse";
-    for (rows, middle_collapsed) in [
-        (&[ROW, COLLAPSED, ROW][..], true),
-        (&[ROW, ROW, COLLAPSED][..], false),
+    // Adjoining rows overlap by the 2px line between them; a run of
+    // collapsed rows leaves one line between the rows around it.
+    let (doc, _, cells) = collapsing_table(&[
+        (ROW, BORDERED),
+        (COLLAPSED, BORDERED),
+        (COLLAPSED, BORDERED),
+        (ROW, BORDERED),
+    ]);
+    assert_eq!(cell_box(&doc, cells[1]).1, 0.0);
+    assert_eq!(
+        cell_box(&doc, cells[3]).0 - cell_box(&doc, cells[0]).0,
+        18.0
+    );
+}
+
+#[test]
+fn the_joined_line_is_the_narrowest_line_in_the_collapsed_run() {
+    // The last row has no top border, so it shares no line with the first.
+    let (doc, _, cells) = collapsing_table(&[
+        (ROW, "border-bottom:4px solid black"),
+        (COLLAPSED, "border-top:4px solid black"),
+        (ROW, ""),
+    ]);
+    assert_eq!(
+        cell_box(&doc, cells[2]).0 - cell_box(&doc, cells[0]).0,
+        20.0
+    );
+}
+
+#[test]
+fn collapsed_rows_at_the_end_leave_the_last_remaining_row_whole() {
+    let (doc, table, cells) = collapsing_table(&[
+        (ROW, BORDERED),
+        (COLLAPSED, BORDERED),
+        (COLLAPSED, BORDERED),
+    ]);
+    assert_eq!(cell_box(&doc, cells[2]).1, 0.0);
+    // The table is as tall as one holding only the first row.
+    let (single, single_table, _) = collapsing_table(&[(ROW, BORDERED)]);
+    assert_eq!(
+        doc.nodes[table].unrounded_layout.size.height,
+        single.nodes[single_table].unrounded_layout.size.height
+    );
+}
+
+#[test]
+fn an_anonymous_row_collapses_with_its_row_group() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    let mut cells = Vec::new();
+    for group_css in [
+        "display:table-row-group;visibility:collapse",
+        "display:table-row-group",
     ] {
-        let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(
-            Some(html),
-            "body",
+        let group = doc.append_element(Some(table), "div", Style::default(), Some(group_css));
+        cells.push(doc.append_element(
+            Some(group),
+            "div",
             Style::default(),
-            Some("display:block;margin:0"),
-        );
-        let table = doc.append_element(Some(body), "div", Style::default(), Some(table));
-        let cells: Vec<_> = rows
-            .iter()
-            .map(|row_css| {
-                let row = doc.append_element(Some(table), "div", Style::default(), Some(*row_css));
-                doc.append_element(
-                    Some(row),
-                    "div",
-                    Style::default(),
-                    Some("display:table-cell;width:20px;height:20px;padding:0;border:2px solid black;box-sizing:border-box"),
-                )
-            })
-            .collect();
-        doc.mark_in_document_flags();
-        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-        crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-        let first = cell_box(&doc, cells[0]);
-        let second = cell_box(&doc, cells[1]);
-        let third = cell_box(&doc, cells[2]);
-        // Adjoining rows overlap by the 2px line between them.
-        if middle_collapsed {
-            assert_eq!(second.1, 0.0);
-            assert_eq!(third.0 - first.0, 18.0);
-        } else {
-            assert_eq!(second.0 - first.0, 18.0);
-            assert_eq!(third.1, 0.0);
-        }
+            Some("display:table-cell;width:20px;height:20px;padding:0"),
+        ));
     }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    assert_eq!(cell_box(&doc, cells[0]).1, 0.0);
+    // Only the second group's row and its two spacings remain.
+    assert_eq!(doc.nodes[table].unrounded_layout.size.height, 40.0);
+}
+
+#[test]
+fn the_first_remaining_row_carries_the_table_baseline() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    for row_css in [COLLAPSED, ROW] {
+        let row = doc.append_element(Some(table), "div", Style::default(), Some(row_css));
+        let cell = doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some("display:table-cell;padding:0;font-family:Ahem;font-size:20px;line-height:20px"),
+        );
+        doc.append_text(cell, "X");
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    // The second row starts one spacing below the grid edge; Ahem's
+    // baseline sits 16px into its 20px line.
+    assert_eq!(doc.nodes[table].table_first_baseline, Some(26.0));
 }

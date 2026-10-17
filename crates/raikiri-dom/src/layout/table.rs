@@ -487,23 +487,35 @@ fn compute_table_layout_checked(
     };
     // Collapsed rows keep their measured contribution to the columns and to
     // spanning cells, then lose their height and spacing (CSS Tables 3,
-    // "Visibility-collapse rendering"). The rows on either side of one meet
-    // at a single collapsed line, so the line after it absorbs nothing (the
-    // line before it when it is the last row).
+    // "Visibility-collapse rendering"). The rows on either side of a run of
+    // collapsed rows meet at one line, approximated by the narrowest line in
+    // the run; a run at either end of the table leaves no line behind.
     let collapsed_rows = collapsed_rows(doc, &grid);
-    for (row, _) in collapsed_rows
-        .iter()
-        .enumerate()
-        .filter(|(_, collapsed)| **collapsed)
-    {
-        let line = if row < collapsed.row_overlaps.len() {
-            Some(row)
-        } else {
-            row.checked_sub(1)
-        };
-        if let Some(overlap) = line.and_then(|line| collapsed.row_overlaps.get_mut(line)) {
-            *overlap = 0.0;
+    let lines = collapsed.row_overlaps.clone();
+    let mut previous_kept: Option<usize> = None;
+    for (row, &row_collapsed) in collapsed_rows.iter().enumerate() {
+        if row_collapsed {
+            if let Some(line) = collapsed.row_overlaps.get_mut(row) {
+                *line = 0.0;
+            }
+            if let Some(line) = row
+                .checked_sub(1)
+                .and_then(|line| collapsed.row_overlaps.get_mut(line))
+            {
+                *line = 0.0;
+            }
+            continue;
         }
+        if let Some(kept) = previous_kept
+            && row > kept + 1
+            && let Some(line) = collapsed.row_overlaps.get_mut(kept)
+        {
+            *line = lines[kept..row]
+                .iter()
+                .copied()
+                .fold(f32::INFINITY, f32::min);
+        }
+        previous_kept = Some(row);
     }
     let border_spacing = if collapse {
         (0.0, 0.0)
@@ -937,12 +949,17 @@ fn compute_table_layout_checked(
         border_spacing,
         vertical_writing,
     )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
+    // The first row the table still shows carries its baseline.
+    let baseline_row = collapsed_rows
+        .iter()
+        .position(|collapsed| !collapsed)
+        .unwrap_or(0);
     let first_row_baseline = grid
         .cells
         .iter()
         .filter(|cell| {
-            cell.row == 0
-                && !hidden_rows[0]
+            cell.row as usize == baseline_row
+                && !hidden_rows[baseline_row]
                 && cell_baseline_aligned(
                     doc.ifc_layout_node(cell.node_id)
                         .expect("table cell layout view")
@@ -954,14 +971,15 @@ fn compute_table_layout_checked(
         .unwrap_or_else(|| {
             grid.cells
                 .iter()
-                .filter(|cell| cell.row == 0 && !hidden_rows[0])
+                .filter(|cell| cell.row as usize == baseline_row && !hidden_rows[baseline_row])
                 .map(|cell| {
                     let layout = doc.table_layout_node_mut(cell.node_id).unrounded_layout;
                     layout.size.height - layout.padding.bottom - layout.border.bottom
                 })
                 .fold(0.0, f32::max)
         });
-    doc.nodes[table_idx].table_first_baseline = Some(y_origin + first_row_baseline);
+    doc.nodes[table_idx].table_first_baseline =
+        Some(row_origins[baseline_row] + first_row_baseline);
     if vertical_writing {
         reposition_cells_for_vertical_writing(
             doc,
@@ -1924,18 +1942,21 @@ fn distribute_columns_with_authored(
 }
 
 /// Rows removed by `visibility: collapse` on the row or its row group (CSS
-/// Tables 3, "Visibility-collapse rendering"). Anonymous rows have no style
-/// of their own and never collapse.
+/// Tables 3, "Visibility-collapse rendering"). An anonymous row is marked by
+/// its first cell and collapses only with the row group around it.
 fn collapsed_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
     grid.rows
         .iter()
         .map(|&row_id| {
             let row = &doc.nodes[row_id];
-            row.display() == DisplayValue::TableRow
-                && (row.collapses_table_rows
-                    || row
-                        .parent
-                        .is_some_and(|group| doc.nodes[group].collapses_table_rows))
+            let in_collapsed_group = row
+                .parent
+                .is_some_and(|group| doc.nodes[group].collapses_table_rows);
+            match row.display() {
+                DisplayValue::TableRow => row.collapses_table_rows || in_collapsed_group,
+                DisplayValue::TableCell => in_collapsed_group,
+                _ => false,
+            }
         })
         .collect()
 }
@@ -2415,7 +2436,7 @@ fn place_cells(
             VerticalAlign::Top => 0.0,
             VerticalAlign::Middle => extra / 2.0,
             VerticalAlign::Bottom => extra,
-            _ if !vertical_cell => (row_baselines[cell.row as usize] - cell.baseline).max(0.0),
+            _ if !vertical_cell => (row_baselines[start_row] - cell.baseline).max(0.0),
             _ => 0.0,
         };
         padding.top += shift;
