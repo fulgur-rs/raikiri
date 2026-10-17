@@ -407,6 +407,58 @@ fn custom_highlight_paints_the_text_of_a_ruby_annotation() {
 }
 
 #[test]
+fn custom_highlight_skips_hidden_text_on_a_line_with_visible_text() {
+    use anyrender::types::Paint;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "::highlight(sample) { background-color: rgb(0, 255, 255); }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    doc.append_text(paragraph, "seen ");
+    let hidden = doc.append_element(
+        Some(paragraph),
+        "span",
+        Style::default(),
+        Some("visibility:hidden"),
+    );
+    let text = doc.append_text(hidden, "unseen");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &[TextHighlightRange {
+            name: "sample".to_owned(),
+            node: text,
+            start_byte: 0,
+            end_byte: 6,
+        }],
+    )
+    .expect("paint succeeds");
+    assert!(!scene.commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill) if fill.brush == Paint::Solid(Color::from_rgba8(0, 255, 255, 255))
+    )));
+}
+
+#[test]
 fn custom_highlight_of_an_inter_character_ruby_annotation_runs_down_its_text() {
     let (highlights, glyphs) =
         highlighted_ruby_annotation("display:ruby;ruby-position:inter-character");

@@ -925,10 +925,15 @@ fn draw_line_highlights(
         return;
     };
     for highlight in highlights.custom_highlights {
-        let foreground = cascade
-            .computed
-            .get(highlight.node)
-            .map_or(raikiri_style::CssColor::BLACK, |values| values.color);
+        let values = cascade.computed.get(highlight.node);
+        // Hidden text is laid out but not painted, and neither is its
+        // highlight. Its line can still hold visible text.
+        if values
+            .is_some_and(|values| values.visibility != raikiri_style::property::Visibility::Visible)
+        {
+            continue;
+        }
+        let foreground = values.map_or(raikiri_style::CssColor::BLACK, |values| values.color);
         let Some(color) = cascade.custom_highlight_background(&highlight.name, foreground) else {
             continue;
         };
