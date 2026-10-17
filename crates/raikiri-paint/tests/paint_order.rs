@@ -1446,6 +1446,29 @@ fn sticky_pseudo_elements_paint_in_their_lines_by_stack_level() {
     }
 }
 
+/// A sticky `::before`, or a relative one with a stack level of zero or
+/// more, forms a stacking context that paints after the rest of its
+/// paragraph's inline content, so it covers the later span that overlaps
+/// it, in both painters.
+#[test]
+fn stacking_pseudo_elements_paint_over_the_later_text_of_their_paragraph() {
+    for position in ["sticky", "sticky; z-index: 2", "relative; z-index: 0"] {
+        let css = format!("#m::before {{ content: 'AA'; position: {position}; color: red }}");
+        let body = "<div id=m><span style=\"margin-left: -10px; color: lime\">BB</span></div>";
+        let pixels = render_first_page(&lay_out(body, &css));
+        let reddish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > p[1] && p[0] > p[2])
+            .count();
+        let greenish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[1] > p[0] && p[1] > p[2])
+            .count();
+        assert_eq!((reddish, greenish), (200, 100), "{position}");
+        assert_same_order(body, &css);
+    }
+}
+
 /// A `display: contents` element forms no stacking context, so the negative
 /// span inside it still paints below the paragraph's block in both orders.
 #[test]

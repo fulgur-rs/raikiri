@@ -721,6 +721,7 @@ impl Document {
                         && !paint_rules::negative_inline_group(self, cascade, root, group)
                         && !paint_rules::inline_stacking_group(self, cascade, root, group)
                         && !paint_rules::negative_pseudo_group(self, cascade, root, group)
+                        && !paint_rules::pseudo_stacking_group(self, cascade, root, group)
                     {
                         continue; // cov:ignore: groups are found by their opacity or transform
                     }
@@ -2203,8 +2204,9 @@ fn letter_groups(
 }
 
 /// The group the pseudo-element with generated id `id` forms in paragraph
-/// `root`: its id, when it has one (see [`paint_rules::pseudo_forms_group`]
-/// and [`paint_rules::negative_pseudo_group`]).
+/// `root`: its id, when it has one (see [`paint_rules::pseudo_forms_group`],
+/// [`paint_rules::negative_pseudo_group`] and
+/// [`paint_rules::pseudo_stacking_group`]).
 fn pseudo_opacity_group(
     document: &Document,
     cascade: &CascadeResult,
@@ -2212,7 +2214,8 @@ fn pseudo_opacity_group(
     id: usize,
 ) -> Option<usize> {
     (paint_rules::pseudo_forms_group(cascade, id)
-        || paint_rules::negative_pseudo_group(document, cascade, root, id))
+        || paint_rules::negative_pseudo_group(document, cascade, root, id)
+        || paint_rules::pseudo_stacking_group(document, cascade, root, id))
     .then_some(id)
 }
 
