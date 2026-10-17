@@ -16397,3 +16397,32 @@ fn a_clearance_shift_moves_down_to_the_floor_within_its_limit() {
     // The move stops at the limit.
     assert_eq!(clearance_shift(Some(90.0), 10.0, 50.0), 50.0);
 }
+
+#[test]
+fn a_truncated_margin_breaks_at_its_first_page_edge() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // A coinciding forced break keeps the margin on the new page.
+    assert_eq!(
+        pages.truncated_margin_target(2, true, 15.0, || unreachable!(), false),
+        (200.0, 215.0)
+    );
+    // Otherwise the box starts at the first page edge inside its margin.
+    assert_eq!(
+        pages.truncated_margin_target(3, false, 15.0, || 150.0, false),
+        (200.0, 200.0)
+    );
+    // An edge at the margin start counts only without a forced break there.
+    assert_eq!(
+        pages.truncated_margin_target(3, false, 15.0, || 200.0, false),
+        (200.0, 200.0)
+    );
+    assert_eq!(
+        pages.truncated_margin_target(3, false, 15.0, || 200.0, true),
+        (300.0, 300.0)
+    );
+    // The edge never passes the page the box falls on.
+    assert_eq!(
+        pages.truncated_margin_target(1, false, 15.0, || 150.0, false),
+        (100.0, 100.0)
+    );
+}
