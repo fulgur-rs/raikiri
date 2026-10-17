@@ -295,6 +295,8 @@ fn a_table_whose_rows_all_collapse_keeps_no_spacing() {
     let group = fixture.doc.nodes[fixture.rows[0]].parent.unwrap();
     let table = fixture.doc.nodes[group].parent.unwrap();
     assert_eq!(fixture.doc.nodes[table].unrounded_layout.size.height, 0.0);
+    // Without a first row there is no first baseline to expose.
+    assert_eq!(fixture.doc.nodes[table].table_first_baseline, None);
 }
 
 #[test]

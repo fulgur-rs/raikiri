@@ -1001,8 +1001,12 @@ fn compute_table_layout_checked(
                 })
                 .fold(0.0, f32::max)
         });
-    doc.nodes[table_idx].table_first_baseline =
-        Some(row_origins[baseline_row] + first_row_baseline);
+    // With every row collapsed the table has no first row, so it has no
+    // first baseline, like an empty table (CSS Tables 3 §3.10.2).
+    doc.nodes[table_idx].table_first_baseline = collapsed_rows
+        .iter()
+        .any(|collapsed| !collapsed)
+        .then(|| row_origins[baseline_row] + first_row_baseline);
     if vertical_writing {
         reposition_cells_for_vertical_writing(
             doc,
