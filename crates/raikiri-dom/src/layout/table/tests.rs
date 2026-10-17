@@ -10,6 +10,7 @@ use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 mod anonymous_table_tests;
 mod cell_index_tests;
 mod rowspan_tests;
+mod visibility_collapse_tests;
 
 fn append_grid_part(
     doc: &mut Document,
@@ -611,7 +612,7 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
                 &mut doc,
                 &mut grid,
                 &[1.0, 1.0],
-                (&[1.0], &[0.0]),
+                (&[1.0], &[0.0], &[false]),
                 (&[0.0, 1.0, 2.0], &[0.0, 1.0]),
                 (0.0, 0.0),
                 false
