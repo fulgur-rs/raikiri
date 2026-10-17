@@ -98,6 +98,7 @@ pub use shodo::font::FontCollection;
 /// Used image geometry that Raikiri's own painter applies, for painters that
 /// draw background images themselves.
 pub mod image_geometry {
+    // cov:ignore: re-exports have no executable code or lcov record.
     pub use raikiri_dom::image_geometry::{
         BackgroundTiles, BorderImageGeometry, BorderImagePart, background_image_dimensions,
         background_tiles, border_image_geometry, border_image_geometry_on_device_pixels,
