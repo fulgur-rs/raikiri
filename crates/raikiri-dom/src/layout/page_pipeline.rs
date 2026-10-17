@@ -4255,9 +4255,11 @@ fn paginate_flow(
             let follower_offset =
                 accumulated_relative_offset_y(document, cascade, body_id, node_id);
             let flow_raw_y = candidate.raw_y - follower_offset;
-            let shift = floor.map_or(0.0, |floor| {
-                (floor - (flow_raw_y + flow_shift - margin_top)).clamp(0.0, float_shifts.later)
-            });
+            let shift = clearance_shift(
+                floor,
+                flow_raw_y + flow_shift - margin_top,
+                float_shifts.later,
+            );
             if shift > 0.0 {
                 flow_shift += shift;
                 if floating {
@@ -7660,6 +7662,13 @@ struct FloatEdge {
     top: f32,
     bottom: f32,
     width: f32,
+}
+
+/// How far a box whose top edge is at `top` moves down to reach `floor`,
+/// the position it may not start above, or zero without a floor. The move
+/// is at most `limit`, the shift the floats above it have taken.
+fn clearance_shift(floor: Option<f32>, top: f32, limit: f32) -> f32 {
+    floor.map_or(0.0, |floor| (floor - top).clamp(0.0, limit))
 }
 
 /// The margin-box edge of a float that moved to `flow_target_y`, its

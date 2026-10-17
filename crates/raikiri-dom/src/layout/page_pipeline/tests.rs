@@ -16387,3 +16387,13 @@ fn a_page_edge_falls_in_the_margin_between_two_siblings() {
     assert!(!page_edge_falls_in_margin(1, 100.0, 100.0, 120.0, true));
     assert!(page_edge_falls_in_margin(1, 100.0, 90.0, 120.0, true));
 }
+
+#[test]
+fn a_clearance_shift_moves_down_to_the_floor_within_its_limit() {
+    assert_eq!(clearance_shift(None, 10.0, 50.0), 0.0);
+    assert_eq!(clearance_shift(Some(30.0), 10.0, 50.0), 20.0);
+    // A box already below its floor does not move up.
+    assert_eq!(clearance_shift(Some(5.0), 10.0, 50.0), 0.0);
+    // The move stops at the limit.
+    assert_eq!(clearance_shift(Some(90.0), 10.0, 50.0), 50.0);
+}
