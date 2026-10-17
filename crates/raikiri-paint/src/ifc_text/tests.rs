@@ -3838,3 +3838,62 @@ fn vertical_emphasis_marks_a_combined_square_that_starts_without_a_glyph() {
     let marks = placed.iter().filter(|g| g.3 == red).count();
     assert_eq!(marks, 1, "the square takes its mark: {placed:?}");
 }
+
+/// [`paragraph`] and [`lay_out`] with a Noto Sans subset, whose `ffi` is one
+/// ligature glyph, registered as the `Liga` family.
+fn lay_out_ligature(css: &str, text: &str) -> Vec<(u32, f64, f64, anyrender::Paint)> {
+    let fonts = || {
+        let fonts =
+            raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("fonts");
+        fonts
+            .register_face(
+                include_bytes!("../../tests/data/noto-sans-latin/NotoSans-LatinSubset.ttf")
+                    .to_vec(),
+                0,
+                shodo::font::FontFaceDescriptor {
+                    family: "Liga".into(),
+                    ..Default::default()
+                },
+            )
+            .expect("ligature face");
+        fonts
+    };
+    let (mut doc, cascade, root) = paragraph(&format!("font-family:Liga;{css}"), |doc, root| {
+        doc.append_text(root, text);
+    });
+    doc.set_font_collection(fonts());
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout");
+    glyphs(&draw_root(&doc, &cascade, root))
+}
+
+#[test]
+fn emphasis_marks_split_a_ligature_among_its_characters() {
+    for (mode, horizontal) in [("horizontal-tb", true), ("vertical-rl", false)] {
+        let placed = lay_out_ligature(
+            &format!(
+                "writing-mode:{mode};line-height:40px;text-emphasis:dot;\
+                 text-emphasis-color:rgb(255,0,0)"
+            ),
+            "ffi",
+        );
+        let red = solid(255, 0, 0);
+        let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+        assert_eq!(text.len(), 1, "{mode}: ffi is one ligature glyph: {text:?}");
+        assert_eq!(
+            marks.len(),
+            3,
+            "{mode}: each character takes a mark: {marks:?}"
+        );
+        // The marks share the ligature's advance evenly, down a vertical line.
+        let along: Vec<f64> = marks
+            .iter()
+            .map(|mark| if horizontal { mark.1 } else { mark.2 })
+            .collect();
+        let step = along[1] - along[0];
+        assert!(step > 0.0, "{mode}: {along:?}");
+        assert!(
+            (along[2] - along[1] - step).abs() < 0.01,
+            "{mode}: {along:?}"
+        );
+    }
+}

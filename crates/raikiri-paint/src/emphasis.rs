@@ -3,10 +3,12 @@
 //! The inline engine reserves the space for the marks and reports, per glyph
 //! run, the mark character, its size, its side and the distance from the
 //! baseline to the edge the mark is painted outside. This module places one
-//! mark over each shaping cluster that takes one, centered on the cluster in
-//! the inline direction, as Blink does. Marks stay upright in vertical
-//! text (CSS Text Decoration 3 §3.1), so a vertical run's marks are shaped as
-//! upright vertical text and centered on their cluster's em box.
+//! mark over each typographic character that takes one, centered on the
+//! character in the inline direction; a shared shaping cluster such as a
+//! ligature divides its advance evenly among its characters, as Blink does.
+//! Marks stay upright in vertical text (CSS Text Decoration 3 §3.1), so a
+//! vertical run's marks are shaped as upright vertical text and centered on
+//! their character's em box.
 
 use anyrender::PaintScene;
 use peniko::Color;
@@ -14,7 +16,7 @@ use raikiri_dom::{Document, StandaloneAlign, StandaloneText};
 use raikiri_style::ComputedValues;
 use raikiri_style::property::TextDecorationColor;
 use shodo::Fragment;
-use shodo::geometry::{BaselineKind, PhysicalConverter, WritingMode};
+use shodo::geometry::{BaselineKind, Direction, PhysicalConverter, WritingMode};
 
 /// The mark shaped once per run, with what placing it needs.
 struct ShapedMark {
@@ -114,9 +116,6 @@ pub(crate) fn draw_marks_in(
         return; // cov:ignore: shaping one character fails only past the engine's limits.
     };
     for cluster in run.clusters() {
-        if cluster.flags.emphasis_excluded {
-            continue;
-        }
         // The cluster spans from its leftmost glyph origin to the end of its
         // rightmost advance, in either direction.
         let mut start = f32::INFINITY;
@@ -135,7 +134,6 @@ pub(crate) fn draw_marks_in(
         if !found {
             continue; // cov:ignore: every cluster of a run has a glyph in that run.
         }
-        let center = origin_x + (start + end) / 2.0;
         // The mark is placed from the run's baseline, not from a glyph's
         // origin, which carries the glyph's own vertical offset.
         let text_baseline = baseline;
@@ -145,14 +143,31 @@ pub(crate) fn draw_marks_in(
         } else {
             text_baseline + mark.offset + shaped.em_ascent
         };
-        crate::standalone_text::draw(
-            scene,
-            &shaped.text,
-            center - shaped.advance / 2.0,
-            mark_baseline - shaped.baseline,
-            color,
-        );
+        // A right-to-left run lays its characters out from the right.
+        let reversed = run.bidi_level() % 2 == 1;
+        for slot in run.emphasis_slots(&cluster) {
+            let center = origin_x + start + (end - start) * slot_center(slot, reversed);
+            crate::standalone_text::draw(
+                scene,
+                &shaped.text,
+                center - shaped.advance / 2.0,
+                mark_baseline - shaped.baseline,
+                color,
+            );
+        }
     }
+}
+
+/// Where `slot`'s character is centered along its cluster's advance, as a
+/// fraction from the cluster's start in the direction its glyphs are laid
+/// out. A shared cluster divides its advance evenly among its characters.
+fn slot_center(slot: shodo::EmphasisSlot, reversed: bool) -> f32 {
+    let index = if reversed {
+        slot.count - 1 - slot.index
+    } else {
+        slot.index
+    };
+    (index as f32 + 0.5) / slot.count as f32
 }
 
 /// The mark shaped as upright vertical text, with the physical offset of its
@@ -199,8 +214,9 @@ fn shape_upright_mark(
 ///
 /// `converter` maps the logical coordinates of `line`, laid out in
 /// `writing_mode`, to the ifc root's, whose page origin is `origin`. Each
-/// mark's em box is centered on its cluster's advance and starts the mark's
-/// offset from the run's baseline toward its side. A run of
+/// mark's em box is centered on its character's share of its cluster's
+/// advance and starts the mark's offset from the run's baseline toward its
+/// side. A run of
 /// `text-combine-upright` text takes one mark per combined square it starts,
 /// centered on the square, as its characters take none of their own.
 pub(crate) fn draw_vertical_marks(
@@ -284,12 +300,16 @@ pub(crate) fn draw_vertical_marks(
         .collect();
     clusters.sort_by(|a, b| a.0.total_cmp(&b.0));
     let block = line.block_offset() + run.baseline() + reach;
+    // A run against the line's direction lays its characters out backward.
+    let reversed = (run.bidi_level() % 2 == 1) != (line.used_direction() == Direction::Rtl);
     let mut inline = run.inline_start();
     for (_, cluster) in clusters {
-        let center = inline + cluster.advance / 2.0;
-        inline += cluster.advance;
-        if !cluster.flags.emphasis_excluded {
-            draw(center, block);
+        for slot in run.emphasis_slots(&cluster) {
+            draw(
+                inline + cluster.advance * slot_center(slot, reversed),
+                block,
+            );
         }
+        inline += cluster.advance;
     }
 }
