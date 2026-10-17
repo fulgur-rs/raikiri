@@ -1527,3 +1527,58 @@ fn negative_block_pseudo_elements_after_a_translucent_first_line_paint_below_the
     );
     assert_eq!(pixels_of(&render_first_page(&result), [255, 0, 0]), 0);
 }
+
+/// The negative content inside a translucent inline element stays in the
+/// element's group, a stacking context (CSS Color 4 §3.3): the group paints
+/// above the paragraph's block, its opacity applied once, also when nested
+/// in another group.
+#[test]
+fn negative_content_in_inline_opacity_groups_stays_in_the_group() {
+    let body = |outer: &str, inner: &str| {
+        format!(
+            "<div style=\"color: black\">AA<span style=\"opacity: {outer}\">C\
+             <span style=\"opacity: {inner}\">\
+             <span style=\"position: relative; z-index: -1; color: red\">BB</span></span>C</span>\
+             <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+        )
+    };
+    // Red at the group's opacity over the blue block: 128 for one half,
+    // 64 for two nested halves, nothing for a transparent group.
+    for (outer, inner, red) in [("0.5", "1", 128), ("0.5", "0.5", 64), ("0", "1", 0)] {
+        let result = lay_out(&body(outer, inner), "");
+        let pixels = render_first_page(&result);
+        let over_blue = pixels_of(&pixels, [red, 0, 255 - red]);
+        if red == 0 {
+            assert_eq!(over_blue, 6632, "{outer} {inner}");
+        } else {
+            assert_eq!(over_blue, 200, "{outer} {inner}");
+        }
+        // Both orders paint the block first: the public order lists the
+        // group, with its text, after it; the native trace, which records
+        // a paragraph's text once, lists that text after it.
+        let page = result.pages().next().expect("a page");
+        for steps in [api_steps(&page), walker_steps(&page)] {
+            let block = steps
+                .iter()
+                .rposition(|step| matches!(step, Step::Box(_)))
+                .expect("the block");
+            assert!(
+                steps[..block]
+                    .iter()
+                    .all(|step| !matches!(step, Step::Text(_) | Step::PushOpacity)),
+                "{outer} {inner}: {}",
+                describe(&page, &steps)
+            );
+        }
+        let api = api_steps(&page);
+        let push = api
+            .iter()
+            .position(|step| *step == Step::PushOpacity)
+            .expect("a group");
+        assert!(
+            matches!(api[push + 1], Step::Text(_)),
+            "{}",
+            describe(&page, &api)
+        );
+    }
+}
