@@ -4274,9 +4274,8 @@ fn paginate_flow(
         if !document.is_source_node(node_id) {
             continue;
         }
-        let participates_in_margin_adjacency = !candidate.is_float_descendant
-            && !candidate.is_out_of_flow_descendant
-            && !is_floating_box_for_pagination(document, cascade, node_id);
+        let participates_in_margin_adjacency =
+            participates_in_margin_adjacency(document, cascade, &candidate);
         // Explicit positioned insets follow their containing box, not margin
         // changes in a parallel normal flow. Both-auto boxes keep static placement.
         let uses_positioned_coordinates = candidate.is_out_of_flow_descendant
@@ -4717,16 +4716,8 @@ fn paginate_flow(
         let flex_item_overflow = candidate.is_flex_item && !flex_item_is_last && item_overflow();
         let grid_item_overflow = candidate.is_grid_item && item_overflow();
 
-        // A relative offset is not part of the flow gap between siblings, so
-        // a positioned box cannot tell its margin apart from its offset.
         let collapses_with_previous_block =
-            is_block_level_flow_box(document.nodes[node_id].display())
-                && matches!(document.nodes[node_id].position(), PositionValue::Static)
-                && !candidate.is_text
-                && !candidate.is_table_row
-                && !candidate.is_flex_item
-                && !candidate.is_grid_item
-                && participates_in_margin_adjacency;
+            collapses_with_previous_block(document, &candidate, participates_in_margin_adjacency);
         let pending_break_applies = pending_break.applies_to(document, node_id);
         let page_transition = saw_child
             && (pending_break_applies
@@ -8043,6 +8034,40 @@ fn stacks_children_in_block_flow(document: &Document, id: usize) -> bool {
     moves_later_siblings(document, id)
         || document.nodes[id].formatting_context == FormattingContext::Grid
             && grid_stacks_items(document, id)
+}
+
+/// Whether `candidate` lies in the normal flow, where its margins can adjoin
+/// the margins of the boxes before and after it: it is not a float, inside a
+/// float or a monolithic box, out of flow, or inside an out-of-flow box.
+fn participates_in_margin_adjacency(
+    document: &Document,
+    cascade: &CascadeResult,
+    candidate: &PageCandidate,
+) -> bool {
+    !candidate.is_float_descendant
+        && !candidate.is_out_of_flow_descendant
+        && !is_floating_box_for_pagination(document, cascade, candidate.node_id)
+}
+
+/// Whether the block-start margin of `candidate` can collapse with the
+/// block-end margin of the block before it: it is a statically positioned
+/// block-level box in the normal flow, and not text, a table row, or a flex
+/// or grid item. A relative offset is not part of the flow gap between
+/// siblings, so a positioned box cannot tell its margin apart from its
+/// offset.
+fn collapses_with_previous_block(
+    document: &Document,
+    candidate: &PageCandidate,
+    participates_in_margin_adjacency: bool,
+) -> bool {
+    let node = &document.nodes[candidate.node_id];
+    is_block_level_flow_box(node.display())
+        && matches!(node.position(), PositionValue::Static)
+        && !candidate.is_text
+        && !candidate.is_table_row
+        && !candidate.is_flex_item
+        && !candidate.is_grid_item
+        && participates_in_margin_adjacency
 }
 
 /// Whether `display` makes a block-level box in the normal flow, whose
