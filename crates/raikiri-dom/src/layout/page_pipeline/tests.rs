@@ -16426,3 +16426,12 @@ fn a_truncated_margin_breaks_at_its_first_page_edge() {
         (100.0, 100.0)
     );
 }
+
+#[test]
+fn an_empty_box_at_a_page_end_stays_on_that_page() {
+    let pages = PageOrigins::new(&[], 100.0);
+    assert_eq!(pages.start_page(100.0, 0.0), 0);
+    assert_eq!(pages.start_page(100.0, 10.0), 1);
+    assert_eq!(pages.start_page(150.0, 0.0), 1);
+    assert_eq!(pages.start_page(150.0, 10.0), 1);
+}
