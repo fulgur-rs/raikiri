@@ -719,6 +719,7 @@ impl Document {
                     if alpha.is_none()
                         && turned.is_none()
                         && !paint_rules::negative_inline_group(self, cascade, root, group)
+                        && !paint_rules::nested_inline_stacking_group(self, cascade, root, group)
                         && !paint_rules::negative_pseudo_group(self, cascade, root, group)
                     {
                         continue; // cov:ignore: groups are found by their opacity or transform
@@ -2367,9 +2368,11 @@ fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
 }
 
 /// Whether inline element `id` of paragraph `root` composites its
-/// fragments as one group: one with an opacity below one, or one positioned
+/// fragments as one group: one with an opacity below one, one positioned
 /// below the paragraph's blocks (see
-/// [`paint_rules::negative_inline_group`]).
+/// [`paint_rules::negative_inline_group`]), or one with a stack level inside
+/// another inline stacking context (see
+/// [`paint_rules::nested_inline_stacking_group`]).
 fn is_inline_group(
     document: &Document,
     cascade: &CascadeResult,
@@ -2380,6 +2383,7 @@ fn is_inline_group(
 ) -> bool {
     (node.display().is_inline_flow() && cv.opacity < 1.0)
         || paint_rules::negative_inline_group(document, cascade, root, id)
+        || paint_rules::nested_inline_stacking_group(document, cascade, root, id)
 }
 
 #[cfg(test)]
