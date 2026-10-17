@@ -999,3 +999,29 @@ fn only_pseudos_that_read_counters_get_snapshots() {
         Some(&HashMap::from([(Symbol::new("c"), vec![1])]))
     );
 }
+
+#[test]
+fn pseudo_snapshot_entries_count_against_the_budget() {
+    let mut doc = styled_document("div::before { content: counter(c) }");
+    for _ in 0..4 {
+        doc.append_element(
+            Some(doc.root_index()),
+            "div",
+            Style::default(),
+            None::<&str>,
+        );
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    // No counter is live, so every snapshot map is empty and costs nothing:
+    // only the per-node vector and the pseudo-element table are charged.
+    let base = (doc.node_count() * size_of::<CounterSnapshot>()) as u64;
+    let error = counter_snapshots_with_budget(&doc, &cr, &mut CounterSnapshotBudget::new(base))
+        .expect_err("the pseudo-element table exceeds the per-node budget");
+    assert_eq!(error.limit, base);
+    let snapshots =
+        counter_snapshots_with_budget(&doc, &cr, &mut CounterSnapshotBudget::new(error.actual * 4))
+            .expect("a budget for the table");
+    assert_eq!(snapshots.pseudos.len(), 4);
+}

@@ -221,6 +221,16 @@ impl CounterSnapshotBudget {
             .and_then(|count| count.checked_mul(size_of::<CounterSnapshot>() as u64));
         self.charge(bytes)
     }
+
+    /// Charge one entry of [`CounterSnapshots`]' pseudo-element table, with
+    /// the same allowance for hash-table capacity slack and control bytes as
+    /// a counter map entry.
+    fn charge_pseudo_entry(&mut self) -> Result<(), CounterSnapshotLimitExceeded> {
+        let bytes = (size_of::<((usize, PseudoElem), CounterSnapshot)>() as u64)
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(16));
+        self.charge(bytes)
+    }
 }
 
 /// Counter-scope tracker implementing CSS Lists 3 §4.3's nested-scope model
@@ -753,6 +763,7 @@ pub fn counter_snapshots_with_budget(
         match target {
             CounterTarget::Element(idx) => snapshots.nodes[idx] = snapshot,
             CounterTarget::Pseudo(idx, pseudo) => {
+                budget.charge_pseudo_entry()?;
                 snapshots.pseudos.insert((idx, pseudo), snapshot);
             }
         }
