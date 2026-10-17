@@ -4912,43 +4912,15 @@ fn paginate_flow(
                                 float_shifts.extend_later(inherited + node_delta + margin_top);
                             }
                         }
-                        // A formatting context of its own holds its floats
-                        // (CSS 2.1 §10.6.7), so an auto-height one grows to
-                        // the moved float's margin box, and the flow after
-                        // it moves down by the growth.
-                        let context = float_context_root(document, cascade, node_id, body_id);
-                        let context_style = &document.nodes[context].style;
-                        if context != body_id
-                            && (context_style.size.height.is_auto()
-                                || definite_content_height(document, context).is_none())
-                        {
-                            let context_top = current_abs_y(document, context);
-                            let float_bottom = current_abs_y(document, node_id)
-                                + height
-                                + document.nodes[node_id].unrounded_layout.margin.bottom;
-                            let layout = &document.nodes[context].unrounded_layout;
-                            let grown = (float_bottom - context_top
-                                + layout.padding.bottom
-                                + layout.border.bottom)
-                                .min(
-                                    max_border_box_height(document, cascade, context)
-                                        .unwrap_or(f32::INFINITY),
-                                );
-                            let growth = grown - layout.size.height;
-                            if growth > 0.001 {
-                                document.nodes[context].unrounded_layout.size.height += growth;
-                                grow_ancestors_for_shift(
-                                    document,
-                                    cascade,
-                                    context,
-                                    growth,
-                                    body_id,
-                                    &mut subtree_shifts,
-                                    page_before_candidate,
-                                );
-                                subtree_shifts.growth.push((context, growth));
-                            }
-                        }
+                        grow_float_context_to_moved_float(
+                            document,
+                            cascade,
+                            node_id,
+                            body_id,
+                            height,
+                            &mut subtree_shifts,
+                            page_before_candidate,
+                        );
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
@@ -7205,6 +7177,43 @@ fn move_line_block(
         grow_ancestors_for_shift(document, cascade, moved, delta, body_id, shifts, flow_page);
     }
     delta
+}
+
+/// Grows the formatting context that holds a moved float. A formatting
+/// context of its own holds its floats (CSS 2.1 §10.6.7), so an auto-height
+/// one grows to the moved float's margin box, and the flow after it moves
+/// down by the growth.
+fn grow_float_context_to_moved_float(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    body_id: usize,
+    height: f32,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) {
+    let context = float_context_root(document, cascade, node_id, body_id);
+    let context_style = &document.nodes[context].style;
+    if context != body_id
+        && (context_style.size.height.is_auto()
+            || definite_content_height(document, context).is_none())
+    {
+        let context_top = current_abs_y(document, context);
+        let float_bottom = current_abs_y(document, node_id)
+            + height
+            + document.nodes[node_id].unrounded_layout.margin.bottom;
+        let layout = &document.nodes[context].unrounded_layout;
+        let grown = (float_bottom - context_top + layout.padding.bottom + layout.border.bottom)
+            .min(max_border_box_height(document, cascade, context).unwrap_or(f32::INFINITY));
+        let growth = grown - layout.size.height;
+        if growth > 0.001 {
+            document.nodes[context].unrounded_layout.size.height += growth;
+            grow_ancestors_for_shift(
+                document, cascade, context, growth, body_id, shifts, flow_page,
+            );
+            shifts.growth.push((context, growth));
+        }
+    }
 }
 
 /// Grows the auto-height ancestors of `node_id`, which moved down by
