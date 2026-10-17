@@ -13,7 +13,9 @@ use crate::computed::ComputedValues;
 use crate::error::CascadeError;
 use crate::logical::FlowMapping;
 use crate::media::MediaContext;
-use crate::property::{Direction, PropertyKey, PropertyValue, TextOrientation, WritingMode};
+use crate::property::{
+    Direction, DisplayValue, FloatValue, PropertyKey, PropertyValue, TextOrientation, WritingMode,
+};
 use crate::rule::{Declaration, parse_declaration_block_within};
 
 use super::candidate::{
@@ -897,11 +899,17 @@ pub(crate) fn flow_mapping(
     let mut writing_mode: Option<RankedDecl> = None;
     let mut text_orientation: Option<RankedDecl> = None;
     let mut direction: Option<RankedDecl> = None;
+    let mut display: Option<RankedDecl> = None;
+    let mut float: Option<RankedDecl> = None;
+    let mut ruby_position: Option<RankedDecl> = None;
     for (idx, candidate) in decls.iter().enumerate() {
         let slot = match candidate.key() {
             PropertyKey::WritingMode => &mut writing_mode,
             PropertyKey::TextOrientation => &mut text_orientation,
             PropertyKey::Direction => &mut direction,
+            PropertyKey::Display => &mut display,
+            PropertyKey::Float => &mut float,
+            PropertyKey::RubyPosition => &mut ruby_position,
             _ => continue,
         };
         let ranked = candidate.precedence().ranked(idx);
@@ -921,6 +929,30 @@ pub(crate) fn flow_mapping(
     let direction = match winner(direction) {
         Some(PropertyValue::Direction(direction)) => direction,
         _ => inherited.direction,
+    };
+    // An annotation of a horizontal inter-character ruby is laid out in
+    // `vertical-rl` (CSS Ruby 1 §4.1), as its computed value says.
+    let display = match winner(display) {
+        Some(PropertyValue::Display(display)) => display,
+        _ => DisplayValue::Inline,
+    };
+    let float = match winner(float) {
+        Some(PropertyValue::Float(float)) => float,
+        _ => FloatValue::None,
+    };
+    let ruby_position = match winner(ruby_position) {
+        Some(PropertyValue::RubyPosition(position)) => position,
+        _ => inherited.ruby_position,
+    };
+    let writing_mode = if crate::specified::is_inter_character_annotation(
+        crate::property::resolve_display_for_float(display, float),
+        ruby_position,
+        writing_mode,
+        inherited,
+    ) {
+        WritingMode::VerticalRl
+    } else {
+        writing_mode
     };
     // `text-orientation: upright` sets the used direction from the
     // element's own writing mode, before a horizontal parent's layout

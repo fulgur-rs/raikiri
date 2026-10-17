@@ -1531,11 +1531,19 @@ impl SpecifiedValues {
     /// [`Self::finalize`], measuring `line-height: normal` with
     /// `normal_line_height` for the `lh` unit (see [`NormalLineHeight`]).
     pub fn finalize_with(
-        self,
+        mut self,
         parent: &ComputedValues,
         ctx: &ResolveContext,
         normal_line_height: Option<&dyn NormalLineHeight>,
     ) -> ComputedValues {
+        if is_inter_character_annotation(
+            resolve_display_for_float(self.display, self.float),
+            self.ruby_position,
+            self.writing_mode,
+            parent,
+        ) {
+            self.writing_mode = WritingMode::VerticalRl;
+        }
         // Find the parent's line-height reference (CSS Values 4 §6.1.1 self-reference rule). Both
         // `lh` in phase 2 font-size and `lh` in phase 2.5 line-height use this same parent
         // reference. The parent is already resolved before this call in the parent-to-child tree
@@ -2919,6 +2927,38 @@ pub(crate) struct BackgroundLists<'a> {
     pub(crate) attachment: Option<&'a [BackgroundAttachment]>,
     pub(crate) origin: Option<&'a [VisualBox]>,
     pub(crate) clip: Option<&'a [VisualBox]>,
+}
+
+/// Whether an element with the computed `display`, its own cascaded
+/// `ruby-position` and `writing-mode`, and computed `parent` is a ruby
+/// annotation of a horizontal inter-character ruby, so that its computed
+/// `writing-mode` is `vertical-rl` (CSS Ruby 1 §4.1, `inter-character`).
+///
+/// `ruby-position` applies to annotation containers. An explicit annotation
+/// container reads its own value. An annotation directly in its ruby
+/// container sits in an anonymous annotation container, which inherits the
+/// parent's value, and inherits `vertical-rl` from it unless it sets a
+/// writing mode of its own, seen here as one different from its parent's.
+/// An annotation in an explicit container inherits the container's
+/// `vertical-rl`, so it needs no adjustment.
+pub(crate) fn is_inter_character_annotation(
+    display: DisplayValue,
+    ruby_position: RubyPosition,
+    writing_mode: WritingMode,
+    parent: &ComputedValues,
+) -> bool {
+    if parent.cssom_writing_mode.is_vertical() {
+        return false;
+    }
+    match display {
+        DisplayValue::RubyTextContainer => ruby_position == RubyPosition::InterCharacter,
+        DisplayValue::RubyText => {
+            parent.display != DisplayValue::RubyTextContainer
+                && parent.ruby_position == RubyPosition::InterCharacter
+                && writing_mode == parent.cssom_writing_mode
+        }
+        _ => false,
+    }
 }
 
 /// Computes the background layers from the specified per-layer lists (CSS
