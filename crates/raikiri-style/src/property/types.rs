@@ -13364,6 +13364,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "outline-color" => PropertyKey::OutlineColor,
         "outline-offset" => PropertyKey::OutlineOffset,
         "overflow-clip-margin" => PropertyKey::OverflowClipMargin,
+        "grid" => PropertyKey::Grid,
         "grid-template" => PropertyKey::GridTemplate,
         "grid-template-columns" => PropertyKey::GridTemplateColumns,
         "grid-template-rows" => PropertyKey::GridTemplateRows,

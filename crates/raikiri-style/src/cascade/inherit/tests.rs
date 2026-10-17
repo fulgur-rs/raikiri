@@ -2348,6 +2348,26 @@ fn grid_template_shorthand_computes_like_its_longhands() {
 }
 
 #[test]
+fn grid_shorthands_resolve_through_var() {
+    let via_var = cascade_with_ua(
+        "",
+        r#"div { --g: "a" 10px / 1fr; grid-auto-flow: column;
+             grid: var(--g); }"#,
+        "div",
+        None,
+    );
+    let literal = cascade_with_ua("", r#"div { grid: "a" 10px / 1fr; }"#, "div", None);
+    assert!(matches!(
+        literal.grid_template_areas,
+        crate::property::GridTemplateAreasValue::Areas(_)
+    ));
+    assert_eq!(via_var.grid_template_rows, literal.grid_template_rows);
+    assert_eq!(via_var.grid_template_columns, literal.grid_template_columns);
+    assert_eq!(via_var.grid_template_areas, literal.grid_template_areas);
+    assert_eq!(via_var.grid_auto_flow, literal.grid_auto_flow);
+}
+
+#[test]
 fn grid_shorthands_and_longhands_follow_declaration_order() {
     // A later `grid` resets everything an earlier `grid-template` or
     // longhand set, including the implicit grid.

@@ -909,6 +909,27 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        PropertyValue::Grid(shorthand) => match key {
+            crate::property::PropertyKey::GridTemplateRows => {
+                PropertyValue::GridTemplateRows(shorthand.rows)
+            }
+            crate::property::PropertyKey::GridTemplateColumns => {
+                PropertyValue::GridTemplateColumns(shorthand.columns)
+            }
+            crate::property::PropertyKey::GridTemplateAreas => {
+                PropertyValue::GridTemplateAreas(shorthand.areas)
+            }
+            crate::property::PropertyKey::GridAutoRows => {
+                PropertyValue::GridAutoRows(crate::property::initial_grid_auto_track_list())
+            }
+            crate::property::PropertyKey::GridAutoColumns => {
+                PropertyValue::GridAutoColumns(crate::property::initial_grid_auto_track_list())
+            }
+            crate::property::PropertyKey::GridAutoFlow => {
+                PropertyValue::GridAutoFlow(crate::property::GridAutoFlowValue::Row)
+            }
+            _ => return None,
+        },
         PropertyValue::GridTemplate(shorthand) => match key {
             crate::property::PropertyKey::GridTemplateRows => {
                 PropertyValue::GridTemplateRows(shorthand.rows)
