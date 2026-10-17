@@ -207,3 +207,27 @@ fn a_lone_stretched_grid_image_placed_in_an_implicit_row_keeps_its_ratio() {
     assert_eq!(sizes[0], (100.0, 200.0));
     assert_eq!(sizes[1].0 / sizes[1].1, 0.5);
 }
+
+#[test]
+fn a_block_level_fallback_image_keeps_its_supplied_width() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:300px"),
+    );
+    let image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+    doc.set_element_attribute(image, "src", "support/green.png")
+        .unwrap();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 400.0;
+    crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(size(&doc, image), (100.0, 50.0));
+}

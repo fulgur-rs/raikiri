@@ -266,6 +266,8 @@ pub(crate) fn apply_computed_to_style(
             bridge_known_image_intrinsic_size(doc, idx, cv)
         {
             let style = &mut doc.nodes[idx].style;
+            // The supplied size is the image's natural size.
+            style.item_is_replaced = true;
             if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.width = Dimension::length(intrinsic_width);
             }
