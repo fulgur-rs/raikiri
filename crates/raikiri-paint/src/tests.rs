@@ -3404,3 +3404,15 @@ fn empty_inline_block_before_in_a_vertical_paragraph_resolves_a_percentage_width
     assert_eq!(fills.len(), 1, "{fills:?}");
     assert!((fills[0].width() - 100.0).abs() < 0.01, "{fills:?}");
 }
+
+/// In a right-to-left paragraph the physical right margin of an empty
+/// inline-block `::before` stays on its right, against the line's start.
+#[test]
+fn empty_inline_block_before_keeps_its_physical_margins_right_to_left() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} p{margin:0;width:200px;direction:rtl} p::before{content:'';display:inline-block;width:10px;height:10px;margin-right:20px;background:red}</style></head><body><p>abc</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!((fills[0].x1 - 180.0).abs() < 0.01, "{fills:?}");
+}

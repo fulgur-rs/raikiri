@@ -155,17 +155,15 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
     for &(id, size) in root.marker_atomic.iter().chain(&root.generated_atomics) {
         atomics.insert(id, size);
     }
-    // A vertical root's physical width is not kept for a rebreak, so a
-    // percentage width counts as `auto` here.
     let containing = if root.writing_mode == WritingMode::HorizontalTb {
         (Some(width), root.definite_height)
     } else {
-        (None, Some(width))
+        (root.vertical_width, Some(width))
     };
     for generated in root.generated_boxes.iter() {
         atomics.insert(
             shodo::node::NodeId(generated.id),
-            generated.size(Some(width), containing, root.writing_mode),
+            generated.size(Some(width), containing, root.writing_mode, root.rtl),
         );
     }
     let mut placed = place_lines(

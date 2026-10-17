@@ -222,14 +222,15 @@ fn an_empty_atomic_before_keeps_its_size_through_a_rebreak() {
 }
 
 /// A rebreak of a vertical paragraph keeps an empty inline-block `::before`
-/// on its lines, its physical height along the inline axis.
+/// on its lines, its physical height along the inline axis and its
+/// percentage width resolved against the paragraph's physical width.
 #[test]
 fn an_empty_atomic_before_keeps_its_size_through_a_vertical_rebreak() {
     use crate::layout::ifc::test_support::sheet_fixture;
     use crate::layout::test_support::page_box_800x600;
     let fixture = sheet_fixture(
-        "div::before{content:'';display:inline-block;width:30px;height:15px}",
-        "line-height:10px;writing-mode:vertical-rl;height:200px",
+        "div::before{content:'';display:inline-block;width:50%;height:15px}",
+        "line-height:10px;writing-mode:vertical-rl;width:200px;height:200px",
         |doc, root| {
             doc.append_text(root, "aa");
         },
@@ -252,4 +253,6 @@ fn an_empty_atomic_before_keeps_its_size_through_a_vertical_rebreak() {
         })
         .expect("the pseudo-element is on a line");
     assert_eq!(atomic.border_rect.inline_size, 15.0);
+    // The percentage width refers to the paragraph's physical width.
+    assert_eq!(atomic.border_rect.block_size, 100.0);
 }

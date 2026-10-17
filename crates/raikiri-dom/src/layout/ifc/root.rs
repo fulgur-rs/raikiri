@@ -74,6 +74,10 @@ pub(crate) struct IfcRoot {
     /// `right` of its inline elements refers to. Lines may be narrower when
     /// the root lays them out in columns.
     pub(crate) containing_width: Option<f32>,
+    /// A vertical root's physical content width, its block extent, which a
+    /// percentage width of its empty atomic `::before` and `::after` boxes
+    /// refers to when its lines are broken again.
+    pub(crate) vertical_width: Option<f32>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
@@ -350,6 +354,7 @@ impl IfcRoot {
             percent_insets: meta.percent_insets,
             definite_height: None,
             containing_width: None,
+            vertical_width: None,
             cleared_breaks: meta.cleared_breaks.into_iter().collect(),
             fixed: meta.fixed,
             multicol_fragments: None,
@@ -446,6 +451,7 @@ impl IfcRoot {
             percent_insets: self.percent_insets.clone(),
             definite_height: self.definite_height,
             containing_width: self.containing_width,
+            vertical_width: self.vertical_width,
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,

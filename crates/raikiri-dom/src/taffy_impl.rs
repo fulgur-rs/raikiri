@@ -1349,6 +1349,7 @@ fn measure_ifc_root(
     tree.nodes[idx].ifc.iter_mut().for_each(|root| {
         root.definite_height = definite_height;
         root.containing_width = containing_width;
+        root.vertical_width = vertical.then_some(physical_block_extent);
     });
     let axes = IfcAxes::new(writing_mode, direction);
     // Every geometry of the root keeps its definite height, also when the
