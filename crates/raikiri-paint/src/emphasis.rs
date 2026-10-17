@@ -6,6 +6,9 @@
 //! mark over each typographic character that takes one, centered on the
 //! character in the inline direction; a shared shaping cluster such as a
 //! ligature divides its advance evenly among its characters, as Blink does.
+//! A horizontal mark is placed as a one-character ruby annotation would be:
+//! its line box rests on that edge and it is centered in the same fixed-point
+//! units, so marks and the equivalent ruby land on the same pixels.
 //! Marks stay upright in vertical text (CSS Text Decoration 3 §3.1), so a
 //! vertical run's marks are shaped as upright vertical text and centered on
 //! their character's em box.
@@ -16,17 +19,17 @@ use raikiri_dom::{Document, StandaloneAlign, StandaloneText};
 use raikiri_style::ComputedValues;
 use raikiri_style::property::TextDecorationColor;
 use shodo::Fragment;
-use shodo::geometry::{BaselineKind, Direction, PhysicalConverter, WritingMode};
+use shodo::geometry::{Direction, PhysicalConverter, WritingMode};
 
 /// The mark shaped once per run, with what placing it needs.
 struct ShapedMark {
     text: StandaloneText,
     /// Inline advance of the mark.
     advance: f32,
-    /// Baseline of the shaped mark from its own origin.
-    baseline: f32,
-    /// Part of the mark's em box above its baseline.
-    em_ascent: f32,
+    /// Block-start edge of the mark's line box from the shaped text's origin.
+    line_start: f32,
+    /// Block-end edge of the mark's line box from the shaped text's origin.
+    line_end: f32,
 }
 
 fn shape_mark(
@@ -49,21 +52,11 @@ fn shape_mark(
         Fragment::GlyphRun(run) => Some(run),
         _ => None,
     })?;
-    let metrics = run.metrics();
-    let height = metrics.ascent + metrics.descent;
-    // The engine places the mark's em box, so split one em between ascent and
-    // descent in the face's own proportion.
-    let em_ascent = if height > 0.0 {
-        font_size * metrics.ascent / height
-    } else {
-        font_size * 0.8 // cov:ignore: only a face with no vertical metrics has no height.
-    };
     let advance = run.inline_size();
-    let baseline = line.block_offset() + line.baseline(BaselineKind::Alphabetic);
     Some(ShapedMark {
         advance,
-        baseline,
-        em_ascent,
+        line_start: line.block_offset(),
+        line_end: line.block_offset() + line.block_size(),
         text,
     })
 }
@@ -134,27 +127,54 @@ pub(crate) fn draw_marks_in(
         if !found {
             continue; // cov:ignore: every cluster of a run has a glyph in that run.
         }
-        // The mark is placed from the run's baseline, not from a glyph's
-        // origin, which carries the glyph's own vertical offset.
-        let text_baseline = baseline;
-        // The mark's em box starts `offset` from the baseline toward its side.
-        let mark_baseline = if mark.line_over {
-            text_baseline - mark.offset - (mark.font_size - shaped.em_ascent)
+        // The mark's line box rests on the edge `offset` from the run's
+        // baseline as a ruby annotation's line rests on its base. The run's
+        // baseline is used rather than a glyph's origin, which carries the
+        // glyph's own vertical offset.
+        let mark_top = if mark.line_over {
+            baseline - mark.offset - shaped.line_end
         } else {
-            text_baseline + mark.offset + shaped.em_ascent
+            baseline + mark.offset - shaped.line_start
         };
         // A right-to-left run lays its characters out from the right.
         let reversed = run.bidi_level() % 2 == 1;
         for slot in run.emphasis_slots(&cluster) {
-            let center = origin_x + start + (end - start) * slot_center(slot, reversed);
+            let (share_start, share) = slot_share(slot, reversed, end - start);
             crate::standalone_text::draw(
                 scene,
                 &shaped.text,
-                center - shaped.advance / 2.0,
-                mark_baseline - shaped.baseline,
+                origin_x + start + share_start + centered_offset(share, shaped.advance),
+                mark_top,
                 color,
             );
         }
+    }
+}
+
+/// Where `slot`'s character starts along a cluster spanning `span`, as an
+/// offset from the cluster's start in the direction its glyphs are laid out,
+/// and the share of the span it takes. A shared cluster divides its advance
+/// evenly among its characters.
+fn slot_share(slot: shodo::EmphasisSlot, reversed: bool, span: f32) -> (f32, f32) {
+    let share = span / slot.count as f32;
+    (share * slot_index(slot, reversed) as f32, share)
+}
+
+/// Offset that centers a mark of `advance` in `width`, rounded as the
+/// inline engine centers a ruby annotation over its base: the free space is
+/// halved in 1/64 px units, truncating toward zero, so a mark lands on the
+/// same pixels as the equivalent annotation.
+fn centered_offset(width: f32, advance: f32) -> f32 {
+    let unit = |value: f32| (f64::from(value) * 64.0).round() as i64;
+    let extra = unit(width) - unit(advance);
+    (extra / 2) as f32 / 64.0
+}
+
+fn slot_index(slot: shodo::EmphasisSlot, reversed: bool) -> u32 {
+    if reversed {
+        slot.count - 1 - slot.index
+    } else {
+        slot.index
     }
 }
 
@@ -162,12 +182,7 @@ pub(crate) fn draw_marks_in(
 /// fraction from the cluster's start in the direction its glyphs are laid
 /// out. A shared cluster divides its advance evenly among its characters.
 fn slot_center(slot: shodo::EmphasisSlot, reversed: bool) -> f32 {
-    let index = if reversed {
-        slot.count - 1 - slot.index
-    } else {
-        slot.index
-    };
-    (index as f32 + 0.5) / slot.count as f32
+    (slot_index(slot, reversed) as f32 + 0.5) / slot.count as f32
 }
 
 /// The mark shaped as upright vertical text, with the physical offset of its
@@ -313,3 +328,6 @@ pub(crate) fn draw_vertical_marks(
         inline += cluster.advance;
     }
 }
+
+#[cfg(test)]
+mod tests;

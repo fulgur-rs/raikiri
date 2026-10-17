@@ -1575,6 +1575,30 @@ css/css-text-decor/text-emphasis-style-property-002.html
 css/css-text-decor/text-emphasis-style-property-011.html
 css/css-text-decor/text-emphasis-style-property-011a.html
 css/css-text-decor/text-emphasis-style-property-011b.html
+css/css-text-decor/text-emphasis-style-property-012.html
+css/css-text-decor/text-emphasis-style-property-012a.html
+css/css-text-decor/text-emphasis-style-property-012b.html
+css/css-text-decor/text-emphasis-style-property-012c.html
+css/css-text-decor/text-emphasis-style-property-013.html
+css/css-text-decor/text-emphasis-style-property-013a.html
+css/css-text-decor/text-emphasis-style-property-013b.html
+css/css-text-decor/text-emphasis-style-property-014.html
+css/css-text-decor/text-emphasis-style-property-014a.html
+css/css-text-decor/text-emphasis-style-property-014b.html
+css/css-text-decor/text-emphasis-style-property-015.html
+css/css-text-decor/text-emphasis-style-property-015a.html
+css/css-text-decor/text-emphasis-style-property-015b.html
+css/css-text-decor/text-emphasis-style-property-016.html
+css/css-text-decor/text-emphasis-style-property-016a.html
+css/css-text-decor/text-emphasis-style-property-017.html
+css/css-text-decor/text-emphasis-style-property-017a.html
+css/css-text-decor/text-emphasis-style-property-017b.html
+css/css-text-decor/text-emphasis-style-property-018.html
+css/css-text-decor/text-emphasis-style-property-018a.html
+css/css-text-decor/text-emphasis-style-property-019.html
+css/css-text-decor/text-emphasis-style-property-019a.html
+css/css-text-decor/text-emphasis-style-property-020.html
+css/css-text-decor/text-emphasis-style-property-020a.html
 
 # --- css-text-decor text-emphasis upright marks in vertical lines against ruby references (exact, 800x600) ---
 css/css-text-decor/text-emphasis-style-property-003.html
