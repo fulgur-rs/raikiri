@@ -5,9 +5,10 @@ pub(crate) mod context;
 mod positioned;
 mod sizing;
 
-use crate::layout::context::LayoutSession;
+use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::resolve_calc;
 use context::{BlockContext, BlockFormattingContext};
+use shodo::style::TextGroupAlign;
 use sizing::Metrics;
 use taffy::{
     AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutBlockContainer,
@@ -126,19 +127,47 @@ pub(crate) fn compute_block_flow(
         };
         metrics.clamp_width(width)
     };
-    if let Some(ctx) = context.filter(|_| shares_context(&style)) {
-        return layout_context(tree, node, inputs, &style, metrics, width, ctx);
+    let align = tree.nodes[usize::from(node)].text_group_align;
+    let mut shared = context.filter(|_| shares_context(&style));
+    let run = |tree: &mut LayoutSession<'_>, shared: Option<&mut BlockContext<'_>>| {
+        if let Some(ctx) = shared {
+            return layout_context(tree, node, inputs, &style, metrics, width, ctx);
+        }
+        let mut owner = BlockFormattingContext::new();
+        layout_context(
+            tree,
+            node,
+            inputs,
+            &style,
+            metrics,
+            width,
+            &mut owner.root_block_context(),
+        )
+    };
+    if align == TextGroupAlign::None {
+        return run(tree, shared);
     }
-    let mut owner = BlockFormattingContext::new();
-    layout_context(
-        tree,
-        node,
-        inputs,
-        &style,
-        metrics,
-        width,
-        &mut owner.root_block_context(),
-    )
+    // The box roots a `text-group-align` group: the lines under it are laid
+    // out once to find the space the shortest leaves unfilled, then again
+    // with every line padded by it. The measuring pass leaves the block
+    // context as it found it.
+    let outer = std::mem::replace(
+        &mut tree.context.text_group,
+        TextGroupScope::Probing { shortest: None },
+    );
+    let saved = shared.as_deref().map(BlockContext::snapshot);
+    run(tree, shared.as_deref_mut());
+    if let (Some(ctx), Some(saved)) = (shared.as_deref_mut(), &saved) {
+        ctx.restore(saved);
+    }
+    let padding = match tree.context.text_group {
+        TextGroupScope::Probing { shortest, .. } => shortest.unwrap_or(0.0),
+        _ => 0.0, // cov:ignore: the probe leaves its own scope in place.
+    };
+    tree.context.text_group = TextGroupScope::Applying { align, padding };
+    let output = run(tree, shared);
+    tree.context.text_group = outer;
+    output
 }
 
 fn layout_context(

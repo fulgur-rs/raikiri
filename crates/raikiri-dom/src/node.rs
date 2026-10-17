@@ -506,6 +506,9 @@ pub struct Node {
     /// The physical axes in which size containment sizes this box as if it
     /// had no content (CSS Containment 2 §3.1, §3.2).
     pub(crate) size_containment: taffy::Size<bool>,
+    /// The `text-group-align` of this box (CSS Text 4), which makes it the
+    /// root of a group of the lines in its block formatting context.
+    pub(crate) text_group_align: shodo::style::TextGroupAlign,
     /// The flex container width this node's percentage padding and borders
     /// were last resolved against while taffy measured it as a flex item;
     /// its layout cache holds results for that width.
@@ -709,6 +712,7 @@ impl Node {
                 width: false,
                 height: false,
             },
+            text_group_align: shodo::style::TextGroupAlign::None,
             flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),

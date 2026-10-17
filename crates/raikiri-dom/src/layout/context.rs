@@ -25,6 +25,25 @@ pub(crate) struct LayoutContext {
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) in_flow_heights: HashMap<usize, f32>,
+    pub(crate) text_group: TextGroupScope,
+}
+
+/// The `text-group-align` group the lines being laid out belong to: the
+/// lines of the block formatting context under the box that declares it
+/// (CSS Text 4, group alignment).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) enum TextGroupScope {
+    /// No group reaches the lines being laid out.
+    #[default]
+    None,
+    /// Measuring: the lines laid out report the space they leave unfilled,
+    /// and the shortest of it is the group's padding.
+    Probing { shortest: Option<f32> },
+    /// Laying out for real: every line takes the group's padding.
+    Applying {
+        align: shodo::style::TextGroupAlign,
+        padding: f32,
+    },
 }
 
 #[derive(Debug)]

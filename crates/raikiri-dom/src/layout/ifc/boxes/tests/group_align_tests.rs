@@ -105,3 +105,127 @@ fn the_measuring_pass_leaves_the_floats_to_the_real_one() {
     });
     assert_eq!(starts, [60.0, 30.0]);
 }
+
+/// Lay out a group root with block children built by `build`, and return
+/// the inline start of each line's first glyph run in each of `paragraphs`.
+fn block_starts(
+    root_css: &str,
+    build: impl FnOnce(&mut crate::Document, usize) -> Vec<usize>,
+) -> Vec<Vec<f32>> {
+    let mut paragraphs = Vec::new();
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "",
+        &format!("font: 10px/10px Ahem; width: 100px; white-space: pre; {root_css}"),
+        |doc, root| paragraphs = build(doc, root),
+    );
+    layout_single_page(
+        with_ahem(&mut fixture.doc),
+        &fixture.cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    paragraphs
+        .iter()
+        .map(|&paragraph| {
+            let lines = fixture.doc.nodes[paragraph]
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .expect("lines");
+            lines
+                .lines
+                .iter()
+                .filter_map(|line| {
+                    line.fragments().find_map(|fragment| match fragment {
+                        shodo::Fragment::GlyphRun(run) => Some(run.inline_start()),
+                        _ => None,
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn paragraph(doc: &mut crate::Document, parent: usize, style: &str, text: &str) -> usize {
+    let block = doc.append_element(
+        Some(parent),
+        "p",
+        taffy::Style::default(),
+        Some(format!("display:block;margin:0;{style}").as_str()),
+    );
+    doc.append_text(block, text);
+    block
+}
+
+#[test]
+fn the_lines_of_block_children_align_as_one_group() {
+    // The paragraphs leave 60px, 80px and 70px: every line gives up 60px.
+    let starts = block_starts("text-group-align: end", |doc, root| {
+        vec![
+            paragraph(doc, root, "", "AAAA\nAA"),
+            paragraph(doc, root, "", "AAA"),
+        ]
+    });
+    assert_eq!(starts, [vec![60.0, 60.0], vec![60.0]]);
+    // A nested block in the same formatting context joins the group too.
+    let starts = block_starts("text-group-align: end", |doc, root| {
+        let outer = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some("display:block"),
+        );
+        vec![
+            paragraph(doc, outer, "", "AAAA"),
+            paragraph(doc, root, "", "AA"),
+        ]
+    });
+    assert_eq!(starts, [vec![60.0], vec![60.0]]);
+}
+
+#[test]
+fn a_block_with_its_own_formatting_context_is_left_out_of_the_group() {
+    // The `display: flow-root` paragraph aligns on its own, and its 90px of
+    // free space does not narrow the group's 60px.
+    let starts = block_starts("text-group-align: end", |doc, root| {
+        vec![
+            paragraph(doc, root, "", "AAAA"),
+            paragraph(doc, root, "display: flow-root", "A"),
+        ]
+    });
+    assert_eq!(starts, [vec![60.0], vec![0.0]]);
+}
+
+#[test]
+fn a_block_inside_a_paragraph_joins_the_paragraphs_group() {
+    // The root's own line leaves 80px and its block child's 60px.
+    let starts = block_starts("text-group-align: end", |doc, root| {
+        doc.append_text(root, "AA");
+        vec![root, paragraph(doc, root, "", "AAAA")]
+    });
+    assert_eq!(starts, [vec![60.0], vec![60.0]]);
+}
+
+#[test]
+fn a_group_root_that_is_its_own_formatting_context_groups_its_blocks() {
+    let starts = block_starts("text-group-align: end; overflow: hidden", |doc, root| {
+        vec![
+            paragraph(doc, root, "", "AAAA"),
+            paragraph(doc, root, "", "AA"),
+        ]
+    });
+    assert_eq!(starts, [vec![60.0], vec![60.0]]);
+}
+
+#[test]
+fn the_group_of_a_nested_root_is_its_own() {
+    // The inner block declares a group of its own, so its single line pads
+    // by its own 80px and the outer group's 60px stays with the first block.
+    let starts = block_starts("text-group-align: end", |doc, root| {
+        vec![
+            paragraph(doc, root, "", "AAAA"),
+            paragraph(doc, root, "text-group-align: end", "AA"),
+        ]
+    });
+    assert_eq!(starts, [vec![60.0], vec![80.0]]);
+}

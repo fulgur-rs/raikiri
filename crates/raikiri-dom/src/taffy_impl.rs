@@ -462,12 +462,22 @@ impl LayoutSession<'_> {
         inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
-        if let Some(output) = self.compute_transposed_child(node_id, inputs) {
-            return output;
+        // A box that does not share its parent's block context is not part of
+        // the parent's `text-group-align` group.
+        let outer_group = block_ctx
+            .is_none()
+            .then(|| std::mem::take(&mut self.context.text_group));
+        let output = if let Some(output) = self.compute_transposed_child(node_id, inputs) {
+            output
+        } else {
+            stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+                self.compute_child_layout_with_block_ctx_inner(node_id, inputs, block_ctx)
+            })
+        };
+        if let Some(group) = outer_group {
+            self.context.text_group = group;
         }
-        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
-            self.compute_child_layout_with_block_ctx_inner(node_id, inputs, block_ctx)
-        })
+        output
     }
 
     #[inline(never)]
