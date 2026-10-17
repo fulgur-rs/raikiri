@@ -11367,6 +11367,7 @@ fn overflow_clip_margin_inherits_explicitly() {
     let parent = doc.push_element(0, "div", Some("overflow-clip-margin: content-box 2em"));
     let child = doc.push_element(parent, "div", Some("overflow-clip-margin: inherit"));
     let reset = doc.push_element(child, "div", None);
+    let initial = doc.push_element(parent, "div", Some("overflow-clip-margin: initial"));
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
     let expected = crate::resolve::ComputedOverflowClipMargin {
@@ -11375,8 +11376,10 @@ fn overflow_clip_margin_inherits_explicitly() {
     };
     assert_eq!(r.computed[parent].overflow_clip_margin, expected);
     assert_eq!(r.computed[child].overflow_clip_margin, expected);
-    assert_eq!(
-        r.computed[reset].overflow_clip_margin,
-        crate::resolve::ComputedOverflowClipMargin::INITIAL
-    );
+    for id in [reset, initial] {
+        assert_eq!(
+            r.computed[id].overflow_clip_margin,
+            crate::resolve::ComputedOverflowClipMargin::INITIAL
+        );
+    }
 }
