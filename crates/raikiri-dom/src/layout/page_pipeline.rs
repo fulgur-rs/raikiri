@@ -643,6 +643,53 @@ fn unpaginated_content_overflow(
         .collect()
 }
 
+/// Scale the used width of each box with a percentage `width` by the ratio
+/// of the inline size of the page it starts on to the first page's.
+///
+/// Source layout resolves the percentage against the first page's inline
+/// size (`content_width` when the first page has none).
+fn scale_percent_widths(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_widths: &[f32],
+    content_width: f32,
+    page_origins: &PageOrigins,
+    control: &PageLayoutControl<'_>,
+) -> Result<(), LayoutError> {
+    if page_widths.is_empty() {
+        return Ok(());
+    }
+    let base_width = page_widths
+        .first()
+        .copied()
+        .filter(|width| width.is_finite() && *width > 0.0)
+        .unwrap_or(content_width);
+    if base_width.is_finite() && base_width > 0.0 {
+        for node_id in 0..document.nodes.len() {
+            control.check_aborted()?;
+            if !matches!(
+                cascade.computed[node_id].width,
+                ComputedLengthPercentageOrAuto::Percent(_)
+            ) {
+                continue;
+            }
+            let page_index = page_origins.page_index_for_y(current_abs_y(document, node_id));
+            let Some(target_width) = page_widths
+                .get(page_index as usize)
+                .copied()
+                .filter(|width| width.is_finite() && *width > 0.0)
+            else {
+                continue;
+            };
+            let scale = target_width / base_width;
+            if scale.is_finite() && (scale - 1.0).abs() > 0.0001 {
+                document.nodes[node_id].unrounded_layout.size.width *= scale;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Let the table boxes around the rows that pagination moved follow them,
 /// given where each row sat in its parent before pagination.
 ///
@@ -5231,38 +5278,15 @@ fn paginate_flow(
         super::fixed::restore_fixed_box_block_positions(document, cascade, root, content_height);
     }
 
-    if !page_widths.is_empty() {
-        let base_width = page_widths
-            .first()
-            .copied()
-            .filter(|width| width.is_finite() && *width > 0.0)
-            .unwrap_or(content_width);
-        if base_width.is_finite() && base_width > 0.0 {
-            for node_id in 0..document.nodes.len() {
-                control.check_aborted()?;
-                if !matches!(
-                    cascade.computed[node_id].width,
-                    ComputedLengthPercentageOrAuto::Percent(_)
-                ) {
-                    continue;
-                }
-                let page_index = page_index_for_y(current_abs_y(document, node_id));
-                let Some(target_width) = page_widths
-                    .get(page_index as usize)
-                    .copied()
-                    .filter(|width| width.is_finite() && *width > 0.0)
-                else {
-                    continue;
-                };
-                let scale = target_width / base_width;
-                if scale.is_finite() && (scale - 1.0).abs() > 0.0001 {
-                    document.nodes[node_id].unrounded_layout.size.width *= scale;
-                }
-            }
-        }
-    }
-
-    control.check_discovery_page_index(reach.max)?;
+    scale_percent_widths(
+        document,
+        cascade,
+        page_widths,
+        content_width,
+        &page_origins,
+        control,
+    )
+    .and_then(|()| control.check_discovery_page_index(reach.max))?;
     let last_page = if control.page_limit_reached.get() {
         control.max_pages.unwrap_or(0).saturating_sub(1)
     } else {

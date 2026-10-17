@@ -608,6 +608,28 @@ fn page_layout_control_cancels_candidate_collection() {
 }
 
 #[test]
+fn percent_width_scaling_skips_an_unusable_base_width_and_stops_on_abort() {
+    let (mut document, cascade) = hello_world_doc();
+    let pages = PageOrigins::new(&[], 100.0);
+    let widths = |document: &Document| -> Vec<f32> {
+        document
+            .nodes
+            .iter()
+            .map(|node| node.unrounded_layout.size.width)
+            .collect()
+    };
+    let before = widths(&document);
+    let control = PageLayoutControl::new(None);
+    scale_percent_widths(&mut document, &cascade, &[f32::NAN], 0.0, &pages, &control).unwrap();
+    assert_eq!(widths(&document), before);
+
+    let abort_check = || true;
+    let aborted = PageLayoutControl::new(None).with_abort_check(&abort_check);
+    let result = scale_percent_widths(&mut document, &cascade, &[200.0], 200.0, &pages, &aborted);
+    assert!(matches!(result, Err(LayoutError::Aborted)));
+}
+
+#[test]
 fn page_layout_control_allows_an_explicit_unbounded_page_count() {
     let (mut document, cascade) = hello_world_doc();
     let control = PageLayoutControl::new(None);
