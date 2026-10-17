@@ -16353,3 +16353,19 @@ fn a_transition_target_keeps_only_the_offsets_its_break_allows() {
         103.0
     );
 }
+
+#[test]
+fn a_page_type_change_opens_the_page_after_the_overflowed_margin_box() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // Outside the flow, the transition starts from the current page.
+    assert_eq!(pages.transition_natural_page(-1.0, 0.0, 2, 5, true), 2);
+    // A box partway down a reached later page opens the page after it.
+    assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, true), 3);
+    // A margin box already at a page top stays on that page.
+    assert_eq!(pages.transition_natural_page(210.0, 10.0, 0, 3, true), 2);
+    // Without a page-type change, or on a page the flow has not reached,
+    // the box keeps the page it falls on.
+    assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 3, false), 2);
+    assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 1, true), 2);
+    assert_eq!(pages.transition_natural_page(250.0, 10.0, 2, 3, true), 2);
+}
