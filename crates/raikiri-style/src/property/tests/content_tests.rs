@@ -16,12 +16,30 @@ fn counter_pairs(pairs: &[(&str, i32)]) -> Arc<Vec<(SmolStr, i32)>> {
     )
 }
 
+fn reset_pairs(pairs: &[(&str, CounterResetValue)]) -> Arc<Vec<(SmolStr, CounterResetValue)>> {
+    Arc::new(
+        pairs
+            .iter()
+            .map(|(name, value)| (SmolStr::new(name), *value))
+            .collect(),
+    )
+}
+
+fn integer_resets(pairs: &[(&str, i32)]) -> Arc<Vec<(SmolStr, CounterResetValue)>> {
+    Arc::new(
+        pairs
+            .iter()
+            .map(|(name, value)| (SmolStr::new(name), CounterResetValue::Integer(*value)))
+            .collect(),
+    )
+}
+
 #[test]
 fn counter_reset_single_name_defaults_to_zero() {
     // Spec: reset defaults to 0.
     assert_eq!(
         parse("chapter", "counter-reset"),
-        Some(PropertyValue::CounterReset(counter_pairs(&[(
+        Some(PropertyValue::CounterReset(integer_resets(&[(
             "chapter", 0
         )])))
     );
@@ -32,7 +50,7 @@ fn counter_reset_multiple_names_with_mixed_ints() {
     // Second name has an integer: first defaults to 0, second takes 3.
     assert_eq!(
         parse("chapter section 3", "counter-reset"),
-        Some(PropertyValue::CounterReset(counter_pairs(&[
+        Some(PropertyValue::CounterReset(integer_resets(&[
             ("chapter", 0),
             ("section", 3)
         ])))
@@ -45,7 +63,7 @@ fn counter_reset_none_returns_empty_vec() {
     // Use the shared Arc slot (`empty_counter_entries`) for the empty case.
     assert_eq!(
         parse("none", "counter-reset"),
-        Some(PropertyValue::CounterReset(empty_counter_entries()))
+        Some(PropertyValue::CounterReset(empty_counter_reset_entries()))
     );
 }
 
@@ -126,7 +144,7 @@ fn counter_reset_is_case_insensitive_on_none() {
     // Use the shared Arc slot for the empty case.
     assert_eq!(
         parse("NONE", "counter-reset"),
-        Some(PropertyValue::CounterReset(empty_counter_entries()))
+        Some(PropertyValue::CounterReset(empty_counter_reset_entries()))
     );
 }
 
@@ -151,10 +169,50 @@ fn counter_reset_accepts_negative_integer() {
     // Reset and set use the same grammar as increment.
     assert_eq!(
         parse("chapter -5", "counter-reset"),
-        Some(PropertyValue::CounterReset(counter_pairs(&[(
+        Some(PropertyValue::CounterReset(integer_resets(&[(
             "chapter", -5
         )])))
     );
+}
+
+#[test]
+fn counter_reset_parses_reversed_counters() {
+    // CSS Lists 3 §4.1: `reversed(<counter-name>) <integer>?`; without the
+    // integer the starting value is left to layout.
+    assert_eq!(
+        parse(
+            "reversed(first) -1 reversed(second) third 99",
+            "counter-reset"
+        ),
+        Some(PropertyValue::CounterReset(reset_pairs(&[
+            ("first", CounterResetValue::Reversed(Some(-1))),
+            ("second", CounterResetValue::Reversed(None)),
+            ("third", CounterResetValue::Integer(99)),
+        ])))
+    );
+    assert_eq!(
+        parse("chapter REVERSED(chapter)", "counter-reset"),
+        Some(PropertyValue::CounterReset(reset_pairs(&[
+            ("chapter", CounterResetValue::Integer(0)),
+            ("chapter", CounterResetValue::Reversed(None)),
+        ])))
+    );
+}
+
+#[test]
+fn counter_reset_rejects_invalid_reversed_counters() {
+    for value in [
+        "reversed(none)",
+        "reversed(3)",
+        "reversed(a b)",
+        "reversed()",
+        "99 reversed(imagenum)",
+    ] {
+        assert_eq!(parse(value, "counter-reset"), None, "{value}");
+    }
+    // Only counter-reset instantiates reversed counters.
+    assert_eq!(parse("reversed(chapter)", "counter-increment"), None);
+    assert_eq!(parse("reversed(chapter)", "counter-set"), None);
 }
 
 #[test]

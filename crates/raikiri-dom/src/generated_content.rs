@@ -405,6 +405,7 @@ impl<'a> CounterValues<'a> {
         let Some(computed) = computed else {
             return Self::unchanged(base);
         };
+        let list_item = computed.display == DisplayValue::ListItem;
         let mut effective_last = None;
         let mut appended = false;
         if let Some((_, value)) = computed
@@ -413,16 +414,15 @@ impl<'a> CounterValues<'a> {
             .rev()
             .find(|(counter_name, _)| counter_name.as_str() == name)
         {
-            effective_last = Some(*value);
+            effective_last = Some(crate::target::local_reset_value(
+                computed, list_item, name, *value,
+            ));
             appended = true;
         }
 
         // A `display: list-item` pseudo increments list-item for its own
         // content as well as for the element's later children.
-        let implicit = crate::target::implicit_list_item_increment(
-            computed,
-            computed.display == DisplayValue::ListItem,
-        );
+        let implicit = crate::target::local_implicit_list_item_increment(computed, list_item);
         for (counter_name, delta) in computed.counter_increment.iter().chain(implicit.iter()) {
             if counter_name.as_str() != name {
                 continue;
@@ -512,7 +512,8 @@ impl CounterSnapshotLookup for CounterSnapshot {
 
 /// Apply the `counter-reset`, `counter-increment` and `counter-set` of
 /// `computed` (a pseudo-element) to a copy of the counters in effect at its
-/// element.
+/// element, with the implicit list-item increment of a `display: list-item`
+/// pseudo, as its [`CounterSnapshotView`] does.
 pub fn apply_counter_directives_to_snapshot(
     snapshot: &mut CounterSnapshot,
     computed: &raikiri_style::ComputedValues,
@@ -523,7 +524,15 @@ pub fn apply_counter_directives_to_snapshot(
     // generated content before the scope is used by later real children.
     let mut reset_values = std::collections::HashMap::new();
     for (name, value) in computed.counter_reset.iter() {
-        reset_values.insert(name.as_str(), *value);
+        reset_values.insert(
+            name.as_str(),
+            crate::target::local_reset_value(
+                computed,
+                computed.display == DisplayValue::ListItem,
+                name,
+                *value,
+            ),
+        );
     }
     for (name, value) in reset_values {
         snapshot
@@ -531,7 +540,11 @@ pub fn apply_counter_directives_to_snapshot(
             .or_default()
             .push(value);
     }
-    for (name, delta) in computed.counter_increment.iter() {
+    let implicit = crate::target::local_implicit_list_item_increment(
+        computed,
+        computed.display == DisplayValue::ListItem,
+    );
+    for (name, delta) in computed.counter_increment.iter().chain(implicit.iter()) {
         let stack = snapshot
             .entry(raikiri_traits::Symbol::new(name.as_str()))
             .or_default();

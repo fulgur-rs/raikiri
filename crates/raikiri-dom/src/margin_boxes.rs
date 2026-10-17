@@ -646,7 +646,14 @@ fn counter_reset_value(value: Option<&PropertyValue>, name: &str) -> Option<i32>
         .iter()
         .rev()
         .find(|(counter_name, _)| counter_name.as_str() == name)
-        .map(|(_, value)| *value)
+        .map(|(_, value)| page_reset_value(*value))
+}
+
+/// The starting value of a `counter-reset` entry in a page context. A
+/// reversed counter whose starting value is calculated from later increments
+/// starts at 0 here: this compact resolver does not walk the page sequence.
+fn page_reset_value(value: raikiri_style::CounterResetValue) -> i32 {
+    value.starting_value().unwrap_or(0)
 }
 
 fn counter_increment_value(value: Option<&PropertyValue>, name: &str) -> Option<i32> {
@@ -672,7 +679,7 @@ fn computed_counter_reset_value(document: &Document, cascade: &CascadeResult, na
                 .iter()
                 .rev()
                 .find(|(counter_name, _)| counter_name.as_str() == name)
-                .map(|(_, value)| *value)
+                .map(|(_, value)| page_reset_value(*value))
         })
         .unwrap_or(0)
 }

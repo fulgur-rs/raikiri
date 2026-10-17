@@ -154,6 +154,42 @@ pub(crate) fn empty_counter_entries() -> Arc<Vec<(SmolStr, i32)>> {
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
+/// Shared Arc for empty `counter-reset` entries, the [`CounterResetValue`]
+/// counterpart of [`empty_counter_entries`] with the same rationale.
+pub(crate) fn empty_counter_reset_entries() -> Arc<Vec<(SmolStr, CounterResetValue)>> {
+    static EMPTY: OnceLock<Arc<Vec<(SmolStr, CounterResetValue)>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
+/// The value one `counter-reset` entry gives its counter (CSS Lists 3 §4.1
+/// <https://www.w3.org/TR/css-lists-3/#counter-reset>).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CounterResetValue {
+    /// `<counter-name> <integer>?`: a counter starting at the integer, which
+    /// defaults to 0.
+    Integer(i32),
+    /// `reversed(<counter-name>) <integer>?`: a reversed counter. `None` when
+    /// the integer is omitted; the starting value is then calculated from
+    /// the counter's increments at layout time (CSS Lists 3 §4.4.2).
+    Reversed(Option<i32>),
+}
+
+impl CounterResetValue {
+    /// The given starting value, or `None` for a reversed counter whose
+    /// starting value is calculated at layout time.
+    pub fn starting_value(self) -> Option<i32> {
+        match self {
+            Self::Integer(value) => Some(value),
+            Self::Reversed(value) => value,
+        }
+    }
+
+    /// Whether the counter this entry instantiates is reversed.
+    pub fn is_reversed(self) -> bool {
+        matches!(self, Self::Reversed(_))
+    }
+}
+
 /// Shared Arc for empty `quotes` entries. Both parsing `none` and the
 /// initial value (when there is no declaration) use this one slot,
 /// following the `OnceLock` shared-slot pattern of [`empty_counter_entries`].
@@ -9878,10 +9914,11 @@ pub enum PropertyValue {
     /// is expanded into its longhands when parsed (see
     /// [`crate::rule::expand_shorthand_into`]), so few values hold it.
     ListStyle(Box<ListStyleShorthand>),
-    /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
+    /// `counter-reset: [ <counter-name> <integer>? | <reversed-counter-name> <integer>? ]+ | none` —
     /// non-inherited. The spec's initial value is `none` (CSS Lists 3 §4.1), which
     /// this implementation represents as an empty list.
-    /// The integer defaults to 0 if omitted (as specified).
+    /// The integer defaults to 0 if omitted (as specified), except for a
+    /// reversed counter, whose starting value is then calculated at layout time.
     ///
     /// The [`Arc<Vec<..>>`] wrapper makes cloning a cascade winner (the
     /// `value.clone()` in `apply_winners`'s drain) and cloning during an inheritance
@@ -9893,7 +9930,7 @@ pub enum PropertyValue {
     /// deep-cloned the payload. For `* { counter-reset: c0 c1 ... cN }` across M
     /// elements, the cost falls from O(N × M) to O(N + M) (a cascade-memory DoS
     /// mitigation following the Content/StringSet pattern).
-    CounterReset(Arc<Vec<(SmolStr, i32)>>),
+    CounterReset(Arc<Vec<(SmolStr, CounterResetValue)>>),
     /// CSS-wide `counter-reset: inherit` retained for page-context resolution.
     /// The page-margin used-value pass resolves this marker against the
     /// enclosing page counter scope.

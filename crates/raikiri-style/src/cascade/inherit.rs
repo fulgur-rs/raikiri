@@ -3204,7 +3204,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ListStylePosition(v) => target.list_style_position = v,
         PropertyValue::CounterReset(v) => target.counter_reset = v,
         PropertyValue::CounterResetInherit => {
-            target.counter_reset = crate::property::empty_counter_entries();
+            target.counter_reset = crate::property::empty_counter_reset_entries();
         }
         PropertyValue::CounterIncrement(v) => target.counter_increment = v,
         PropertyValue::CounterSet(v) => target.counter_set = v,

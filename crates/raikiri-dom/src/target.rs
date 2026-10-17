@@ -44,7 +44,7 @@ use std::collections::HashMap;
 use std::mem::size_of;
 
 use raikiri_style::property::DisplayValue;
-use raikiri_style::{CascadeResult, PseudoElem};
+use raikiri_style::{CascadeResult, CounterResetValue, PseudoElem};
 use raikiri_traits::Symbol;
 use smol_str::SmolStr;
 
@@ -85,6 +85,67 @@ pub(crate) fn implicit_list_item_increment(
             .iter()
             .any(|(name, _)| name.as_str() == LIST_ITEM_COUNTER))
     .then(|| (SmolStr::new_static(LIST_ITEM_COUNTER), 1))
+}
+
+/// [`implicit_list_item_increment`] for a style seen on its own, as the
+/// local counter view of a pseudo-element sees it: the increment is -1 when
+/// the style's own `counter-reset` makes `list-item` a reversed counter.
+/// A reversed `list-item` counter inherited from the element is not known
+/// here.
+pub(crate) fn local_implicit_list_item_increment(
+    cv: &raikiri_style::ComputedValues,
+    list_item: bool,
+) -> Option<(SmolStr, i32)> {
+    let reversed = cv
+        .counter_reset
+        .iter()
+        .rev()
+        .find(|(name, _)| name.as_str() == LIST_ITEM_COUNTER)
+        .is_some_and(|(_, value)| value.is_reversed());
+    implicit_list_item_increment(cv, list_item)
+        .map(|(name, delta)| (name, if reversed { -delta } else { delta }))
+}
+
+/// The starting value that the `counter-reset` entry `value` of `cv` gives
+/// the counter `name` in the local counter view of a pseudo-element. A
+/// reversed counter without a given starting value is calculated from `cv`'s
+/// own directives, as if nothing else in its scope counted.
+pub(crate) fn local_reset_value(
+    cv: &raikiri_style::ComputedValues,
+    list_item: bool,
+    name: &str,
+    value: CounterResetValue,
+) -> i32 {
+    value.starting_value().unwrap_or_else(|| {
+        let implicit = local_implicit_list_item_increment(cv, list_item);
+        let (increment, set) = counter_directives(cv, implicit.as_ref(), name);
+        let mut tally = ReversedStartTally::default();
+        tally.record(increment, set);
+        tally.starting_value()
+    })
+}
+
+/// The total increment that `cv` (with its implicit list-item increment)
+/// applies to the counter `name`, and the value its last `counter-set`
+/// entry for `name` gives, if any.
+fn counter_directives(
+    cv: &raikiri_style::ComputedValues,
+    implicit_list_item: Option<&(SmolStr, i32)>,
+    name: &str,
+) -> (i32, Option<i32>) {
+    let increment = cv
+        .counter_increment
+        .iter()
+        .chain(implicit_list_item)
+        .filter(|(counter, _)| counter.as_str() == name)
+        .fold(0_i32, |total, (_, delta)| total.saturating_add(*delta));
+    let set = cv
+        .counter_set
+        .iter()
+        .rev()
+        .find(|(counter, _)| counter.as_str() == name)
+        .map(|(_, value)| *value);
+    (increment, set)
 }
 
 /// Maximum estimated memory retained and cloned for counter snapshots.
@@ -172,6 +233,83 @@ struct CounterScopes {
     /// last) — the [`CounterSnapshot`] shape directly, so
     /// [`Self::snapshot`] is a plain clone.
     stacks: HashMap<Symbol, Vec<i32>>,
+    /// counter name → what each level of the same-named entry of
+    /// [`Self::stacks`] is, pushed and popped in lockstep with it.
+    levels: HashMap<Symbol, Vec<CounterLevel>>,
+    /// How reversed counters without a given starting value start.
+    reversed: ReversedStarts,
+    /// How many levels in [`Self::levels`] have a
+    /// [`CounterLevel::calculated`] tally, so elements outside every such
+    /// scope skip the tally bookkeeping.
+    live_calculated: usize,
+}
+
+/// Whether one counter level is reversed, and which calculated starting
+/// value it feeds when its `counter-reset` gave none.
+#[derive(Clone, Copy, Debug, Default)]
+struct CounterLevel {
+    reversed: bool,
+    /// While [`ReversedStarts::Collect`] runs, the index of this level's
+    /// tally when it is a reversed counter without a given starting value.
+    calculated: Option<usize>,
+}
+
+/// The starting values of reversed counters instantiated without one.
+///
+/// CSS Lists 3 §4.4.2 <https://www.w3.org/TR/css-lists-3/#instantiating-counters>
+/// calculates such a value from the increments and sets that the elements in
+/// the counter's scope apply to it. Those directives never depend on the
+/// counter's own value, so [`counter_snapshots_with_budget`] walks the tree
+/// once in [`Self::Collect`] mode, then again with the [`Self::Resolved`]
+/// values.
+#[derive(Debug)]
+enum ReversedStarts {
+    /// Record each counter's directives; the counters start at 0 meanwhile.
+    Collect(Vec<ReversedStartTally>),
+    /// The calculated starting values in document order, and the index of
+    /// the next one to use.
+    Resolved { starts: Vec<i32>, next: usize },
+}
+
+impl Default for ReversedStarts {
+    fn default() -> Self {
+        Self::Collect(Vec::new())
+    }
+}
+
+/// The running state of CSS Lists 3 §4.4.2's algorithm for one reversed
+/// counter: `num` and `lastNonZeroIncrementNegated`, plus whether a
+/// `counter-set` already ended the loop.
+#[derive(Clone, Copy, Debug, Default)]
+struct ReversedStartTally {
+    num: i32,
+    last_non_zero_increment_negated: i32,
+    done: bool,
+}
+
+impl ReversedStartTally {
+    /// One element that increments the counter by `increment` (0 when it only
+    /// sets it) and, when `set` is given, sets it to that value.
+    fn record(&mut self, increment: i32, set: Option<i32>) {
+        if self.done {
+            return;
+        }
+        let increment_negated = increment.saturating_neg();
+        if increment_negated != 0 {
+            self.last_non_zero_increment_negated = increment_negated;
+        }
+        if let Some(value) = set {
+            self.num = self.num.saturating_add(value);
+            self.done = true;
+        } else {
+            self.num = self.num.saturating_add(increment_negated);
+        }
+    }
+
+    fn starting_value(self) -> i32 {
+        self.num
+            .saturating_add(self.last_non_zero_increment_negated)
+    }
 }
 
 impl CounterScopes {
@@ -220,7 +358,12 @@ impl CounterScopes {
     /// automatically increment the special list-item counter, unless the
     /// counter-increment property explicitly specifies a different
     /// increment for the list-item counter", so such an element gets an
-    /// implicit `list-item 1` increment after its resets and before its sets.
+    /// implicit `list-item 1` increment after its resets and before its sets,
+    /// or `list-item -1` when the innermost `list-item` counter is reversed.
+    ///
+    /// A reversed counter without a given starting value takes the one
+    /// [`ReversedStarts`] calculated, and the directives applied to it are fed
+    /// back to that calculation while it is being collected.
     fn apply(
         &mut self,
         cv: &raikiri_style::ComputedValues,
@@ -236,7 +379,7 @@ impl CounterScopes {
         // `reset_order` preserves first-occurrence order across distinct
         // names only; it has no bearing on correctness (different names
         // push into independent stacks), just deterministic iteration.
-        let mut reset_values: HashMap<Symbol, i32> = HashMap::new();
+        let mut reset_values: HashMap<Symbol, CounterResetValue> = HashMap::new();
         let mut reset_order: Vec<Symbol> = Vec::new();
         for (name, value) in cv.counter_reset.iter() {
             let sym = Symbol::new(name.clone());
@@ -245,7 +388,7 @@ impl CounterScopes {
             }
         }
         for sym in reset_order {
-            let value = reset_values[&sym];
+            let reset = reset_values[&sym];
             // Obscuring rule: an earlier sibling's still-open same-name
             // level (found in `parent_bucket`) is evicted, not nested
             // inside, by this element's own counter-reset — see this
@@ -256,15 +399,33 @@ impl CounterScopes {
                 bucket.remove(pos);
                 self.pop_one(&sym);
             }
+            let mut level = CounterLevel {
+                reversed: reset.is_reversed(),
+                calculated: None,
+            };
+            let value = match reset.starting_value() {
+                Some(value) => value,
+                None => self.calculated_start(&mut level),
+            };
             // counter-reset always instantiates a *new* nested scope level
             // (CSS Lists 3 §4.3 "self-nesting", module doc), regardless of
             // whether an ancestor scope for `name` already exists.
-            self.stacks.entry(sym.clone()).or_default().push(value);
+            self.push_level(sym.clone(), value, level);
             if let Some(bucket) = parent_bucket.as_deref_mut() {
                 bucket.push(sym);
             }
         }
-        let implicit_list_item = implicit_list_item_increment(cv, list_item);
+        // CSS Lists 3 §4.6: a reversed `list-item` counter is incremented by
+        // -1 on every list item instead.
+        let implicit_list_item =
+            implicit_list_item_increment(cv, list_item).map(|(name, delta)| {
+                let reversed = self
+                    .levels
+                    .get(&Symbol::new(LIST_ITEM_COUNTER))
+                    .and_then(|levels| levels.last())
+                    .is_some_and(|level| level.reversed);
+                (name, if reversed { -delta } else { delta })
+            });
         for (name, delta) in cv.counter_increment.iter().chain(implicit_list_item.iter()) {
             let sym = Symbol::new(name.clone());
             let stack = self.stacks.entry(sym.clone()).or_default();
@@ -283,7 +444,7 @@ impl CounterScopes {
                     // into `parent_bucket` exactly like a counter-reset's
                     // own push so it too survives across following
                     // siblings.
-                    stack.push(*delta);
+                    self.push_level(sym.clone(), *delta, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
                         bucket.push(sym);
                     }
@@ -296,13 +457,78 @@ impl CounterScopes {
             match stack.last_mut() {
                 Some(top) => *top = *value,
                 None => {
-                    stack.push(*value);
+                    self.push_level(sym.clone(), *value, CounterLevel::default());
                     if let Some(bucket) = parent_bucket.as_deref_mut() {
                         bucket.push(sym);
                     }
                 }
             }
         }
+        self.record_reversed_directives(cv, implicit_list_item.as_ref());
+    }
+
+    /// The starting value of a reversed counter level whose `counter-reset`
+    /// gave none, numbering the level for [`ReversedStarts`].
+    fn calculated_start(&mut self, level: &mut CounterLevel) -> i32 {
+        match &mut self.reversed {
+            ReversedStarts::Collect(tallies) => {
+                level.calculated = Some(tallies.len());
+                tallies.push(ReversedStartTally::default());
+                self.live_calculated += 1;
+                0
+            }
+            ReversedStarts::Resolved { starts, next } => {
+                // Both walks visit the same levels in the same order, so the
+                // index is in range.
+                let value = starts.get(*next).copied().unwrap_or(0);
+                *next += 1;
+                value
+            }
+        }
+    }
+
+    /// Feed the increments and sets that `cv` applied to the innermost level
+    /// of each counter to that level's [`ReversedStartTally`], when the level
+    /// is a reversed counter whose starting value is being calculated.
+    fn record_reversed_directives(
+        &mut self,
+        cv: &raikiri_style::ComputedValues,
+        implicit_list_item: Option<&(SmolStr, i32)>,
+    ) {
+        // Only the collecting walk numbers calculated levels.
+        let tallies = match &mut self.reversed {
+            ReversedStarts::Collect(tallies) if self.live_calculated > 0 => tallies,
+            _ => return,
+        };
+        let mut seen: Vec<&str> = Vec::new();
+        let names = cv
+            .counter_increment
+            .iter()
+            .chain(implicit_list_item)
+            .chain(cv.counter_set.iter())
+            .map(|(name, _)| name.as_str());
+        for name in names {
+            if seen.contains(&name) {
+                continue;
+            }
+            seen.push(name);
+            let Some(index) = self
+                .levels
+                .get(&Symbol::new(name))
+                .and_then(|levels| levels.last())
+                .and_then(|level| level.calculated)
+            else {
+                continue;
+            };
+            let (increment, set) = counter_directives(cv, implicit_list_item, name);
+            tallies[index].record(increment, set);
+        }
+    }
+
+    /// Push one new innermost level for `name`.
+    fn push_level(&mut self, name: Symbol, value: i32, level: CounterLevel) {
+        self.stacks.entry(name.clone()).or_default().push(value);
+        self.levels.entry(name).or_default().push(level);
     }
 
     /// Pop exactly the scope levels recorded for one bucket of
@@ -326,6 +552,13 @@ impl CounterScopes {
             if stack.is_empty() {
                 self.stacks.remove(name);
             }
+        }
+        let level = self.levels.get_mut(name).and_then(Vec::pop);
+        if self.levels.get(name).is_some_and(Vec::is_empty) {
+            self.levels.remove(name);
+        }
+        if level.is_some_and(|level| level.calculated.is_some()) {
+            self.live_calculated -= 1;
         }
     }
 
@@ -427,14 +660,60 @@ impl Document {
 /// Build named-counter snapshots while consuming a caller-owned cumulative
 /// budget. Reusing one budget across pages bounds the total clone and
 /// allocation work for the whole multi-page render.
+///
+/// When a style instantiates a reversed counter without a starting value, a
+/// first walk without snapshots collects the directives that calculate it.
 pub fn counter_snapshots_with_budget(
     doc: &Document,
     cascade: &CascadeResult,
     budget: &mut CounterSnapshotBudget,
 ) -> Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded> {
     budget.charge_base(doc.node_count())?;
-    let mut snapshots = vec![HashMap::new(); doc.node_count()];
     let mut scopes = CounterScopes::default();
+    if has_calculated_reversed_reset(cascade) {
+        let mut collect = CounterScopes::default();
+        walk_counter_scopes(doc, cascade, &mut collect, |_, _| Ok(()))?;
+        if let ReversedStarts::Collect(tallies) = collect.reversed {
+            scopes.reversed = ReversedStarts::Resolved {
+                starts: tallies
+                    .into_iter()
+                    .map(ReversedStartTally::starting_value)
+                    .collect(),
+                next: 0,
+            };
+        }
+    }
+    let mut snapshots = vec![HashMap::new(); doc.node_count()];
+    walk_counter_scopes(doc, cascade, &mut scopes, |idx, scopes| {
+        snapshots[idx] = scopes.snapshot(budget)?;
+        Ok(())
+    })?;
+    Ok(snapshots)
+}
+
+/// Whether any style instantiates a reversed counter without a starting
+/// value, so the walk must calculate one first.
+fn has_calculated_reversed_reset(cascade: &CascadeResult) -> bool {
+    cascade
+        .computed
+        .iter()
+        .chain(cascade.pseudo.values().map(|style| style.as_ref()))
+        .any(|cv| {
+            cv.counter_reset
+                .iter()
+                .any(|(_, value)| value.starting_value().is_none())
+        })
+}
+
+/// Walk the tree in document order, applying every counter directive to
+/// `scopes` and calling `visit` with each element whose box takes part in
+/// counting, right after its own directives and before its `::before`.
+fn walk_counter_scopes(
+    doc: &Document,
+    cascade: &CascadeResult,
+    scopes: &mut CounterScopes,
+    mut visit: impl FnMut(usize, &CounterScopes) -> Result<(), CounterSnapshotLimitExceeded>,
+) -> Result<(), CounterSnapshotLimitExceeded> {
     enum WalkStep {
         Enter(usize),
         Exit(usize),
@@ -473,7 +752,7 @@ pub fn counter_snapshots_with_budget(
                 // so a counter scope it creates must be visible to the
                 // element's real children, while the pseudo's own content
                 // applies those directives locally in paint.
-                snapshots[idx] = scopes.snapshot(budget)?;
+                visit(idx, scopes)?;
                 stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
                 if let Some(before) = generated_pseudo(cascade, idx, PseudoElem::Before) {
@@ -504,7 +783,7 @@ pub fn counter_snapshots_with_budget(
             }
         }
     }
-    Ok(snapshots)
+    Ok(())
 }
 
 #[cfg(test)]
