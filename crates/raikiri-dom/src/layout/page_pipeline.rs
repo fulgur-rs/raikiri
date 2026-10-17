@@ -4938,20 +4938,15 @@ fn paginate_flow(
                 {
                     let page_top = page_origin(natural_page);
                     let previous_bottom = effective_y - gap;
-                    // A border box ending exactly at the break still has
-                    // an adjoining margin on the following page.
-                    // An empty box that a forced break placed at the page
-                    // top leaves its collapsed margin after the break.
-                    // A later, unforced page edge inside that margin still
-                    // truncates it.
                     let follows_forced_break =
                         sibling_margins.follows_forced_break(document, cascade, previous, node_id);
-                    let after_forced_break =
-                        follows_forced_break && (previous_bottom - page_top).abs() <= 0.001;
-                    if natural_page > 0
-                        && effective_y > page_top + 0.001
-                        && previous_bottom <= page_top + 0.001
-                        && !after_forced_break
+                    if page_edge_falls_in_margin(
+                        natural_page,
+                        page_top,
+                        previous_bottom,
+                        effective_y,
+                        follows_forced_break,
+                    )
                         // Only a margin between adjoining siblings is
                         // truncated; a box that is not a candidate may lie
                         // between two nested candidates.
@@ -6443,6 +6438,29 @@ fn transition_target_y(
     } else {
         target_y + relative_offset
     }
+}
+
+/// Whether the edge at `page_top` of page `natural_page` falls inside the
+/// margin between a previous sibling whose border box ends at
+/// `previous_bottom` and a box whose border box starts at `effective_y`.
+///
+/// A border box ending exactly at the break still has an adjoining margin on
+/// the following page. An empty box that a forced break placed at the page
+/// top, which `follows_forced_break` reports, leaves its collapsed margin
+/// after the break; a later, unforced page edge inside that margin still
+/// falls in it.
+fn page_edge_falls_in_margin(
+    natural_page: u32,
+    page_top: f32,
+    previous_bottom: f32,
+    effective_y: f32,
+    follows_forced_break: bool,
+) -> bool {
+    let after_forced_break = follows_forced_break && (previous_bottom - page_top).abs() <= 0.001;
+    natural_page > 0
+        && effective_y > page_top + 0.001
+        && previous_bottom <= page_top + 0.001
+        && !after_forced_break
 }
 
 /// Whether a table row of `height` at `flow_y` crosses `page_end` and moves
