@@ -1776,6 +1776,10 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
 /// rounding, stays on the page beside it.
 const FLOW_BAND_TOLERANCE: f64 = 0.01;
 
+/// How far before a page's start and end a line's center may fall and still
+/// belong to that page, as layout assigns lines to pages.
+const CENTER_TOLERANCE: f64 = 0.001;
+
 /// How far toward its start a page's slice of the flow reaches to own a
 /// line, as layout assigns lines to pages.
 const LINE_OWNERSHIP_BIAS: f64 = 0.001;
@@ -1904,10 +1908,15 @@ impl PageLines {
                     rect.y0 - f64::from(paint_shift),
                     rect.y1 - f64::from(paint_shift),
                 );
+                // A line reaching into the page belongs to it, and so does
+                // one without height whose center layout puts there.
+                let center = (top + bottom) * 0.5;
                 top.is_finite()
                     && bottom.is_finite()
-                    && top < f64::from(end) - FLOW_BAND_TOLERANCE
-                    && bottom > f64::from(start) + FLOW_BAND_TOLERANCE
+                    && (top < f64::from(end) - FLOW_BAND_TOLERANCE
+                        && bottom > f64::from(start) + FLOW_BAND_TOLERANCE
+                        || center >= f64::from(start) - CENTER_TOLERANCE
+                            && center < f64::from(end) - CENTER_TOLERANCE)
             }
         }
     }

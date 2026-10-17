@@ -103,3 +103,12 @@ fn a_relative_offset_that_paint_applies_keeps_the_line_on_its_page() {
     );
     assert_eq!(pixel(&pages[0], 5, 95), GREEN);
 }
+
+#[test]
+fn a_line_without_height_at_the_start_of_a_page_stays_on_it() {
+    // The line after the break has no height and sits exactly where the
+    // second page area starts; its glyphs still paint there.
+    let pages = raster("<div>a</div><div style='break-before:page;line-height:0'>a</div>");
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pixel(&pages[1], 5, 22), GREEN);
+}
