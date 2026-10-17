@@ -79,3 +79,15 @@ fn a_line_after_a_forced_break_stays_on_its_page() {
     assert_eq!(pixel(&pages[0], 5, 85), WHITE);
     assert_eq!(pixel(&pages[1], 5, 25), GREEN);
 }
+
+#[test]
+fn a_line_taller_than_the_page_area_continues_on_the_next_page() {
+    // The 80px line overflows the 60px page area of the first page, which
+    // keeps it; its last 20px paint at the top of the second page area,
+    // above the 10px line that starts there.
+    let pages = raster("<div style='font:80px/80px Ahem'>a</div><div>a</div>");
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pixel(&pages[0], 5, 75), GREEN);
+    assert_eq!(pixel(&pages[1], 5, 35), GREEN);
+    assert_eq!(pixel(&pages[1], 5, 55), WHITE);
+}

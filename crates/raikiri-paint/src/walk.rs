@@ -1846,10 +1846,12 @@ pub(crate) enum PageLines {
     /// A page that follows the x axis owns the lines whose center lies in
     /// its band of the flow.
     AlongX(FlowBand),
-    /// A page that follows the y axis owns the lines whose center lies in
-    /// its slice of the shared flow space, from `start` to `end`, where
-    /// layout placed them: translations that paint adds move a line, not
-    /// the page it belongs to.
+    /// A page that follows the y axis owns the lines that reach across its
+    /// slice of the shared flow space, from `start` to `end`, where layout
+    /// placed them: layout moves a line that does not fit to the next page
+    /// whole, so only a line taller than a page reaches across several.
+    /// Translations that paint adds move a line, not the page it belongs
+    /// to.
     AlongY {
         start: f32,
         end: f32,
@@ -1889,7 +1891,7 @@ impl PageLines {
 
     /// Whether the page owns the line, or the paragraph kept whole, that
     /// covers `rect` where it paints under `transform` inside the root
-    /// element: by its center, as layout assigns lines to pages.
+    /// element, as layout assigns lines to pages.
     pub(crate) fn holds_line(self, transform: Affine, rect: Rect) -> bool {
         match self {
             Self::AlongX(band) => band.holds_line_center(transform, rect.center()),
@@ -1898,10 +1900,14 @@ impl PageLines {
                 end,
                 paint_shift,
             } => {
-                let center = rect.center().y - f64::from(paint_shift);
-                center.is_finite()
-                    && center >= f64::from(start) - LINE_OWNERSHIP_BIAS
-                    && center < f64::from(end) - LINE_OWNERSHIP_BIAS
+                let (top, bottom) = (
+                    rect.y0 - f64::from(paint_shift),
+                    rect.y1 - f64::from(paint_shift),
+                );
+                top.is_finite()
+                    && bottom.is_finite()
+                    && top < f64::from(end) - FLOW_BAND_TOLERANCE
+                    && bottom > f64::from(start) + FLOW_BAND_TOLERANCE
             }
         }
     }
