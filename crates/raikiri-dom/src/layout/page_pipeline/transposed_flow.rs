@@ -277,7 +277,9 @@ impl TransposedDocument {
         axes: FlowAxes,
         page_area_width: f32,
     ) -> Self {
-        let keys = document.nodes.len() + document.table_objects.cells.len();
+        let keys = document.nodes.len()
+            + document.table_objects.tables.len()
+            + document.table_objects.cells.len();
         // Only the virtual document node is outside the flow. The html
         // box and its children all have real layouts and local frames.
         let outside: Vec<usize> = document.ancestors(flow_root).collect();
@@ -366,7 +368,8 @@ impl TransposedDocument {
 /// The layout key whose border box the location of `key` is relative to.
 fn layout_frame(document: &Document, key: usize) -> Option<usize> {
     if key >= document.nodes.len() {
-        // An anonymous table cell is placed relative to its source owner.
+        // An anonymous table cell is placed relative to its source owner,
+        // and an anonymous table relative to its parent.
         return Some(document.ifc_source_owner(key));
     }
     document

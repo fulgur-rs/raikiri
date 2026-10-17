@@ -527,6 +527,51 @@ fn a_table_cell_resolves_against_its_table() {
 }
 
 #[test]
+fn a_cell_in_a_row_outside_a_table_resolves_against_the_anonymous_table() {
+    // CSS Tables 3 §3.9: the rows sit in an 80px wide anonymous table, not
+    // in the body. Its auto height is indefinite, so `top: 50%` is auto.
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let row = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-row"),
+    );
+    document.append_element(
+        Some(row),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-cell;width:80px;height:40px"),
+    );
+    let row = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = document.append_element(
+        Some(row),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-cell;position:relative;left:50%;top:50%;height:20px"),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    assert_eq!(
+        used_relative_offset(&document, &cascade, &cascade.computed[cell], cell),
+        (40.0, 0.0)
+    );
+}
+
+#[test]
 fn layout_precedence_takes_top_in_every_writing_mode() {
     // The painter takes the block-start `bottom` of an RTL `vertical-rl`
     // block; taffy's block layout applies `top` whatever the writing mode.

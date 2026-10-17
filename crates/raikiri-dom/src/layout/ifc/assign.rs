@@ -117,9 +117,9 @@ pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize)
         {
             true
         }
-        // A row or row group outside any table is laid out as a block (no
-        // anonymous table wraps it, see the taffy bridge), so it lays its own
-        // inline content out. Inside a table that content belongs to
+        // A row or row group outside any table that no anonymous table wraps
+        // (see `layout::table::anonymous`) is laid out as a block, so it lays
+        // its own inline content out. Inside a table that content belongs to
         // anonymous cells instead.
         DisplayValue::TableRow
         | DisplayValue::TableRowGroup
@@ -291,6 +291,7 @@ pub(crate) fn assign_ifc_roots(
         node_count: doc.nodes.len(),
         continuation_break: doc.continuation_break,
         anonymous_cells: doc.table_objects.cells.len(),
+        anonymous_tables: doc.table_objects.tables.len(),
     };
     if state
         .retained
@@ -504,7 +505,7 @@ fn inside_hidden_subtrees(doc: &Document) -> Vec<bool> {
 /// not zero-height (CSS 2.1, 9.4.2): any white space under `preserve`,
 /// `preserve-spaces` and `break-spaces`, and a segment break under
 /// `preserve-breaks`.
-pub(super) fn text_makes_a_line(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+pub(crate) fn text_makes_a_line(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let Some(text) = doc.nodes[id].text_content() else {
         return false; // cov:ignore: callers pass text nodes, which always hold character data.
     };

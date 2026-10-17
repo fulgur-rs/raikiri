@@ -234,8 +234,8 @@ struct ContainingBlock {
 /// The nearest ancestor of `node_id` that can be its containing block:
 /// `display: contents` elements, non-atomic inlines and table rows, row
 /// groups and columns are skipped, so a table cell has its table (CSS
-/// Tables 3 §3.5). A box that table fixup wrapped in an anonymous cell (CSS
-/// Tables 3 §3.9) has that cell instead.
+/// Tables 3 §3.5). A box that table fixup wrapped in an anonymous cell or
+/// table (CSS Tables 3 §3.9) has that box instead.
 fn containing_block(
     document: &Document,
     boxes: BoxTree<'_>,
@@ -245,6 +245,11 @@ fn containing_block(
     loop {
         let block = boxes.parent(child, BoxParentScope::Document)?;
         if let Some(key) = document.anonymous_cell_of(child) {
+            return Some(ContainingBlock { key, source: block });
+        }
+        // A cell in a row outside any table has the anonymous table that
+        // wraps the row, which takes its inherited style from the parent.
+        if let Some(key) = document.anonymous_table_of(child) {
             return Some(ContainingBlock { key, source: block });
         }
         if !is_non_atomic_inline(document, boxes, block) && !is_table_part(document, boxes, block) {

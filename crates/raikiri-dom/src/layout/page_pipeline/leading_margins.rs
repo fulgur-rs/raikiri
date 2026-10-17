@@ -45,9 +45,15 @@ pub(super) fn truncate(
                 parent_node.display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
             ) || parent_node.flags.contains(NodeFlags::IS_ROOT_ELEMENT));
-        let content_y = flow_y
-            + parent_node.unrounded_layout.border.top
-            + parent_node.unrounded_layout.padding.top;
+        // The rows an anonymous table wraps are placed relative to the
+        // table's parent, which holds them in the DOM.
+        let content_y = if document.is_anonymous_table(parent) {
+            flow_y - parent_node.unrounded_layout.location.y
+        } else {
+            flow_y
+                + parent_node.unrounded_layout.border.top
+                + parent_node.unrounded_layout.padding.top
+        };
         let children: Vec<usize> = document
             .child_ids(TaffyNodeId::from(parent))
             .map(usize::from)

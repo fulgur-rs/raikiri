@@ -1,4 +1,6 @@
-//! Layout-only anonymous table cells, without changing the source DOM.
+//! Layout-only anonymous table boxes, without changing the source DOM:
+//! cells that wrap loose content in tables, rows and row groups, and tables
+//! that wrap rows and row groups outside any table.
 
 use crate::Document;
 use crate::node::arena::BoxKey;
@@ -30,6 +32,20 @@ pub(crate) struct AnonymousCell {
     pub(crate) content: Vec<Content>,
 }
 
+/// An anonymous table around a run of rows and row groups whose parent is
+/// a block container (CSS 2.1 §17.2.1 rule 3, CSS Tables 3 §3.9).
+#[derive(Debug, Clone)]
+pub(crate) struct AnonymousTable {
+    /// The block container that holds the wrapped parts in the DOM.
+    pub(crate) parent: usize,
+    /// The wrapped rows and row groups, in document order.
+    pub(crate) parts: Vec<usize>,
+    /// The used boxes of `parts` relative to the table, as table layout
+    /// last placed them. Their stored boxes add the table's location, so
+    /// boxes summed along DOM ancestors place them in the table.
+    pub(crate) relative_parts: Vec<taffy::Layout>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Row {
     pub(crate) marker: usize,
@@ -43,6 +59,9 @@ pub(crate) struct TableObjects {
     pub(crate) cells: Vec<AnonymousCell>,
     /// The layout views of `cells`, moved into the node arena once built.
     cell_nodes: Vec<Node>,
+    pub(crate) tables: Vec<AnonymousTable>,
+    /// The anonymous table index of each wrapped row or row group.
+    table_by_part: HashMap<usize, usize>,
     cells_by_owner: HashMap<usize, Vec<usize>>,
     cell_by_content: HashMap<Content, usize>,
     content_by_owner: HashMap<usize, Vec<Content>>,
@@ -60,6 +79,11 @@ impl TableObjects {
     /// cells: `owner` is a table or one of its row groups or rows.
     pub(crate) fn lays_out_children(&self, owner: usize) -> bool {
         self.content_by_owner.contains_key(&owner)
+    }
+
+    /// The anonymous table index that wraps the source part `id`.
+    pub(crate) fn table_of_part(&self, id: usize) -> Option<usize> {
+        self.table_by_part.get(&id).copied()
     }
 }
 
@@ -87,10 +111,16 @@ fn children(
         .rev()
         .map(|&id| Content::Node(id))
         .collect();
-    if crate::generated_content::is_in_flow_generated_text(cascade, owner, PseudoElem::After) {
+    // An anonymous table has no generated content of its own.
+    let source = doc.is_source_node(owner);
+    if source
+        && crate::generated_content::is_in_flow_generated_text(cascade, owner, PseudoElem::After)
+    {
         pending.insert(0, Content::After(owner));
     }
-    if crate::generated_content::is_in_flow_generated_text(cascade, owner, PseudoElem::Before) {
+    if source
+        && crate::generated_content::is_in_flow_generated_text(cascade, owner, PseudoElem::Before)
+    {
         pending.push(Content::Before(owner));
     }
     while let Some(content) = pending.pop() {
@@ -366,6 +396,141 @@ fn rows(
     Ok(out)
 }
 
+fn is_row_or_group(display: DisplayValue) -> bool {
+    matches!(
+        display,
+        DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+    )
+}
+
+/// Whether `parent` lays its children out as block-level boxes, so that a
+/// run of rows among them can be wrapped in an anonymous block-level table.
+///
+/// Inline content would make the parent a paragraph root, whose children the
+/// inline engine lays out instead; its rows remain blocks there. List items,
+/// whose markers sit on their first line, and vertical and multicol
+/// containers keep their rows as blocks as well.
+fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: usize) -> bool {
+    let node = &doc.nodes[parent];
+    let cv = &cascade.computed[parent];
+    if !matches!(
+        node.display(),
+        DisplayValue::Block
+            | DisplayValue::FlowRoot
+            | DisplayValue::TableCell
+            | DisplayValue::TableCaption
+    ) || cv.cssom_writing_mode.is_vertical()
+        || !matches!(
+            cv.column_count,
+            raikiri_style::property::ColumnCountValue::Auto
+        )
+        || !matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto)
+        || node.is_inline_svg_root()
+    {
+        return false;
+    }
+    let generates = |pseudo| {
+        cascade
+            .pseudo
+            .get(&(raikiri_style::StyleNodeId::new(parent as u64), pseudo))
+            .is_some_and(|cv| cv.display != DisplayValue::None && !cv.content.is_empty())
+    };
+    if generates(PseudoElem::Before) || generates(PseudoElem::After) {
+        return false;
+    }
+    node.children.iter().all(|&child| {
+        let child_node = &doc.nodes[child];
+        !child_node.is_in_document()
+            || child_node.is_non_rendered_html_element()
+            || if child_node.kind() == NodeKind::Text {
+                // White space that `white-space` preserves forms a line.
+                !crate::layout::ifc::assign::text_makes_a_line(doc, cascade, child)
+            } else {
+                // Only text and elements are in the document.
+                let display = child_node.display();
+                display == DisplayValue::None
+                    || (!display.is_inline_level() && display != DisplayValue::Contents)
+            }
+    })
+}
+
+/// Group the rows and row groups outside any table into the runs that one
+/// anonymous table each wraps. White space and boxes that generate nothing
+/// between two parts do not end a run.
+fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<AnonymousTable> {
+    let mut tables = Vec::new();
+    for parent in 0..doc.nodes.len() {
+        let node = &doc.nodes[parent];
+        if !node.is_in_document()
+            || node.kind() != NodeKind::Element
+            || !node
+                .children
+                .iter()
+                .any(|&child| is_row_or_group(doc.nodes[child].display()))
+            || !holds_only_block_level_boxes(doc, cascade, parent)
+        {
+            continue;
+        }
+        let mut run = Vec::new();
+        for &child in &node.children {
+            let child_node = &doc.nodes[child];
+            if child_node.kind() == NodeKind::Element
+                && child_node.is_in_document()
+                && is_row_or_group(child_node.display())
+            {
+                run.push(child);
+            } else if child_node.kind() == NodeKind::Element
+                && child_node.is_in_document()
+                && !child_node.is_non_rendered_html_element()
+                && child_node.display() != DisplayValue::None
+                && !run.is_empty()
+            {
+                tables.push(AnonymousTable {
+                    parent,
+                    parts: std::mem::take(&mut run),
+                    relative_parts: Vec::new(),
+                });
+            }
+        }
+        if !run.is_empty() {
+            tables.push(AnonymousTable {
+                parent,
+                parts: run,
+                relative_parts: Vec::new(),
+            });
+        }
+    }
+    tables
+}
+
+/// The layout view of the anonymous table in `parent` around `parts`. It
+/// inherits its inherited table properties from `parent` and has initial
+/// values for the rest.
+fn anonymous_table_node(doc: &Document, parent: usize, parts: &[usize]) -> Node {
+    let source = &doc.nodes[parent];
+    let mut node = Node::new_element("div".into(), taffy::Style::default(), None);
+    if let crate::node::NodeData::Element(source_data) = &source.data {
+        let target = node.data.as_element_mut().expect("element prototype");
+        target.namespace = source_data.namespace.clone();
+    }
+    node.parent = Some(parent);
+    node.children = parts.to_vec();
+    node.flags = NodeFlags::IS_IN_DOCUMENT | NodeFlags::IS_TABLE_ROOT;
+    node.style.direction = source.style.direction;
+    node.computed_border = Some(raikiri_style::ComputedValues::initial().border);
+    node.set_display(DisplayValue::Table);
+    node.border_collapse = source.border_collapse;
+    node.border_spacing = source.border_spacing;
+    node.caption_side = source.caption_side;
+    node.authored_writing_mode = None;
+    node.used_writing_mode = source.used_writing_mode;
+    node.under_vertical_writing = source.under_vertical_writing;
+    node
+}
+
 pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(), LayoutError> {
     // Source parts may no longer contain anonymous cells on this pass. Their
     // previous parent-relative boxes must not shift ordinary table cells.
@@ -375,22 +540,43 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     // An unsuccessful rebuild must not expose cells from the previous pass.
     doc.table_objects = TableObjects::default();
     doc.nodes.set_anonymous_cells(Vec::new());
+    let tables = anonymous_table_runs(doc, cascade);
+    let table_nodes = tables
+        .iter()
+        .map(|table| anonymous_table_node(doc, table.parent, &table.parts))
+        .collect();
+    // The tables are set first: their number fixes the keys of the cells.
+    doc.nodes.set_anonymous_tables(table_nodes);
     let mut objects = TableObjects {
         paragraph_owner: vec![None; doc.nodes.len()],
         ..TableObjects::default()
     };
-    for id in 0..doc.nodes.len() {
-        if doc.nodes[id].is_in_document()
+    for (index, table) in tables.iter().enumerate() {
+        for &part in &table.parts {
+            objects.table_by_part.insert(part, index);
+        }
+    }
+    let table_keys = (0..tables.len()).map(|index| doc.nodes.anonymous_table_key(index));
+    let source_tables = (0..doc.nodes.len()).filter(|&id| {
+        doc.nodes[id].is_in_document()
             && matches!(
                 doc.nodes[id].display(),
                 DisplayValue::Table | DisplayValue::InlineTable
             )
-        {
-            let table_rows = rows(doc, cascade, &mut objects, id, true, &mut 0)?;
-            objects.rows.insert(id, table_rows);
-            objects.prototypes_by_owner.clear();
+    });
+    for id in source_tables.chain(table_keys).collect::<Vec<_>>() {
+        match rows(doc, cascade, &mut objects, id, true, &mut 0) {
+            Ok(table_rows) => {
+                objects.rows.insert(id, table_rows);
+                objects.prototypes_by_owner.clear();
+            }
+            Err(error) => {
+                doc.nodes.set_anonymous_tables(Vec::new());
+                return Err(error);
+            }
         }
     }
+    objects.tables = tables;
     doc.nodes
         .set_anonymous_cells(std::mem::take(&mut objects.cell_nodes));
     doc.table_objects = objects;
@@ -524,10 +710,12 @@ impl Document {
     }
 
     /// Source owner of a paragraph, retaining real DOM ids for decorations.
+    /// An anonymous table takes its parent, which it inherits from.
     #[doc(hidden)]
     pub fn ifc_source_owner(&self, key: usize) -> usize {
         match self.nodes.box_key(key) {
             Some(BoxKey::AnonymousCell(index)) => self.table_objects.cells[index].owner,
+            Some(BoxKey::AnonymousTable(index)) => self.table_objects.tables[index].parent,
             _ => key,
         }
     }
@@ -535,6 +723,68 @@ impl Document {
     /// Whether a layout key names a layout-only anonymous table cell.
     pub(crate) fn is_anonymous_cell(&self, key: usize) -> bool {
         self.nodes.is_anonymous_cell(key)
+    }
+
+    /// Whether a layout key names a layout-only anonymous table.
+    pub(crate) fn is_anonymous_table(&self, key: usize) -> bool {
+        self.nodes.is_anonymous_table(key)
+    }
+
+    /// The layout key of the anonymous table that wraps the source row or
+    /// row group `id`, if table fixup wrapped it in one.
+    pub(crate) fn anonymous_table_of(&self, id: usize) -> Option<usize> {
+        self.table_objects
+            .table_of_part(id)
+            .map(|index| self.nodes.anonymous_table_key(index))
+    }
+
+    /// The box at which table structure ends above the parts of `table`:
+    /// the table itself, or the parent of an anonymous table, which is not
+    /// a DOM ancestor of the parts it wraps.
+    pub(crate) fn table_parts_boundary(&self, table: usize) -> usize {
+        match self.nodes.box_key(table) {
+            Some(BoxKey::AnonymousTable(index)) => self.table_objects.tables[index].parent,
+            _ => table,
+        }
+    }
+
+    /// The rows and row groups that the anonymous table `table` wraps.
+    pub(crate) fn anonymous_table_parts(&self, table: usize) -> Option<&[usize]> {
+        match self.nodes.box_key(table) {
+            Some(BoxKey::AnonymousTable(index)) => Some(&self.table_objects.tables[index].parts),
+            _ => None,
+        }
+    }
+
+    /// Record the used boxes of an anonymous table's parts relative to the
+    /// table, then store them as their parent sees them.
+    pub(crate) fn place_anonymous_table_parts(&mut self, table: usize) {
+        let Some(BoxKey::AnonymousTable(index)) = self.nodes.box_key(table) else {
+            return;
+        };
+        let relative = self.table_objects.tables[index]
+            .parts
+            .iter()
+            .map(|&part| self.nodes[part].unrounded_layout)
+            .collect();
+        self.table_objects.tables[index].relative_parts = relative;
+        self.offset_anonymous_table_parts(table);
+    }
+
+    /// Store the boxes of an anonymous table's parts relative to their
+    /// parent: the box relative to the table plus the table's location.
+    pub(crate) fn offset_anonymous_table_parts(&mut self, table: usize) {
+        let Some(BoxKey::AnonymousTable(index)) = self.nodes.box_key(table) else {
+            return;
+        };
+        let origin = self.nodes[table].unrounded_layout.location;
+        let anonymous = &self.table_objects.tables[index];
+        for (&part, relative) in anonymous.parts.iter().zip(&anonymous.relative_parts) {
+            let mut layout = *relative;
+            layout.location.x += origin.x;
+            layout.location.y += origin.y;
+            self.nodes[part].unrounded_layout = layout;
+        }
     }
 
     /// Whether a layout key names a source DOM node.
