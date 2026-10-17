@@ -16168,6 +16168,18 @@ fn float_shift_stays_pending_inside_the_moved_float() {
 }
 
 #[test]
+fn a_float_adds_to_its_own_pending_shift_only() {
+    let mut shifts = FloatShifts {
+        pending: Some((7, 12.0, 3)),
+        ..FloatShifts::default()
+    };
+    assert_eq!(shifts.add_to_pending(7, 5.0, 9), 12.0);
+    assert_eq!(shifts.pending, Some((7, 17.0, 3)));
+    assert_eq!(shifts.add_to_pending(8, 4.0, 9), 0.0);
+    assert_eq!(shifts.pending, Some((8, 4.0, 9)));
+}
+
+#[test]
 fn dropping_the_last_float_edges_resets_the_later_shift() {
     let edge = |node, bottom| FloatEdge {
         node,

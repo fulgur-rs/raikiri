@@ -4888,13 +4888,8 @@ fn paginate_flow(
                         flow_shift += node_delta;
                     }
                     if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
-                        let (inherited, flow_page) = float_shifts
-                            .pending
-                            .filter(|(float_id, _, _)| *float_id == node_id)
-                            .map_or((0.0, page_before_candidate), |(_, delta, page)| {
-                                (delta, page)
-                            });
-                        float_shifts.pending = Some((node_id, inherited + node_delta, flow_page));
+                        let inherited =
+                            float_shifts.add_to_pending(node_id, node_delta, page_before_candidate);
                         // A clearing follower stays below the margin box,
                         // which a negative block-end margin pulls up.
                         if let Some(index) = float_side_index(computed.float) {
@@ -7767,6 +7762,20 @@ struct FloatShifts {
 }
 
 impl FloatShifts {
+    /// Add `delta` to the pending shift of the float `node_id`, and return
+    /// the shift the float already had.
+    ///
+    /// A float with no pending shift of its own starts one from
+    /// `flow_page`; one already shifted keeps the page it moved from.
+    fn add_to_pending(&mut self, node_id: usize, delta: f32, flow_page: u32) -> f32 {
+        let (inherited, flow_page) = self
+            .pending
+            .filter(|(float_id, _, _)| *float_id == node_id)
+            .map_or((0.0, flow_page), |(_, delta, page)| (delta, page));
+        self.pending = Some((node_id, inherited + delta, flow_page));
+        inherited
+    }
+
     /// End the pending shift when `node_id` is outside the moved float's
     /// subtree, and return the shift and the page to restore.
     fn end_pending_outside(&mut self, document: &Document, node_id: usize) -> Option<(f32, u32)> {
