@@ -3916,6 +3916,7 @@ property_key_samples! {
     Grid => PropertyValue::Grid(GridShorthand {
         rows: GridTemplateTracks::None,
         columns: GridTemplateTracks::None,
+        areas: GridTemplateAreasValue::None,
     }),
     GridArea => PropertyValue::GridArea(Arc::new(GridAreaShorthand {
         row_start: GridLineValue::Line(1),
@@ -4325,6 +4326,16 @@ property_key_samples! {
     PlaceSelf => PropertyValue::PlaceSelf(PlaceSelfShorthand {
         align: AlignSelfValue::Auto,
         justify: AlignSelfValue::Value(SelfAlignmentValue::Start),
+    }),
+    GridTemplate => PropertyValue::GridTemplate(GridShorthand {
+        rows: GridTemplateTracks::List(Arc::new(GridTrackList {
+            line_names: vec![vec![], vec![]],
+            components: vec![GridTrackListComponent::Size(GridTrackSize::Breadth(
+                GridTrackBreadth::Length(Length::Em(3.0)),
+            ))],
+        })),
+        columns: GridTemplateTracks::None,
+        areas: GridTemplateAreasValue::None,
     }),
     // No specified/computed distinction for `orphans`/`widows`
     // (computed value = specified integer, CSS Fragmentation Module
@@ -4974,6 +4985,7 @@ property_value_variant_registry! {
     JustifySelf,
     PlaceItems,
     PlaceSelf,
+    GridTemplate,
     Orphans,
     Widows,
     WritingMode,
@@ -5558,6 +5570,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::GridArea(_) | PropertyValue::Grid(_) => None,
             PropertyValue::GridTemplateColumns(v) | PropertyValue::GridTemplateRows(v) => {
                 grid_template_tracks(v)
+            }
+            PropertyValue::GridTemplate(t) => {
+                grid_template_tracks(&t.rows).or_else(|| grid_template_tracks(&t.columns))
             }
             PropertyValue::GridAutoColumns(v) | PropertyValue::GridAutoRows(v) => {
                 v.iter().find_map(grid_track_size)

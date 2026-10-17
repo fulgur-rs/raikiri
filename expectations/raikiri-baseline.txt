@@ -1958,8 +1958,6 @@ css/css-break/grid/grid-item-fragmentation-017.html
 css/css-break/grid/grid-item-fragmentation-018.html
 css/css-break/grid/grid-item-fragmentation-019.html
 css/css-break/grid/grid-item-fragmentation-020.html
-css/css-break/grid/grid-item-fragmentation-028.html
-css/css-break/grid/grid-item-fragmentation-029.html
 css/css-break/grid/grid-item-fragmentation-030.html
 css/css-break/grid/grid-item-fragmentation-031.html
 css/css-break/grid/grid-item-fragmentation-035.html
@@ -2664,6 +2662,8 @@ css/css-grid/alignment/grid-item-auto-margins-002.html
 css/css-grid/alignment/grid-self-alignment-stretch-input-range.html
 css/css-grid/alignment/replaced-alignment-with-aspect-ratio-001.html
 css/css-grid/alignment/replaced-alignment-with-aspect-ratio-002.html
+css/css-grid/alignment/replaced-alignment-with-aspect-ratio-004.html
+css/css-grid/alignment/replaced-alignment-with-aspect-ratio-005.html
 css/css-grid/alignment/replaced-alignment-with-aspect-ratio-006.html
 css/css-grid/alignment/replaced-alignment-with-aspect-ratio-007.html
 css/css-grid/alignment/replaced-alignment-with-aspect-ratio-008.html

@@ -135,6 +135,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "grid-row-end",
         "grid-row-gap",
         "grid-row-start",
+        "grid-template",
         "grid-template-areas",
         "grid-template-columns",
         "grid-template-rows",

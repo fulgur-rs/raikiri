@@ -260,6 +260,14 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
             &[PropertyKey::AlignItems, PropertyKey::JustifyItems],
         ),
         (
+            PropertyKey::GridTemplate,
+            &[
+                PropertyKey::GridTemplateRows,
+                PropertyKey::GridTemplateColumns,
+                PropertyKey::GridTemplateAreas,
+            ],
+        ),
+        (
             PropertyKey::PlaceSelf,
             &[PropertyKey::AlignSelf, PropertyKey::JustifySelf],
         ),

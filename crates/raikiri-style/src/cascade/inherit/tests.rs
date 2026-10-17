@@ -8209,6 +8209,7 @@ fn apply_value_direct_grid_shorthand_fall_through() {
     let shorthand = GridShorthand {
         rows: GridTemplateTracks::None,
         columns: GridTemplateTracks::None,
+        areas: GridTemplateAreasValue::None,
     };
     apply_value(PropertyValue::Grid(shorthand), &mut cv);
     assert_eq!(cv.grid_template_rows, GridTemplateTracks::None);

@@ -18,9 +18,9 @@ use crate::property::{
     DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride,
     FontOpticalSizing, FontShorthand, FontShorthandSize, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GapShorthand, GridLineShorthand, Length, LengthOrAuto, LengthPercentageOrCalc, Outline,
-    OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey,
-    PropertyValue, Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand,
+    GapShorthand, GridLineShorthand, GridShorthand, Length, LengthOrAuto, LengthPercentageOrCalc,
+    Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
+    PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand,
     consume_deferred_value, parse_consumer_text_value, parse_value,
 };
 
@@ -326,6 +326,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         GridRow => &[GridRowStart, GridRowEnd],
         GridColumn => &[GridColumnStart, GridColumnEnd],
         PlaceItems => &[AlignItems, JustifyItems],
+        GridTemplate => &[GridTemplateRows, GridTemplateColumns, GridTemplateAreas],
         PlaceSelf => &[AlignSelf, JustifySelf],
         // `BackgroundShorthand`'s own field order. Each key lands in its own
         // `SpecifiedValues` field, so the order does not affect the result.
@@ -1054,6 +1055,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, push_longhand),
         PropertyValue::GridColumn(ref shorthand) => expand_grid_column(shorthand, push_longhand),
         PropertyValue::PlaceItems(p) => expand_place_items(p, push_longhand),
+        PropertyValue::GridTemplate(ref t) => expand_grid_template(t, push_longhand),
         PropertyValue::PlaceSelf(p) => expand_place_self(p, push_longhand),
         // `BackgroundShorthand` holds its layers in a boxed slice, which is
         // not `Copy` — same reason `GridLineShorthand`
@@ -1510,6 +1512,17 @@ pub(crate) fn expand_grid_column(
 ) {
     push(PropertyValue::GridColumnStart(shorthand.start.clone()));
     push(PropertyValue::GridColumnEnd(shorthand.end.clone()));
+}
+
+/// Cold helper expanding `grid-template` into `grid-template-rows` /
+/// `grid-template-columns` / `grid-template-areas` (see the
+/// [`GridShorthand`] docs). Takes the value by reference for the same reason
+/// as [`expand_grid_row`]; the clones only bump `Arc` counts.
+#[inline(never)]
+pub(crate) fn expand_grid_template(t: &GridShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::GridTemplateRows(t.rows.clone()));
+    push(PropertyValue::GridTemplateColumns(t.columns.clone()));
+    push(PropertyValue::GridTemplateAreas(t.areas.clone()));
 }
 
 /// Cold helper expanding `place-items` into two longhands, `align-items` /

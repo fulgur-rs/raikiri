@@ -618,6 +618,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::OutlineColor(..)
         | PropertyValue::GridArea(..)
         | PropertyValue::Grid(..)
+        | PropertyValue::GridTemplate(..)
         | PropertyValue::GridTemplateColumns(..)
         | PropertyValue::GridTemplateRows(..)
         | PropertyValue::GridTemplateAreas(..)

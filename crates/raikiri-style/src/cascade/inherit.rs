@@ -9,10 +9,10 @@ use crate::computed::{
 };
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
-    LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize, Sides, TextWrapMode,
-    WhiteSpace, WhiteSpaceCollapse, WritingMode, initial_grid_auto_track_list,
-    resolve_text_align_internal_center, resolve_text_align_match_parent,
+    GridAutoFlowValue, GridLineValue, Length, LengthOrAuto, LengthPercentageOrCalc, PositionValue,
+    PropertyValue, RelativeFontSize, Sides, TextWrapMode, WhiteSpace, WhiteSpaceCollapse,
+    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
@@ -22,10 +22,10 @@ use crate::rule::{
     expand_border_color, expand_border_css_wide, expand_border_left, expand_border_left_css_wide,
     expand_border_right, expand_border_right_css_wide, expand_border_style, expand_border_top,
     expand_border_top_css_wide, expand_border_width, expand_flex, expand_flex_flow, expand_font,
-    expand_gap, expand_grid_column, expand_grid_row, expand_margin, expand_margin_block,
-    expand_margin_inline, expand_outline, expand_overflow, expand_padding, expand_padding_block,
-    expand_padding_inline, expand_place_content, expand_place_items, expand_place_self,
-    expand_text_decoration,
+    expand_gap, expand_grid_column, expand_grid_row, expand_grid_template, expand_margin,
+    expand_margin_block, expand_margin_inline, expand_outline, expand_overflow, expand_padding,
+    expand_padding_block, expand_padding_inline, expand_place_content, expand_place_items,
+    expand_place_self, expand_text_decoration,
 };
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -2910,6 +2910,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::JustifySelf(_)
         | PropertyValue::PlaceItems(_)
         | PropertyValue::PlaceSelf(_)
+        | PropertyValue::GridTemplate(_)
         // `orphans`/`widows` (CSS Fragmentation Module Level 3 §3.3) carry a
         // bare positive `<integer>`, not a length — nothing for phase 2 to
         // resolve, same shape as `FlexGrow`/`FlexShrink` above.
@@ -3528,7 +3529,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Grid(shorthand) => {
             target.grid_template_rows = shorthand.rows;
             target.grid_template_columns = shorthand.columns;
-            target.grid_template_areas = GridTemplateAreasValue::None;
+            target.grid_template_areas = shorthand.areas;
             target.grid_auto_columns = initial_grid_auto_track_list();
             target.grid_auto_rows = initial_grid_auto_track_list();
             target.grid_auto_flow = GridAutoFlowValue::Row;
@@ -3556,6 +3557,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::JustifyItems(v) => target.justify_items = v,
         PropertyValue::JustifySelf(v) => target.justify_self = v,
         PropertyValue::PlaceItems(p) => expand_place_items(p, |v| apply_value(v, target)),
+        PropertyValue::GridTemplate(t) => expand_grid_template(&t, |v| apply_value(v, target)),
         PropertyValue::PlaceSelf(p) => expand_place_self(p, |v| apply_value(v, target)),
         PropertyValue::Orphans(n) => target.orphans = n,
         PropertyValue::Widows(n) => target.widows = n,

@@ -8,7 +8,7 @@ use crate::property::{
     BackgroundSize, Border, BorderColor, BorderImageOutsetSide, BorderImageWidthSide, BorderRadius,
     BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset,
     FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand,
-    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridInflexibleBreadth, GridShorthand, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     LengthPercentageCalc, LengthPercentageOrCalc, Outline, OutlineColor, OutlineStyle, OverflowXY,
     PropertyValue, Sides, TextDecorationInset, TextDecorationShorthand, TextDecorationThickness,
@@ -1197,6 +1197,11 @@ pub(super) fn absolutize_in_page_context(
         // ── grid-template-columns / grid-template-rows ──────────────────────
         PropertyValue::GridTemplateColumns(v) => PropertyValue::GridTemplateColumns(basis.gtt(v)),
         PropertyValue::GridTemplateRows(v) => PropertyValue::GridTemplateRows(basis.gtt(v)),
+        PropertyValue::GridTemplate(t) => PropertyValue::GridTemplate(GridShorthand {
+            rows: basis.gtt(t.rows),
+            columns: basis.gtt(t.columns),
+            areas: t.areas,
+        }),
         // ── grid-auto-columns / grid-auto-rows ───────────────────────────────
         PropertyValue::GridAutoColumns(v) => PropertyValue::GridAutoColumns(basis.gatl(&v)),
         PropertyValue::GridAutoRows(v) => PropertyValue::GridAutoRows(basis.gatl(&v)),
