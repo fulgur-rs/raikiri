@@ -253,10 +253,26 @@ impl FlowAxis {
         }
     }
 
+    /// Whether the page whose slice of the flow runs from `start` to `end`
+    /// owns the line from `top` to `bottom`, as [`Self::line_extent`] gives
+    /// them.
+    ///
+    /// A page owns the line holding its center. Down the page, a line taller
+    /// than the page's slice also belongs to every page it reaches into, as
+    /// the painter draws it there, so its ink is not lost on the pages after
+    /// the one holding its center.
+    pub(crate) fn holds_line(self, top: f32, bottom: f32, start: f32, end: f32) -> bool {
+        crate::layout::line_center_on_page(top, bottom, start, end)
+            || matches!(self, Self::Y)
+                && bottom - top > end - start
+                && top < end - 0.01
+                && bottom > start + 0.01
+    }
+
     /// The extent along the flow that decides which page owns the line of
     /// `root` from `top` to `bottom`, which are the line's block-axis edges
     /// measured as `root.y` plus the line's offset from the content box's
-    /// block-start edge. A page owns the line holding its center.
+    /// block-start edge. [`Self::holds_line`] tests it against a page.
     ///
     /// Along x, the lines of a paragraph on vertical axes stack along the
     /// flow from the block-start edge of its content box; a paragraph on

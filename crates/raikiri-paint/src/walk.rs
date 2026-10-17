@@ -2052,6 +2052,9 @@ pub(crate) fn paint_document_impl(
             shift_y: f32,
             transform_x: f32,
             transform_y: f32,
+            /// How far the relative offsets that paint applies to the
+            /// ancestors move `parent_abs_y` from where layout placed it.
+            paint_offset_y: f32,
             fragment_clip_height: Option<f32>,
             fragment_id: Option<usize>,
             fragment_origin_x: f32,
@@ -2072,6 +2075,9 @@ pub(crate) fn paint_document_impl(
             shift_y: f32,
             transform_x: f32,
             transform_y: f32,
+            /// How far the relative offsets that paint applies move `y`
+            /// from where layout placed it.
+            paint_offset_y: f32,
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             decorations: text::DecorationContext,
@@ -2365,6 +2371,7 @@ pub(crate) fn paint_document_impl(
             shift_y: 0.0,
             transform_x: 0.0,
             transform_y: 0.0,
+            paint_offset_y: 0.0,
             fragment_clip_height: None,
             fragment_id: None,
             fragment_origin_x: 0.0,
@@ -2451,6 +2458,7 @@ pub(crate) fn paint_document_impl(
             shift_y,
             transform_x,
             transform_y,
+            paint_offset_y,
             fragment_clip_height,
             fragment_id,
             fragment_origin_x,
@@ -2471,6 +2479,7 @@ pub(crate) fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                paint_offset_y,
                 fragmentainer,
                 inside_fixed,
                 decorations,
@@ -2565,7 +2574,7 @@ pub(crate) fn paint_document_impl(
                     page_box,
                     page_lines
                         .filter(|_| !inside_fixed)
-                        .map(|lines| lines.translated(transform_y)),
+                        .map(|lines| lines.translated(transform_y + paint_offset_y)),
                     paint_transform,
                 );
                 if clip.is_some() {
@@ -2979,6 +2988,7 @@ pub(crate) fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                paint_offset_y,
                 fragment_clip_height,
                 fragment_id,
                 fragment_origin_x,
@@ -2998,6 +3008,7 @@ pub(crate) fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                paint_offset_y,
                 fragment_clip_height,
                 fragment_id,
                 fragment_origin_x,
@@ -3045,6 +3056,7 @@ pub(crate) fn paint_document_impl(
                     shift_y,
                     transform_x,
                     transform_y,
+                    paint_offset_y,
                     fragment_clip_height,
                     fragment_id: Some(current_fragment_id),
                     fragment_origin_x: node_abs_x,
@@ -4194,6 +4206,7 @@ pub(crate) fn paint_document_impl(
                 // except for the manual placement paths identified above.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
+                let child_paint_offset_y = paint_offset_y + pos_dy + fixed_dy;
                 // A paragraph inside a fixed box, or a fixed box that is a
                 // paragraph itself, repeats on every page and is not clipped
                 // like flowed text, as the text branch below does.
@@ -4240,7 +4253,7 @@ pub(crate) fn paint_document_impl(
                         x: content_x,
                         y: content_y,
                         shift_y: child_shift_y,
-                        translation_y: child_transform_y,
+                        translation_y: child_transform_y + child_paint_offset_y,
                         decorations: child_decorations.clone(),
                         fragmentainer,
                         inside_fixed: ifc_inside_fixed,
@@ -4325,6 +4338,7 @@ pub(crate) fn paint_document_impl(
                             shift_y: child_shift_y,
                             transform_x: child_transform_x,
                             transform_y: child_transform_y,
+                            paint_offset_y: child_paint_offset_y,
                             fragmentainer,
                             inside_fixed: ifc_inside_fixed,
                             decorations: child_decorations.clone(),
@@ -4437,6 +4451,7 @@ pub(crate) fn paint_document_impl(
                         shift_y: child_shift_y,
                         transform_x: child_transform_x,
                         transform_y: child_transform_y,
+                        paint_offset_y: child_paint_offset_y,
                         fragment_clip_height: child_fragment_clip_height,
                         fragment_id,
                         fragment_origin_x,
@@ -4552,7 +4567,7 @@ pub(crate) fn paint_document_impl(
                             page_box,
                             page_lines
                                 .filter(|_| !inside_fixed)
-                                .map(|lines| lines.translated(transform_y)),
+                                .map(|lines| lines.translated(transform_y + paint_offset_y)),
                             paint_transform,
                         );
                     }

@@ -91,3 +91,15 @@ fn a_line_taller_than_the_page_area_continues_on_the_next_page() {
     assert_eq!(pixel(&pages[1], 5, 35), GREEN);
     assert_eq!(pixel(&pages[1], 5, 55), WHITE);
 }
+
+#[test]
+fn a_relative_offset_that_paint_applies_keeps_the_line_on_its_page() {
+    // Paint applies the relative offset of a float: it moves the float's
+    // line from where layout put it on the first page into the margin
+    // below, where that page still paints it.
+    let pages = raster(
+        "<div style='height:40px'></div>\
+         <div style='float:left;position:relative;top:30px;width:10px'>a</div>",
+    );
+    assert_eq!(pixel(&pages[0], 5, 95), GREEN);
+}
