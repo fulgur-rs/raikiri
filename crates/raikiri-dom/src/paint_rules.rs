@@ -1196,43 +1196,54 @@ pub fn negative_inline_group(
 }
 
 /// Whether inline element `id` of paragraph `root` is positioned with an
-/// integer `z-index` inside an inline element of the paragraph that forms a
-/// stacking context and paints as a group: a translucent one, one that
-/// [`negative_inline_group`] finds, or another one this finds.
+/// integer `z-index` and paints as a group: one with a stack level of zero
+/// or more outside every inline box of the paragraph that forms a stacking
+/// context, beyond the paragraph's translucent first line, if it has one,
+/// or one with any stack level inside an inline element of the paragraph
+/// that forms a stacking context and paints as a group (a translucent one,
+/// one that [`negative_inline_group`] finds, or another one this finds).
 ///
-/// It forms a stacking context of its own within that one, whose boxes and
-/// text paint as a group at its stack level among the content of the
-/// enclosing one: below it with a negative level, after it otherwise (CSS
-/// 2.1 Appendix E steps 3, 8 and 9).
-pub fn nested_inline_stacking_group(
+/// It forms a stacking context of its own, whose boxes and text paint as a
+/// group at its stack level among the content of the enclosing one: below
+/// it with a negative level, after it otherwise (CSS 2.1 Appendix E steps
+/// 3, 8 and 9). Outside every inline stacking context, that is after the
+/// rest of the paragraph's inline content, as for the positioned boxes laid
+/// out on its lines.
+pub fn inline_stacking_group(
     document: &Document,
     cascade: &CascadeResult,
     root: usize,
     id: usize,
 ) -> bool {
-    document
+    let Some(level) = document
         .get_node(id)
-        .is_some_and(|node| node.kind() == NodeKind::Element)
-        && cascade.computed.get(id).is_some_and(|cv| {
-            cv.display.is_inline_flow()
-                && !matches!(cv.position, PositionValue::Static)
-                && matches!(cv.z_index, ZIndexValue::Integer(_))
+        .filter(|node| node.kind() == NodeKind::Element)
+        .and_then(|_| cascade.computed.get(id))
+        .filter(|cv| cv.display.is_inline_flow() && !matches!(cv.position, PositionValue::Static))
+        .and_then(|cv| match cv.z_index {
+            ZIndexValue::Integer(level) => Some(level),
+            _ => None,
         })
-        && document.parent_of(id).is_some_and(|parent| {
-            let owner = document.ifc_source_owner(root);
-            document
-                .inclusive_ancestors(parent)
-                .take_while(|&ancestor| ancestor != root && ancestor != owner)
-                .find(|&ancestor| !forms_no_inline_stacking_context(document, cascade, ancestor))
-                .is_some_and(|context| {
-                    cascade
-                        .computed
-                        .get(context)
-                        .is_some_and(|cv| cv.display.is_inline_flow() && cv.opacity < 1.0)
-                        || negative_inline_group(document, cascade, root, context)
-                        || nested_inline_stacking_group(document, cascade, root, context)
-                })
-        })
+    else {
+        return false;
+    };
+    let owner = document.ifc_source_owner(root);
+    match document
+        .inclusive_ancestors(id)
+        .skip(1)
+        .take_while(|&ancestor| ancestor != root && ancestor != owner)
+        .find(|&ancestor| !forms_no_inline_stacking_context(document, cascade, ancestor))
+    {
+        None => level >= 0 && !within_translucent_first_line(document, root, id),
+        Some(context) => {
+            cascade
+                .computed
+                .get(context)
+                .is_some_and(|cv| cv.display.is_inline_flow() && cv.opacity < 1.0)
+                || negative_inline_group(document, cascade, root, context)
+                || inline_stacking_group(document, cascade, root, context)
+        }
+    }
 }
 
 /// Whether the `::before` or `::after` with generated id `id`, laid out in

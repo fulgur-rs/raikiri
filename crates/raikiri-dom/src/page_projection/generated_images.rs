@@ -131,21 +131,24 @@ pub(super) fn prepare(
         let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
             Box::new(pages.iter())
         } else {
-            // Without a finite line center the range stays empty, and so
-            // does the candidate list.
+            // Without a finite line extent the range stays empty, and so
+            // does the candidate list. A line's extent holds its center, and
+            // a line taller than its page reaches the pages along all of it.
             let (low, high) = prepared
                 .iter()
                 .map(|&(top, height, _, _)| {
-                    // The arithmetic of `line_center_on_page`, so rounding at
-                    // large coordinates cannot prune the owning page.
+                    // The arithmetic of `PageFragment::owns_line`, so rounding
+                    // at large coordinates cannot prune an owning page.
                     let top = root.y + top;
-                    let (top, bottom) = flow_axis.line_extent(root, top, top + height);
-                    (top + bottom) * 0.5
+                    flow_axis.line_extent(root, top, top + height)
                 })
-                .filter(|center| center.is_finite())
-                .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), center| {
-                    (low.min(center), high.max(center))
-                });
+                .filter(|(low, high)| low.is_finite() && high.is_finite())
+                .fold(
+                    (f32::INFINITY, f32::NEG_INFINITY),
+                    |(first, last), (low, high)| {
+                        (first.min(low.min(high)), last.max(low.max(high)))
+                    },
+                );
             Box::new(flow_pages.around(low, high))
         };
         for page in candidates {
@@ -166,12 +169,10 @@ pub(super) fn prepare(
             for &(top, height, line, image) in *prepared {
                 work.charge(1)?;
                 if !root.is_repeat {
-                    // A page without flow geometry cannot own a normal-flow line.
-                    let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
                     let (top, bottom) =
                         page.flow_axis
                             .line_extent(&root, root.y + top, root.y + top + height);
-                    if !crate::layout::line_center_on_page(top, bottom, start, end) {
+                    if !page.owns_line(pages, top, bottom) {
                         continue;
                     }
                 }

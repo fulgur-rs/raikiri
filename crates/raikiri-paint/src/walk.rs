@@ -1776,6 +1776,10 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
 /// rounding, stays on the page beside it.
 const FLOW_BAND_TOLERANCE: f64 = 0.01;
 
+/// How far before a page's start and end a line's center may fall and still
+/// belong to that page, as layout assigns lines to pages.
+const CENTER_TOLERANCE: f64 = 0.001;
+
 /// How far toward its start a page's slice of the flow reaches to own a
 /// line, as layout assigns lines to pages.
 const LINE_OWNERSHIP_BIAS: f64 = 0.001;
@@ -1836,6 +1840,84 @@ impl FlowBand {
             x > left + LINE_OWNERSHIP_BIAS && x <= right + LINE_OWNERSHIP_BIAS
         } else {
             x >= left - LINE_OWNERSHIP_BIAS && x < right - LINE_OWNERSHIP_BIAS
+        }
+    }
+}
+
+/// The lines a page owns of a paragraph that runs over several pages.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PageLines {
+    /// A page that follows the x axis owns the lines whose center lies in
+    /// its band of the flow.
+    AlongX(FlowBand),
+    /// A page that follows the y axis owns the lines that reach across its
+    /// slice of the shared flow space, from `start` to `end`, where layout
+    /// placed them: layout moves a line that does not fit to the next page
+    /// whole, so only a line taller than a page reaches across several.
+    /// Translations that paint adds move a line, not the page it belongs
+    /// to.
+    AlongY {
+        start: f32,
+        end: f32,
+        /// How far paint moves the lines from the flow space: the page's
+        /// offset and the translations around the paragraph.
+        paint_shift: f32,
+    },
+}
+
+impl PageLines {
+    /// Whether a paragraph whose lines stack along x when `vertical`, along
+    /// y otherwise, goes to one page whole: pages never cut a paragraph
+    /// across its lines.
+    pub(crate) fn keeps_paragraph_whole(self, vertical: bool) -> bool {
+        match self {
+            Self::AlongX(_) => !vertical,
+            Self::AlongY { .. } => vertical,
+        }
+    }
+
+    /// The same lines for a paragraph that the translations around it move
+    /// `shift` further along y.
+    pub(crate) fn translated(self, shift: f32) -> Self {
+        match self {
+            Self::AlongY {
+                start,
+                end,
+                paint_shift,
+            } => Self::AlongY {
+                start,
+                end,
+                paint_shift: paint_shift + shift,
+            },
+            along_x => along_x,
+        }
+    }
+
+    /// Whether the page owns the line, or the paragraph kept whole, that
+    /// covers `rect` where it paints under `transform` inside the root
+    /// element, as layout assigns lines to pages.
+    pub(crate) fn holds_line(self, transform: Affine, rect: Rect) -> bool {
+        match self {
+            Self::AlongX(band) => band.holds_line_center(transform, rect.center()),
+            Self::AlongY {
+                start,
+                end,
+                paint_shift,
+            } => {
+                let (top, bottom) = (
+                    rect.y0 - f64::from(paint_shift),
+                    rect.y1 - f64::from(paint_shift),
+                );
+                // A line reaching into the page belongs to it, and so does
+                // one without height whose center layout puts there.
+                let center = (top + bottom) * 0.5;
+                top.is_finite()
+                    && bottom.is_finite()
+                    && (top < f64::from(end) - FLOW_BAND_TOLERANCE
+                        && bottom > f64::from(start) + FLOW_BAND_TOLERANCE
+                        || center >= f64::from(start) - CENTER_TOLERANCE
+                            && center < f64::from(end) - CENTER_TOLERANCE)
+            }
         }
     }
 }
@@ -1979,6 +2061,9 @@ pub(crate) fn paint_document_impl(
             shift_y: f32,
             transform_x: f32,
             transform_y: f32,
+            /// How far the relative offsets that paint applies to the
+            /// ancestors move `parent_abs_y` from where layout placed it.
+            paint_offset_y: f32,
             fragment_clip_height: Option<f32>,
             fragment_id: Option<usize>,
             fragment_origin_x: f32,
@@ -1999,6 +2084,9 @@ pub(crate) fn paint_document_impl(
             shift_y: f32,
             transform_x: f32,
             transform_y: f32,
+            /// How far the relative offsets that paint applies move `y`
+            /// from where layout placed it.
+            paint_offset_y: f32,
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             decorations: text::DecorationContext,
@@ -2016,6 +2104,9 @@ pub(crate) fn paint_document_impl(
             x: f32,
             y: f32,
             shift_y: f32,
+            /// How far the translations around the paragraph move its lines
+            /// along y.
+            translation_y: f32,
             decorations: text::DecorationContext,
             fragmentainer: Option<usize>,
             inside_fixed: bool,
@@ -2186,6 +2277,21 @@ pub(crate) fn paint_document_impl(
             root_transform,
         }
     });
+    // A paragraph that runs over several pages paints on each only the
+    // lines that page owns, not the ones layout moved beside it into the
+    // page margins. The first page also owns whatever lies before the flow.
+    let page_lines = Some(flow_band.map_or_else(
+        || PageLines::AlongY {
+            start: if content_origin_y > 0.0 {
+                content_origin_y
+            } else {
+                -FLOW_EXTENT
+            },
+            end: content_origin_y + content_height,
+            paint_shift: page_offset_y,
+        },
+        PageLines::AlongX,
+    ));
     let mut capture_scene = crate::capture::CaptureScene::new(scene);
     let mut transformed_scene = crate::transform::TransformScene {
         scene: &mut capture_scene,
@@ -2274,6 +2380,7 @@ pub(crate) fn paint_document_impl(
             shift_y: 0.0,
             transform_x: 0.0,
             transform_y: 0.0,
+            paint_offset_y: 0.0,
             fragment_clip_height: None,
             fragment_id: None,
             fragment_origin_x: 0.0,
@@ -2360,6 +2467,7 @@ pub(crate) fn paint_document_impl(
             shift_y,
             transform_x,
             transform_y,
+            paint_offset_y,
             fragment_clip_height,
             fragment_id,
             fragment_origin_x,
@@ -2380,6 +2488,7 @@ pub(crate) fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                paint_offset_y,
                 fragmentainer,
                 inside_fixed,
                 decorations,
@@ -2472,7 +2581,9 @@ pub(crate) fn paint_document_impl(
                     pixel_source,
                     warnings,
                     page_box,
-                    flow_band.filter(|_| !inside_fixed),
+                    page_lines
+                        .filter(|_| !inside_fixed)
+                        .map(|lines| lines.translated(transform_y + paint_offset_y)),
                     paint_transform,
                 );
                 if clip.is_some() {
@@ -2585,6 +2696,7 @@ pub(crate) fn paint_document_impl(
                 x,
                 y,
                 shift_y,
+                translation_y,
                 decorations,
                 fragmentainer,
                 inside_fixed,
@@ -2631,7 +2743,9 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
-                        flow_band.filter(|_| !inside_fixed),
+                        page_lines
+                            .filter(|_| !inside_fixed)
+                            .map(|lines| lines.translated(translation_y)),
                         paint_transform,
                     );
                     match lines {
@@ -2674,7 +2788,9 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
-                        flow_band.filter(|_| !inside_fixed),
+                        page_lines
+                            .filter(|_| !inside_fixed)
+                            .map(|lines| lines.translated(translation_y)),
                         paint_transform,
                     )
                     .map(crate::ifc_text::HeldLines::finish_around_blocks)
@@ -2705,7 +2821,9 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
-                        flow_band.filter(|_| !inside_fixed),
+                        page_lines
+                            .filter(|_| !inside_fixed)
+                            .map(|lines| lines.translated(translation_y)),
                         paint_transform,
                     );
                 }
@@ -2879,6 +2997,7 @@ pub(crate) fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                paint_offset_y,
                 fragment_clip_height,
                 fragment_id,
                 fragment_origin_x,
@@ -2898,6 +3017,7 @@ pub(crate) fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                paint_offset_y,
                 fragment_clip_height,
                 fragment_id,
                 fragment_origin_x,
@@ -2945,6 +3065,7 @@ pub(crate) fn paint_document_impl(
                     shift_y,
                     transform_x,
                     transform_y,
+                    paint_offset_y,
                     fragment_clip_height,
                     fragment_id: Some(current_fragment_id),
                     fragment_origin_x: node_abs_x,
@@ -4135,6 +4256,7 @@ pub(crate) fn paint_document_impl(
                 // except for the manual placement paths identified above.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
+                let child_paint_offset_y = paint_offset_y + pos_dy + fixed_dy;
                 // A paragraph inside a fixed box, or a fixed box that is a
                 // paragraph itself, repeats on every page and is not clipped
                 // like flowed text, as the text branch below does.
@@ -4181,6 +4303,7 @@ pub(crate) fn paint_document_impl(
                         x: content_x,
                         y: content_y,
                         shift_y: child_shift_y,
+                        translation_y: child_transform_y + child_paint_offset_y,
                         decorations: child_decorations.clone(),
                         fragmentainer,
                         inside_fixed: ifc_inside_fixed,
@@ -4265,6 +4388,7 @@ pub(crate) fn paint_document_impl(
                             shift_y: child_shift_y,
                             transform_x: child_transform_x,
                             transform_y: child_transform_y,
+                            paint_offset_y: child_paint_offset_y,
                             fragmentainer,
                             inside_fixed: ifc_inside_fixed,
                             decorations: child_decorations.clone(),
@@ -4377,6 +4501,7 @@ pub(crate) fn paint_document_impl(
                         shift_y: child_shift_y,
                         transform_x: child_transform_x,
                         transform_y: child_transform_y,
+                        paint_offset_y: child_paint_offset_y,
                         fragment_clip_height: child_fragment_clip_height,
                         fragment_id,
                         fragment_origin_x,
@@ -4490,7 +4615,9 @@ pub(crate) fn paint_document_impl(
                             pixel_source,
                             warnings,
                             page_box,
-                            flow_band.filter(|_| !inside_fixed),
+                            page_lines
+                                .filter(|_| !inside_fixed)
+                                .map(|lines| lines.translated(transform_y + paint_offset_y)),
                             paint_transform,
                         );
                     }

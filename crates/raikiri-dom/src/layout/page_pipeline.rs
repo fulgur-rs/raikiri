@@ -1387,6 +1387,21 @@ impl PageOrigins {
         (y.is_finite() && y >= 0.0).then(|| self.page_index_for_y(y))
     }
 
+    /// The page whose start is the first page edge inside a margin that
+    /// starts at `margin_start`, at most `last_page`. An edge within 0.001
+    /// of `margin_start` counts as inside the margin, unless the margin
+    /// follows a forced break: the forced break at its start is not an edge
+    /// inside it.
+    fn first_edge_in_margin(
+        &self,
+        margin_start: f32,
+        follows_forced_break: bool,
+        last_page: u32,
+    ) -> u32 {
+        let edge_slack = if follows_forced_break { 0.001 } else { -0.001 };
+        (self.page_index_for_y(margin_start + edge_slack) + 1).min(last_page)
+    }
+
     /// The page that starts at flow position `y` (within 0.001), or else the
     /// page after the one `y` falls on. A position above the first page falls
     /// on the first page.
@@ -4887,29 +4902,17 @@ fn paginate_flow(
                             // Floors are kept in normal-flow coordinates,
                             // without the relative offsets of the ancestors.
                             let flow_target_y = node_target_y - relative_offset;
-                            let outer_bottom = flow_target_y
-                                + height
-                                + document.nodes[node_id].unrounded_layout.margin.bottom;
-                            // An unforced break truncates the block-start
-                            // margin (CSS Fragmentation 3 §5.2), so the margin
-                            // box then starts at the border box.
-                            let outer_top = if forced_transition {
-                                flow_target_y - margin_top
-                            } else {
-                                flow_target_y
-                            };
-                            let layout = &document.nodes[node_id].unrounded_layout;
                             float_shifts.record_edge(
                                 context,
-                                FloatEdge {
-                                    node: node_id,
-                                    side: index,
-                                    top: outer_top,
-                                    bottom: outer_bottom,
-                                    width: layout.size.width
-                                        + layout.margin.left
-                                        + layout.margin.right,
-                                },
+                                moved_float_edge(
+                                    document,
+                                    node_id,
+                                    index,
+                                    flow_target_y,
+                                    height,
+                                    margin_top,
+                                    forced_transition,
+                                ),
                             );
                             // The margin box then moved further than the
                             // border box, and a later float may have to
@@ -5019,11 +5022,11 @@ fn paginate_flow(
                             let collapsed = adjoining_margin(document, cascade, previous, false)
                                 .max(adjoining_margin(document, cascade, node_id, true));
                             let margin_start = previous_bottom.max(effective_y - collapsed);
-                            // The forced break at the start of a kept
-                            // margin is not an edge inside it.
-                            let edge_slack = if follows_forced_break { 0.001 } else { -0.001 };
-                            let first_edge =
-                                (page_index_for_y(margin_start + edge_slack) + 1).min(natural_page);
+                            let first_edge = page_origins.first_edge_in_margin(
+                                margin_start,
+                                follows_forced_break,
+                                natural_page,
+                            );
                             (page_origin(first_edge), page_origin(first_edge))
                         };
                         let delta = target_y - effective_y;
@@ -5068,27 +5071,21 @@ fn paginate_flow(
             && let Some(parent_id) =
                 BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
         {
-            // An empty box right after the forced-break box passes the
-            // break on to the margin after it; any other box ends it.
             if !starts_after_forced_break {
-                let follows_forced_box = sibling_margins
-                    .previous_bottoms
-                    .get(&parent_id)
-                    .is_some_and(|&(previous, _)| {
-                        sibling_margins.follows_forced_break(document, cascade, previous, node_id)
-                    });
-                sibling_margins.forced_break_box = (follows_forced_box
-                    && collapses_with_previous_block
-                    && margins_collapse_through)
-                    .then_some(node_id);
+                sibling_margins.pass_on_forced_break(
+                    document,
+                    cascade,
+                    parent_id,
+                    node_id,
+                    collapses_with_previous_block && margins_collapse_through,
+                );
             }
-            if collapses_with_previous_block {
-                sibling_margins
-                    .previous_bottoms
-                    .insert(parent_id, (node_id, raw_y + height));
-            } else {
-                sibling_margins.previous_bottoms.remove(&parent_id);
-            }
+            sibling_margins.record_bottom(
+                parent_id,
+                node_id,
+                collapses_with_previous_block,
+                raw_y + height,
+            );
         }
 
         let header_delta = make_room_for_table_header(
@@ -6994,6 +6991,40 @@ impl SiblingMargins {
         self.forced_break_box
             .is_some_and(|owner| forced_margin_reaches(document, cascade, owner, previous, node_id))
     }
+
+    /// Moves the forced break on to `node_id`, a child of `parent_id`, or
+    /// ends it. An empty box right after the forced-break box passes the
+    /// break on to the margin after it when its margins collapse through
+    /// with that margin (`collapses_through`); any other box ends it.
+    fn pass_on_forced_break(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        parent_id: usize,
+        node_id: usize,
+        collapses_through: bool,
+    ) {
+        let follows_forced_box =
+            self.previous_bottoms
+                .get(&parent_id)
+                .is_some_and(|&(previous, _)| {
+                    self.follows_forced_break(document, cascade, previous, node_id)
+                });
+        self.forced_break_box = (follows_forced_box && collapses_through).then_some(node_id);
+    }
+
+    /// Records `bottom`, the unpaginated border-box bottom of `node_id`, as
+    /// the previous bottom for the next block-level child of `parent_id`
+    /// when `node_id` is a block whose margins collapse with its siblings'
+    /// (`collapses`). Any other box ends the run of adjoining siblings, so
+    /// the previous bottom of `parent_id` is forgotten.
+    fn record_bottom(&mut self, parent_id: usize, node_id: usize, collapses: bool, bottom: f32) {
+        if collapses {
+            self.previous_bottoms.insert(parent_id, (node_id, bottom));
+        } else {
+            self.previous_bottoms.remove(&parent_id);
+        }
+    }
 }
 
 /// Shifts of the flow that end where a subtree does.
@@ -7616,6 +7647,35 @@ struct FloatEdge {
     top: f32,
     bottom: f32,
     width: f32,
+}
+
+/// The margin-box edge of a float that moved to `flow_target_y`, its
+/// border-box top in normal-flow coordinates. An unforced break truncates
+/// the block-start margin (CSS Fragmentation 3 §5.2), so the margin box then
+/// starts at the border box; after a forced break it keeps `margin_top`.
+fn moved_float_edge(
+    document: &Document,
+    node_id: usize,
+    side: usize,
+    flow_target_y: f32,
+    height: f32,
+    margin_top: f32,
+    forced_transition: bool,
+) -> FloatEdge {
+    let layout = &document.nodes[node_id].unrounded_layout;
+    let outer_bottom = flow_target_y + height + layout.margin.bottom;
+    let outer_top = if forced_transition {
+        flow_target_y - margin_top
+    } else {
+        flow_target_y
+    };
+    FloatEdge {
+        node: node_id,
+        side,
+        top: outer_top,
+        bottom: outer_bottom,
+        width: layout.size.width + layout.margin.left + layout.margin.right,
+    }
 }
 
 /// The highest outer top, at or below the highest top of `edges`, from

@@ -146,22 +146,15 @@ pub(super) fn prepare(
             pages.iter().map(|page| (page, *pieces)).collect()
         } else {
             let mut candidates = Vec::new();
-            let spans = pieces
-                .iter()
-                .map(|&(_, _, _, offset, _, top, height, block)| {
-                    let top = root.y + offset.1 + top;
-                    let (top, bottom) = axis.line_extent(root, top, top + height);
-                    if block.is_some() && axis == FlowAxis::Y {
-                        // A block box goes to every page it reaches.
-                        (top, bottom)
-                    } else {
-                        // The arithmetic of `line_center_on_page`, so
-                        // rounding at large coordinates cannot prune the
-                        // owning page.
-                        let center = (top + bottom) * 0.5;
-                        (center, center)
-                    }
-                });
+            let spans = pieces.iter().map(|&(_, _, _, offset, _, top, height, _)| {
+                let top = root.y + offset.1 + top;
+                // The arithmetic of `PageFragment::owns_line`, so rounding
+                // at large coordinates cannot prune an owning page. The
+                // extent holds the line's center; a block box, or a line
+                // taller than its page, goes to every page it reaches.
+                let (top, bottom) = axis.line_extent(root, top, top + height);
+                (top.min(bottom), top.max(bottom))
+            });
             for (index, (low, high)) in spans
                 .enumerate()
                 .filter(|(_, (low, high))| low.is_finite() && high.is_finite())
@@ -212,9 +205,7 @@ pub(super) fn prepare(
                     rect.height = high - low;
                     block_edges.0 &= low == line_top;
                     block_edges.1 &= high == line_bottom;
-                } else if !root.is_repeat
-                    && !crate::layout::line_center_on_page(line_top, line_bottom, start, end)
-                {
+                } else if !root.is_repeat && !page.owns_line(pages, line_top, line_bottom) {
                     continue;
                 }
                 // A pseudo-element moves by its own relative offset and with

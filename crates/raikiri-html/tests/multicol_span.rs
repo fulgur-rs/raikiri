@@ -843,7 +843,18 @@ fn a_line_taller_than_a_page_keeps_the_measured_group_without_a_page_loop() {
     );
     assert_eq!(document.page_count(), 2);
     assert_page_runs(&document, 0, &[("A", (0.0, 41.0)), ("B", (60.0, 41.0))]);
-    assert_page_runs(&document, 1, &[("C", (0.0, 26.0)), ("D", (0.0, 46.0))]);
+    // The lines taller than the page reach onto the next page, which draws
+    // them too, so its runs list them where they sit above it.
+    assert_page_runs(
+        &document,
+        1,
+        &[
+            ("A", (0.0, -19.0)),
+            ("B", (60.0, -19.0)),
+            ("C", (0.0, 26.0)),
+            ("D", (0.0, 46.0)),
+        ],
+    );
 }
 
 #[test]

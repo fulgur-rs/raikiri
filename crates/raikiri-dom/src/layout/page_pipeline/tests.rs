@@ -664,6 +664,19 @@ fn page_starting_at_or_after_keeps_a_page_start_and_skips_past_mid_page() {
 }
 
 #[test]
+fn first_edge_in_margin_skips_a_forced_break_at_the_margin_start() {
+    let fixed = PageOrigins::new(&[], 100.0);
+    // The first edge after a margin that starts mid-page.
+    assert_eq!(fixed.first_edge_in_margin(150.0, false, 5), 2);
+    // An unforced margin that starts on an edge breaks at that edge.
+    assert_eq!(fixed.first_edge_in_margin(200.0, false, 5), 2);
+    // A forced break at the margin start is not an edge inside it.
+    assert_eq!(fixed.first_edge_in_margin(200.0, true, 5), 3);
+    // The edge never goes past the box's own page.
+    assert_eq!(fixed.first_edge_in_margin(150.0, false, 1), 1);
+}
+
+#[test]
 fn float_top_beside_moves_below_floats_it_does_not_fit_beside() {
     let edge = |node, side, top, bottom, width| FloatEdge {
         node,
@@ -16175,4 +16188,30 @@ fn dropping_the_last_float_edges_resets_the_later_shift() {
     shifts.drop_edges_above(2, 80.0);
     assert!(shifts.edges.is_empty());
     assert_eq!(shifts.later, 0.0);
+}
+
+#[test]
+fn moved_float_edge_keeps_the_block_start_margin_only_after_a_forced_break() {
+    let mut document = Document::new();
+    let float = document.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let layout = &mut document.nodes[float].unrounded_layout;
+    layout.size.width = 40.0;
+    layout.margin.left = 3.0;
+    layout.margin.right = 5.0;
+    layout.margin.bottom = 7.0;
+
+    // A forced break keeps the block-start margin above the border box.
+    let forced = moved_float_edge(&document, float, 1, 100.0, 20.0, 10.0, true);
+    assert_eq!(forced.node, float);
+    assert_eq!(forced.side, 1);
+    assert_eq!(forced.top, 90.0);
+    assert_eq!(forced.bottom, 127.0);
+    assert_eq!(forced.width, 48.0);
+
+    // An unforced break truncates it, so the margin box starts at the
+    // border box.
+    let unforced = moved_float_edge(&document, float, 0, 100.0, 20.0, 10.0, false);
+    assert_eq!(unforced.side, 0);
+    assert_eq!(unforced.top, 100.0);
+    assert_eq!(unforced.bottom, 127.0);
 }

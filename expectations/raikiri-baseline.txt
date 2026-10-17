@@ -1387,6 +1387,7 @@ css/css-position/position-absolute-center-004.html
 css/css-position/fixed-z-index-blend.html
 css/css-page/page-name-000-print.html
 css/css-page/page-name-001-print.html
+css/css-page/page-name-002-print.html
 css/css-page/page-left-right-001-print.html
 css/css-page/page-name-flex-003-print.html
 css/css-page/page-name-flex-004-print.html
@@ -1396,6 +1397,8 @@ css/css-page/page-margin-003-print.html
 css/css-page/page-margin-004-print.html
 css/css-page/page-margin-005-print.html
 css/css-page/page-margin-006-print.html
+css/css-page/fixedpos-005-print.html
+css/css-page/fixedpos-006-print.html
 css/css-page/margin-boxes/content-004-print.html
 css/css-page/margin-boxes/content-005-print.html
 css/css-page/margin-boxes/content-008-print.html

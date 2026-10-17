@@ -105,23 +105,25 @@ pub(super) fn prepare(
                     )
                 }
                 MarkerRoot::Inline(inline_markers) => {
-                    let mut centers = inline_markers
+                    // A line's extent holds its center, and a line taller
+                    // than its page reaches the pages along all of it.
+                    // Without a finite extent the range stays empty, and so
+                    // does the candidate list.
+                    let (low, high) = inline_markers
                         .iter()
                         .map(|&(top, height, _)| {
-                            // The arithmetic of `line_center_on_page`, so
-                            // rounding at large coordinates cannot prune the
+                            // The arithmetic of `PageFragment::owns_line`, so
+                            // rounding at large coordinates cannot prune an
                             // owning page.
                             let top = root.y + top;
                             let (top, bottom) = flow_axis.line_extent(root, top, top + height);
-                            (top + bottom) * 0.5
+                            (top.min(bottom), top.max(bottom))
                         })
-                        .filter(|center| center.is_finite());
-                    let Some(first) = centers.next() else {
-                        continue;
-                    };
-                    let (low, high) = centers.fold((first, first), |(low, high), center| {
-                        (low.min(center), high.max(center))
-                    });
+                        .filter(|(low, high)| low.is_finite() && high.is_finite())
+                        .fold(
+                            (f32::INFINITY, f32::NEG_INFINITY),
+                            |(first, last), (low, high)| (first.min(low), last.max(high)),
+                        );
                     Box::new(flow_pages.around_slots(low, high))
                 }
             }
@@ -175,14 +177,12 @@ pub(super) fn prepare(
                     for &(top, height, marker) in inline_markers {
                         work.charge(1)?;
                         if !root.is_repeat {
-                            // A page without flow geometry cannot own a normal-flow line.
-                            let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
                             let (top, bottom) = page.flow_axis.line_extent(
                                 &root,
                                 root.y + top,
                                 root.y + top + height,
                             );
-                            if !crate::layout::line_center_on_page(top, bottom, start, end) {
+                            if !page.owns_line(pages, top, bottom) {
                                 continue;
                             }
                         }

@@ -235,6 +235,43 @@ fn an_image_belongs_only_to_the_page_of_its_line() {
     );
 }
 
+/// A line taller than the page draws on every page it reaches, its
+/// images with its text.
+#[test]
+fn an_image_on_a_line_taller_than_the_page_is_on_every_page_of_its_line() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A</p><p style=\"line-height:150px\">X</p>",
+        "p::before{content:url(icon.png)}",
+        &pixels,
+    );
+    let pages: Vec<_> = (0..document.page_count())
+        .filter(|&number| {
+            let page = document.page(number).unwrap();
+            let runs = page.text_runs();
+            runs.iter().any(|run| run.text == "X")
+                && page
+                    .paint_order_for_text_runs(&runs)
+                    .iter()
+                    .filter(|event| matches!(event, PaintEvent::GeneratedImage(_)))
+                    .count()
+                    == if runs.iter().any(|run| run.text == "A") {
+                        2
+                    } else {
+                        1
+                    }
+        })
+        .collect();
+    let with_x = (0..document.page_count())
+        .filter(|&number| {
+            let page = document.page(number).unwrap();
+            page.text_runs().iter().any(|run| run.text == "X")
+        })
+        .count();
+    assert!(with_x > 1, "the tall line reaches more than one page");
+    assert_eq!(pages.len(), with_x);
+}
+
 #[test]
 fn an_image_in_a_repeated_table_header_stops_after_the_table() {
     let pixels = Pixels::new();
