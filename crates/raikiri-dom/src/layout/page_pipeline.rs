@@ -4752,24 +4752,17 @@ fn paginate_flow(
                 // following siblings (and for page count), but materialize
                 // this box at the underflowed coordinate.  This is the
                 // `underflow-from-next-page` case from CSS Break.
-                let underflow_y = target_y + margin_top;
-                let node_target_y =
-                    if forced_transition && margin_top < 0.0 && underflow_y < target_y {
-                        underflow_y
-                    } else if forced_transition {
-                        // The forced break is before the box's margin box, so a
-                        // positive block-start margin remains on the new page.
-                        // A table's first row keeps the table's top edge above it.
-                        target_y + margin_top.max(0.0) + table_row_lead
-                    } else if row_group_overflow {
-                        target_y + row_group.map_or(0.0, |(_, lead)| lead) + relative_offset
-                    } else if table_row_overflow {
-                        target_y + table_row_lead + relative_offset
-                    } else {
-                        // A relative offset moves with the box to the page
-                        // it starts on.
-                        target_y + relative_offset
-                    };
+                let node_target_y = transition_target_y(
+                    target_y,
+                    margin_top,
+                    relative_offset,
+                    table_row_lead,
+                    forced_transition,
+                    row_group
+                        .filter(|_| row_group_overflow)
+                        .map(|(_, lead)| lead),
+                    table_row_overflow,
+                );
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
                 // Keep `flow_shift` at the page boundary even when the
@@ -6398,6 +6391,41 @@ fn margin_box_starts_page(
         .unwrap_or(current_page);
     margin_box_page > current_page
         || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
+}
+
+/// Where a box that crosses a page transition is placed, given the
+/// `target_y` top of the page it moves to.
+///
+/// A forced break sits before the box's margin box, so a positive block-start
+/// `margin_top` stays on the new page, and a negative one may pull the box back
+/// above the page top (the `underflow-from-next-page` case from CSS Break).
+/// A table's first row keeps the table's top edge, `table_row_lead`, above it.
+/// An unforced move truncates the margin; a moved row group or table row keeps
+/// its lead from the table's top edge. Except after a forced break, the box's
+/// `relative_offset` moves with it to the page it starts on.
+///
+/// `row_group_lead` is the lead of a row group that moves as a whole, if any.
+fn transition_target_y(
+    target_y: f32,
+    margin_top: f32,
+    relative_offset: f32,
+    table_row_lead: f32,
+    forced_transition: bool,
+    row_group_lead: Option<f32>,
+    table_row_overflow: bool,
+) -> f32 {
+    let underflow_y = target_y + margin_top;
+    if forced_transition && margin_top < 0.0 && underflow_y < target_y {
+        underflow_y
+    } else if forced_transition {
+        target_y + margin_top.max(0.0) + table_row_lead
+    } else if let Some(lead) = row_group_lead {
+        target_y + lead + relative_offset
+    } else if table_row_overflow {
+        target_y + table_row_lead + relative_offset
+    } else {
+        target_y + relative_offset
+    }
 }
 
 /// Whether a table row of `height` at `flow_y` crosses `page_end` and moves

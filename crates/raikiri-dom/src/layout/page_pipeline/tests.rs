@@ -16325,3 +16325,31 @@ fn moved_float_edge_keeps_the_block_start_margin_only_after_a_forced_break() {
     assert_eq!(unforced.top, 100.0);
     assert_eq!(unforced.bottom, 127.0);
 }
+
+#[test]
+fn a_transition_target_keeps_only_the_offsets_its_break_allows() {
+    // A forced break keeps a positive margin and the table's lead, but not
+    // the relative offset.
+    assert_eq!(
+        transition_target_y(100.0, 8.0, 3.0, 5.0, true, Some(7.0), true),
+        113.0
+    );
+    // A negative margin after a forced break underflows into the page above.
+    assert_eq!(
+        transition_target_y(100.0, -6.0, 3.0, 5.0, true, None, false),
+        94.0
+    );
+    // An unforced move truncates the margin and keeps the relative offset.
+    assert_eq!(
+        transition_target_y(100.0, 8.0, 3.0, 5.0, false, Some(7.0), true),
+        110.0
+    );
+    assert_eq!(
+        transition_target_y(100.0, 8.0, 3.0, 5.0, false, None, true),
+        108.0
+    );
+    assert_eq!(
+        transition_target_y(100.0, 8.0, 3.0, 5.0, false, None, false),
+        103.0
+    );
+}
