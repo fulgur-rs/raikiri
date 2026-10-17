@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-traits"
-version = "0.2.0"
+version = "0.3.0"
 description = "Shared DOM, resource, layout, and target resolution contracts for raikiri"
 edition.workspace = true
 rust-version.workspace = true
