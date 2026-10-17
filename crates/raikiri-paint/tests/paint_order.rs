@@ -1893,3 +1893,19 @@ fn positioned_flex_items_keep_order_modified_order() {
     );
     assert_eq!(red_and_lime(&result), (200, 0));
 }
+
+#[test]
+fn z_indexed_inline_content_stays_in_the_lines_beside_an_empty_block_pseudo_element() {
+    // An empty block-level `::before` has no line fragment, but its group
+    // still orders by stack level with the inline block's in the lines. The
+    // pixels show it; the native trace records the box of a block-level
+    // pseudo-element with the lines at another step than the public list.
+    let result = lay_out(
+        "<div id=p><span style=\"display: inline-block; position: relative; z-index: 1; \
+         top: -10px; width: 20px; height: 10px; background: lime\"></span></div>\
+         <div style=\"position: relative; height: 10px\"></div>",
+        "#p::before { content: \"\"; display: block; position: relative; z-index: 2; \
+         width: 20px; height: 10px; background: red }",
+    );
+    assert_eq!(red_and_lime(&result), (200, 0));
+}

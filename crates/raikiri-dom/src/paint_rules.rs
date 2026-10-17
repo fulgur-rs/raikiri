@@ -764,19 +764,27 @@ fn content_can_leave_paragraph(document: &Document, cascade: &CascadeResult, roo
     if first_line_opacity_layer(document, root).is_some() {
         return false;
     }
-    !document
-        .get_node(root)
-        .and_then(|node| node.ifc_lines())
-        .into_iter()
-        .flatten()
-        .flat_map(|line| line.fragments())
-        .filter_map(fragment_node)
-        .any(|id| {
-            crate::generated_content::generated_origin(id).is_some_and(|(element, _)| {
-                pseudo_stacking_group(document, cascade, root, id)
-                    && outside_inline_stacking_contexts(document, cascade, root, element)
+    // A block-level `::before` or `::after` with no content has no line
+    // fragment, only its piece.
+    document.get_node(root).is_none_or(|node| {
+        !node
+            .ifc_lines()
+            .into_iter()
+            .flatten()
+            .flat_map(|line| line.fragments())
+            .filter_map(fragment_node)
+            .chain(
+                node.ifc_generated_block_pieces()
+                    .iter()
+                    .map(|piece| piece.node),
+            )
+            .any(|id| {
+                crate::generated_content::generated_origin(id).is_some_and(|(element, _)| {
+                    pseudo_stacking_group(document, cascade, root, id)
+                        && outside_inline_stacking_contexts(document, cascade, root, element)
+                })
             })
-        })
+    })
 }
 
 /// The paragraph whose lines lay out box `node_id`: the paragraph root
