@@ -1238,7 +1238,7 @@ pub(crate) fn parse_property_grammar(
         "grid-column" => parse_grid_line_shorthand(input).map(PropertyValue::GridColumn),
         // CSS Box Alignment Module Level 3 §7.1
         // <https://www.w3.org/TR/css-align-3/#propdef-justify-items>.
-        "justify-items" => parse_self_alignment(input).map(PropertyValue::JustifyItems),
+        "justify-items" => parse_justify_alignment(input).map(PropertyValue::JustifyItems),
         // CSS Box Alignment Module Level 3 §6.1
         // <https://www.w3.org/TR/css-align-3/#propdef-justify-self>.
         "justify-self" => parse_justify_self(input).map(PropertyValue::JustifySelf),

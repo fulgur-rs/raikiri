@@ -2395,3 +2395,5 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
         assert_eq!(changed.nodes[child].unrounded_layout.size, expected);
     }
 }
+
+mod replaced_sizing_tests;

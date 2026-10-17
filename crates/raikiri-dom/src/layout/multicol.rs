@@ -2725,7 +2725,7 @@ pub(crate) fn root_column_fragments(
 /// authored containing block before layout. Descendants of a multicol
 /// container are left to the multicol dispatch in [`compute_multicol_layout`],
 /// which supplies their used widths, so they are not guessed from a page
-/// fallback.
+/// fallback. A replaced box keeps its natural width (CSS 2.1 §10.3.4).
 pub(crate) fn prepare_authored_block_widths(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -2769,6 +2769,7 @@ pub(crate) fn prepare_authored_block_widths(
         ) && !ancestors.vertical[idx]
             && matches!(doc.nodes[idx].position(), PositionValue::Static)
             && !has_nonzero_horizontal_margin(&cascade.computed[idx])
+            && !doc.nodes[idx].style.item_is_replaced
             && !ancestors.out_of_flow_ancestor[idx]
             && !ancestors.non_block_flow_ancestor[idx]
             && let Some(width) = ancestors.authored_containing_width(idx)

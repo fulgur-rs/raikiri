@@ -305,6 +305,20 @@ fn parse_content_alignment_res<'i>(
 /// [`SelfAlignmentValue`] docs. [`parse_align_self`] reuses this function for
 /// `align-self`, while accepting `auto` as an additional value.
 pub(super) fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAlignmentValue> {
+    parse_axis_self_alignment(input, false)
+}
+
+/// Parser for `justify-items`, which also accepts `left` and `right`: those
+/// keywords exist only in the inline (justify) axis (CSS Box Alignment 3
+/// §6.1, §7.1), so `align-items` and `align-self` reject them.
+pub(super) fn parse_justify_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAlignmentValue> {
+    parse_axis_self_alignment(input, true)
+}
+
+fn parse_axis_self_alignment(
+    input: &mut Parser<'_, '_>,
+    inline_axis: bool,
+) -> Option<SelfAlignmentValue> {
     let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
     let _unsafe = !safe
         && input
@@ -321,8 +335,8 @@ pub(super) fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAli
         "center" => SelfAlignmentValue::Center,
         "start" | "self-start" => SelfAlignmentValue::Start,
         "end" | "self-end" => SelfAlignmentValue::End,
-        "left" => SelfAlignmentValue::Start,
-        "right" => SelfAlignmentValue::End,
+        "left" if inline_axis => SelfAlignmentValue::Start,
+        "right" if inline_axis => SelfAlignmentValue::End,
         "flex-start" => SelfAlignmentValue::FlexStart,
         "flex-end" => SelfAlignmentValue::FlexEnd,
         "baseline" => SelfAlignmentValue::Baseline,
@@ -340,15 +354,6 @@ pub(super) fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAli
             value
         },
     )
-}
-
-/// The `Result` form of [`parse_self_alignment`], following the wrapper
-/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
-/// [`parse_place_items_shorthand`].
-fn parse_self_alignment_res<'i>(
-    input: &mut Parser<'i, '_>,
-) -> Result<SelfAlignmentValue, ParseError<'i, ()>> {
-    parse_self_alignment(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// Parser for `align-self: auto | …`. It tries the `auto` branch first
@@ -382,7 +387,7 @@ pub(super) fn parse_justify_self(input: &mut Parser<'_, '_>) -> Option<AlignSelf
         && input
             .try_parse(|i| i.expect_ident_matching("unsafe"))
             .is_ok();
-    parse_self_alignment(input).map(|value| {
+    parse_justify_alignment(input).map(|value| {
         AlignSelfValue::Value(
             if safe
                 && matches!(
@@ -400,13 +405,20 @@ pub(super) fn parse_justify_self(input: &mut Parser<'_, '_>) -> Option<AlignSelf
     })
 }
 
-/// The `Result` form of [`parse_align_self`], following the wrapper
-/// pattern of [`parse_padding_side_res`](super::box_model::parse_padding_side_res), for the `try_parse` in
+/// The `Result` form of [`parse_justify_alignment`], for the second
+/// component of [`parse_place_items_shorthand`].
+fn parse_justify_alignment_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<SelfAlignmentValue, ParseError<'i, ()>> {
+    parse_justify_alignment(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// The `Result` form of [`parse_justify_self`], for the second component of
 /// [`parse_place_self_shorthand`].
-fn parse_align_self_res<'i>(
+fn parse_justify_self_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<AlignSelfValue, ParseError<'i, ()>> {
-    parse_align_self(input).ok_or_else(|| input.new_custom_error(()))
+    parse_justify_self(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// Shared parser for `row-gap` and `column-gap`:
@@ -1212,7 +1224,9 @@ pub(crate) fn parse_place_items_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<PlaceItemsShorthand> {
     let align = parse_self_alignment(input)?;
-    let justify = input.try_parse(parse_self_alignment_res).unwrap_or(align);
+    let justify = input
+        .try_parse(parse_justify_alignment_res)
+        .unwrap_or(align);
     Some(PlaceItemsShorthand { align, justify })
 }
 
@@ -1222,7 +1236,7 @@ pub(crate) fn parse_place_items_shorthand(
 /// component is omitted, the copy rule matches [`parse_place_items_shorthand`].
 pub(crate) fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfShorthand> {
     let align = parse_align_self(input)?;
-    let justify = input.try_parse(parse_align_self_res).unwrap_or(align);
+    let justify = input.try_parse(parse_justify_self_res).unwrap_or(align);
     Some(PlaceSelfShorthand { align, justify })
 }
 

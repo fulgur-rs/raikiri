@@ -1104,6 +1104,12 @@ css/css-flexbox/abspos/flex-abspos-staticpos-margin-003.html
 css/css-grid/abspos/grid-abspos-staticpos-align-self-001.html
 css/css-grid/abspos/grid-abspos-staticpos-align-self-self-end.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-001.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-img-001.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-img-002.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-001.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-002.html
+css/css-grid/alignment/replaced-alignment-with-aspect-ratio-004.html
+css/css-grid/alignment/replaced-alignment-with-aspect-ratio-005.html
 css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-003.html
 # REMOVED 2026-09-16: grid abspos last-baseline vertical/rtl cases remain unsupported by the horizontal Taffy bridge.
 
