@@ -1995,9 +1995,16 @@ fn collapsed_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
         .iter()
         .map(|&row_id| {
             let row = &doc.nodes[row_id];
-            let in_collapsed_group = row
-                .parent
-                .is_some_and(|group| doc.nodes[group].collapses_table_rows);
+            // `display: contents` wrappers are transparent to the grid, so
+            // the row group may sit further up.
+            let mut group = row.parent;
+            while let Some(id) = group
+                && doc.nodes[id].display() == DisplayValue::Contents
+            {
+                group = doc.nodes[id].parent;
+            }
+            let in_collapsed_group =
+                group.is_some_and(|group| doc.nodes[group].collapses_table_rows);
             match row.display() {
                 DisplayValue::TableRow => row.collapses_table_rows || in_collapsed_group,
                 DisplayValue::TableCell => in_collapsed_group,

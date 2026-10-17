@@ -372,3 +372,44 @@ fn a_spanning_cell_moved_past_a_collapsed_row_aligns_with_its_new_row() {
     // row's baseline, so the 20px cell there (16px down) shifts by 16px.
     assert_eq!(doc.nodes[cells[1]].unrounded_layout.padding.top, 16.0);
 }
+
+#[test]
+fn a_row_inside_a_contents_wrapper_collapses_with_its_row_group() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    let group = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row-group;visibility:collapse"),
+    );
+    let wrapper = doc.append_element(
+        Some(group),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let row = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:table-row;visibility:visible"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "div",
+        Style::default(),
+        Some("display:table-cell;width:20px;height:20px;padding:0"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    assert_eq!(cell_box(&doc, cell).1, 0.0);
+}
