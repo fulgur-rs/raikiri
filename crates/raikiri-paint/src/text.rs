@@ -107,18 +107,21 @@ pub(crate) fn missing_glyph_origins(
         // off that grid, so the boxes go on the grid that holds the most
         // origins, starting from the leftmost such origin.
         let count = boxes as usize;
+        // Layout rounds the em before it advances the pen, so the grid's
+        // pitch is the cluster's own advance per box, not the font size.
+        let pitch = cluster.shaping_advance / boxes;
         let on_grid = |anchor: f32, x: f32| {
-            let steps = (x - anchor) / size;
+            let steps = (x - anchor) / pitch;
             let step = steps.round();
             (steps - step).abs() < 1e-3 && step >= 0.0 && (step as usize) < count
         };
         // Origins on one grid share their offset from the first origin modulo
-        // an em, so a single pass sorts them into grids, each anchored at its
-        // leftmost origin.
+        // the pitch, so a single pass sorts them into grids, each anchored at
+        // its leftmost origin.
         let first = points.first().map_or(0.0, |&(x, _)| x);
         let mut grids: HashMap<i64, (f32, usize)> = HashMap::new();
         for &(x, _) in &points {
-            let phase = ((x - first) / size).rem_euclid(1.0);
+            let phase = ((x - first) / pitch).rem_euclid(1.0);
             let key = (phase * 1000.0).round() as i64 % 1000;
             let (anchor, matches) = grids.entry(key).or_insert((x, 0));
             if on_grid(*anchor, x) {

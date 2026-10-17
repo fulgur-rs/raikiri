@@ -3645,15 +3645,23 @@ fn missing_glyph_boxes_keep_their_size_under_negative_letter_spacing() {
 fn zero_advance_stub_glyphs_take_no_box_of_their_own() {
     // The stub face gives joiners, variation selectors and marks no advance
     // so they stay invisible; only the characters with an em take a box.
-    for (text, expected) in [
-        ("\u{FDD0}\u{200D}\u{FDD1}", 2),
-        ("\u{FDD0}\u{FE0F}", 1),
-        ("\u{FDD0}\u{0301}", 1),
-        ("\u{FDD0}\u{200D}\u{FDD1}\u{FE0F}", 2),
+    for (text, font_size, expected) in [
+        ("\u{FDD0}\u{200D}\u{FDD1}", "20px", 2),
+        ("\u{FDD0}\u{FE0F}", "20px", 1),
+        ("\u{FDD0}\u{0301}", "20px", 1),
+        ("\u{FDD0}\u{200D}\u{FDD1}\u{FE0F}", "20px", 2),
         // One grapheme: the mark sits half an em into the first box.
-        ("\u{1F600}\u{0301}\u{200D}\u{1F600}", 2),
+        ("\u{1F600}\u{0301}\u{200D}\u{1F600}", "20px", 2),
+        // Layout rounds a fractional em, so the boxes follow the rounded one.
+        ("\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}", "10.1px", 3),
+        (
+            "\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}",
+            "10.1px",
+            5,
+        ),
     ] {
-        let scene = painted_root("width:200px;font-size:20px", |doc, root| {
+        let style = format!("width:200px;font-size:{font_size}");
+        let scene = painted_root(&style, |doc, root| {
             doc.append_text(root, text);
         });
         let boxes: Vec<_> = scene
