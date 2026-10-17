@@ -93,8 +93,10 @@ pub(crate) fn missing_glyph_origins(
         }
         let start =
             glyphs.partition_point(|&(offset, ..)| (offset as usize) < cluster.text_range.start);
-        let end =
-            glyphs.partition_point(|&(offset, ..)| (offset as usize) < cluster.text_range.end);
+        // A generated cluster such as a `text-overflow` ellipsis has an empty
+        // text range, with its glyphs at that offset.
+        let range_end = cluster.text_range.end.max(cluster.text_range.start + 1);
+        let end = glyphs.partition_point(|&(offset, ..)| (offset as usize) < range_end);
         let mut points: Vec<(f32, f32)> =
             glyphs[start..end].iter().map(|&(_, x, y)| (x, y)).collect();
         points.sort_by(|a, b| a.0.total_cmp(&b.0));
