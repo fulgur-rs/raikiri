@@ -142,8 +142,8 @@ impl TypographicPaint {
     /// positioned below the paragraph's blocks, and so do the
     /// `::before`, `::after` and `::first-letter` boxes (CSS Color 4 §3.3).
     /// An atomic `::before` or `::after` with a transform is a group too,
-    /// turned as a whole (CSS Transforms 1 §6). The groups nest as their
-    /// boxes do.
+    /// turned as a whole (CSS Transforms 1 §6), and so is one positioned
+    /// below the paragraph's blocks. The groups nest as their boxes do.
     pub(super) fn new(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
         let cascade = paragraph.cascade;
         let mut paint = Self {
@@ -157,7 +157,10 @@ impl TypographicPaint {
         let mut by_box = HashMap::new();
         let mut parents = HashMap::new();
         let mut opacities = HashMap::new();
-        let mut turned = std::collections::HashSet::new();
+        // The keys that form a group without an opacity: an atomic
+        // pseudo-element with a transform, or one positioned below the
+        // paragraph's blocks.
+        let mut grouped = std::collections::HashSet::new();
         for piece in pieces {
             let key = FragmentKey {
                 node: piece.node,
@@ -187,8 +190,15 @@ impl TypographicPaint {
             {
                 opacities.insert(key, opacity);
             }
-            if raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node).is_some() {
-                turned.insert(key);
+            if raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node).is_some()
+                || raikiri_dom::paint_rules::negative_pseudo_group(
+                    paragraph.document,
+                    cascade,
+                    paragraph.root_id,
+                    piece.node,
+                )
+            {
+                grouped.insert(key);
             }
         }
         // Resolve parents before children. Equal opacities share a group only
@@ -222,7 +232,7 @@ impl TypographicPaint {
             };
             for key in path.into_iter().rev() {
                 let opacity = opacities.get(&key).copied();
-                if opacity.is_some() || turned.contains(&key) {
+                if opacity.is_some() || grouped.contains(&key) {
                     let index = *by_box
                         .entry((key.node, opacity.map(f32::to_bits), group))
                         .or_insert_with(|| {

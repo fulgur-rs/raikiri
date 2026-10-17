@@ -1350,3 +1350,20 @@ fn negative_inline_elements_paint_by_stack_level() {
     assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0);
     assert_eq!(pixels_of(&pixels, [0, 255, 0]), 200);
 }
+
+/// A `::before` positioned with a negative stack level paints below the
+/// block inside its paragraph, which stays below the paragraph's other
+/// text.
+#[test]
+fn paragraph_blocks_cover_negative_pseudo_elements() {
+    let css = "#m::before { content: 'BB'; position: relative; z-index: -1; color: red }";
+    for style in ["", "position: relative; z-index: 0"] {
+        let body = format!(
+            "<div id=m style=\"{style}; color: black\">AA\
+             <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+        );
+        let pixels = render_first_page(&lay_out(&body, css));
+        assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{style}");
+        assert_eq!(pixels_of(&pixels, [0, 0, 0]), 200, "{style}");
+    }
+}

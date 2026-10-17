@@ -415,18 +415,18 @@ impl Document {
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
+        let root = usize::try_from(run.line.root.0).ok()?;
         let start = match run.source {
             RunSource::Text(node) => self.parent_of(usize::try_from(node.0).ok()?)?,
             RunSource::Generated(owner, kind @ (GeneratedKind::Before | GeneratedKind::After)) => {
                 let owner = usize::try_from(owner.0).ok()?;
-                if let Some(group) = generated_group(cascade, owner, kind) {
+                if let Some(group) = generated_group(self, cascade, root, owner, kind) {
                     return Some(NodeId::new(group as u64));
                 }
                 owner
             }
             _ => return None,
         };
-        let root = usize::try_from(run.line.root.0).ok()?;
         self.inline_opacity_group(cascade, root, start)
             .map(|group| NodeId::new(group as u64))
     }
@@ -719,6 +719,7 @@ impl Document {
                     if alpha.is_none()
                         && turned.is_none()
                         && !paint_rules::negative_inline_group(self, cascade, root, group)
+                        && !paint_rules::negative_pseudo_group(self, cascade, root, group)
                     {
                         continue; // cov:ignore: groups are found by their opacity or transform
                     }
@@ -1858,7 +1859,8 @@ fn push_paragraph<'a>(
                 // listed after this content with its boxes, images and text.
                 // Its `::first-letter` slot still follows.
                 if matches!(kind, GeneratedKind::Before | GeneratedKind::After)
-                    && let Some(pseudo) = generated_group(items.cascade, node_id, kind)
+                    && let Some(pseudo) =
+                        generated_group(document, items.cascade, root, node_id, kind)
                 {
                     if pseudo_on_paragraph(items, root, node_id, kind, lines)
                         && !nested.contains(&pseudo)
@@ -1924,7 +1926,14 @@ fn push_paragraph<'a>(
                 };
                 // The images of a `::before` group are listed in the group.
                 if !after
-                    && generated_group(items.cascade, node_id, GeneratedKind::Before).is_some()
+                    && generated_group(
+                        document,
+                        items.cascade,
+                        root,
+                        node_id,
+                        GeneratedKind::Before,
+                    )
+                    .is_some()
                 {
                     continue;
                 }
@@ -2192,11 +2201,18 @@ fn letter_groups(
     found
 }
 
-/// The group the pseudo-element with generated id `id` forms in its
-/// paragraph: its id, when it has one (see
-/// [`paint_rules::pseudo_forms_group`]).
-fn pseudo_opacity_group(cascade: &CascadeResult, id: usize) -> Option<usize> {
-    paint_rules::pseudo_forms_group(cascade, id).then_some(id)
+/// The group the pseudo-element with generated id `id` forms in paragraph
+/// `root`: its id, when it has one (see [`paint_rules::pseudo_forms_group`]
+/// and [`paint_rules::negative_pseudo_group`]).
+fn pseudo_opacity_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> Option<usize> {
+    (paint_rules::pseudo_forms_group(cascade, id)
+        || paint_rules::negative_pseudo_group(document, cascade, root, id))
+    .then_some(id)
 }
 
 /// The border box of the `::before` or `::after` with generated id `group`
@@ -2222,16 +2238,24 @@ fn pseudo_box(
         .map(|piece| piece.rect)
 }
 
-/// The opacity group the `::before` or `::after` of `element` forms in its
-/// paragraph, if any.
-fn generated_group(cascade: &CascadeResult, element: usize, kind: GeneratedKind) -> Option<usize> {
+/// The group the `::before` or `::after` of `element` forms in paragraph
+/// `root`, if any.
+fn generated_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    element: usize,
+    kind: GeneratedKind,
+) -> Option<usize> {
     let pseudo = if kind == GeneratedKind::After {
         PseudoElem::After
     } else {
         PseudoElem::Before
     };
     pseudo_opacity_group(
+        document,
         cascade,
+        root,
         crate::generated_content::generated_node_id(element, pseudo),
     )
 }

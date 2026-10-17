@@ -978,39 +978,70 @@ pub fn holds_negative_stack_level(
 /// Its boxes and text paint as a group below the in-flow blocks inside the
 /// paragraph and the rest of its lines (CSS 2.1 Appendix E steps 3, 4 and
 /// 7). Such an element is part of the content
-/// [`holds_negative_stack_level`] finds.
+/// [`holds_negative_stack_level`] finds; so is a `::before` or `::after`
+/// that [`negative_pseudo_group`] finds.
 pub fn negative_inline_group(
     document: &Document,
     cascade: &CascadeResult,
     root: usize,
     id: usize,
 ) -> bool {
-    let inline = |id: usize| {
-        document
-            .get_node(id)
-            .is_some_and(|node| node.kind() == NodeKind::Element)
-            .then(|| cascade.computed.get(id))
-            .flatten()
-            .filter(|cv| cv.display.is_inline_flow() || cv.display == DisplayValue::Contents)
-    };
-    if !inline(id).is_some_and(|cv| {
-        cv.display.is_inline_flow()
-            && !matches!(cv.position, PositionValue::Static)
-            && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0)
-    }) {
-        return false;
-    }
+    document
+        .get_node(id)
+        .is_some_and(|node| node.kind() == NodeKind::Element)
+        && cascade.computed.get(id).is_some_and(|cv| {
+            cv.display.is_inline_flow()
+                && !matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0)
+        })
+        && document
+            .parent_of(id)
+            .is_some_and(|parent| outside_inline_stacking_contexts(document, cascade, root, parent))
+}
+
+/// Whether the `::before` or `::after` with generated id `id`, laid out in
+/// the lines of paragraph `root`, is relatively positioned with a negative
+/// `z-index` outside every inline box of the paragraph that forms a
+/// stacking context.
+///
+/// Like the elements [`negative_inline_group`] finds, its boxes, images and
+/// text paint as a group below the in-flow blocks inside the paragraph and
+/// the rest of its lines.
+pub fn negative_pseudo_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> bool {
+    crate::generated_content::generated_origin(id).is_some_and(|(element, pseudo)| {
+        matches!(pseudo, PseudoElem::Before | PseudoElem::After)
+            && pseudo_stack_level(cascade, id) < 0
+            && outside_inline_stacking_contexts(document, cascade, root, element)
+    })
+}
+
+/// Whether `start` and the elements around it, up to paragraph `root`, are
+/// inline elements of the paragraph that form no stacking context.
+fn outside_inline_stacking_contexts(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    start: usize,
+) -> bool {
     let owner = document.ifc_source_owner(root);
     document
-        .inclusive_ancestors(id)
-        .skip(1)
+        .inclusive_ancestors(start)
         .take_while(|&ancestor| ancestor != root && ancestor != owner)
         .all(|ancestor| {
-            inline(ancestor).is_some_and(|cv| {
-                !establishes_stacking_context(document, ancestor, cv)
-                    && (matches!(cv.position, PositionValue::Static)
-                        || !matches!(cv.z_index, ZIndexValue::Integer(_)))
-            })
+            document
+                .get_node(ancestor)
+                .is_some_and(|node| node.kind() == NodeKind::Element)
+                && cascade.computed.get(ancestor).is_some_and(|cv| {
+                    (cv.display.is_inline_flow() || cv.display == DisplayValue::Contents)
+                        && !establishes_stacking_context(document, ancestor, cv)
+                        && (matches!(cv.position, PositionValue::Static)
+                            || !matches!(cv.z_index, ZIndexValue::Integer(_)))
+                })
         })
 }
 

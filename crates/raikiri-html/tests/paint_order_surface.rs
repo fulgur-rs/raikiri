@@ -568,6 +568,34 @@ fn negative_opacity_groups_paint_below_anonymous_paragraph_text() {
     );
 }
 
+/// A `::before` positioned with a negative stack level paints below the
+/// block inside its paragraph, and the paragraph's other text above it,
+/// even without an opacity of its own.
+#[test]
+fn negative_pseudo_elements_paint_below_paragraph_blocks() {
+    assert_eq!(
+        content_order(
+            "<div id=d>A<p id=p>C</p></div>",
+            "#d::before {content:'X';position:relative;z-index:-1}",
+        ),
+        ["box d", "text pseudo", "box p", "text", "text"]
+    );
+}
+
+/// A negative `::before` of a span that forms a stacking context stays in
+/// the paragraph's lines with that span.
+#[test]
+fn negative_pseudo_elements_inside_inline_stacking_contexts_stay_in_the_lines() {
+    assert_eq!(
+        content_order(
+            "<div id=d>A<span id=s>B</span><p id=p>C</p></div>",
+            "#s {position:relative;z-index:0} \
+             #s::before {content:'X';position:relative;z-index:-1}",
+        ),
+        ["box d", "box p", "box s", "text", "text"]
+    );
+}
+
 /// Like `content_order`, with each group's opacity and each text line's
 /// index: `push <alpha>`, `text <line>` and `text <id> <line>`.
 fn line_order(body: &str, style: &str) -> Vec<String> {
