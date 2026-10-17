@@ -919,6 +919,30 @@ pub(crate) fn flow_mapping(
             *slot = Some(ranked);
         }
     }
+    // `all: revert-layer` rolls these winners back as `pick_winners` does;
+    // `all` never covers `direction`.
+    if decls
+        .iter()
+        .any(|candidate| candidate.is_all_revert_layer())
+    {
+        for (key, slot) in [
+            (PropertyKey::WritingMode, &mut writing_mode),
+            (PropertyKey::TextOrientation, &mut text_orientation),
+            (PropertyKey::Display, &mut display),
+            (PropertyKey::Float, &mut float),
+        ] {
+            if slot.is_none() {
+                continue;
+            }
+            let selected = super::rollback::select_layered_winner(decls, |idx, candidate| {
+                if candidate.key() != key && !candidate.is_all_revert_layer() {
+                    return None;
+                }
+                Some(candidate.precedence().layered(idx, candidate.rollback()))
+            });
+            *slot = selected.map(|idx| decls[idx].precedence().ranked(idx));
+        }
+    }
     let mut winner =
         |key: PropertyKey, slot: Option<RankedDecl>| slot.and_then(|w| resolve(key, w.idx));
     let writing_mode = match winner(PropertyKey::WritingMode, writing_mode) {
