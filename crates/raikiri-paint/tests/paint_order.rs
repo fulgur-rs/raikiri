@@ -1582,3 +1582,47 @@ fn negative_content_in_inline_opacity_groups_stays_in_the_group() {
         );
     }
 }
+
+#[test]
+fn z_indexed_spans_in_inline_stacking_contexts_paint_in_level_order() {
+    // The earlier span has the higher level, so it covers the later one
+    // where they overlap, inside each kind of enclosing inline stacking
+    // context.
+    for outer in [
+        "opacity: 0.5",
+        "position: relative; z-index: 0",
+        "position: relative; z-index: -1",
+    ] {
+        let result = lay_out(
+            &format!(
+                "<div><span style=\"{outer}\">\
+                 <span id=a style=\"position: relative; z-index: 1; color: red\">AA</span>\
+                 <span id=b style=\"position: relative; z-index: -1; left: -10px; color: lime\">BB</span>\
+                 </span></div>"
+            ),
+            "",
+        );
+        let pixels = render_first_page(&result);
+        let reddish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > p[1] && p[0] > p[2])
+            .count();
+        let greenish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[1] > p[0] && p[1] > p[2])
+            .count();
+        assert_eq!((reddish, greenish), (200, 100), "{outer}");
+        // The public order lists the later span's text first.
+        let page = result.pages().next().expect("a page");
+        let (document, _, _, _) = page.paint_inputs();
+        let texts: Vec<_> = page
+            .paint_order()
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::Text(fragment) => document.parent_of(node_index(fragment.node())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, [by_id(&result, "b"), by_id(&result, "a")], "{outer}");
+    }
+}

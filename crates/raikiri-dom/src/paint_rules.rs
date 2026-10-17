@@ -1055,6 +1055,33 @@ pub fn negative_inline_group(
         && !within_translucent_first_line(document, root, id)
 }
 
+/// Whether inline element `id` of paragraph `root` is positioned with an
+/// integer `z-index` inside an inline element of the paragraph that forms a
+/// stacking context.
+///
+/// It forms a stacking context of its own within that one, whose boxes and
+/// text paint as a group at its stack level among the content of the
+/// enclosing one: below it with a negative level, after it otherwise (CSS
+/// 2.1 Appendix E steps 3, 8 and 9).
+pub fn nested_inline_stacking_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> bool {
+    document
+        .get_node(id)
+        .is_some_and(|node| node.kind() == NodeKind::Element)
+        && cascade.computed.get(id).is_some_and(|cv| {
+            cv.display.is_inline_flow()
+                && !matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(_))
+        })
+        && document.parent_of(id).is_some_and(|parent| {
+            !outside_inline_stacking_contexts(document, cascade, root, parent)
+        })
+}
+
 /// Whether the `::before` or `::after` with generated id `id`, laid out in
 /// the lines of paragraph `root`, is relatively positioned with a negative
 /// `z-index` outside every inline box of the paragraph that forms a
