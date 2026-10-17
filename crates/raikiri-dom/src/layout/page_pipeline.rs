@@ -5005,11 +5005,14 @@ fn paginate_flow(
                         let (target_top, target_y) = if forced_before {
                             (page_top, page_top + margin_top)
                         } else {
-                            // Only the collapsed margin is truncated, not
-                            // clearance or other space in the gap.
-                            let collapsed = adjoining_margin(document, cascade, previous, false)
-                                .max(adjoining_margin(document, cascade, node_id, true));
-                            let margin_start = previous_bottom.max(effective_y - collapsed);
+                            let margin_start = collapsed_margin_start(
+                                document,
+                                cascade,
+                                previous,
+                                node_id,
+                                previous_bottom,
+                                effective_y,
+                            );
                             let first_edge = page_origins.first_edge_in_margin(
                                 margin_start,
                                 follows_forced_break,
@@ -5019,11 +5022,7 @@ fn paginate_flow(
                         };
                         let delta = target_y - effective_y;
                         sibling_margins.moved_boxes |= delta != 0.0;
-                        document.nodes[node_id].unrounded_layout.location.y += delta;
-                        follow_moved_ifc_block(document, node_id, delta);
-                        shrink_ancestors_after_margin_truncation(
-                            document, cascade, node_id, delta, body_id,
-                        );
+                        move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
                         flow_shift += delta;
                         effective_y += delta;
                         if target_y < target_top {
@@ -5962,6 +5961,25 @@ fn generated_box_separates(document: &Document, node_id: usize, previous: usize)
         current = parent;
     }
     false // cov:ignore: the document node is never a `display: contents` element, so the walk returns before it runs out of parents
+}
+
+/// Where the collapsed margin between `previous` and `node_id` starts in the
+/// page flow, given the previous sibling's bottom and the top of `node_id`'s
+/// border box.
+///
+/// Only the collapsed margin is truncated, not clearance or other space in
+/// the gap.
+fn collapsed_margin_start(
+    document: &Document,
+    cascade: &CascadeResult,
+    previous: usize,
+    node_id: usize,
+    previous_bottom: f32,
+    border_box_top: f32,
+) -> f32 {
+    let collapsed = adjoining_margin(document, cascade, previous, false)
+        .max(adjoining_margin(document, cascade, node_id, true));
+    previous_bottom.max(border_box_top - collapsed)
 }
 
 /// The largest positive margin among the block-start (`start`) or block-end
@@ -7342,6 +7360,21 @@ fn grow_ancestors_for_shift(
         }
     }
     bounded
+}
+
+/// Move `node_id` by `delta` after its block-start margin was truncated at a
+/// page break, together with its inline content and the auto-height boxes
+/// containing it.
+fn move_box_by_truncated_margin(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    delta: f32,
+    flow_root: usize,
+) {
+    document.nodes[node_id].unrounded_layout.location.y += delta;
+    follow_moved_ifc_block(document, node_id, delta);
+    shrink_ancestors_after_margin_truncation(document, cascade, node_id, delta, flow_root);
 }
 
 /// A truncated margin shortens the auto-height boxes containing the flow.
