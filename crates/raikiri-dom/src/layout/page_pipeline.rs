@@ -3970,6 +3970,22 @@ fn record_run_on(
     Ok(())
 }
 
+fn reset_inline_x_for_page_transition(
+    document: &mut Document,
+    node_id: usize,
+    page_transition: bool,
+    is_direct_body_element: bool,
+) {
+    // A direct inline child starts its next page fragment at the inline
+    // origin instead of keeping its source-order position from the first pass.
+    if page_transition
+        && is_direct_body_element
+        && document.nodes[node_id].display().is_inline_flow()
+    {
+        document.nodes[node_id].unrounded_layout.location.x = 0.0;
+    }
+}
+
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
 /// page area, as for [`layout_pages_with_page_geometry_and_control`].
@@ -5026,16 +5042,12 @@ fn paginate_flow(
                 check_candidate_page!('candidate_loop, natural_page);
                 current_page = current_page.max(natural_page);
             }
-            // An inline direct child keeps its source-order inline x position
-            // in taffy's single pre-pagination layout. A forced page boundary
-            // starts a fresh page formatting context, so reset that box's
-            // inline origin before painting the next slice.
-            if page_transition
-                && candidate.is_direct_body_element
-                && document.nodes[node_id].display().is_inline_flow()
-            {
-                document.nodes[node_id].unrounded_layout.location.x = 0.0;
-            }
+            reset_inline_x_for_page_transition(
+                document,
+                node_id,
+                page_transition,
+                candidate.is_direct_body_element,
+            );
         } else {
             // A forced break before the first class-A box does not manufacture
             // a leading blank page.
