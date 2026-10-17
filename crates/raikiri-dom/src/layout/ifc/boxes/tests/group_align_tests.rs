@@ -285,3 +285,22 @@ fn the_blocks_of_a_vertical_root_join_its_group() {
     );
     assert_eq!(starts, [vec![60.0], vec![60.0]]);
 }
+
+#[test]
+fn an_independent_block_with_its_own_group_leaves_the_outer_measure_alone() {
+    // The first paragraph leaves 60px, the last 80px. The flow-root block
+    // between them roots a group of its own, which must not reset what the
+    // outer group has measured.
+    let starts = block_starts("text-group-align: end", |doc, root| {
+        let first = paragraph(doc, root, "", "AAAA");
+        let independent = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some("display:flow-root;text-group-align:end"),
+        );
+        paragraph(doc, independent, "", "A");
+        vec![first, paragraph(doc, root, "", "AA")]
+    });
+    assert_eq!(starts, [vec![60.0], vec![60.0]]);
+}

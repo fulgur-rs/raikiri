@@ -466,8 +466,12 @@ impl LayoutSession<'_> {
         // the parent's `text-group-align` group.
         let keeps_group = std::mem::take(&mut self.context.keep_text_group);
         self.context.group_child_uncached = keeps_group;
-        let outer_group = (block_ctx.is_none() && !keeps_group)
-            .then(|| std::mem::take(&mut self.context.text_group));
+        let outer_group = (block_ctx.is_none() && !keeps_group).then(|| {
+            (
+                std::mem::take(&mut self.context.text_group),
+                self.context.text_group_shortest.take(),
+            )
+        });
         let output = if let Some(output) = self.compute_transposed_child(node_id, inputs) {
             output
         } else {
@@ -476,8 +480,9 @@ impl LayoutSession<'_> {
             })
         };
         self.context.group_child_uncached = false;
-        if let Some(group) = outer_group {
+        if let Some((group, shortest)) = outer_group {
             self.context.text_group = group;
+            self.context.text_group_shortest = shortest;
         }
         output
     }
