@@ -4881,29 +4881,17 @@ fn paginate_flow(
                             // Floors are kept in normal-flow coordinates,
                             // without the relative offsets of the ancestors.
                             let flow_target_y = node_target_y - relative_offset;
-                            let outer_bottom = flow_target_y
-                                + height
-                                + document.nodes[node_id].unrounded_layout.margin.bottom;
-                            // An unforced break truncates the block-start
-                            // margin (CSS Fragmentation 3 §5.2), so the margin
-                            // box then starts at the border box.
-                            let outer_top = if forced_transition {
-                                flow_target_y - margin_top
-                            } else {
-                                flow_target_y
-                            };
-                            let layout = &document.nodes[node_id].unrounded_layout;
                             float_shifts.record_edge(
                                 context,
-                                FloatEdge {
-                                    node: node_id,
-                                    side: index,
-                                    top: outer_top,
-                                    bottom: outer_bottom,
-                                    width: layout.size.width
-                                        + layout.margin.left
-                                        + layout.margin.right,
-                                },
+                                moved_float_edge(
+                                    document,
+                                    node_id,
+                                    index,
+                                    flow_target_y,
+                                    height,
+                                    margin_top,
+                                    forced_transition,
+                                ),
                             );
                             // The margin box then moved further than the
                             // border box, and a later float may have to
@@ -7610,6 +7598,35 @@ struct FloatEdge {
     top: f32,
     bottom: f32,
     width: f32,
+}
+
+/// The margin-box edge of a float that moved to `flow_target_y`, its
+/// border-box top in normal-flow coordinates. An unforced break truncates
+/// the block-start margin (CSS Fragmentation 3 §5.2), so the margin box then
+/// starts at the border box; after a forced break it keeps `margin_top`.
+fn moved_float_edge(
+    document: &Document,
+    node_id: usize,
+    side: usize,
+    flow_target_y: f32,
+    height: f32,
+    margin_top: f32,
+    forced_transition: bool,
+) -> FloatEdge {
+    let layout = &document.nodes[node_id].unrounded_layout;
+    let outer_bottom = flow_target_y + height + layout.margin.bottom;
+    let outer_top = if forced_transition {
+        flow_target_y - margin_top
+    } else {
+        flow_target_y
+    };
+    FloatEdge {
+        node: node_id,
+        side,
+        top: outer_top,
+        bottom: outer_bottom,
+        width: layout.size.width + layout.margin.left + layout.margin.right,
+    }
 }
 
 /// The highest outer top, at or below the highest top of `edges`, from

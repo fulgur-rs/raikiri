@@ -16176,3 +16176,29 @@ fn dropping_the_last_float_edges_resets_the_later_shift() {
     assert!(shifts.edges.is_empty());
     assert_eq!(shifts.later, 0.0);
 }
+
+#[test]
+fn moved_float_edge_keeps_the_block_start_margin_only_after_a_forced_break() {
+    let mut document = Document::new();
+    let float = document.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let layout = &mut document.nodes[float].unrounded_layout;
+    layout.size.width = 40.0;
+    layout.margin.left = 3.0;
+    layout.margin.right = 5.0;
+    layout.margin.bottom = 7.0;
+
+    // A forced break keeps the block-start margin above the border box.
+    let forced = moved_float_edge(&document, float, 1, 100.0, 20.0, 10.0, true);
+    assert_eq!(forced.node, float);
+    assert_eq!(forced.side, 1);
+    assert_eq!(forced.top, 90.0);
+    assert_eq!(forced.bottom, 127.0);
+    assert_eq!(forced.width, 48.0);
+
+    // An unforced break truncates it, so the margin box starts at the
+    // border box.
+    let unforced = moved_float_edge(&document, float, 0, 100.0, 20.0, 10.0, false);
+    assert_eq!(unforced.side, 0);
+    assert_eq!(unforced.top, 100.0);
+    assert_eq!(unforced.bottom, 127.0);
+}
