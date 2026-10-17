@@ -3371,3 +3371,24 @@ fn empty_inline_block_before_in_a_vertical_paragraph_keeps_its_physical_size() {
         "{fills:?}"
     );
 }
+
+/// A percentage height of an empty inline-block `::before` refers to the
+/// paragraph's definite height, which is its inline size when vertical.
+#[test]
+fn empty_inline_block_before_resolves_a_percentage_height() {
+    for (paragraph, expected) in [
+        ("height:100px", 50.0),
+        ("writing-mode:vertical-rl;height:200px", 100.0),
+    ] {
+        let html = format!(
+            "<html><head><style>p{{{paragraph}}} p::before{{content:'';display:inline-block;width:10px;height:50%;background:red}}</style></head><body><p>abc</p></body></html>"
+        );
+        let scene = painted_html(html.as_bytes());
+        let fills = solid_fill_bounds(&scene, (255, 0, 0));
+        assert_eq!(fills.len(), 1, "{paragraph}: {fills:?}");
+        assert!(
+            (fills[0].height() - expected).abs() < 0.01,
+            "{paragraph}: {fills:?}"
+        );
+    }
+}

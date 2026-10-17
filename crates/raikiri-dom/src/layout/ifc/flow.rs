@@ -158,7 +158,7 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
     for generated in root.generated_boxes.iter() {
         atomics.insert(
             shodo::node::NodeId(generated.id),
-            generated.size(Some(width), root.writing_mode),
+            generated.size(Some(width), root.definite_height, root.writing_mode),
         );
     }
     let mut placed = place_lines(

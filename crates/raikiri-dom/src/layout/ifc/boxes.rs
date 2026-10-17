@@ -1363,7 +1363,11 @@ pub(crate) fn measure_atomics(
     for generated in root.generated_boxes.iter() {
         sizes.insert(
             shodo::node::NodeId(generated.id),
-            generated.size(Some(geometry.width), root.writing_mode),
+            generated.size(
+                Some(geometry.width),
+                geometry.definite_height,
+                root.writing_mode,
+            ),
         );
     }
     let mut outputs = Vec::new();
@@ -2491,7 +2495,7 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
         // Percentages count as zero, as the width they resolve against is
         // not known yet.
         for generated in root.generated_boxes.iter() {
-            let size = generated.size(None, root.writing_mode);
+            let size = generated.size(None, None, root.writing_mode);
             let extent = size.inline_size + size.margins.inline_sum();
             intrinsics.engine.insert_atomic(
                 shodo::node::NodeId(generated.id),
