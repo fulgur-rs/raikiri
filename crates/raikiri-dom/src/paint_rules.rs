@@ -688,6 +688,7 @@ pub fn defers_to_positioned_layer(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
+    paragraphs: &LeavingParagraphs,
 ) -> bool {
     cascade.computed.get(node_id).is_some_and(|cv| {
         let positioned = !matches!(cv.position, PositionValue::Static);
@@ -698,7 +699,7 @@ pub fn defers_to_positioned_layer(
             && generates_box(cv)
             && (positioned || establishes_stacking_context(document, node_id, cv))
             && !negative
-            && (leaves_paragraph_lines(document, cascade, node_id)
+            && (leaves_paragraph_lines(document, cascade, node_id, paragraphs)
                 || box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
                     |parent| {
                         document
@@ -738,6 +739,7 @@ pub fn leaves_paragraph_lines(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
+    paragraphs: &LeavingParagraphs,
 ) -> bool {
     cascade.computed.get(node_id).is_some_and(|cv| {
         !cv.display.is_inline_flow()
@@ -747,8 +749,25 @@ pub fn leaves_paragraph_lines(
         document.parent_of(node_id).is_some_and(|parent| {
             parent == root || outside_inline_stacking_contexts(document, cascade, root, parent)
         }) && !within_translucent_first_line(document, root, node_id)
-            && content_can_leave_paragraph(document, cascade, root)
+            && paragraphs.can_leave(document, cascade, root)
     })
+}
+
+/// What [`content_can_leave_paragraph`] tells of each paragraph a painter
+/// asks about, found once per paragraph, as it scans the paragraph's lines.
+#[derive(Debug, Default)]
+pub struct LeavingParagraphs(std::cell::RefCell<std::collections::HashMap<usize, bool>>);
+
+impl LeavingParagraphs {
+    /// Whether the content of paragraph `root` can leave its lines (see
+    /// [`content_can_leave_paragraph`]).
+    pub fn can_leave(&self, document: &Document, cascade: &CascadeResult, root: usize) -> bool {
+        *self
+            .0
+            .borrow_mut()
+            .entry(root)
+            .or_insert_with(|| content_can_leave_paragraph(document, cascade, root))
+    }
 }
 
 /// Whether the positioned content of paragraph `root` that forms a stacking
@@ -1211,6 +1230,7 @@ fn held_levels(document: &Document, cascade: &CascadeResult, id: usize) -> HeldL
             || inside_inline_opacity_group(document, cascade, id)
     };
     let mut held = HeldLevels::None;
+    let paragraphs = LeavingParagraphs::default();
     let mut stack: Vec<(usize, bool)> = if auto {
         let kept = cascade.computed.get(id).is_some_and(|cv| keeps(id, cv));
         children(id, kept).collect()
@@ -1238,7 +1258,7 @@ fn held_levels(document: &Document, cascade: &CascadeResult, id: usize) -> HeldL
             if kept
                 || level < 0
                 || matches!(cv.position, PositionValue::Static)
-                || !defers_to_positioned_layer(document, cascade, child)
+                || !defers_to_positioned_layer(document, cascade, child, &paragraphs)
             {
                 return HeldLevels::Kept;
             }

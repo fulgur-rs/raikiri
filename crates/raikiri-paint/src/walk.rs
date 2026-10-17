@@ -2440,6 +2440,8 @@ pub(crate) fn paint_document_impl(
             }
         }
     }
+    // Whether each paragraph's content can leave its lines, found once.
+    let paragraphs = raikiri_dom::paint_rules::LeavingParagraphs::default();
     let mut stack = vec![
         PaintFrame::EndDeferral,
         PaintFrame::Visit {
@@ -2497,9 +2499,19 @@ pub(crate) fn paint_document_impl(
             && let Some(layer) = deferral_scopes.last_mut()
             && layer.allowed
             && !layer.flushing
-            && raikiri_dom::paint_rules::defers_to_positioned_layer(document, cascade, *node_id)
+            && raikiri_dom::paint_rules::defers_to_positioned_layer(
+                document,
+                cascade,
+                *node_id,
+                &paragraphs,
+            )
         {
-            if raikiri_dom::paint_rules::leaves_paragraph_lines(document, cascade, *node_id) {
+            if raikiri_dom::paint_rules::leaves_paragraph_lines(
+                document,
+                cascade,
+                *node_id,
+                &paragraphs,
+            ) {
                 raikiri_dom::paint_rules::insert_positioned_frame(
                     document,
                     &mut layer.positioned,
@@ -2804,9 +2816,7 @@ pub(crate) fn paint_document_impl(
                 let below = traced_below.remove(&node_id);
                 let leaving = trace.is_some()
                     && leaves_groups(&deferral_scopes)
-                    && raikiri_dom::paint_rules::content_can_leave_paragraph(
-                        document, cascade, node_id,
-                    );
+                    && paragraphs.can_leave(document, cascade, node_id);
                 if let Some(t) = trace.as_deref_mut()
                     && traced_text(
                         document,

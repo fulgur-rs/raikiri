@@ -516,8 +516,7 @@ impl Document {
         let mut layers = vec![Layer::new(true, LayerClose::Paint)];
         // Whether each paragraph's content can leave its lines, found once
         // for all its groups.
-        let mut can_leave: std::collections::HashMap<usize, bool> =
-            std::collections::HashMap::new();
+        let paragraphs = paint_rules::LeavingParagraphs::default();
         let mut motion = super::paint_transform::MotionCache::default();
         // The transforms open around the current event, composed.
         let mut spaces = vec![PaintTransform::IDENTITY];
@@ -528,9 +527,9 @@ impl Document {
                 && let Some(layer) = layers.last_mut()
                 && layer.allowed
                 && !layer.flushing
-                && paint_rules::defers_to_positioned_layer(self, cascade, node_id)
+                && paint_rules::defers_to_positioned_layer(self, cascade, node_id, &paragraphs)
             {
-                if paint_rules::leaves_paragraph_lines(self, cascade, node_id) {
+                if paint_rules::leaves_paragraph_lines(self, cascade, node_id, &paragraphs) {
                     paint_rules::insert_positioned_frame(
                         self,
                         &mut layer.positioned,
@@ -553,9 +552,7 @@ impl Document {
                     cascade,
                     root,
                     group,
-                    *can_leave.entry(root).or_insert_with(|| {
-                        paint_rules::content_can_leave_paragraph(self, cascade, root)
-                    }),
+                    paragraphs.can_leave(self, cascade, root),
                 )
             {
                 paint_rules::insert_positioned_frame(
