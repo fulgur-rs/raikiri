@@ -1926,7 +1926,8 @@ fn z_indexed_inline_content_holding_a_block_stays_in_the_lines() {
 }
 
 /// A box that is not visible lists no decoration of its own in either order,
-/// while a visible box inside it does.
+/// while a visible box inside it does. The row stays `hidden`: a collapsed
+/// row takes its own path through both lists.
 #[test]
 fn boxes_that_are_not_visible_keep_native_and_public_order() {
     for keyword in ["hidden", "collapse"] {
@@ -1934,7 +1935,7 @@ fn boxes_that_are_not_visible_keep_native_and_public_order() {
             &format!(
                 "<div id=a style='visibility:{keyword};background:red'>\
                  <div id=b style='visibility:visible;background:blue'>x</div></div>\
-                 <table><tr id=r style='visibility:{keyword};background:red'>\
+                 <table><tr id=r style='visibility:hidden;background:red'>\
                  <td id=c>y</td></tr></table>"
             ),
             "",
