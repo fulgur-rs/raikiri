@@ -4343,9 +4343,14 @@ fn paginate_flow(
                     .is_some_and(|value| value >= 0.0)
             {
                 let block_height = document.nodes[block_id].unrounded_layout.size.height;
-                let block_raw_y = root_flow_offset + current_abs_y(document, block_id) - flow_shift;
-                let relative_text_y = raw_y - block_raw_y;
-                let block_effective_y = effective_y - relative_text_y;
+                let block_effective_y = block_effective_y(
+                    document,
+                    block_id,
+                    raw_y,
+                    effective_y,
+                    root_flow_offset,
+                    flow_shift,
+                );
                 if first_line_overflows(
                     effective_y,
                     height,
@@ -4381,18 +4386,16 @@ fn paginate_flow(
             // Oversized blocks that cannot break earlier keep their natural
             // break.
             // A paragraph that is a flex item alone on its line cannot move
-            // as a unit, but its later lines can move down inside it.
-            let flex_line_paragraph = paragraph_root
-                .filter(|_| {
-                    line_block_parent.is_none()
-                        && !uses_positioned_coordinates
-                        && !candidate.is_float_descendant
-                        && !candidate.is_out_of_flow_descendant
-                })
-                .and_then(|root| {
-                    flex_container_of_item_alone_on_its_line(document, cascade, root, body_id)
-                        .map(|container| (root, container))
-                });
+            // as a unit, but its later lines can move down inside it. It is
+            // looked for only when no line block parent was found.
+            let flex_line_paragraph = flex_line_paragraph(
+                document,
+                cascade,
+                body_id,
+                &candidate,
+                paragraph_root.filter(|_| line_block_parent.is_none()),
+                uses_positioned_coordinates,
+            );
             if let Some((block_id, nested)) =
                 line_block_parent.or(flex_line_paragraph.map(|(root, _)| (root, true)))
                 && checked_paragraphs.orphans_widows.insert(block_id)
@@ -4453,11 +4456,15 @@ fn paginate_flow(
                     && fits_on_page
                     && line_fit.violates_line_constraints
                 {
-                    let block_raw_y =
-                        root_flow_offset + current_abs_y(document, block_id) - flow_shift;
-                    // The block already sits `flow_shift` below its raw
-                    // position, so the move is measured from where it is now.
-                    let block_effective_y = effective_y - (raw_y - block_raw_y);
+                    // The move is measured from where the block is now.
+                    let block_effective_y = block_effective_y(
+                        document,
+                        block_id,
+                        raw_y,
+                        effective_y,
+                        root_flow_offset,
+                        flow_shift,
+                    );
                     let target_page = current_page.saturating_add(1);
                     check_candidate_page!('candidate_loop, target_page);
                     let delta = move_line_block(
@@ -6816,6 +6823,46 @@ fn line_block_parent(
                     && is_block_flow_paragraph(document, cascade, parent_id, roots.element))
                 .then_some((parent_id, true))
             }
+        })
+}
+
+/// Where block `block_id` now sits in the flow, given that its text at raw
+/// position `text_raw_y` now sits at `text_effective_y`. The block already
+/// sits `flow_shift` below its raw position, so this keeps the text's offset
+/// inside the block.
+fn block_effective_y(
+    document: &Document,
+    block_id: usize,
+    text_raw_y: f32,
+    text_effective_y: f32,
+    root_flow_offset: f32,
+    flow_shift: f32,
+) -> f32 {
+    let block_raw_y = root_flow_offset + current_abs_y(document, block_id) - flow_shift;
+    text_effective_y - (text_raw_y - block_raw_y)
+}
+
+/// The paragraph `paragraph_root` with its flex container, when the
+/// paragraph is a flex item alone on its line. Such a paragraph cannot move
+/// as a unit, but its later lines can move down inside it. Text placed by
+/// positioned insets, or inside a float or an out-of-flow box, has none.
+fn flex_line_paragraph(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    candidate: &PageCandidate,
+    paragraph_root: Option<usize>,
+    uses_positioned_coordinates: bool,
+) -> Option<(usize, usize)> {
+    paragraph_root
+        .filter(|_| {
+            !uses_positioned_coordinates
+                && !candidate.is_float_descendant
+                && !candidate.is_out_of_flow_descendant
+        })
+        .and_then(|root| {
+            flex_container_of_item_alone_on_its_line(document, cascade, root, body_id)
+                .map(|container| (root, container))
         })
 }
 
