@@ -4933,18 +4933,15 @@ fn paginate_flow(
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
-                        // In-flow content that opened a page ends the floors
-                        // of its formatting context for later floats: they
-                        // start below it anyway. A float that still reaches
-                        // below the content's new place keeps its floor for
-                        // later clearing boxes. A box that moved inside an
-                        // ancestor that cannot grow leaves the outer flow
-                        // where it was, so the floors stay.
-                        if !moved_in_bounded_ancestor {
-                            let context = float_context_root(document, cascade, node_id, body_id);
-                            let flow_top = node_target_y - relative_offset;
-                            float_shifts.drop_edges_above(context, flow_top);
-                        }
+                        let flow_top = node_target_y - relative_offset;
+                        float_shifts.drop_edges_for_in_flow_candidate(
+                            document,
+                            cascade,
+                            node_id,
+                            body_id,
+                            flow_top,
+                            moved_in_bounded_ancestor,
+                        );
                     }
                     effective_y += node_delta;
                 }
@@ -7830,6 +7827,25 @@ impl FloatShifts {
         if self.edges.is_empty() {
             self.later = 0.0;
         }
+    }
+
+    /// Drop the ended float edges in the formatting context of an in-flow
+    /// candidate that opened a page. A moved box inside a bounded ancestor
+    /// leaves the outer flow where it was, so its floors stay.
+    fn drop_edges_for_in_flow_candidate(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        body_id: usize,
+        flow_top: f32,
+        moved_in_bounded_ancestor: bool,
+    ) {
+        if moved_in_bounded_ancestor {
+            return;
+        }
+        let context = float_context_root(document, cascade, node_id, body_id);
+        self.drop_edges_above(context, flow_top);
     }
 }
 
