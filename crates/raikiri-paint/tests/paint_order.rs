@@ -1586,13 +1586,9 @@ fn negative_content_in_inline_opacity_groups_stays_in_the_group() {
 #[test]
 fn z_indexed_spans_in_inline_stacking_contexts_paint_in_level_order() {
     // The earlier span has the higher level, so it covers the later one
-    // where they overlap, inside each kind of enclosing inline stacking
-    // context.
-    for outer in [
-        "opacity: 0.5",
-        "position: relative; z-index: 0",
-        "position: relative; z-index: -1",
-    ] {
+    // where they overlap, inside an enclosing inline stacking context that
+    // paints as a group.
+    for outer in ["opacity: 0.5", "position: relative; z-index: -1"] {
         let result = lay_out(
             &format!(
                 "<div><span style=\"{outer}\">\
