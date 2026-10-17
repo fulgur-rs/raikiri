@@ -1568,6 +1568,14 @@ css/css-text-decor/text-emphasis-punctuation-2.html
 css/css-text-decor/text-emphasis-style-001.html
 css/css-text-decor/text-emphasis-style-property-001.html
 
+# --- css-text-decor text-emphasis marks against ruby references, ruby em edges capped at the primary font (exact, 800x600) ---
+css/css-text-decor/text-emphasis-property-002.html
+css/css-text-decor/text-emphasis-punctuation-3.html
+css/css-text-decor/text-emphasis-style-property-002.html
+css/css-text-decor/text-emphasis-style-property-011.html
+css/css-text-decor/text-emphasis-style-property-011a.html
+css/css-text-decor/text-emphasis-style-property-011b.html
+
 # --- css-lists list-style shorthand and inside marker text (exact, 800x600, bundled fonts) ---
 css/css-lists/content-property/marker-text-matches-decimal-leading-zero.html
 css/css-lists/content-property/marker-text-matches-decimal.html
