@@ -202,7 +202,10 @@ fn events_are_balanced_on_every_page() {
 fn replaced_follows_its_box() {
     let events = order("<body><img id=i style='width:10px;height:10px'></body>", 0);
     let b = position(&events, "Box(i)");
-    assert_eq!(events[b + 1], "Replaced(i)", "{events:?}");
+    // The UA `overflow: clip` clips the image at its content box.
+    assert_eq!(events[b + 1], "PushClip", "{events:?}");
+    assert_eq!(events[b + 2], "Replaced(i)", "{events:?}");
+    assert_eq!(events[b + 3], "PopClip", "{events:?}");
 }
 
 #[test]

@@ -185,6 +185,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "outline-style",
         "outline-width",
         "overflow",
+        "overflow-clip-margin",
         "overflow-wrap",
         "overflow-x",
         "overflow-y",

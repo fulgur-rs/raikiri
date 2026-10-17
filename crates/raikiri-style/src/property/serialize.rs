@@ -72,6 +72,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderLeftWidth(l)
         | PropertyValue::OutlineWidth(l)
         | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
+        PropertyValue::OverflowClipMargin(margin) => Some(serialize_overflow_clip_margin(margin)),
 
         PropertyValue::BorderImageSlice(slice) => {
             let sides = serialize_sides(&slice.offsets, |offset| match *offset {
@@ -1485,5 +1486,22 @@ pub(crate) fn serialize_start_end<T: PartialEq>(
         start
     } else {
         format!("{start} {end}")
+    }
+}
+
+/// Serializes `overflow-clip-margin` in its shortest form: the box before the
+/// length, `padding-box` and a zero length left out unless both are (CSS
+/// Overflow 4 §3.2; CSSOM shortest serialization).
+fn serialize_overflow_clip_margin(margin: &OverflowClipMargin) -> String {
+    let visual_box = match margin.visual_box {
+        Some(VisualBox::ContentBox) => Some("content-box"),
+        Some(VisualBox::BorderBox) => Some("border-box"),
+        _ => None,
+    };
+    let zero = margin.offset.payload() == 0.0;
+    match (visual_box, zero) {
+        (Some(visual_box), true) => visual_box.to_owned(),
+        (Some(visual_box), false) => format!("{visual_box} {}", serialize_length(&margin.offset)),
+        (None, _) => serialize_length(&margin.offset),
     }
 }

@@ -447,6 +447,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | OutlineStyle
         | OutlineColor
         | OutlineOffset
+        | OverflowClipMargin
         | WritingMode
         | RubyPosition
         | BackgroundRepeat
@@ -947,6 +948,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::OutlineStyle(_)
         | PropertyValue::OutlineColor(_)
         | PropertyValue::OutlineOffset(_)
+        | PropertyValue::OverflowClipMargin(_)
         // grid-template-columns/-rows/-areas + grid-auto-columns/-rows/-flow
         // + grid-row-start/-end + grid-column-start/-end: individual properties
         // with no corresponding expansion longhands (CSS Grid Layout Module Level 1

@@ -95,7 +95,7 @@ pub struct PaintClip {
     pub clip_x: bool,
     /// Whether the top and bottom edges clip the content.
     pub clip_y: bool,
-    /// Padding-edge ellipses in top-left, top-right, bottom-right, bottom-left
+    /// Clip-edge ellipses in top-left, top-right, bottom-right, bottom-left
     /// order, each as horizontal and vertical radii. `None` means square corners.
     ///
     /// Curves apply only when both axes clip. The producer resolves percentages

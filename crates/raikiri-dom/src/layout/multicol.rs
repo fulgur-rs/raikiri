@@ -2747,9 +2747,10 @@ pub(crate) fn prepare_authored_block_widths(
         // 10.3.9), and a block child that is a scroll container takes the
         // room the floats beside it leave (CSS 2.1 9.5).
         let cv = &cascade.computed[idx];
+        let scrolls = |overflow| !matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
         let engine_sized = doc.nodes[idx].display() == DisplayValue::InlineBlock
-            || cv.overflow.x != OverflowValue::Visible
-            || cv.overflow.y != OverflowValue::Visible;
+            || scrolls(cv.overflow.x)
+            || scrolls(cv.overflow.y);
         let engine_box = engine_sized
             && !doc.nodes[idx].in_ifc_subtree()
             && doc.parent_of(idx).is_some_and(|parent| {

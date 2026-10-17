@@ -4312,6 +4312,10 @@ property_key_samples! {
     OutlineStyle => PropertyValue::OutlineStyle(OutlineStyle::Solid),
     OutlineColor => PropertyValue::OutlineColor(OutlineColor::Resolved(GREEN)),
     OutlineOffset => PropertyValue::OutlineOffset(Length::Em(0.5)),
+    OverflowClipMargin => PropertyValue::OverflowClipMargin(crate::property::OverflowClipMargin {
+        visual_box: Some(crate::property::VisualBox::ContentBox),
+        offset: Length::Em(0.5),
+    }),
     // Non-initial writing mode remains available to margin-box layout.
     WritingMode => PropertyValue::WritingMode(WritingMode::VerticalRl),
     RubyPosition => PropertyValue::RubyPosition(RubyPosition::Over),
@@ -4898,6 +4902,7 @@ property_value_variant_registry! {
     OutlineStyle,
     OutlineColor,
     OutlineOffset,
+    OverflowClipMargin,
     GridTemplateColumns,
     GridTemplateRows,
     GridTemplateAreas,
@@ -5426,6 +5431,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::BorderBottomWidth(l)
             | PropertyValue::BorderLeftWidth(l)
             | PropertyValue::OutlineOffset(l) => length(*l),
+            PropertyValue::OverflowClipMargin(margin) => length(margin.offset),
             PropertyValue::MarginTopInherit
             | PropertyValue::MarginRightInherit
             | PropertyValue::MarginBottomInherit

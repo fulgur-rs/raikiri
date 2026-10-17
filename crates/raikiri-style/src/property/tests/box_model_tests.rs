@@ -3856,3 +3856,54 @@ fn padding_and_border_image_width_serialize_their_calc_sums() {
         );
     }
 }
+
+// ── overflow-clip-margin (CSS Overflow 4 §3.2) ────────
+
+#[test]
+fn overflow_clip_margin_parses_and_serializes_in_shortest_form() {
+    // Expected serializations follow WPT css-overflow/parsing/overflow-clip-margin.html.
+    for (input, expected) in [
+        ("10px", "10px"),
+        ("content-box", "content-box"),
+        ("content-box 10px", "content-box 10px"),
+        ("10px content-box", "content-box 10px"),
+        ("0px content-box", "content-box"),
+        ("padding-box", "0px"),
+        ("padding-box 10px", "10px"),
+        ("10px padding-box", "10px"),
+        ("border-box", "border-box"),
+        ("border-box 0px", "border-box"),
+        ("10px border-box", "border-box 10px"),
+        ("-5px", "-5px"),
+    ] {
+        let value =
+            parse(input, "overflow-clip-margin").unwrap_or_else(|| panic!("{input} should parse"));
+        assert_eq!(value.key(), PropertyKey::OverflowClipMargin);
+        assert_eq!(
+            crate::property::serialize_value(&value).as_deref(),
+            Some(expected),
+            "{input}"
+        );
+    }
+    assert_eq!(
+        parse("2em", "overflow-clip-margin"),
+        Some(PropertyValue::OverflowClipMargin(OverflowClipMargin {
+            visual_box: None,
+            offset: Length::Em(2.0),
+        }))
+    );
+}
+
+#[test]
+fn overflow_clip_margin_rejects_other_values() {
+    for input in [
+        "margin-box",
+        "inset(10px)",
+        "50px 50px",
+        "content-box border-box",
+        "10%",
+        "auto",
+    ] {
+        assert_eq!(parse(input, "overflow-clip-margin"), None, "{input}");
+    }
+}

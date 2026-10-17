@@ -2114,10 +2114,12 @@ fn relative_inset(
 
 /// The baseline of an atomic inline from its border-box top, if it has one.
 /// An inline-block that is a scroll container has none: it sits on its
-/// bottom margin edge (CSS 2.1 10.8.1).
+/// bottom margin edge (CSS 2.1 10.8.1). `overflow: clip` does not make a
+/// scroll container (CSS Overflow 3 §3.1).
 fn atomic_baseline(tree: &Document, node: usize, output: &taffy::LayoutOutput) -> Option<f32> {
     let overflow = tree.nodes[node].style.overflow;
-    if overflow.x != taffy::Overflow::Visible || overflow.y != taffy::Overflow::Visible {
+    let scrolls = |overflow| !matches!(overflow, taffy::Overflow::Visible | taffy::Overflow::Clip);
+    if scrolls(overflow.x) || scrolls(overflow.y) {
         return None;
     }
     output.baselines.first

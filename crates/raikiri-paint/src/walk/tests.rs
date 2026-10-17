@@ -1464,8 +1464,10 @@ fn nested_transforms_cover_descendant_glyphs_and_overflow_without_leaking_to_sib
 #[test]
 fn transformed_text_and_image_fallback_keep_page_content_clips_untransformed() {
     let scene = transform_markup_scene(
-        "<style>@page { margin-left:200px; margin-right:200px }</style><body style='margin:0'><div style='width:100px;height:50px;background:green;transform:scale(2);transform-origin:0 0'>TEXT<img style='display:block;width:10px;height:10px' src='green-100.png'></div>",
+        "<style>@page { margin-left:200px; margin-right:200px }</style><body style='margin:0'><div style='width:100px;height:50px;background:green;transform:scale(2);transform-origin:0 0'>TEXT<img style='display:block;width:10px;height:10px;overflow:visible' src='green-100.png'></div>",
     );
+    // The image is not clipped (`overflow: visible`), so every clip layer is a
+    // page content clip.
     let clips: Vec<_> = scene
         .commands
         .iter()
@@ -1487,6 +1489,39 @@ fn transformed_text_and_image_fallback_keep_page_content_clips_untransformed() {
             .iter()
             .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
     );
+}
+
+#[test]
+fn image_fallback_paints_inside_the_content_clip() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><img style='display:block;width:20px;height:20px;padding:5px' src='green-100.png'>",
+    );
+    let start = scene
+        .commands
+        .iter()
+        .position(|command| match command {
+            RenderCommand::PushClipLayer(clip) => {
+                kurbo::Shape::bounding_box(&clip.clip) == kurbo::Rect::new(5.0, 5.0, 25.0, 25.0)
+            }
+            _ => false,
+        })
+        .expect("the image clips at its content box");
+    let mut depth = 0usize;
+    let mut fills = 0;
+    for command in &scene.commands[start..] {
+        match command {
+            RenderCommand::PushClipLayer(_) | RenderCommand::PushLayer(_) => depth += 1,
+            RenderCommand::PopLayer => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            RenderCommand::Fill(_) => fills += 1,
+            _ => {}
+        }
+    }
+    assert!(fills > 0, "the fallback colour paints inside the clip");
 }
 
 #[test]

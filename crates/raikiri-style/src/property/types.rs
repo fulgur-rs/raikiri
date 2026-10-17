@@ -7740,6 +7740,7 @@ impl DeferredValue {
                 | PropertyKey::BackgroundColor
                 | PropertyKey::FontSize
                 | PropertyKey::VerticalAlign
+                | PropertyKey::OverflowClipMargin
                 | PropertyKey::BorderRadiusTopLeft
                 | PropertyKey::BorderRadiusTopRight
                 | PropertyKey::BorderRadiusBottomRight
@@ -8742,6 +8743,26 @@ pub enum VisualBox {
     /// (CSS Backgrounds 4 §2.6 `[border-area || text]`). The two
     /// keywords parse in either order and serialize as `border-area text`.
     BorderAreaText,
+}
+
+/// Specified `overflow-clip-margin` (CSS Overflow 4 §3.2): the box the
+/// overflow clip edge starts from and how far outside it the edge lies.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OverflowClipMargin {
+    /// `content-box`, `padding-box` or `border-box`; `None` when omitted,
+    /// which means `content-box` on a replaced element and `padding-box`
+    /// otherwise.
+    pub visual_box: Option<VisualBox>,
+    /// The `<length>` outset, negative for an inset; `0px` when omitted.
+    pub offset: Length,
+}
+
+impl OverflowClipMargin {
+    /// The initial value, `0px`.
+    pub const INITIAL: Self = Self {
+        visual_box: None,
+        offset: Length::Px(0.0),
+    };
 }
 
 css_keywords!(@serialize VisualBox {
@@ -10899,6 +10920,10 @@ pub enum PropertyValue {
     /// accepted; the offset from the border edge is absolutized. `<percentage>`
     /// is outside the grammar.
     OutlineOffset(Length),
+    /// `overflow-clip-margin: <visual-box> || <length>` — non-inherited,
+    /// initial: `0px` (CSS Overflow 4 §3.2). How far outside its box a
+    /// clipping axis paints its content.
+    OverflowClipMargin(OverflowClipMargin),
     /// `grid-area` shorthand — placement for one grid item. Shared behind an
     /// [`Arc`] so that it does not set the size of every `PropertyValue`: it
     /// reaches the cascade unexpanded, where a winning value is cloned for
@@ -11762,6 +11787,7 @@ pub enum PropertyKey {
     OutlineStyle,
     OutlineColor,
     OutlineOffset,
+    OverflowClipMargin,
     // writing-mode (CSS Writing Modes 4 §3.2, semantics on the matching
     // PropertyValue::WritingMode variant; sibling PropertyKey variants carry
     // no per-variant docs per crate convention).
@@ -12206,6 +12232,7 @@ impl PropertyValue {
             PropertyValue::OutlineStyle(_) => PropertyKey::OutlineStyle,
             PropertyValue::OutlineColor(_) => PropertyKey::OutlineColor,
             PropertyValue::OutlineOffset(_) => PropertyKey::OutlineOffset,
+            PropertyValue::OverflowClipMargin(_) => PropertyKey::OverflowClipMargin,
             PropertyValue::WritingMode(_) => PropertyKey::WritingMode,
             PropertyValue::RubyPosition(_) => PropertyKey::RubyPosition,
             PropertyValue::BackgroundRepeat(_) => PropertyKey::BackgroundRepeat,
@@ -13278,6 +13305,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "outline-style" => PropertyKey::OutlineStyle,
         "outline-color" => PropertyKey::OutlineColor,
         "outline-offset" => PropertyKey::OutlineOffset,
+        "overflow-clip-margin" => PropertyKey::OverflowClipMargin,
         "grid-template-columns" => PropertyKey::GridTemplateColumns,
         "grid-template-rows" => PropertyKey::GridTemplateRows,
         "grid-template-areas" => PropertyKey::GridTemplateAreas,

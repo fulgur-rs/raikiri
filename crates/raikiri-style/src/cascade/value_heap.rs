@@ -87,6 +87,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         box_shadow,
         outline: _,
         outline_offset: _,
+        overflow_clip_margin: _,
         width: _,
         width_ch: _,
         height: _,

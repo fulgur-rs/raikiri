@@ -2234,6 +2234,17 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     crate::property::VerticalAlign::Baseline
                 });
             }
+            crate::property::PropertyKey::OverflowClipMargin => {
+                let margin = if keyword == CssWideKeyword::Inherit {
+                    crate::property::OverflowClipMargin {
+                        visual_box: inherited.overflow_clip_margin.visual_box,
+                        offset: Length::Px(inherited.overflow_clip_margin.offset.px()),
+                    }
+                } else {
+                    crate::property::OverflowClipMargin::INITIAL
+                };
+                return PropertyValue::OverflowClipMargin(margin);
+            }
             crate::property::PropertyKey::BorderRadiusTopLeft => {
                 return PropertyValue::BorderRadiusTopLeft(radius.top_left);
             }
@@ -2861,6 +2872,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::OutlineStyle(_)
         | PropertyValue::OutlineColor(_)
         | PropertyValue::OutlineOffset(_)
+        | PropertyValue::OverflowClipMargin(_)
         // CSS Grid Layout Module Level 1 grid-template-columns/-rows/-areas
         // (§7.2/§7.3) + grid-auto-columns/-rows/-flow (§7.6/§7.7) +
         // grid-row-start/-end/grid-column-start/-end (+ their `grid-row`/
@@ -3521,6 +3533,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.set_contextual_color(crate::property::PropertyKey::OutlineColor, None);
         }
         PropertyValue::OutlineOffset(v) => target.outline_offset = v,
+        PropertyValue::OverflowClipMargin(v) => target.overflow_clip_margin = v,
         PropertyValue::GridArea(area) => {
             let area = Arc::unwrap_or_clone(area);
             target.grid_row_start = area.row_start;
