@@ -1755,7 +1755,7 @@ fn compute_inline_block_shrink_wrap(
 /// Lay out the block container `node_id` with taffy's block algorithm.
 ///
 /// Every block container goes through here so that
-/// [`Document::get_block_child_style`] knows the content-box width its
+/// [`taffy::LayoutBlockContainer::get_block_child_style`] knows the content-box width its
 /// children's percentage padding and borders resolve against. A container
 /// in a vertical writing mode is laid out on transposed axes instead (see
 /// `vertical_block`), where taffy resolves those percentages against its

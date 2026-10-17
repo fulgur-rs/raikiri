@@ -419,7 +419,8 @@ pub struct Node {
     box_properties: BoxProperties,
     /// How this box lays out its contents. Layout dispatch and the other
     /// consumers read this classification instead of re-deriving it from
-    /// [`Self::display`], [`Self::style`] and the paragraph root flag.
+    /// [`Self::display`], the retained style from
+    /// [`crate::Document::layout_node_with_style`], and the paragraph root flag.
     pub(crate) formatting_context: FormattingContext,
     /// Computed `table-layout` for the table engine. No `taffy::Style`
     /// counterpart exists (taffy 0.12 has no table layout), so the keyword
@@ -568,7 +569,7 @@ pub struct Node {
     /// `size.width` and `padding.{left,right}` can make
     /// `size.width - padding.left - padding.right` negative.
     ///
-    /// [`crate::Document::store_unrounded_layout`], through which taffy's
+    /// [`crate::layout::context::LayoutSession::store_unrounded_layout`], through which taffy's
     /// `set_unrounded_layout` and the table algorithm store whole layouts,
     /// enforces this contract (see the docs for
     /// [`crate::layout::sanitize::sanitize_taffy_layout`] for details and
