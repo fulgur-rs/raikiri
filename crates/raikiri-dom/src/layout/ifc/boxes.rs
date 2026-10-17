@@ -1360,6 +1360,24 @@ pub(crate) fn measure_atomics(
     for &(id, size) in root.marker_atomic.iter().chain(&root.generated_atomics) {
         sizes.insert(id, size);
     }
+    // The containing block's physical size: a vertical root's inline size is
+    // its height, and its width is its block extent.
+    let containing = if root.writing_mode == WritingMode::HorizontalTb {
+        (Some(geometry.width), geometry.definite_height)
+    } else {
+        (geometry.vertical_width, Some(geometry.width))
+    };
+    for generated in root.generated_boxes.iter() {
+        sizes.insert(
+            shodo::node::NodeId(generated.id),
+            generated.size(
+                Some(geometry.width),
+                containing,
+                root.writing_mode,
+                root.rtl,
+            ),
+        );
+    }
     let mut outputs = Vec::new();
     for b in root.boxes.iter().filter(|b| b.kind == IfcBoxKind::Atomic) {
         let node = b.node;
@@ -2479,6 +2497,19 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
                 AtomicIntrinsic {
                     min_content: size.inline_size,
                     max_content: size.inline_size,
+                },
+            );
+        }
+        // Percentages count as zero, as the width they resolve against is
+        // not known yet.
+        for generated in root.generated_boxes.iter() {
+            let size = generated.size(None, (None, None), root.writing_mode, root.rtl);
+            let extent = size.inline_size + size.margins.inline_sum();
+            intrinsics.engine.insert_atomic(
+                shodo::node::NodeId(generated.id),
+                AtomicIntrinsic {
+                    min_content: extent,
+                    max_content: extent,
                 },
             );
         }

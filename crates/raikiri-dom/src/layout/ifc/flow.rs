@@ -39,6 +39,10 @@ pub(crate) struct FlowGeometry {
     /// heights of its floats and atomic inlines (CSS 2.1 §10.5). `None` when
     /// the root's height depends on its content.
     pub(crate) definite_height: Option<f32>,
+    /// A vertical root's definite physical content width, its block extent,
+    /// the basis for the percentage widths of its empty atomic `::before`
+    /// and `::after` boxes. `None` when the width depends on the content.
+    pub(crate) vertical_width: Option<f32>,
 }
 
 impl FlowGeometry {
@@ -51,6 +55,7 @@ impl FlowGeometry {
             edges: (insets.left, insets.right),
             top_edge: insets.top,
             definite_height: None,
+            vertical_width: None,
         }
     }
 
@@ -154,6 +159,17 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
     let mut atomics = AtomicSizes::new();
     for &(id, size) in root.marker_atomic.iter().chain(&root.generated_atomics) {
         atomics.insert(id, size);
+    }
+    let containing = if root.writing_mode == WritingMode::HorizontalTb {
+        (Some(width), root.definite_height)
+    } else {
+        (root.vertical_width, Some(width))
+    };
+    for generated in root.generated_boxes.iter() {
+        atomics.insert(
+            shodo::node::NodeId(generated.id),
+            generated.size(Some(width), containing, root.writing_mode, root.rtl),
+        );
     }
     let mut placed = place_lines(
         &root.line_paragraph,

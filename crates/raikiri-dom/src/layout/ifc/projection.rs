@@ -12,6 +12,7 @@
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::first_letter::{FirstLetter, LetterStyle};
+use super::generated_atomics::GeneratedAtomic;
 use super::generated_blocks::GeneratedBlock;
 use super::style;
 use crate::Document;
@@ -84,6 +85,8 @@ pub(crate) struct ProjectedMeta {
     pub(crate) generated_atomics: Vec<(NodeId, shodo::AtomicSize)>,
     /// Block-level `::before` and `::after` boxes, in document order.
     pub(crate) generated_blocks: Vec<GeneratedBlock>,
+    /// Atomic `::before` and `::after` boxes without content.
+    pub(crate) generated_boxes: Vec<GeneratedAtomic>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements, by DOM
@@ -274,6 +277,8 @@ struct GeneratedImages {
     offsets: Vec<(usize, (f32, f32))>,
     /// The block-level `::before` and `::after` boxes, in document order.
     blocks: Vec<GeneratedBlock>,
+    /// The atomic `::before` and `::after` boxes without content.
+    boxes: Vec<GeneratedAtomic>,
     /// The insets of the boxes in `offsets` whose offset depends on the
     /// root's size, by index in `offsets`.
     percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
@@ -408,10 +413,7 @@ fn push_generated(
         }
         None => None,
     };
-    if text.is_empty() && !has_images && block.is_none() {
-        if atomic {
-            first_letter.stop();
-        }
+    if text.is_empty() && !has_images && block.is_none() && !atomic {
         return Ok(());
     }
     // The pseudo-element's own relative offset moves its text and images
@@ -470,6 +472,12 @@ fn push_generated(
         images.blocks.push(*block);
     }
     let empty = text.is_empty() && !has_images;
+    if empty && atomic {
+        // An atomic box without content is still a box: an empty atomic
+        // inline of its own size in place of the pseudo-element.
+        images.boxes.push(GeneratedAtomic::new(id.0, cv));
+        builder.push_atomic(id, &inline_style, InlineEdges::default());
+    }
     if !empty {
         builder
             .open_inline(id, &inline_style, edges)
@@ -739,6 +747,7 @@ pub(crate) fn project_ifc_text_builder(
             marker_atomic: None,
             generated_atomics: Vec::new(),
             generated_blocks: Vec::new(),
+            generated_boxes: Vec::new(),
             rtl: cv.direction == Direction::Rtl,
             offsets: Vec::new(),
             percent_insets: Vec::new(),
@@ -860,6 +869,7 @@ fn project_children_builder(
         writing_mode,
         offsets: Vec::new(),
         blocks: Vec::new(),
+        boxes: Vec::new(),
         percent_insets: Vec::new(),
         rtl: root_cv.direction == Direction::Rtl,
     };
@@ -1317,6 +1327,7 @@ fn project_children_builder(
             marker_atomic,
             generated_atomics: generated_images.atomics,
             generated_blocks: generated_images.blocks,
+            generated_boxes: generated_images.boxes,
             rtl: root_cv.direction == Direction::Rtl,
             percent_insets: {
                 // The generated boxes' offsets follow the elements'.

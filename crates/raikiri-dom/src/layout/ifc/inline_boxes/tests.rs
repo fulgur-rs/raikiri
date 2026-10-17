@@ -51,6 +51,7 @@ fn pieces_of(lines: &[shodo::Line], width: f32, rtl: bool) -> Vec<InlineBoxPiece
         lines,
         WritingMode::HorizontalTb,
         PhysicalSize { width, height: 0.0 },
+        |_| None,
     )
 }
 
@@ -150,6 +151,7 @@ fn vertical_inline_pieces_map_physical_edges_to_their_logical_axes() {
                 width: 100.0,
                 height: 40.0,
             },
+            |_| None,
         )[0];
         assert_eq!(
             (piece.border_box.width, piece.border_box.height),
@@ -183,6 +185,7 @@ fn an_rtl_inline_span_does_not_reverse_vertical_block_progression() {
             width: 100.0,
             height: 40.0,
         },
+        |_| None,
     )[0];
     assert_eq!(piece.border_box.x, 93.0);
 }

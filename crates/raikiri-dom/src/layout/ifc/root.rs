@@ -55,6 +55,9 @@ pub(crate) struct IfcRoot {
     /// Block-level `::before` and `::after` boxes of the paragraph, which the
     /// line loop places between the lines at their tokens.
     pub(crate) generated_blocks: Arc<[super::generated_blocks::GeneratedBlock]>,
+    /// Atomic `::before` and `::after` boxes without content, sized against
+    /// the paragraph's width when it is laid out.
+    pub(crate) generated_boxes: Arc<[super::generated_atomics::GeneratedAtomic]>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements of the
@@ -71,6 +74,10 @@ pub(crate) struct IfcRoot {
     /// `right` of its inline elements refers to. Lines may be narrower when
     /// the root lays them out in columns.
     pub(crate) containing_width: Option<f32>,
+    /// A vertical root's physical content width, its block extent, which a
+    /// percentage width of its empty atomic `::before` and `::after` boxes
+    /// refers to when its lines are broken again.
+    pub(crate) vertical_width: Option<f32>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
@@ -341,11 +348,13 @@ impl IfcRoot {
             marker_atomic: meta.marker_atomic,
             generated_atomics: meta.generated_atomics,
             generated_blocks: meta.generated_blocks.into(),
+            generated_boxes: meta.generated_boxes.into(),
             rtl: meta.rtl,
             offsets: meta.offsets,
             percent_insets: meta.percent_insets,
             definite_height: None,
             containing_width: None,
+            vertical_width: None,
             cleared_breaks: meta.cleared_breaks.into_iter().collect(),
             fixed: meta.fixed,
             multicol_fragments: None,
@@ -436,11 +445,13 @@ impl IfcRoot {
             marker_atomic: self.marker_atomic,
             generated_atomics: self.generated_atomics.clone(),
             generated_blocks: self.generated_blocks.clone(),
+            generated_boxes: self.generated_boxes.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
             percent_insets: self.percent_insets.clone(),
             definite_height: self.definite_height,
             containing_width: self.containing_width,
+            vertical_width: self.vertical_width,
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,

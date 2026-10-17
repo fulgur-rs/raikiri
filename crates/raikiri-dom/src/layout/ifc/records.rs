@@ -55,7 +55,7 @@ pub(crate) fn record_inline_boxes(
     lines: &[shodo::Line],
     geometry: &FlowGeometry,
 ) {
-    let pieces = inline_box_pieces(lines, ifc.writing_mode, geometry.content_size);
+    let pieces = inline_box_pieces(lines, ifc.writing_mode, geometry.content_size, |_| None);
     // Bounding box of each element's border boxes, in content-box coordinates.
     let mut boxes: HashMap<usize, BoxRect> = HashMap::new();
     for InlineBoxPiece {

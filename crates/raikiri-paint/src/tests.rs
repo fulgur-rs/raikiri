@@ -3288,3 +3288,149 @@ fn singularly_transformed_before_paints_nothing() {
         RenderCommand::Fill(fill) if fill.brush == anyrender::Paint::Solid(peniko::color::AlphaColor::from_rgb8(255, 0, 0))
     )));
 }
+
+/// The page bounds of the solid fills of `rgb` in `scene`.
+fn solid_fill_bounds(scene: &Scene, rgb: (u8, u8, u8)) -> Vec<kurbo::Rect> {
+    let color = anyrender::Paint::Solid(peniko::color::AlphaColor::from_rgb8(rgb.0, rgb.1, rgb.2));
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if fill.brush == color => Some(kurbo::Shape::bounding_box(
+                &(fill.transform * fill.shape.clone()),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An inline-block `::before` whose content generates nothing is still a
+/// box of its own size, with its padding and border, ahead of the text.
+#[test]
+fn empty_inline_block_before_paints_its_box() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} p{margin:0} p::before{content:'';display:inline-block;width:30px;height:40px;padding:1px;border:1px solid blue;background:red;margin-right:5px}</style></head><body><p>abc</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    let fill = fills[0];
+    assert!(
+        (fill.width() - 34.0).abs() < 0.01 && (fill.height() - 44.0).abs() < 0.01,
+        "{fill:?}"
+    );
+    assert!(fill.x0.abs() < 0.01, "{fill:?}");
+    // The text follows the box and its margin.
+    let text_x = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::GlyphRun(run) => run
+                .glyphs
+                .first()
+                .map(|glyph| (run.transform * kurbo::Point::new(f64::from(glyph.x), 0.0)).x),
+            _ => None,
+        })
+        .expect("the text paints");
+    assert!(text_x >= 38.99, "{text_x}");
+}
+
+/// A percentage width of an empty inline-block `::after` refers to the
+/// paragraph's width, and `box-sizing: border-box` keeps its edges inside.
+#[test]
+fn empty_inline_block_after_resolves_a_percentage_width() {
+    let scene = painted_html(
+        br#"<html><head><style>p{width:200px} p::after{content:'';display:inline-block;width:50%;height:10px;padding:0 10px;box-sizing:border-box;background:red}</style></head><body><p>abc</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!((fills[0].width() - 100.0).abs() < 0.01, "{fills:?}");
+}
+
+/// A shrink-to-fit box holds the margin box of an empty inline-block
+/// `::before`.
+#[test]
+fn empty_inline_block_before_sizes_a_shrink_to_fit_box() {
+    let scene = painted_html(
+        br#"<html><head><style>div{float:left;background:lime} div::before{content:'';display:inline-block;width:30px;height:10px;margin-left:5px;background:red}</style></head><body><div></div></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (0, 255, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!((fills[0].width() - 35.0).abs() < 0.01, "{fills:?}");
+}
+
+/// In a vertical paragraph the box keeps its physical width and height.
+#[test]
+fn empty_inline_block_before_in_a_vertical_paragraph_keeps_its_physical_size() {
+    let scene = painted_html(
+        br#"<html><head><style>p{writing-mode:vertical-rl;height:200px} p::before{content:'';display:inline-block;width:30px;height:40px;margin-top:3px;background:red}</style></head><body><p>abc</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!(
+        (fills[0].width() - 30.0).abs() < 0.01 && (fills[0].height() - 40.0).abs() < 0.01,
+        "{fills:?}"
+    );
+}
+
+/// A percentage height of an empty inline-block `::before` refers to the
+/// paragraph's definite height, which is its inline size when vertical.
+#[test]
+fn empty_inline_block_before_resolves_a_percentage_height() {
+    for (paragraph, expected) in [
+        ("height:100px", 50.0),
+        ("writing-mode:vertical-rl;height:200px", 100.0),
+    ] {
+        let html = format!(
+            "<html><head><style>p{{{paragraph}}} p::before{{content:'';display:inline-block;width:10px;height:50%;background:red}}</style></head><body><p>abc</p></body></html>"
+        );
+        let scene = painted_html(html.as_bytes());
+        let fills = solid_fill_bounds(&scene, (255, 0, 0));
+        assert_eq!(fills.len(), 1, "{paragraph}: {fills:?}");
+        assert!(
+            (fills[0].height() - expected).abs() < 0.01,
+            "{paragraph}: {fills:?}"
+        );
+    }
+}
+
+/// In a vertical paragraph a percentage width refers to the paragraph's
+/// physical width, its block extent.
+#[test]
+fn empty_inline_block_before_in_a_vertical_paragraph_resolves_a_percentage_width() {
+    let scene = painted_html(
+        br#"<html><head><style>p{writing-mode:vertical-rl;width:200px;height:200px} p::before{content:'';display:inline-block;width:50%;height:10px;background:red}</style></head><body><p>abc</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!((fills[0].width() - 100.0).abs() < 0.01, "{fills:?}");
+}
+
+/// In a right-to-left paragraph the physical right margin of an empty
+/// inline-block `::before` stays on its right, against the line's start.
+#[test]
+fn empty_inline_block_before_keeps_its_physical_margins_right_to_left() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} p{margin:0;width:200px;direction:rtl} p::before{content:'';display:inline-block;width:10px;height:10px;margin-right:20px;background:red}</style></head><body><p>abc</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!((fills[0].x1 - 180.0).abs() < 0.01, "{fills:?}");
+}
+
+/// An empty inline-block `::before` keeps its paragraph in its columns.
+#[test]
+fn empty_inline_block_before_keeps_a_multicol_paragraph_in_columns() {
+    let scene = painted_html(
+        br#"<html><head><style>body{margin:0} p{margin:0;width:200px;columns:2;column-gap:0} p::before{content:'';display:inline-block;width:10px;height:10px;background:red}</style></head><body><p>a<br>b<br>c<br>d</p></body></html>"#,
+    );
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1, "{fills:?}");
+    assert!(fills[0].x0.abs() < 0.01, "{fills:?}");
+    let in_second_column = scene.commands.iter().any(|command| match command {
+        RenderCommand::GlyphRun(run) => run.glyphs.first().is_some_and(|glyph| {
+            (run.transform * kurbo::Point::new(f64::from(glyph.x), 0.0)).x >= 100.0
+        }),
+        _ => false,
+    });
+    assert!(in_second_column);
+}

@@ -3,8 +3,9 @@
 
 use super::geometry::IfcAxes;
 use super::positioned_runs::Placement;
+use raikiri_style::property::Sides;
 use shodo::geometry::{LogicalRect, PhysicalSize, WritingMode};
-use shodo::{Fragment, Line};
+use shodo::{AtomicFragment, Fragment, Line};
 use std::collections::HashMap;
 
 /// A physical rectangle in the paragraph's content box.
@@ -105,10 +106,15 @@ fn physical(
 /// controls inline progression inside `content_size`. shodo's inline-box
 /// fragments already exclude collapsible spaces hanging at a line end, while
 /// preserved spaces remain in their boxes as ink overflow.
+///
+/// An atomic `::before` or `::after` without content has a piece of its
+/// own, a whole box, when `generated_edges` gives the padding and border on
+/// its physical sides.
 pub(crate) fn inline_box_pieces(
     lines: &[Line],
     writing_mode: WritingMode,
     content_size: PhysicalSize,
+    generated_edges: impl Fn(u64) -> Option<Sides<f32>>,
 ) -> Vec<InlineBoxPiece> {
     let mut pieces = Vec::new();
     for (line_index, line) in lines.iter().enumerate() {
@@ -150,6 +156,20 @@ pub(crate) fn inline_box_pieces(
                     &mut own,
                 );
                 annotations.push((annotation.container().0 as usize, own));
+                continue;
+            }
+            if let Fragment::Atomic(atomic) = fragment {
+                if let Some(edges) = generated_edges(atomic.node.0) {
+                    pieces.push(generated_atomic_piece(
+                        atomic,
+                        edges,
+                        &fragments,
+                        line_index,
+                        line.block_offset(),
+                        axes,
+                        content_size,
+                    ));
+                }
                 continue;
             }
             let Fragment::InlineBox(piece) = fragment else {
@@ -198,6 +218,45 @@ pub(crate) fn inline_box_pieces(
         insert_annotation_pieces(&mut pieces, line_start, annotations);
     }
     pieces
+}
+
+/// The piece of the atomic `::before` or `::after` placed as `atomic` on
+/// the line at `line_top`, whose padding and border on each physical side
+/// are `edges`. Its parent is its element's box on the line, if any.
+fn generated_atomic_piece(
+    atomic: &AtomicFragment,
+    edges: Sides<f32>,
+    fragments: &[Fragment],
+    line: usize,
+    line_top: f32,
+    axes: IfcAxes,
+    content_size: PhysicalSize,
+) -> InlineBoxPiece {
+    let border_box = physical(atomic.border_rect, line_top, axes, content_size);
+    let content_box = BoxRect {
+        x: border_box.x + edges.left,
+        y: border_box.y + edges.top,
+        width: (border_box.width - edges.left - edges.right).max(0.0),
+        height: (border_box.height - edges.top - edges.bottom).max(0.0),
+    };
+    let parent = crate::generated_content::generated_origin(atomic.node.0 as usize)
+        .map(|(element, _)| element)
+        .filter(|&element| {
+            fragments.iter().any(|fragment| {
+                matches!(fragment, Fragment::InlineBox(piece) if piece.node.0 as usize == element)
+            })
+        });
+    InlineBoxPiece {
+        node: atomic.node.0 as usize,
+        line,
+        border_box,
+        content_box,
+        has_start_edge: true,
+        has_end_edge: true,
+        parent,
+        source_container: parent,
+        source_owner: None,
+    }
 }
 
 /// Insert the pieces of each annotation after the pieces of its ruby

@@ -1217,6 +1217,9 @@ fn measure_ifc_root(
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
     let has_boxes = !probe.boxes.is_empty() || !probe.generated_blocks.is_empty();
+    // Empty atomic pseudo-elements are sized without laying out a node, so
+    // they take part in the intrinsic widths but keep the paragraph's columns.
+    let has_box_intrinsics = has_boxes || !probe.generated_boxes.is_empty();
     let vertical = writing_mode != shodo::geometry::WritingMode::HorizontalTb;
     let inline_available = if vertical {
         available.height
@@ -1237,7 +1240,7 @@ fn measure_ifc_root(
     // and only when the intrinsic widths decide the width.
     let needs_intrinsics =
         !(inline_stretched && matches!(inline_available, AvailableSpace::Definite(_)));
-    let box_intrinsics = if has_boxes && needs_intrinsics {
+    let box_intrinsics = if has_box_intrinsics && needs_intrinsics {
         let basis = match inline_available {
             AvailableSpace::Definite(size) => size,
             _ => 0.0,
@@ -1343,10 +1346,15 @@ fn measure_ifc_root(
     // the column the lines are broken in. A vertical root's physical width
     // is settled by the layout below, which resolves against it.
     let containing_width = (!vertical).then_some(width);
+    // A vertical root's width is its block extent, definite when it is known
+    // or stretched to the available space rather than sized by its lines.
+    let vertical_width = (vertical && (known_width.is_some() || measure.stretched_width))
+        .then_some(physical_block_extent);
     // The root's paragraph was taken above, so it is present.
     tree.nodes[idx].ifc.iter_mut().for_each(|root| {
         root.definite_height = definite_height;
         root.containing_width = containing_width;
+        root.vertical_width = vertical_width;
     });
     let axes = IfcAxes::new(writing_mode, direction);
     // Every geometry of the root keeps its definite height, also when the
@@ -1354,6 +1362,7 @@ fn measure_ifc_root(
     let geometry_of = |content_size| {
         let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
         geometry.definite_height = measure.definite_height;
+        geometry.vertical_width = vertical_width;
         geometry
     };
     let mut geometry = geometry_of(content_size);
