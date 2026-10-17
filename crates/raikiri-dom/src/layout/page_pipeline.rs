@@ -907,15 +907,20 @@ fn fits_decorated_paper(
     (insets.top > 0.0 || insets.right > 0.0 || insets.bottom > 0.0 || insets.left > 0.0)
         && top >= page_top
         && top + height <= page_top + paper_height + 0.001
-        && style_dimension_length(
-            document
-                .layout_node_with_style(node_id)
-                .unwrap()
-                .style
-                .size
-                .height,
-        )
-        .is_some_and(|value| value >= 0.0)
+        && has_fixed_height(document, node_id)
+}
+
+/// Whether `node_id` has a definite, non-negative `height` length.
+fn has_fixed_height(document: &Document, node_id: usize) -> bool {
+    style_dimension_length(
+        document
+            .layout_node_with_style(node_id)
+            .unwrap()
+            .style
+            .size
+            .height,
+    )
+    .is_some_and(|value| value >= 0.0)
 }
 
 /// The flow end of a candidate box placed at `effective_y`, or `None` when
@@ -4449,15 +4454,7 @@ fn paginate_flow(
             );
             if let Some((block_id, nested)) = line_block_parent
                 && checked_paragraphs.block_text.insert(block_id)
-                && style_dimension_length(
-                    document
-                        .layout_node_with_style(block_id)
-                        .unwrap()
-                        .style
-                        .size
-                        .height,
-                )
-                .is_some_and(|value| value >= 0.0)
+                && has_fixed_height(document, block_id)
             {
                 let block_height = document.nodes[block_id].unrounded_layout.size.height;
                 let block_effective_y = block_effective_y(
