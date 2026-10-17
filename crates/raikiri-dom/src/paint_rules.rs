@@ -164,21 +164,50 @@ pub fn overflow_clip(
     }
     // A cell that spans a collapsed row keeps the rows that remain and clips
     // its contents to its border box (CSS Tables 3, "Visibility-collapse cell
-    // rendering"). An axis the element already clips keeps its own edges.
-    let Some(mut clip) = clip else {
+    // rendering"). An axis the element already clips keeps its own edges
+    // where they lie inside the border box; an `overflow-clip-margin` that
+    // reaches past it is cut back to the border box.
+    let Some(clip) = clip else {
         return Some(PaintClip::new(border_box));
     };
-    if !clip.clip_x {
-        clip.rect.x = border_box.x;
-        clip.rect.width = border_box.width;
-        clip.clip_x = true;
+    let (x, width) = clamp_clip_axis(
+        clip.clip_x,
+        clip.rect.x,
+        clip.rect.width,
+        border_box.x,
+        border_box.width,
+    );
+    let (y, height) = clamp_clip_axis(
+        clip.clip_y,
+        clip.rect.y,
+        clip.rect.height,
+        border_box.y,
+        border_box.height,
+    );
+    let rect = PaintRect::new(x, y, width, height);
+    if rect == clip.rect && clip.clip_x && clip.clip_y {
+        return Some(clip);
     }
-    if !clip.clip_y {
-        clip.rect.y = border_box.y;
-        clip.rect.height = border_box.height;
-        clip.clip_y = true;
+    // The element's curves were shaped for its own clip edge, so a trimmed
+    // or newly bounded rectangle takes square corners.
+    Some(PaintClip::new(rect))
+}
+
+/// One axis of a collapsed-span clip: the element's own clip edges intersected
+/// with the border box, or the border box when that axis did not clip.
+fn clamp_clip_axis(
+    clips: bool,
+    start: f32,
+    size: f32,
+    box_start: f32,
+    box_size: f32,
+) -> (f32, f32) {
+    if !clips {
+        return (box_start, box_size);
     }
-    Some(clip)
+    let lo = start.max(box_start);
+    let hi = (start + size).min(box_start + box_size);
+    (lo, (hi - lo).max(0.0))
 }
 
 /// Whether the element is a replaced element, whose overflow and

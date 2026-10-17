@@ -137,23 +137,40 @@ fn overflow_clip_propagates_a_block_root_to_the_viewport() {
 fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box() {
     let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
     let no_border = PaintInsets::new(0.0, 0.0, 0.0, 0.0);
-    for (css, expected) in [
+    let mut rounded = PaintClip::new(border_box);
+    rounded.corner_radii = Some([[8.0; 2]; 4]);
+    for (css, expected, same_before) in [
         // Visible overflow clips at the border box on both axes.
-        ("display:block", PaintClip::new(border_box)),
+        ("display:block", PaintClip::new(border_box), false),
         // A visible block axis joins a clipped inline axis.
         (
             "display:block;overflow-x:clip;overflow-y:visible",
             PaintClip::new(border_box),
+            false,
         ),
         // A visible inline axis joins a clipped block axis.
         (
             "display:block;overflow-x:visible;overflow-y:clip",
             PaintClip::new(border_box),
+            false,
         ),
-        // Clipped axes keep their own edges.
-        ("display:block;overflow:clip;overflow-clip-margin:5px", {
-            PaintClip::new(PaintRect::new(5.0, 15.0, 110.0, 60.0))
-        }),
+        // An overflow-clip-margin past the border box is cut back to it.
+        (
+            "display:block;overflow:clip;overflow-clip-margin:5px",
+            PaintClip::new(border_box),
+            false,
+        ),
+        (
+            "display:block;overflow-x:clip;overflow-y:visible;overflow-clip-margin:5px",
+            PaintClip::new(border_box),
+            false,
+        ),
+        // A clip already inside the border box keeps its edges and curves.
+        (
+            "display:block;overflow:clip;border-radius:8px",
+            rounded,
+            true,
+        ),
     ] {
         let mut doc = Document::new();
         let node = doc.append_element(Some(doc.root_index()), "div", Style::default(), Some(css));
@@ -162,8 +179,8 @@ fn a_cell_spanning_a_collapsed_row_clips_to_its_border_box() {
         let before = overflow_clip(&doc, &cascade, node, border_box, no_border);
         assert_eq!(
             before == Some(expected),
-            css.contains("overflow:clip"),
-            "{css}: only an element clipping both axes clips the same before"
+            same_before,
+            "{css}: only a clip inside the border box on both axes stays the same"
         );
         doc.nodes[node].clips_collapsed_table_span = true;
         assert_eq!(
