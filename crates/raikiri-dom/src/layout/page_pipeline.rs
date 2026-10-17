@@ -1496,6 +1496,18 @@ impl PageOrigins {
         (self.page_index_for_y(margin_start + edge_slack) + 1).min(last_page)
     }
 
+    /// The page a box of block size `height` whose top is at `y` starts on.
+    /// A box with no block size at a page's end still fits on that page, so
+    /// it does not open the next one: a forced break after it would
+    /// otherwise leave it alone on a page.
+    fn start_page(&self, y: f32, height: f32) -> u32 {
+        if height <= 0.0 {
+            self.page_index_for_end(y)
+        } else {
+            self.page_index_for_y(y)
+        }
+    }
+
     /// Where a box starts when an unforced break falls in the collapsed
     /// margin above it at the edge that opens `natural_page`: the top of the
     /// page it lands on and its border-box top.
@@ -4936,14 +4948,7 @@ fn paginate_flow(
                     pending_break.clear();
                 }
             } else if effective_y.is_finite() && effective_y >= 0.0 {
-                // A box with no block size at a page's end still fits on
-                // that page, so it does not open the next one: a forced
-                // break after it would otherwise leave it alone on a page.
-                let mut natural_page = if height <= 0.0 {
-                    page_index_for_end(effective_y)
-                } else {
-                    page_index_for_y(effective_y)
-                };
+                let mut natural_page = page_origins.start_page(effective_y, height);
                 // A forced break that coincides with a page edge also starts
                 // that page.
                 if forced_before {
