@@ -3393,15 +3393,12 @@ pub(crate) fn paint_document_impl(
                     paint_height = paint_height.min(clip_height);
                     paint_background_height = paint_background_height.min(clip_height);
                     let clip_origin_y = paint_y.floor();
-                    let clip = snap_column_clip_outward(
-                        Rect::new(
-                            paint_x as f64,
-                            clip_origin_y as f64,
-                            (paint_x + layout.size.width) as f64,
-                            (clip_origin_y + clip_height) as f64,
-                        ),
-                        cv.writing_mode.is_vertical(),
-                    );
+                    let clip = snap_column_clip_outward(Rect::new(
+                        paint_x as f64,
+                        clip_origin_y as f64,
+                        (paint_x + layout.size.width) as f64,
+                        (clip_origin_y + clip_height) as f64,
+                    ));
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     multicol_clip_pushed = true;
                     if let Some(t) = trace.as_deref_mut() {
@@ -3409,15 +3406,12 @@ pub(crate) fn paint_document_impl(
                     }
                 }
                 if let Some(clip) = fragment_clip {
-                    let clip = snap_column_clip_outward(
-                        Rect::new(
-                            (paint_x + clip.x) as f64,
-                            (paint_y + clip.y) as f64,
-                            (paint_x + clip.x + clip.width) as f64,
-                            (paint_y + clip.y + clip.height) as f64,
-                        ),
-                        cv.writing_mode.is_vertical(),
-                    );
+                    let clip = snap_column_clip_outward(Rect::new(
+                        (paint_x + clip.x) as f64,
+                        (paint_y + clip.y) as f64,
+                        (paint_x + clip.x + clip.width) as f64,
+                        (paint_y + clip.y + clip.height) as f64,
+                    ));
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     fragmentainer_clip_pushed = true;
                     if let Some(t) = trace.as_deref_mut() {
@@ -7936,23 +7930,24 @@ mod tests;
 #[cfg(test)]
 use raikiri_style::CounterStyleRegistry;
 
-/// The clip of a column fragment, with the edges that separate it from its
-/// neighbour columns grown outward to whole pixels: the vertical edges of a
-/// horizontal writing mode, the horizontal edges of a vertical one.
+/// The clip of a column fragment, with the vertical edges that separate it
+/// from its neighbour columns grown outward to whole pixels.
+///
+/// Only a multicol container in a horizontal writing mode fragments its
+/// content into column clips, so the columns are always side by side whatever
+/// writing mode the clipped box has itself: an orthogonal flow inside a
+/// column is clipped by the same left and right edges.
 ///
 /// A clip edge inside a pixel scales the coverage of whatever is drawn there,
 /// so ink that begins exactly on a fractional column edge (the stem of the
 /// first glyph of a line, in columns whose width is not a whole number of
 /// pixels) would be attenuated twice, once by its own antialiasing and once
 /// by the clip's. The same ink drawn without a fragment clip keeps only its
-/// own coverage. The edges where the flow breaks into the next column stay
-/// exact, as the next fragment's content starts right behind them.
-fn snap_column_clip_outward(clip: Rect, vertical: bool) -> Rect {
-    if vertical {
-        Rect::new(clip.x0, clip.y0.floor(), clip.x1, clip.y1.ceil())
-    } else {
-        Rect::new(clip.x0.floor(), clip.y0, clip.x1.ceil(), clip.y1)
-    }
+/// own coverage. The top and bottom edges, where the flow breaks into the
+/// next column, stay exact, as the next fragment's content starts right
+/// behind them.
+fn snap_column_clip_outward(clip: Rect) -> Rect {
+    Rect::new(clip.x0.floor(), clip.y0, clip.x1.ceil(), clip.y1)
 }
 
 fn push_overflow_clip(

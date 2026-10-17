@@ -6834,15 +6834,25 @@ fn paged_scene(markup: &str) -> Scene {
 
 #[test]
 fn a_column_clip_grows_outward_across_the_columns_only() {
-    let clip = Rect::new(274.5, 8.5, 525.25, 88.25);
     assert_eq!(
-        snap_column_clip_outward(clip, false),
+        snap_column_clip_outward(Rect::new(274.5, 8.5, 525.25, 88.25)),
         Rect::new(274.0, 8.5, 526.0, 88.25)
     );
-    assert_eq!(
-        snap_column_clip_outward(clip, true),
-        Rect::new(274.5, 8.0, 525.25, 89.0)
-    );
+}
+
+#[test]
+fn an_orthogonal_flow_in_a_column_is_clipped_by_the_same_column_edges() {
+    // The wrapper's own writing mode is vertical, but the columns it is
+    // clipped to are still side by side: the left and right edges grow
+    // outward and the top and bottom edges, where the flow breaks into the
+    // next column, keep their fractional position (17.6px lines).
+    let markup = "<!DOCTYPE html><style>.c{columns:3;column-fill:auto;height:5em;orphans:3;widows:3;font:16px/1.1 Ahem}.v{writing-mode:vertical-rl}</style><body><div class=c><div>a<br>b<br>c<br></div><div class=v><div>d<br>e<br>f<br>g<br>h<br>i<br>j<br></div></div></div></body>";
+    let clips = clip_layer_bounds(&paged_scene(markup));
+    assert_eq!(clips.len(), 2, "one clip for each column the flow is in");
+    for clip in clips {
+        assert_eq!((clip.x0.fract(), clip.x1.fract()), (0.0, 0.0), "{clip:?}");
+        assert_ne!(clip.y0.fract(), 0.0, "{clip:?}");
+    }
 }
 
 #[test]
