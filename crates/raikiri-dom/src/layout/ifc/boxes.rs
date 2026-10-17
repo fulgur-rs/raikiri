@@ -1365,7 +1365,7 @@ pub(crate) fn measure_atomics(
     let containing = if root.writing_mode == WritingMode::HorizontalTb {
         (Some(geometry.width), geometry.definite_height)
     } else {
-        (Some(geometry.content_size.width), Some(geometry.width))
+        (geometry.vertical_width, Some(geometry.width))
     };
     for generated in root.generated_boxes.iter() {
         sizes.insert(

@@ -256,3 +256,41 @@ fn an_empty_atomic_before_keeps_its_size_through_a_vertical_rebreak() {
     // The percentage width refers to the paragraph's physical width.
     assert_eq!(atomic.border_rect.block_size, 100.0);
 }
+
+/// The percentage width of an empty inline-block `::before` in a vertical
+/// paragraph sized by its lines is the same after its lines are broken again.
+#[test]
+fn an_empty_atomic_before_in_an_auto_width_vertical_root_keeps_its_width_through_a_rebreak() {
+    use crate::layout::ifc::test_support::sheet_fixture;
+    use crate::layout::test_support::page_box_800x600;
+    let fixture = sheet_fixture(
+        "div::before{content:'';display:inline-block;width:50%;height:15px}",
+        "line-height:10px;writing-mode:vertical-rl;height:200px",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    doc.set_font_collection_with_limits(ahem_fonts(), Limits::default());
+    crate::layout::layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600())
+        .expect("layout");
+    let before =
+        crate::generated_content::generated_node_id(root, raikiri_style::PseudoElem::Before);
+    let block_size = |doc: &Document| {
+        doc.nodes[root]
+            .ifc_lines()
+            .expect("lines")
+            .iter()
+            .flat_map(|line| line.fragments())
+            .find_map(|fragment| match fragment {
+                shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == before => {
+                    Some(atomic.border_rect.block_size)
+                }
+                _ => None,
+            })
+            .expect("the pseudo-element is on a line")
+    };
+    let laid_out = block_size(&doc);
+    crate::layout::relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
+    assert_eq!(block_size(&doc), laid_out);
+}

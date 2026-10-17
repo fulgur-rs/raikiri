@@ -1346,11 +1346,15 @@ fn measure_ifc_root(
     // the column the lines are broken in. A vertical root's physical width
     // is settled by the layout below, which resolves against it.
     let containing_width = (!vertical).then_some(width);
+    // A vertical root's width is its block extent, definite when it is known
+    // or stretched to the available space rather than sized by its lines.
+    let vertical_width = (vertical && (known_width.is_some() || measure.stretched_width))
+        .then_some(physical_block_extent);
     // The root's paragraph was taken above, so it is present.
     tree.nodes[idx].ifc.iter_mut().for_each(|root| {
         root.definite_height = definite_height;
         root.containing_width = containing_width;
-        root.vertical_width = vertical.then_some(physical_block_extent);
+        root.vertical_width = vertical_width;
     });
     let axes = IfcAxes::new(writing_mode, direction);
     // Every geometry of the root keeps its definite height, also when the
@@ -1358,6 +1362,7 @@ fn measure_ifc_root(
     let geometry_of = |content_size| {
         let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
         geometry.definite_height = measure.definite_height;
+        geometry.vertical_width = vertical_width;
         geometry
     };
     let mut geometry = geometry_of(content_size);
