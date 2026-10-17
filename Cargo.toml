@@ -65,7 +65,7 @@ shodo  = { version = "=0.0.36", default-features = false, features = ["system-fo
 skrifa = "0.44"
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
-anyrender = "0.13"
+anyrender = "0.14"
 peniko    = "0.6"
 kurbo     = "0.13"
 
