@@ -1217,9 +1217,13 @@ fn measure_ifc_root(
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
     let has_boxes = !probe.boxes.is_empty() || !probe.generated_blocks.is_empty();
-    // Empty atomic pseudo-elements are sized without laying out a node, so
-    // they take part in the intrinsic widths but keep the paragraph's columns.
-    let has_box_intrinsics = has_boxes || !probe.generated_boxes.is_empty();
+    // Marker and generated images and empty atomic pseudo-elements are sized
+    // without laying out a node, so they take part in the intrinsic widths
+    // but keep the paragraph's columns.
+    let has_box_intrinsics = has_boxes
+        || probe.marker_atomic.is_some()
+        || !probe.generated_atomics.is_empty()
+        || !probe.generated_boxes.is_empty();
     let vertical = writing_mode != shodo::geometry::WritingMode::HorizontalTb;
     let inline_available = if vertical {
         available.height
