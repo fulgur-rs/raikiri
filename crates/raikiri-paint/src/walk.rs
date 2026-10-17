@@ -2499,12 +2499,16 @@ pub(crate) fn paint_document_impl(
             && !layer.flushing
             && raikiri_dom::paint_rules::defers_to_positioned_layer(document, cascade, *node_id)
         {
-            raikiri_dom::paint_rules::insert_positioned_frame(
-                document,
-                &mut layer.positioned,
-                frame,
-                positioned_frame,
-            );
+            if raikiri_dom::paint_rules::leaves_paragraph_lines(document, cascade, *node_id) {
+                raikiri_dom::paint_rules::insert_positioned_frame(
+                    document,
+                    &mut layer.positioned,
+                    frame,
+                    positioned_frame,
+                );
+            } else {
+                layer.positioned.push(frame);
+            }
             continue;
         }
         // The lines of an anonymous cell in a table part that defers wait

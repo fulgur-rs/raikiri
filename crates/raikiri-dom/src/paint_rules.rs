@@ -729,7 +729,11 @@ pub fn defers_to_positioned_layer(
 /// where it paints by stack level among the positioned boxes outside the
 /// paragraph, in tree order within a level (CSS 2.1 Appendix E steps 8 and
 /// 9), so it waits for the end of the layer like them.
-fn leaves_paragraph_lines(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+pub fn leaves_paragraph_lines(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     cascade.computed.get(node_id).is_some_and(|cv| {
         !cv.display.is_inline_flow()
             && !matches!(cv.position, PositionValue::Static)
@@ -837,10 +841,13 @@ fn precedes_in_tree(document: &Document, a: usize, b: usize) -> bool {
 /// boxes that wait for its end (see [`PositionedFrame`]), at its place in
 /// tree order.
 ///
-/// The painters list most boxes as they reach them, which is tree order. A
-/// paragraph whose inline content waits for the end of the layer reaches
-/// its boxes after the boxes that follow it, so its boxes go back past them,
-/// past the clips around them as a whole.
+/// The painters list most boxes as they reach them, in paint order, which
+/// is tree order but for the order-modified document order of flex and grid
+/// items (CSS Flexbox 1 §5.4), so they push those at the end. A paragraph
+/// whose inline content waits for the end of the layer reaches its boxes
+/// (see [`leaves_paragraph_lines`] and [`leaves_paragraph_content`]) after
+/// the boxes that follow it, so its boxes go back past them with this, past
+/// the clips around them as a whole.
 pub fn insert_positioned_frame<F>(
     document: &Document,
     frames: &mut Vec<F>,

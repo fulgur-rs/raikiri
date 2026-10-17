@@ -1878,3 +1878,18 @@ fn z_indexed_inline_content_stays_in_the_lines_of_a_translucent_first_line() {
         "#p::first-line { opacity: 0.5 }",
     );
 }
+
+#[test]
+fn positioned_flex_items_keep_order_modified_order() {
+    // Flex items paint in order-modified document order (CSS Flexbox 1
+    // §5.4), so the earlier item placed last covers the one placed first.
+    let result = assert_same_order(
+        "<div style=\"display: flex\">\
+         <div id=a style=\"order: 2; position: relative; left: -20px; width: 20px; \
+         height: 10px; background: red\"></div>\
+         <div id=b style=\"order: 1; position: relative; width: 20px; height: 10px; \
+         background: lime\"></div></div>",
+        "",
+    );
+    assert_eq!(red_and_lime(&result), (200, 0));
+}

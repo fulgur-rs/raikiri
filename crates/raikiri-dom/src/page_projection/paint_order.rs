@@ -526,12 +526,16 @@ impl Document {
                 && !layer.flushing
                 && paint_rules::defers_to_positioned_layer(self, cascade, node_id)
             {
-                paint_rules::insert_positioned_frame(
-                    self,
-                    &mut layer.positioned,
-                    frame,
-                    positioned_frame,
-                );
+                if paint_rules::leaves_paragraph_lines(self, cascade, node_id) {
+                    paint_rules::insert_positioned_frame(
+                        self,
+                        &mut layer.positioned,
+                        frame,
+                        positioned_frame,
+                    );
+                } else {
+                    layer.positioned.push(frame);
+                }
                 continue;
             }
             // So does the group of a positioned inline element that forms a
