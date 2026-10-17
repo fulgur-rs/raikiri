@@ -244,11 +244,21 @@ pub(crate) fn draw_vertical_marks(
         );
     };
     if run.orientation() == shodo::GlyphOrientation::Combined {
-        // A square can span several runs; only the run holding its first
-        // character marks it, so it takes one mark.
+        // A square can span several runs, and its first characters may have
+        // no glyph (a preserved tab); only the earliest run inside it marks
+        // it, so it takes one mark.
         let text = run.text_range();
         for combination in line.text_combinations() {
-            if text.contains(&combination.text_range.start) {
+            let range = &combination.text_range;
+            let first = line
+                .fragments()
+                .filter_map(|fragment| match fragment {
+                    Fragment::GlyphRun(run) => Some(run.text_range()),
+                    _ => None,
+                })
+                .filter(|run| run.start < range.end && range.start < run.end)
+                .min_by_key(|run| run.start);
+            if first == Some(text.clone()) {
                 let square = combination.square;
                 draw(
                     square.inline_start + square.inline_size / 2.0,

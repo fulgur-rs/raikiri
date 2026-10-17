@@ -3816,3 +3816,25 @@ fn only_a_face_with_a_head_table_has_glyph_outlines() {
     let ahem = peniko::FontData::new(peniko::Blob::from(ahem), 0);
     assert!(crate::text::has_glyph_outlines(&ahem));
 }
+
+#[test]
+fn vertical_emphasis_marks_a_combined_square_that_starts_without_a_glyph() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;line-height:40px;text-emphasis:dot;white-space:pre;\
+         text-emphasis-color:rgb(255,0,0)",
+        |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "\t1");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let red = solid(255, 0, 0);
+    let marks = placed.iter().filter(|g| g.3 == red).count();
+    assert_eq!(marks, 1, "the square takes its mark: {placed:?}");
+}
