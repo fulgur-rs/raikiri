@@ -26,6 +26,13 @@ pub(crate) struct LayoutContext {
     pub(crate) pagination_on_transposed_axes: bool,
     pub(crate) in_flow_heights: HashMap<usize, f32>,
     pub(crate) text_group: TextGroupScope,
+    /// The next child layout is in the group's block formatting context
+    /// although it gets no block context (a vertical block child), so it
+    /// keeps the group.
+    pub(crate) keep_text_group: bool,
+    /// The layout being entered is such a child: its size cache is bypassed,
+    /// which would answer without laying its lines out in the group.
+    pub(crate) group_child_uncached: bool,
 }
 
 /// The `text-group-align` group the lines being laid out belong to: the
@@ -39,6 +46,11 @@ pub(crate) enum TextGroupScope {
     /// Measuring: the lines laid out report the space they leave unfilled,
     /// and the shortest of it is the group's padding.
     Probing { shortest: Option<f32> },
+    /// Inside a group being measured or skipped, below a box that roots a
+    /// group of its own: that group is neither measured nor applied, since
+    /// its lines are not part of the outer group, and laying it out once
+    /// keeps nested groups linear.
+    Skipping,
     /// Laying out for real: every line takes the group's padding.
     Applying {
         align: shodo::style::TextGroupAlign,

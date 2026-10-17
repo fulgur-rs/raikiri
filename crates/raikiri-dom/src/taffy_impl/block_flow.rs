@@ -147,6 +147,17 @@ pub(crate) fn compute_block_flow(
     if align == TextGroupAlign::None {
         return run(tree, shared);
     }
+    if matches!(
+        tree.context.text_group,
+        TextGroupScope::Probing { .. } | TextGroupScope::Skipping
+    ) {
+        // Its lines are not part of the group being measured, so it is laid
+        // out once, unpadded, with nothing below it joining anything.
+        let outer = std::mem::replace(&mut tree.context.text_group, TextGroupScope::Skipping);
+        let output = run(tree, shared);
+        tree.context.text_group = outer;
+        return output;
+    }
     // The box roots a `text-group-align` group: the lines under it are laid
     // out once to find the space the shortest leaves unfilled, then again
     // with every line padded by it. The measuring pass leaves the block

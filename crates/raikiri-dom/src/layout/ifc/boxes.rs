@@ -170,14 +170,13 @@ pub(crate) fn layout_with_boxes_in(
         Some(ctx) => {
             join_group(tree, &mut root);
             if own_group {
-                root.options.group_padding = group_padding(
+                root.options.group_padding = own_group_padding(
                     tree,
                     &root,
                     geometry,
                     ctx,
-                    false,
-                    top_margin_escapes,
-                    bottom_margin_escapes,
+                    (false, top_margin_escapes, bottom_margin_escapes),
+                    outer_group,
                 );
             }
             let lines = run_boxes(
@@ -200,8 +199,14 @@ pub(crate) fn layout_with_boxes_in(
             ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
             join_group(tree, &mut root);
             if own_group {
-                root.options.group_padding =
-                    group_padding(tree, &root, geometry, &mut ctx, true, false, false);
+                root.options.group_padding = own_group_padding(
+                    tree,
+                    &root,
+                    geometry,
+                    &mut ctx,
+                    (true, false, false),
+                    outer_group,
+                );
             }
             let lines = run_boxes(
                 tree, idx, &root, geometry, &mut ctx, perform, true, false, false,
@@ -248,6 +253,36 @@ fn shortest_remaining(lines: &IfcLines, other: Option<f32>) -> Option<f32> {
         .map(shodo::Line::remaining_inline_size)
         .chain(other)
         .reduce(f32::min)
+}
+
+/// [`group_padding`] for a root that declares a group, unless it sits in a
+/// group being measured or skipped: its lines are not part of that group, so
+/// it is laid out once, unpadded, and its descendants do not join anything.
+fn own_group_padding(
+    tree: &mut LayoutSession<'_>,
+    root: &IfcRoot,
+    geometry: FlowGeometry,
+    ctx: &mut BlockContext<'_>,
+    (local, top_margin_escapes, bottom_margin_escapes): (bool, bool, bool),
+    outer: TextGroupScope,
+) -> f32 {
+    if matches!(
+        outer,
+        TextGroupScope::Probing { .. } | TextGroupScope::Skipping
+    ) {
+        tree.context.text_group = TextGroupScope::Skipping;
+        0.0
+    } else {
+        group_padding(
+            tree,
+            root,
+            geometry,
+            ctx,
+            local,
+            top_margin_escapes,
+            bottom_margin_escapes,
+        )
+    }
 }
 
 /// The padding `text-group-align` takes from every line of the root: the
@@ -1780,6 +1815,9 @@ fn layout_vertical_block_child(
     };
     let node_id = taffy::NodeId::from(node);
     let output = if in_the_roots_formatting_context(tree, node) {
+        // A group reaching the child is laid out through it, not answered
+        // from the size cache.
+        tree.context.keep_text_group = !matches!(tree.context.text_group, TextGroupScope::None);
         tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
     } else {
         tree.compute_child_layout(node_id, inputs)

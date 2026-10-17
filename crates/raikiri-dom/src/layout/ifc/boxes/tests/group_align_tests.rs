@@ -249,3 +249,39 @@ fn physical_group_sides_place_the_group_left_or_right() {
         [60.0, 60.0]
     );
 }
+
+#[test]
+fn nested_group_roots_are_laid_out_in_linear_time() {
+    // Each level declares a group of its own. Laying every level out twice
+    // inside the one above would take 2^40 passes.
+    let starts = block_starts("text-group-align: end", |doc, root| {
+        let mut parent = root;
+        for _ in 0..40 {
+            parent = doc.append_element(
+                Some(parent),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;text-group-align:end"),
+            );
+        }
+        vec![
+            paragraph(doc, parent, "", "AAAA"),
+            paragraph(doc, parent, "", "AA"),
+        ]
+    });
+    assert_eq!(starts, [vec![60.0], vec![60.0]]);
+}
+
+#[test]
+fn the_blocks_of_a_vertical_root_join_its_group() {
+    // The root's own line leaves 80px of its 100px inline size, its block
+    // child's 60px.
+    let starts = block_starts(
+        "text-group-align: end; writing-mode: vertical-rl; width: auto; height: 100px",
+        |doc, root| {
+            doc.append_text(root, "AA");
+            vec![root, paragraph(doc, root, "", "AAAA")]
+        },
+    );
+    assert_eq!(starts, [vec![60.0], vec![60.0]]);
+}

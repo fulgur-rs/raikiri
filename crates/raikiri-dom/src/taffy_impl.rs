@@ -464,8 +464,9 @@ impl LayoutSession<'_> {
     ) -> LayoutOutput {
         // A box that does not share its parent's block context is not part of
         // the parent's `text-group-align` group.
-        let outer_group = block_ctx
-            .is_none()
+        let keeps_group = std::mem::take(&mut self.context.keep_text_group);
+        self.context.group_child_uncached = keeps_group;
+        let outer_group = (block_ctx.is_none() && !keeps_group)
             .then(|| std::mem::take(&mut self.context.text_group));
         let output = if let Some(output) = self.compute_transposed_child(node_id, inputs) {
             output
@@ -474,6 +475,7 @@ impl LayoutSession<'_> {
                 self.compute_child_layout_with_block_ctx_inner(node_id, inputs, block_ctx)
             })
         };
+        self.context.group_child_uncached = false;
         if let Some(group) = outer_group {
             self.context.text_group = group;
         }
@@ -521,6 +523,7 @@ impl LayoutSession<'_> {
         // A shared block context owns float placements and unresolved margin struts.
         // A size-only cache cannot replay them after a speculative layout is restored.
         let uncached = block_ctx.is_some()
+            || std::mem::take(&mut self.context.group_child_uncached)
             || (paragraph
                 && ifc_basis.is_some()
                 && has_percent_edge(self.layout_node_with_style(idx).unwrap().style))
