@@ -2802,16 +2802,18 @@ pub(crate) fn paint_document_impl(
                 // text traced below the paragraph's blocks is not traced
                 // again.
                 let below = traced_below.remove(&node_id);
+                let leaving = trace.is_some()
+                    && leaves_groups(&deferral_scopes)
+                    && raikiri_dom::paint_rules::content_can_leave_paragraph(
+                        document, cascade, node_id,
+                    );
                 if let Some(t) = trace.as_deref_mut()
                     && traced_text(
                         document,
                         cascade,
                         node_id,
                         |negative| !below || !negative,
-                        |owner| {
-                            !leaves_groups(&deferral_scopes)
-                                || !in_left_group(document, cascade, node_id, owner, None)
-                        },
+                        |owner| !leaving || !in_left_group(document, cascade, node_id, owner, None),
                     )
                 {
                     t.push(crate::PaintTraceEvent::Text(node_id));
@@ -4847,7 +4849,7 @@ fn traced_text(
 /// Whether `start` lies in content of paragraph `root` that leaves the lines
 /// to paint with the positioned boxes (see
 /// [`raikiri_dom::paint_rules::leaves_paragraph_content`]), within `group`
-/// when given.
+/// when given, for a paragraph whose content can leave its lines.
 fn in_left_group(
     document: &Document,
     cascade: &CascadeResult,
@@ -4860,7 +4862,9 @@ fn in_left_group(
         .take_while(|&id| id != root)
         .any(|id| {
             group.is_none_or(|group| group == id)
-                && raikiri_dom::paint_rules::leaves_paragraph_content(document, cascade, root, id)
+                && raikiri_dom::paint_rules::leaves_paragraph_content(
+                    document, cascade, root, id, true,
+                )
         })
 }
 

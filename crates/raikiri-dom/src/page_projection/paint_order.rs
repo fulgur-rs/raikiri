@@ -514,6 +514,10 @@ impl Document {
         let mut stack = vec![Frame::EndDeferral, Frame::Visit(root)];
         // Each open layer collects the content that waits for its end.
         let mut layers = vec![Layer::new(true, LayerClose::Paint)];
+        // Whether each paragraph's content can leave its lines, found once
+        // for all its groups.
+        let mut can_leave: std::collections::HashMap<usize, bool> =
+            std::collections::HashMap::new();
         let mut motion = super::paint_transform::MotionCache::default();
         // The transforms open around the current event, composed.
         let mut spaces = vec![PaintTransform::IDENTITY];
@@ -544,7 +548,15 @@ impl Document {
                 && let Some(layer) = layers.last_mut()
                 && layer.allowed
                 && !layer.flushing
-                && paint_rules::leaves_paragraph_content(self, cascade, root, group)
+                && paint_rules::leaves_paragraph_content(
+                    self,
+                    cascade,
+                    root,
+                    group,
+                    *can_leave.entry(root).or_insert_with(|| {
+                        paint_rules::content_can_leave_paragraph(self, cascade, root)
+                    }),
+                )
             {
                 paint_rules::insert_positioned_frame(
                     self,

@@ -227,12 +227,19 @@ impl HeldLines<'_> {
         leaving: bool,
     ) -> (Scene, Vec<Scene>, Scene, Vec<(usize, Scene)>) {
         let paragraph = self.paragraph;
+        let leaving = leaving
+            && raikiri_dom::paint_rules::content_can_leave_paragraph(
+                paragraph.document,
+                paragraph.cascade,
+                paragraph.root_id,
+            );
         let leaves = |owner: usize| {
             raikiri_dom::paint_rules::leaves_paragraph_content(
                 paragraph.document,
                 paragraph.cascade,
                 paragraph.root_id,
                 owner,
+                true,
             )
         };
         let paint_transform = self.paint_transform;

@@ -760,7 +760,11 @@ pub fn leaves_paragraph_lines(
 /// `::before` or `::after` forms such a stacking context too, as the lines
 /// order those groups by stack level among themselves; the content then
 /// paints with the lines, as all of it did before.
-fn content_can_leave_paragraph(document: &Document, cascade: &CascadeResult, root: usize) -> bool {
+pub fn content_can_leave_paragraph(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> bool {
     if first_line_opacity_layer(document, root).is_some() {
         return false;
     }
@@ -1448,18 +1452,21 @@ pub fn inline_stacking_group(
 ///
 /// Such a group paints by stack level among the positioned boxes outside the
 /// paragraph, in tree order within a level (CSS 2.1 Appendix E steps 8 and
-/// 9), so the painters let it wait for the end of the layer like them.
+/// 9), so the painters let it wait for the end of the layer like them, when
+/// `can_leave`: what [`content_can_leave_paragraph`] tells of the paragraph,
+/// which callers find once for all its groups.
 pub fn leaves_paragraph_content(
     document: &Document,
     cascade: &CascadeResult,
     root: usize,
     id: usize,
+    can_leave: bool,
 ) -> bool {
-    inline_stacking_group(document, cascade, root, id)
+    can_leave
+        && inline_stacking_group(document, cascade, root, id)
         && document
             .parent_of(id)
             .is_some_and(|parent| outside_inline_stacking_contexts(document, cascade, root, parent))
-        && content_can_leave_paragraph(document, cascade, root)
 }
 
 /// Whether inline element `context` of paragraph `root`, which forms a
