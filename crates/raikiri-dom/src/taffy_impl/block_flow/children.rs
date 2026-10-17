@@ -2,7 +2,7 @@
 
 use super::context::BlockContext;
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
-use crate::Document;
+use crate::layout::context::LayoutSession;
 use crate::taffy_impl::resolve_calc;
 use taffy::{
     AvailableSpace, Baselines, BlockItemStyle, BoxGenerationMode, Clear, CollapsibleMarginSet,
@@ -128,7 +128,7 @@ fn overflow(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: NodeId,
     inputs: LayoutInput,
     container: &Style,
@@ -460,7 +460,7 @@ pub(super) fn layout(
     flow
 }
 
-pub(super) fn align(tree: &mut Document, style: &Style, flow: &mut Flow, free: f32) {
+pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow, free: f32) {
     if style.align_content.keyword == taffy::AlignContentKeyword::Normal {
         return;
     }

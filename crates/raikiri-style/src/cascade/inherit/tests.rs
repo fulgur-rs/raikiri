@@ -813,6 +813,7 @@ fn border_width_device_scale_reaches_elements_pseudos_page_and_margin_boxes() {
         &options,
     )
     .expect("cascade Ok");
+    assert_eq!(result.border_width_device_scale(), Some(1.5));
     let snapped = ComputedLength(74.0 / 1.5);
     assert_eq!(result.computed[html].border.top.width, snapped);
     assert_eq!(result.computed[child].border.top.width, snapped);
@@ -11693,5 +11694,27 @@ fn overflow_clip_margin_inherits_explicitly() {
             r.computed[id].overflow_clip_margin,
             crate::resolve::ComputedOverflowClipMargin::INITIAL
         );
+    }
+}
+
+#[test]
+fn an_invalid_border_width_device_scale_is_not_reported() {
+    let mut doc = TestDoc::new();
+    doc.push_element(0, "html", None);
+    let tree = build_rule_tree(&doc);
+    for invalid in [-1.0, 0.0, f32::NAN] {
+        let options = crate::CascadeOptions {
+            border_width_device_scale: Some(invalid),
+            ..crate::CascadeOptions::default()
+        };
+        let result = crate::cascade_with_options(
+            &doc,
+            &tree,
+            &MediaContext::default(),
+            &crate::PageContextQuery::default(),
+            &options,
+        )
+        .expect("cascade Ok");
+        assert_eq!(result.border_width_device_scale(), None);
     }
 }

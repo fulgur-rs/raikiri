@@ -1,8 +1,10 @@
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
+use crate::layout::context::LayoutSession;
 
 pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
-    if tree.nodes[parent].ifc.is_some() || tree.nodes[parent].style.direction != TaffyDirection::Ltr
+    if tree.nodes[parent].ifc.is_some()
+        || tree.layout_node_with_style(parent).unwrap().style.direction != TaffyDirection::Ltr
     {
         return None;
     }
@@ -19,7 +21,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         if children.next().is_some() {
             return None;
         }
-        let node = &tree.nodes[child];
+        let node = &tree.layout_node_with_style(child).unwrap();
         let defaults: taffy::Style = taffy::Style::default();
         if node.display() != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
@@ -142,7 +144,7 @@ fn constrained_line_ranges(
 }
 
 pub(super) fn layout(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     parent: usize,
     chain: &[usize],
     context: FragmentationContext,
@@ -184,15 +186,32 @@ pub(super) fn layout(
     let mut first_layout = tree.nodes[first].unrounded_layout;
     // Parent-owned used margins can still refer to the unfragmented width.
     // Resolve the outer margins against the column before placing this box.
-    first_layout.margin = tree.nodes[first].style.margin.map(|margin| {
-        margin
-            .resolve_to_option(context.column_width, |pointer, basis| {
-                tree.resolve_calc_value(pointer, basis)
-            })
-            .unwrap_or(0.0)
-    });
-    let left_auto = tree.nodes[first].style.margin.left.is_auto();
-    let right_auto = tree.nodes[first].style.margin.right.is_auto();
+    first_layout.margin = tree
+        .layout_node_with_style(first)
+        .unwrap()
+        .style
+        .margin
+        .map(|margin| {
+            margin
+                .resolve_to_option(context.column_width, |pointer, basis| {
+                    tree.resolve_calc_value(pointer, basis)
+                })
+                .unwrap_or(0.0)
+        });
+    let left_auto = tree
+        .layout_node_with_style(first)
+        .unwrap()
+        .style
+        .margin
+        .left
+        .is_auto();
+    let right_auto = tree
+        .layout_node_with_style(first)
+        .unwrap()
+        .style
+        .margin
+        .right
+        .is_auto();
     let leftover = (context.column_width
         - output.size.width
         - first_layout.margin.left

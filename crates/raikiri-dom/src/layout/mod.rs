@@ -45,6 +45,8 @@ use taffy::{
     TrackSizingFunction, style_helpers as taffy_style_helpers,
 };
 
+pub(crate) mod context;
+pub(crate) mod retained_styles;
 pub(crate) mod table;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {
@@ -82,6 +84,7 @@ use page::*;
 use page_pipeline::*;
 use sanitize::*;
 
+#[cfg(test)]
 pub(crate) use bridge::apply_computed_to_style;
 pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::{

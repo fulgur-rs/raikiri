@@ -5,7 +5,7 @@ pub(crate) mod context;
 mod positioned;
 mod sizing;
 
-use crate::Document;
+use crate::layout::context::LayoutSession;
 use crate::taffy_impl::resolve_calc;
 use context::{BlockContext, BlockFormattingContext};
 use sizing::Metrics;
@@ -27,7 +27,7 @@ fn shares_context(style: &Style) -> bool {
         && style.align_content.keyword == taffy::AlignContentKeyword::Normal
 }
 
-fn child_style(tree: &Document, child: NodeId) -> Style {
+fn child_style(tree: &LayoutSession<'_>, child: NodeId) -> Style {
     let query = tree.get_block_child_style(child);
     let mut style = query.style.clone();
     style.padding = query.padding();
@@ -57,7 +57,7 @@ fn child_inputs(parent: Size<Option<f32>>, width: Option<f32>, run_mode: RunMode
     }
 }
 
-fn intrinsic_width(tree: &mut Document, node: NodeId, space: AvailableSpace) -> f32 {
+fn intrinsic_width(tree: &mut LayoutSession<'_>, node: NodeId, space: AvailableSpace) -> f32 {
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut width = 0.0_f32;
     let mut floats = taffy::FloatIntrinsicWidthCalculator::new(space);
@@ -87,7 +87,7 @@ fn intrinsic_width(tree: &mut Document, node: NodeId, space: AvailableSpace) -> 
 }
 
 pub(crate) fn compute_block_flow(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: NodeId,
     inputs: LayoutInput,
     context: Option<&mut BlockContext<'_>>,
@@ -142,7 +142,7 @@ pub(crate) fn compute_block_flow(
 }
 
 fn layout_context(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: NodeId,
     inputs: LayoutInput,
     style: &Style,
@@ -259,7 +259,7 @@ fn layout_context(
 }
 
 fn commit(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node: NodeId,
     order: usize,
     metrics: Metrics,

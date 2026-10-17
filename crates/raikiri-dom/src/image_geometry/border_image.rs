@@ -71,11 +71,81 @@ const MAX_OUTSET: f64 = 1.0e7;
 /// outsets multiply. `natural` is the image's natural size, `None` for an
 /// image without one, such as a gradient. Returns `None` when nothing is
 /// drawn.
+///
+/// The geometry keeps fractional CSS pixels, so moving a box moves its
+/// border image without changing its shape. A raster painter that knows its
+/// output scale uses [`border_image_geometry_on_device_pixels`] instead.
 pub fn border_image_geometry(
     border_box: Rect,
     border_widths: Sides<f64>,
     image: &ComputedBorderImage,
     natural: Option<ImageIntrinsicSize>,
+) -> Option<BorderImageGeometry> {
+    geometry(border_box, border_widths, image, natural, None)
+}
+
+/// A raster output's device pixel grid along each axis: the CSS pixel
+/// coordinate `x` lies at device pixel `x * scale_x + offset_x`, and likewise
+/// for `y`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DeviceGrid {
+    /// Device pixels per CSS pixel along x.
+    pub scale_x: f64,
+    /// The device pixel position of x = 0.
+    pub offset_x: f64,
+    /// Device pixels per CSS pixel along y.
+    pub scale_y: f64,
+    /// The device pixel position of y = 0.
+    pub offset_y: f64,
+}
+
+impl DeviceGrid {
+    /// A grid of `scale` device pixels per CSS pixel with its origin at the
+    /// CSS origin.
+    pub fn uniform(scale: f64) -> Self {
+        Self {
+            scale_x: scale,
+            offset_x: 0.0,
+            scale_y: scale,
+            offset_y: 0.0,
+        }
+    }
+
+    fn is_usable(self) -> bool {
+        [self.scale_x, self.offset_x, self.scale_y, self.offset_y]
+            .into_iter()
+            .all(f64::is_finite)
+            && self.scale_x != 0.0
+            && self.scale_y != 0.0
+    }
+}
+
+/// [`border_image_geometry`] for a raster output whose device pixels lie on
+/// `grid`.
+///
+/// Opposite widths that overlap are scaled down together, which leaves the
+/// inner edges of the corners at fractions of a device pixel even for
+/// whole-pixel widths. Those edges move to the nearest device pixel, so
+/// neighbouring parts share an edge instead of both half-covering one pixel
+/// and letting the background bleed through the seam. A grid with a zero or
+/// non-finite component leaves the geometry unsnapped.
+pub fn border_image_geometry_on_device_pixels(
+    border_box: Rect,
+    border_widths: Sides<f64>,
+    image: &ComputedBorderImage,
+    natural: Option<ImageIntrinsicSize>,
+    grid: DeviceGrid,
+) -> Option<BorderImageGeometry> {
+    let grid = Some(grid).filter(|grid| grid.is_usable());
+    geometry(border_box, border_widths, image, natural, grid)
+}
+
+fn geometry(
+    border_box: Rect,
+    border_widths: Sides<f64>,
+    image: &ComputedBorderImage,
+    natural: Option<ImageIntrinsicSize>,
+    grid: Option<DeviceGrid>,
 ) -> Option<BorderImageGeometry> {
     let (x, y, width, height) = border_box;
     if ![x, y, width, height].into_iter().all(f64::is_finite) {
@@ -202,20 +272,22 @@ pub fn border_image_geometry(
             has_natural_width,
         ),
     };
-    // Opposite widths that overlap are scaled down together. Scaling leaves
-    // the inner edges of the corners at fractions of a pixel even for
-    // whole-pixel widths; those edges round to whole pixels, so neighbouring
-    // parts share an edge instead of both half-covering one pixel and
-    // letting the background bleed through the seam. Rounding keeps the
-    // edges in order, and edges that met before still meet.
+    // Opposite widths that overlap are scaled down together (§6.3). On a
+    // raster output the inner edges then move to the nearest device pixel,
+    // see `border_image_geometry_on_device_pixels`. Rounding keeps the edges
+    // in order, and edges that met before still meet.
     let factor = (area_w / (widths.left + widths.right))
         .min(area_h / (widths.top + widths.bottom))
         .min(1.0);
     if factor < 1.0 {
-        let inner_left = (area_x + widths.left * factor).round();
-        let inner_right = (area_x + area_w - widths.right * factor).round();
-        let inner_top = (area_y + widths.top * factor).round();
-        let inner_bottom = (area_y + area_h - widths.bottom * factor).round();
+        let snap =
+            |edge: f64, scale: f64, offset: f64| ((edge * scale + offset).round() - offset) / scale;
+        let snap_x = |x: f64| grid.map_or(x, |grid| snap(x, grid.scale_x, grid.offset_x));
+        let snap_y = |y: f64| grid.map_or(y, |grid| snap(y, grid.scale_y, grid.offset_y));
+        let inner_left = snap_x(area_x + widths.left * factor);
+        let inner_right = snap_x(area_x + area_w - widths.right * factor);
+        let inner_top = snap_y(area_y + widths.top * factor);
+        let inner_bottom = snap_y(area_y + area_h - widths.bottom * factor);
         widths = Sides {
             top: (inner_top - area_y).clamp(0.0, area_h),
             right: (area_x + area_w - inner_right).clamp(0.0, area_w),

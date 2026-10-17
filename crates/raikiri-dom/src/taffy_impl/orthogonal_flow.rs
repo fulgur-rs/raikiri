@@ -14,6 +14,7 @@
 //! its columns, and lays it out at that width. Its inline size keeps
 //! following the available height the parent passes down.
 
+use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{AvailableSpace, LayoutInput, LayoutOutput, NodeId, Position as TaffyPosition, Size};
@@ -26,7 +27,7 @@ use raikiri_style::property::DisplayValue;
 /// container.
 pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool {
     use super::vertical_oof::used_writing_mode;
-    let node = &tree.nodes[idx];
+    let node = &tree.layout_node_with_style(idx).unwrap();
     node.style.size.width.is_auto()
         && node.taffy_position() != TaffyPosition::Absolute
         && node.style.float == taffy::Float::None
@@ -55,7 +56,7 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool
 /// An orthogonal flow establishes an independent formatting context (CSS
 /// Writing Modes 4 §7.3), so neither pass continues the parent's floats.
 pub(super) fn compute_orthogonal_block(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
@@ -94,9 +95,9 @@ pub(super) fn compute_orthogonal_block(
         },
         ..inputs
     };
-    let outer = tree.orthogonal_block_in_layout.replace(idx);
+    let outer = tree.context.orthogonal_block_in_layout.replace(idx);
     let output = tree.compute_child_layout_with_block_ctx(node_id, final_inputs, None);
-    tree.orthogonal_block_in_layout = outer;
+    tree.context.orthogonal_block_in_layout = outer;
     output
 }
 

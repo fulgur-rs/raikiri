@@ -9,6 +9,11 @@ use raikiri_html::{
 
 /// Paint `body` on a 50×50 page.
 fn painted(css: &str, body: &str) -> Scene {
+    painted_page(css, body, 0)
+}
+
+/// Paint page `index` of `body` laid out on 50×50 pages.
+fn painted_page(css: &str, body: &str, index: u32) -> Scene {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -30,7 +35,7 @@ fn painted(css: &str, body: &str) -> Scene {
     .unwrap() else {
         panic!("layout must complete")
     };
-    let page = result.page(0).unwrap();
+    let page = result.page(index).unwrap();
     let (doc, cascade, page_box, origin) = page.paint_inputs();
     let mut scene = Scene::new();
     raikiri_paint::paint_single_page_with_origin(&mut scene, doc, cascade, page_box, origin)
@@ -216,4 +221,23 @@ fn a_broken_vertical_inline_box_lays_its_border_image_out_over_the_joined_box() 
         .collect();
     assert!(all.contains(&LIME));
     assert!(!all.contains(&BLUE));
+}
+
+#[test]
+fn an_absolute_continuation_shows_no_border_image_top_edge() {
+    let scene = painted_page(
+        "",
+        "<div style='position:absolute;top:0;left:0;width:30px;height:20px;\
+         border:5px solid blue;background:white;border-image:linear-gradient(lime,lime) 1'>\
+         <div style='height:80px'></div></div>",
+        1,
+    );
+    let pixels = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        50,
+        50,
+    );
+    // The left edge continues down the page, but the cut shows no top edge.
+    assert_eq!(pixel(&pixels, 2, 10), LIME);
+    assert_ne!(pixel(&pixels, 20, 2), LIME);
 }

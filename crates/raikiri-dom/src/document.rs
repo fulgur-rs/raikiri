@@ -1,5 +1,5 @@
-//! Document arena — Vec-backed node arena that implements taffy layout traits
-//! (in `taffy_impl.rs`) and raikiri-traits::Dom (in `dom_impl.rs`).
+//! Document arena — Vec-backed node arena that implements raikiri-traits::Dom
+//! (in `dom_impl.rs`). Taffy layout traits are implemented by `LayoutSession`.
 //!
 //! # Flat tree membership contract
 //!
@@ -29,8 +29,7 @@ use taffy::Style;
 
 use raikiri_traits::{QuirksMode, StylesheetKind};
 
-use crate::fragment::{FragmentTree, FragmentationContext};
-use crate::layout::LayoutWarn;
+use crate::fragment::FragmentTree;
 use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData};
 
 mod mutation;
@@ -368,6 +367,7 @@ pub struct Document {
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
+    pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
@@ -413,10 +413,6 @@ pub struct Document {
     /// Page values and forced breaks that paged layout gives clearance by in
     /// place of the cascade's, for a relayout whose cascade drops them.
     pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
-    /// Set around a table's intrinsic width probe of a cell that is an ifc
-    /// root: the next ifc measurement only needs the cell's width, so it
-    /// skips breaking the paragraph into lines.
-    pub(crate) ifc_width_probe: bool,
     /// Inline-engine state; `None` until fonts are set or the first layout
     /// takes the installed fonts.
     pub(crate) ifc: Option<crate::layout::ifc::root::IfcState>,
@@ -427,23 +423,10 @@ pub struct Document {
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
     pub(crate) layout_cascade_generation: Option<u64>,
-    /// The children of each container with many children whose walk by
-    /// index taffy has started and not finished, listed when taffy counted
-    /// them.
-    pub(crate) taffy_child_walks: std::cell::RefCell<HashMap<usize, Vec<taffy::NodeId>>>,
     /// Width and height of the page area of the most recent layout: the
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
     pub(crate) fixed_page_area: Option<(f32, f32)>,
-    /// The laid-out border-box height of each auto-height box that the most
-    /// recent layout then grew to hold a float descendant it does not
-    /// contain: the flow after such a box follows this height, not its grown
-    /// one (CSS 2.1 §10.6.3).
-    pub(crate) in_flow_heights: HashMap<usize, f32>,
-    /// Whether the paginator is running on the transposed axes of a document
-    /// whose root element lays out its blocks on vertical axes. Pagination
-    /// then treats the boxes laid out on horizontal axes as monolithic.
-    pub(crate) pagination_on_transposed_axes: bool,
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -481,87 +464,10 @@ pub struct Document {
     /// Parsing is deferred to the cascade phase.
     /// Call order determines cascade source_order within each kind.
     stylesheets: Vec<(Cow<'static, str>, StylesheetKind)>,
-    /// Buffered [`LayoutWarn`] diagnostic events for the current (or most
-    /// recent) `layout_single_page` pass (generalizing
-    /// the `fonts.rs` `FontWarn` observer pattern to this crate's other
-    /// "silent clamp" site).
-    ///
-    /// Owned (`Vec`, no borrowed observer) rather than a closure field —
-    /// deliberately, not as a simplification of convenience.
-    /// [`Document::store_unrounded_layout`] is the choke point that writes
-    /// non-finite-clamped layouts into the arena, and taffy's
-    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout` reaches
-    /// it through a signature fixed by the `taffy` trait — it cannot receive an extra observer
-    /// parameter. Storing a borrowed `&mut dyn FnMut` here instead would
-    /// require adding a lifetime parameter to `Document` itself, which is a
-    /// public-shape break every consumer of this type would have to absorb
-    /// (dom→paint wall territory) for a capability nothing external can
-    /// plug into yet. An owned buffer sidesteps that: `set_unrounded_layout`
-    /// pushes through `self` with no signature change, and
-    /// `layout_single_page` drains + replays the buffer through the same
-    /// [`crate::diag::emit_warn_via`] mechanism the rest of this module's
-    /// diagnostics use, once per pass, after the taffy compute step returns.
-    ///
-    /// Cleared at the start of each `layout_single_page` call (re-entrance
-    /// safety) and drained near its end.
-    ///
-    /// # Scope boundary: only `layout_single_page` clears/drains this
-    ///
-    /// A `Document` driven through `taffy::compute_root_layout` directly
-    /// (bypassing `layout_single_page` — e.g. this crate's own `lib.rs` unit
-    /// tests) still has `set_unrounded_layout` pushing into this buffer, but
-    /// nothing clears or drains it. [`LAYOUT_WARN_CAP`]-plus-one bounds the
-    /// memory either way, so this is not a leak, but on such a `Document` the
-    /// first pathological layout pass fills the buffer and every event after
-    /// that collapses into the trailing `Truncated` counter, with nothing
-    /// ever reading it back out. Not a problem for `layout_single_page`
-    /// callers (the only production path); worth knowing if a future
-    /// consumer drives taffy directly and expects these diagnostics.
-    ///
-    /// [`LAYOUT_WARN_CAP`]: crate::layout::sanitize::LAYOUT_WARN_CAP
-    pub(crate) layout_warnings: Vec<LayoutWarn>,
-    /// Terminal error raised inside Taffy's infallible table callback.
-    pub(crate) table_layout_error: Option<String>,
-    /// Stable storage for Taffy calc resolver payloads used by the current
-    /// layout pass. The heap allocations keep pointees stable while styles hold raw handles.
-    pub(crate) calc_values: Vec<Arc<crate::taffy_impl::ArenaCalc>>,
     /// Fragments emitted by the active multicol strategy for this layout pass.
     pub(crate) fragment_tree: FragmentTree,
     /// Column rules retained from final placements, relative to each owner.
     pub(crate) column_rules: std::collections::BTreeMap<usize, Vec<raikiri_traits::PaintRect>>,
-    /// Active nested fragmentainer stack while Taffy recursively lays out nodes.
-    pub(crate) fragmentation_stack: Vec<FragmentationContext>,
-    /// Vertical block containers being laid out whose absolutely positioned
-    /// children use the recorded physical height as their containing
-    /// block's inline size; see `taffy_impl::vertical_oof`.
-    pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
-    /// The vertical box under a horizontal block container that is being
-    /// laid out at its content-based width; see `taffy_impl::orthogonal_flow`.
-    pub(crate) orthogonal_block_in_layout: Option<usize>,
-    /// Vertical block containers being laid out on transposed axes, the
-    /// innermost last; see [`crate::taffy_impl::TransposedBlock`].
-    pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
-    /// Block containers being laid out, each with the content-box width its
-    /// children's percentage padding and borders resolve against; see
-    /// [`crate::taffy_impl::BlockChildStyle`].
-    pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
-    /// Flex containers being laid out, each with its content-box size where
-    /// that is definite. Taffy measures the automatic minimum size of an item
-    /// without a main-axis parent size, so an item finds the basis of its
-    /// percentage padding, borders and margins here instead; see
-    /// [`crate::taffy_impl::flex_layout`].
-    pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
-    /// Size-contained boxes being measured as if they had no content, the
-    /// innermost last; taffy sees no children under them; see
-    /// [`mod@crate::taffy_impl`]'s `size_contained_inputs`.
-    pub(crate) size_contained_measure: Vec<usize>,
-    /// Per-container tracks kept from
-    /// [`taffy::LayoutGridContainer::set_detailed_grid_info`] until
-    /// [`mod@crate::taffy_impl`]'s `grid_layout` finishes positioning that
-    /// container's children. Nested grids retain their ancestors' entries.
-    pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<String>>,
-    /// Out-of-flow boxes recorded by the public Taffy containing-block interface.
-    pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -578,6 +484,23 @@ pub struct Document {
     /// the relative `url()` values left in computed values, such as those
     /// of a `style` attribute.
     base_url: Option<url::Url>,
+}
+
+pub(crate) struct LayoutNodeRef<'a> {
+    pub(crate) style: &'a Style,
+    node: &'a Node,
+}
+
+impl std::ops::Deref for LayoutNodeRef<'_> {
+    type Target = Node;
+
+    fn deref(&self) -> &Self::Target {
+        self.node
+    }
+}
+
+pub(crate) struct LayoutNodeMut<'a> {
+    pub(crate) style: &'a mut Style,
 }
 
 impl Document {
@@ -720,10 +643,14 @@ impl Document {
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
+        let mut retained_layout_styles =
+            crate::layout::retained_styles::RetainedLayoutStyles::default();
+        retained_layout_styles.insert(crate::node::arena::BoxKey::Source(0), Style::default());
         Self {
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
+            retained_layout_styles,
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
             focused: None,
@@ -737,14 +664,10 @@ impl Document {
             forced_break_clearance: Vec::new(),
             forced_break_line_clearance: Vec::new(),
             clearance_breaks: None,
-            ifc_width_probe: false,
             ifc: None,
             normal_line_height: None,
             layout_cascade_generation: None,
-            taffy_child_walks: Default::default(),
             fixed_page_area: None,
-            in_flow_heights: HashMap::new(),
-            pagination_on_transposed_axes: false,
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
@@ -754,20 +677,8 @@ impl Document {
             // detached nodes yet, so the flag is not dirty.
             flags_dirty: false,
             stylesheets: Vec::new(),
-            layout_warnings: Vec::new(),
-            table_layout_error: None,
-            calc_values: Vec::new(),
             fragment_tree: FragmentTree::default(),
             column_rules: std::collections::BTreeMap::new(),
-            fragmentation_stack: Vec::new(),
-            vertical_oof_containing_blocks: Vec::new(),
-            orthogonal_block_in_layout: None,
-            transposed_blocks: Vec::new(),
-            block_item_percent_bases: Vec::new(),
-            flex_item_percent_bases: Vec::new(),
-            size_contained_measure: Vec::new(),
-            grid_layout_info: HashMap::new(),
-            taffy_hoisted_children: HashMap::new(),
             quirks_mode: QuirksMode::default(),
             base_url: None,
         }
@@ -812,13 +723,13 @@ impl Document {
         style: Style,
         inline_style: Option<impl Into<SmolStr>>,
     ) -> usize {
-        let style = sanitize_external_style(style);
+        let mut style = sanitize_external_style(style);
         let id = self.nodes.len();
-        self.nodes.push(Node::new_element(
-            tag.into(),
-            style,
-            inline_style.map(Into::into),
-        ));
+        let node = Node::new_element(tag.into(), style.clone(), inline_style.map(Into::into));
+        node.refresh_box_style(&mut style);
+        self.nodes.push(node);
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), style);
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -835,6 +746,8 @@ impl Document {
     pub fn append_text(&mut self, parent: usize, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(text.into()));
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         self.nodes[parent].children.push(id);
         self.nodes[id].parent = Some(parent);
         self.invalidate_layout_cache();
@@ -922,6 +835,8 @@ impl Document {
     pub fn append_comment(&mut self, parent: Option<usize>, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_comment(text.into()));
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -951,6 +866,8 @@ impl Document {
         let id = self.nodes.len();
         self.nodes
             .push(Node::new_processing_instruction(target.into(), data.into()));
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -1602,6 +1519,10 @@ impl Document {
         if !text.is_empty() {
             let text_id = self.nodes.len();
             self.nodes.push(Node::new_text(text));
+            self.retained_layout_styles.insert(
+                crate::node::arena::BoxKey::Source(text_id),
+                Style::default(),
+            );
             self.nodes[id].children.push(text_id);
             if let Some(node) = self.nodes.get_mut(text_id) {
                 node.parent = Some(id);
@@ -1664,7 +1585,7 @@ impl Document {
             .collect();
 
         while let Some((source_id, target_parent)) = pending.pop() {
-            let source_node = &source_document.nodes[source_id];
+            let source_node = &source_document.layout_node_with_style(source_id).unwrap();
             let source_children = source_node.children.clone();
 
             match &source_node.data {
@@ -2024,6 +1945,10 @@ impl Document {
         // mark_in_document_flags clear the default IS_IN_DOCUMENT bit in step 1.
         let frag_root = self.nodes.len();
         self.nodes.push(Node::new_document_fragment());
+        self.retained_layout_styles.insert(
+            crate::node::arena::BoxKey::Source(frag_root),
+            Style::default(),
+        );
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         // Step 2: Store the fragment root index in the template element's
@@ -2105,34 +2030,19 @@ impl Document {
             forced_break_clearance: _,
             forced_break_line_clearance: _,
             clearance_breaks: _,
-            ifc_width_probe: _,
             ifc,
             normal_line_height,
             layout_cascade_generation: _,
-            taffy_child_walks: _,
             fixed_page_area: _,
-            in_flow_heights: _,
-            pagination_on_transposed_axes: _,
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,
             later_fragments: _,
             flags_dirty: _,
             stylesheets,
-            layout_warnings: _,
-            table_layout_error: _,
-            calc_values: _,
+            retained_layout_styles: _,
             fragment_tree: _,
             column_rules: _,
-            fragmentation_stack: _,
-            vertical_oof_containing_blocks: _,
-            orthogonal_block_in_layout: _,
-            transposed_blocks: _,
-            block_item_percent_bases: _,
-            flex_item_percent_bases: _,
-            size_contained_measure: _,
-            grid_layout_info: _,
-            taffy_hoisted_children: _,
             quirks_mode,
             base_url,
         } = self;
@@ -2169,6 +2079,12 @@ impl Document {
 
         let mut document = Document::new();
         document.nodes = copied.into();
+        document.retained_layout_styles.retain_source_styles();
+        for id in 1..document.nodes.len() {
+            document
+                .retained_layout_styles
+                .insert(crate::node::arena::BoxKey::Source(id), Style::default());
+        }
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
@@ -2995,7 +2911,91 @@ impl Document {
     /// runs. Paint-side consumers can therefore observe the same used values
     /// without re-probing fonts or falling back to `ComputedValues`.
     pub fn layout_style(&self, id: usize) -> Option<&Style> {
-        self.nodes.get(id).map(|node| &node.style)
+        self.nodes.get(id)?;
+        self.layout_style_for_key(id)
+    }
+
+    pub(crate) fn layout_style_for_key(&self, key: usize) -> Option<&Style> {
+        self.retained_layout_styles.get(self.nodes.box_key(key)?)
+    }
+
+    pub(crate) fn layout_style_for_key_mut(&mut self, key: usize) -> Option<&mut Style> {
+        let box_key = self.nodes.box_key(key)?;
+        self.retained_layout_styles.get_mut(box_key)
+    }
+
+    pub(crate) fn layout_node_with_style(&self, key: usize) -> Option<LayoutNodeRef<'_>> {
+        let box_key = self.nodes.box_key(key)?;
+        Some(LayoutNodeRef {
+            node: self.nodes.layout_node(key)?,
+            style: self.retained_layout_styles.get(box_key)?,
+        })
+    }
+
+    pub(crate) fn layout_node_with_style_mut(&mut self, key: usize) -> Option<LayoutNodeMut<'_>> {
+        let box_key = self.nodes.box_key(key)?;
+        let retained_layout_styles = &mut self.retained_layout_styles;
+        Some(LayoutNodeMut {
+            style: retained_layout_styles.get_mut(box_key)?,
+        })
+    }
+
+    pub(crate) fn set_initial_containing_block(&mut self, node: Node, mut style: Style) -> usize {
+        node.refresh_box_style(&mut style);
+        let key = self.nodes.set_initial_containing_block(node);
+        self.retained_layout_styles
+            .insert(crate::node::arena::BoxKey::InitialContainingBlock, style);
+        key
+    }
+
+    pub(crate) fn set_anonymous_tables(&mut self, boxes: Vec<(Node, Style)>) {
+        let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
+        self.nodes.set_anonymous_tables(nodes);
+        self.retained_layout_styles
+            .retain_source_and_initial_containing_block();
+        for (index, style) in styles.into_iter().enumerate() {
+            self.retained_layout_styles
+                .insert(crate::node::arena::BoxKey::AnonymousTable(index), style);
+        }
+    }
+
+    pub(crate) fn set_anonymous_cells(&mut self, boxes: Vec<(Node, Style)>) {
+        let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
+        self.nodes.set_anonymous_cells(nodes);
+        self.retained_layout_styles.retain_without_cells();
+        for (index, style) in styles.into_iter().enumerate() {
+            self.retained_layout_styles
+                .insert(crate::node::arena::BoxKey::AnonymousCell(index), style);
+        }
+    }
+
+    pub(crate) fn set_box_properties(
+        &mut self,
+        key: usize,
+        display: raikiri_style::property::DisplayValue,
+        position: raikiri_style::property::PositionValue,
+    ) {
+        let Self {
+            nodes,
+            retained_layout_styles,
+            ..
+        } = self;
+        let box_key = nodes.box_key(key).expect("box key has a node");
+        let style = retained_layout_styles
+            .get_mut(box_key)
+            .expect("box key has a retained style");
+        nodes[key].set_box_properties(display, position);
+        nodes[key].refresh_box_style(style);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_display(
+        &mut self,
+        key: usize,
+        display: raikiri_style::property::DisplayValue,
+    ) {
+        let position = self.nodes[key].position().clone();
+        self.set_box_properties(key, display, position);
     }
 
     /// Total number of nodes in the arena, including the Document root.

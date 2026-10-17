@@ -212,6 +212,14 @@ pub struct CascadeResult {
 }
 
 impl CascadeResult {
+    /// The device pixels per CSS pixel the cascade snapped border widths to,
+    /// `None` for an output-neutral or vector cascade, or for a scale that is
+    /// not finite and positive, which the cascade ignores.
+    pub fn border_width_device_scale(&self) -> Option<f32> {
+        self.border_width_device_scale
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+    }
+
     /// The measurer of `line-height: normal` the cascade ran with.
     pub(crate) fn normal_line_height(&self) -> Option<&dyn crate::resolve::NormalLineHeight> {
         self.normal_line_height.as_ref().map(|source| &*source.0)

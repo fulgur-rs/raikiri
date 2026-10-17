@@ -3150,6 +3150,88 @@ fn emphasis_marks_follow_the_text_color_by_default_and_can_go_under() {
 }
 
 #[test]
+fn vertical_emphasis_marks_sit_beside_each_cluster_but_not_punctuation() {
+    for (mode, position, right) in [
+        ("vertical-rl", "over right", true),
+        ("vertical-lr", "over right", true),
+        ("vertical-rl", "over left", false),
+    ] {
+        let (mut doc, cascade, root) = paragraph(
+            &format!(
+                "writing-mode:{mode};text-orientation:upright;line-height:40px;\
+                 text-emphasis:dot;text-emphasis-position:{position};\
+                 text-emphasis-color:rgb(255,0,0)"
+            ),
+            |doc, root| {
+                doc.append_text(root, "aa,a");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let placed = glyphs(&draw_root(&doc, &cascade, root));
+        let red = solid(255, 0, 0);
+        let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+        assert_eq!(text.len(), 4, "{mode}: every character is drawn");
+        assert_eq!(marks.len(), 3, "{mode}: the comma takes no mark");
+        let column = text[0].1;
+        assert!(
+            marks.iter().all(|mark| (mark.1 > column) == right),
+            "{mode} {position}: marks go on the {} side: {marks:?} {text:?}",
+            if right { "right" } else { "left" }
+        );
+        // Each mark is centered on its 10px cluster down the line.
+        let ys: Vec<f64> = marks.iter().map(|mark| mark.2).collect();
+        assert!((ys[1] - ys[0] - 10.0).abs() < 0.01, "{mode}: {ys:?}");
+        assert!((ys[2] - ys[1] - 20.0).abs() < 0.01, "{mode}: {ys:?}");
+    }
+}
+
+#[test]
+fn vertical_emphasis_marks_default_to_the_text_color() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;\
+         text-emphasis:dot;color:rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    assert_eq!(placed.len(), 4, "two characters and two marks: {placed:?}");
+    assert!(
+        placed.iter().all(|g| g.3 == blue),
+        "marks take currentcolor: {placed:?}"
+    );
+}
+
+#[test]
+fn vertical_emphasis_marks_take_one_mark_per_combined_square() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;line-height:40px;text-emphasis:dot;\
+         text-emphasis-color:rgb(255,0,0)",
+        |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "12");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let red = solid(255, 0, 0);
+    let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+    assert_eq!(text.len(), 2, "both digits are drawn");
+    assert_eq!(marks.len(), 1, "the square takes one mark: {marks:?}");
+    assert!(
+        text.iter().all(|digit| marks[0].1 > digit.1),
+        "the mark goes on the right: {marks:?} {text:?}"
+    );
+}
+
+#[test]
 fn ellipsis_is_painted_in_the_root_style() {
     let css =
         "width:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgb(0,0,255)";
@@ -3733,4 +3815,103 @@ fn only_a_face_with_a_head_table_has_glyph_outlines() {
     let ahem = std::fs::read(std::path::Path::new(FONT_DIR).join("Ahem.ttf")).expect("Ahem");
     let ahem = peniko::FontData::new(peniko::Blob::from(ahem), 0);
     assert!(crate::text::has_glyph_outlines(&ahem));
+}
+
+#[test]
+fn vertical_emphasis_marks_a_combined_square_that_starts_without_a_glyph() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;line-height:40px;text-emphasis:dot;white-space:pre;\
+         text-emphasis-color:rgb(255,0,0)",
+        |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "\t1");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let red = solid(255, 0, 0);
+    let marks = placed.iter().filter(|g| g.3 == red).count();
+    assert_eq!(marks, 1, "the square takes its mark: {placed:?}");
+}
+
+/// [`paragraph`] and [`lay_out`] with a Noto Sans subset, whose `ffi` is one
+/// ligature glyph, registered as the `Liga` family. `text` sits in a span
+/// styled with `span` when that is not empty.
+fn lay_out_ligature(css: &str, span: &str, text: &str) -> Vec<(u32, f64, f64, anyrender::Paint)> {
+    let fonts = || {
+        let fonts =
+            raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("fonts");
+        fonts
+            .register_face(
+                include_bytes!("../../tests/data/noto-sans-latin/NotoSans-LatinSubset.ttf")
+                    .to_vec(),
+                0,
+                shodo::font::FontFaceDescriptor {
+                    family: "Liga".into(),
+                    ..Default::default()
+                },
+            )
+            .expect("ligature face");
+        fonts
+    };
+    let (mut doc, cascade, root) = paragraph(&format!("font-family:Liga;{css}"), |doc, root| {
+        let parent = if span.is_empty() {
+            root
+        } else {
+            let style = format!("display:inline;{span}");
+            doc.append_element(Some(root), "span", Style::default(), Some(style.as_str()))
+        };
+        doc.append_text(parent, text);
+    });
+    doc.set_font_collection(fonts());
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout");
+    glyphs(&draw_root(&doc, &cascade, root))
+}
+
+#[test]
+fn emphasis_marks_split_a_ligature_among_its_characters() {
+    for (mode, horizontal) in [("horizontal-tb", true), ("vertical-rl", false)] {
+        let placed = lay_out_ligature(
+            &format!(
+                "writing-mode:{mode};line-height:40px;text-emphasis:dot;\
+                 text-emphasis-color:rgb(255,0,0)"
+            ),
+            "",
+            "ffi",
+        );
+        let red = solid(255, 0, 0);
+        let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+        assert_eq!(text.len(), 1, "{mode}: ffi is one ligature glyph: {text:?}");
+        assert_eq!(
+            marks.len(),
+            3,
+            "{mode}: each character takes a mark: {marks:?}"
+        );
+        // The marks share the ligature's advance evenly, down a vertical line.
+        let along: Vec<f64> = marks
+            .iter()
+            .map(|mark| if horizontal { mark.1 } else { mark.2 })
+            .collect();
+        let step = along[1] - along[0];
+        assert!(step > 0.0, "{mode}: {along:?}");
+        assert!(
+            (along[2] - along[1] - step).abs() < 0.01,
+            "{mode}: {along:?}"
+        );
+    }
+    // A right-to-left run lays the ligature's characters out from the right,
+    // and each still takes a mark.
+    let placed = lay_out_ligature(
+        "line-height:40px;text-emphasis:dot;text-emphasis-color:rgb(255,0,0)",
+        "direction:rtl;unicode-bidi:bidi-override",
+        "ffi",
+    );
+    let red = solid(255, 0, 0);
+    let marks = placed.iter().filter(|g| g.3 == red).count();
+    assert_eq!(marks, 3, "{placed:?}");
 }

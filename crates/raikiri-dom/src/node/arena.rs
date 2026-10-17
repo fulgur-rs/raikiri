@@ -8,7 +8,7 @@ use std::ops::{Deref, DerefMut, Index, IndexMut};
 /// Layout keys are plain `usize` values because taffy node ids and fragment
 /// records carry them as numbers. Every key is classified here, so no other
 /// code compares a key against the arena length.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum BoxKey {
     /// A source DOM node, by its arena index.
     Source(usize),

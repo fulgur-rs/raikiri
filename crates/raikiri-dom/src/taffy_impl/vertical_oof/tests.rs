@@ -1,7 +1,9 @@
 use crate::Document;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::Style;
+use taffy::{
+    AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode, Style,
+};
 
 /// Rects of a column of two Ahem paragraphs in a positioned container under
 /// a root with `root_css`. `column_css` styles the column.
@@ -164,14 +166,96 @@ fn only_an_absolute_child_of_the_vertical_containing_block_gets_its_inline_size(
         None::<&str>,
     );
     let in_flow = doc.append_element(Some(container), "div", Style::default(), None::<&str>);
-    doc.vertical_oof_containing_blocks.push((container, 120.0));
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    session
+        .context
+        .vertical_oof_containing_blocks
+        .push((container, 120.0));
     let inputs = taffy::LayoutInput::HIDDEN;
-    let resolved = super::absolute_child_inputs(&doc, absolute, inputs);
+    let resolved = super::absolute_child_inputs(&session, absolute, inputs);
     assert_eq!(resolved.parent_size.height, Some(120.0));
     assert_eq!(
         resolved.available_space.height,
         taffy::AvailableSpace::Definite(120.0)
     );
-    let unchanged = super::absolute_child_inputs(&doc, in_flow, inputs);
+    let unchanged = super::absolute_child_inputs(&session, in_flow, inputs);
     assert_eq!(unchanged.parent_size.height, inputs.parent_size.height);
+}
+
+#[test]
+fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let container = doc.append_element(
+        Some(html),
+        "div",
+        Style::default(),
+        Some("display:block;position:relative;writing-mode:vertical-rl"),
+    );
+    let absolute = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;writing-mode:vertical-rl;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(absolute, "aa bb cc dd ee ff gg hh ii jj kk ll");
+    doc.mark_in_document_flags();
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    // Model the vertical block as a descendant of a multicol container.
+    doc.nodes[html].multicol = Some(crate::fragment::MulticolStyle {
+        count: Some(2),
+        width: None,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
+        gap: 0.0,
+        gap_percent: None,
+        height_definite: true,
+        horizontal: true,
+        orphans: 2,
+        widows: 2,
+    });
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    assert_eq!(
+        session.nodes[container].formatting_context,
+        crate::node::FormattingContext::Block
+    );
+    assert_eq!(
+        session.nodes[absolute].formatting_context,
+        crate::node::FormattingContext::Inline
+    );
+    assert_eq!(
+        session.nodes[absolute].ifc.as_ref().unwrap().writing_mode,
+        shodo::geometry::WritingMode::VerticalRl
+    );
+    let inputs = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::ContentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(100.0),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(300.0),
+            height: Some(200.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(300.0),
+            height: AvailableSpace::Definite(200.0),
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    assert_eq!(
+        super::containing_block_inline_size(&session, container, &inputs),
+        Some(200.0)
+    );
+    session.compute_child_layout_with_block_ctx(NodeId::from(container), inputs, None);
+
+    assert_eq!(session.nodes[absolute].unrounded_layout.size.height, 200.0);
+    assert!(session.context.vertical_oof_containing_blocks.is_empty());
 }

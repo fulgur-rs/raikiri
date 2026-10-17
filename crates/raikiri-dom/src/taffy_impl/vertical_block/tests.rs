@@ -345,7 +345,7 @@ fn vertical_flex_body_keeps_its_vertical_margins() {
     );
     // A flex body lays its items out on horizontal axes, below its top
     // margin rather than below padding in place of it.
-    let padding = doc.nodes[ids[0]].style.padding;
+    let padding = doc.layout_node_with_style(ids[0]).unwrap().style.padding;
     let zero = LengthPercentage::length(0.0);
     assert_eq!((padding.top, padding.bottom), (zero, zero));
     assert_eq!(absolute_rect(&doc, ids[1]), (8.0, 8.0, 20.0, 10.0));

@@ -23,16 +23,28 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
     layout_nested_flex_float_fixture(&mut doc);
     assert!(can_balance_single_paragraph(&doc, parent, child));
 
-    let original = doc.nodes[child].style.clone();
-    doc.nodes[child].style.size.height = Dimension::length(80.0);
+    let original = doc.layout_node_with_style(child).unwrap().style.clone();
+    doc.layout_node_with_style_mut(child)
+        .unwrap()
+        .style
+        .size
+        .height = Dimension::length(80.0);
     assert!(!can_balance_single_paragraph(&doc, parent, child));
-    doc.nodes[child].style = original.clone();
-    doc.nodes[child].style.min_size.height = LengthPercentageAuto::length(80.0);
+    *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
+    doc.layout_node_with_style_mut(child)
+        .unwrap()
+        .style
+        .min_size
+        .height = LengthPercentageAuto::length(80.0);
     assert!(!can_balance_single_paragraph(&doc, parent, child));
-    doc.nodes[child].style = original.clone();
-    doc.nodes[child].style.max_size.height = LengthPercentageAuto::length(80.0);
+    *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
+    doc.layout_node_with_style_mut(child)
+        .unwrap()
+        .style
+        .max_size
+        .height = LengthPercentageAuto::length(80.0);
     assert!(!can_balance_single_paragraph(&doc, parent, child));
-    doc.nodes[child].style = original;
+    *doc.layout_style_for_key_mut(child).unwrap() = original;
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Avoid;
     assert!(!can_balance_single_paragraph(&doc, parent, child));
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Auto;
@@ -42,12 +54,27 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
     doc.nodes[child].unrounded_layout.border.bottom = 4.0;
     assert!(!can_balance_single_paragraph(&doc, parent, child));
     doc.nodes[child].unrounded_layout.border.bottom = 0.0;
-    doc.nodes[parent].style.padding.left = LengthPercentage::length(4.0);
+    doc.layout_node_with_style_mut(parent)
+        .unwrap()
+        .style
+        .padding
+        .left = LengthPercentage::length(4.0);
     assert!(can_balance_single_paragraph(&doc, parent, child));
-    doc.nodes[parent].style.border.top = LengthPercentage::length(1.0);
+    doc.layout_node_with_style_mut(parent)
+        .unwrap()
+        .style
+        .border
+        .top = LengthPercentage::length(1.0);
     assert!(can_balance_single_paragraph(&doc, parent, child));
-    doc.nodes[parent].style.padding.left = LengthPercentage::length(0.0);
-    doc.nodes[parent].style.direction = TaffyDirection::Rtl;
+    doc.layout_node_with_style_mut(parent)
+        .unwrap()
+        .style
+        .padding
+        .left = LengthPercentage::length(0.0);
+    doc.layout_node_with_style_mut(parent)
+        .unwrap()
+        .style
+        .direction = TaffyDirection::Rtl;
     assert!(!can_balance_single_paragraph(&doc, parent, child));
 }
 
@@ -161,13 +188,13 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
     let root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     let float = doc.append_element(Some(hidden), "div", Style::default(), None::<&str>);
-    doc.nodes[hidden].set_display(raikiri_style::property::DisplayValue::None);
+    doc.set_display(hidden, raikiri_style::property::DisplayValue::None);
     doc.nodes[hidden].formatting_context = FormattingContext::None;
-    doc.nodes[float].style.float = taffy::Float::Left;
+    doc.layout_node_with_style_mut(float).unwrap().style.float = taffy::Float::Left;
 
     assert!(!multicol_subtree_has_float(&doc, root));
 
-    doc.nodes[hidden].set_display(raikiri_style::property::DisplayValue::Block);
+    doc.set_display(hidden, raikiri_style::property::DisplayValue::Block);
     doc.nodes[hidden].formatting_context = FormattingContext::Block;
     assert!(multicol_subtree_has_float(&doc, root));
 }
@@ -188,7 +215,7 @@ fn flex_float_chain_matches_an_ancestor_walk() {
         let mut has_row_flex = false;
         let mut has_float = false;
         for current in tree.inclusive_ancestors(node_id) {
-            let node = &tree.nodes[current];
+            let node = &tree.layout_node_with_style(current).unwrap();
             has_float |= node.style.float.is_floated();
             if node.authored_writing_mode == Some(raikiri_style::property::WritingMode::VerticalRl)
             {
@@ -222,12 +249,15 @@ fn flex_float_chain_matches_an_ancestor_walk() {
             let node = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
             match arrangement % KINDS {
                 0 => {}
-                1 => doc.nodes[node].set_display(raikiri_style::property::DisplayValue::Flex),
+                1 => doc.set_display(node, raikiri_style::property::DisplayValue::Flex),
                 2 => {
-                    doc.nodes[node].set_display(raikiri_style::property::DisplayValue::Flex);
-                    doc.nodes[node].style.flex_direction = taffy::FlexDirection::Column;
+                    doc.set_display(node, raikiri_style::property::DisplayValue::Flex);
+                    doc.layout_node_with_style_mut(node)
+                        .unwrap()
+                        .style
+                        .flex_direction = taffy::FlexDirection::Column;
                 }
-                3 => doc.nodes[node].style.float = taffy::Float::Left,
+                3 => doc.layout_node_with_style_mut(node).unwrap().style.float = taffy::Float::Left,
                 4 => {
                     doc.nodes[node].authored_writing_mode =
                         Some(raikiri_style::property::WritingMode::VerticalRl)
@@ -345,8 +375,15 @@ fn avoid_page_min_block_child_can_continue_across_columns() {
 fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
     let mut doc = Document::new();
     let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    doc.nodes[node].style.box_sizing = taffy::BoxSizing::BorderBox;
-    doc.nodes[node].style.max_size.height = LengthPercentageAuto::length(100.0);
+    doc.layout_node_with_style_mut(node)
+        .unwrap()
+        .style
+        .box_sizing = taffy::BoxSizing::BorderBox;
+    doc.layout_node_with_style_mut(node)
+        .unwrap()
+        .style
+        .max_size
+        .height = LengthPercentageAuto::length(100.0);
 
     assert_eq!(
         multicol_max_fragmentainer_height(&doc, node, 120.0, None, None),
@@ -360,11 +397,19 @@ fn multicol_min_constrained_child_requires_all_constraints() {
     let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
     doc.nodes[child].has_logical_min_block_size = true;
-    doc.nodes[child].style.min_size.height = LengthPercentageAuto::length(40.0);
+    doc.layout_node_with_style_mut(child)
+        .unwrap()
+        .style
+        .min_size
+        .height = LengthPercentageAuto::length(40.0);
 
     assert!(multicol_has_min_constrained_child(&doc, parent));
 
-    doc.nodes[child].style.min_size.height = LengthPercentageAuto::auto();
+    doc.layout_node_with_style_mut(child)
+        .unwrap()
+        .style
+        .min_size
+        .height = LengthPercentageAuto::auto();
     assert!(!multicol_has_min_constrained_child(&doc, parent));
 }
 
@@ -387,8 +432,14 @@ fn authored_containing_width_uses_the_cascade_resolved_ch_width() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("styles");
 
-    let taffy_width = style_dimension_length(doc.nodes[container].style.size.width)
-        .expect("cascade-resolved ch width should be a finite length");
+    let taffy_width = style_dimension_length(
+        doc.layout_node_with_style(container)
+            .unwrap()
+            .style
+            .size
+            .width,
+    )
+    .expect("cascade-resolved ch width should be a finite length");
     assert_eq!(
         AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
         Some(taffy_width),
@@ -1258,7 +1309,10 @@ fn multicol_block_children_with_lines_get_text_ranges() {
     doc.append_element(Some(second), "br", Style::default(), None::<&str>);
 
     layout_nested_flex_float_fixture(&mut doc);
-    assert_ne!(doc.nodes[multicol].style.display, Display::Flex);
+    assert_ne!(
+        doc.layout_node_with_style(multicol).unwrap().style.display,
+        Display::Flex
+    );
     assert!(doc.nodes[first].is_ifc_root(), "first child must own lines");
     assert!(
         doc.nodes[first].ifc_multicol_fragments().is_some(),
@@ -2684,8 +2738,9 @@ fn ancestor_width_table_uses_cascade_resolved_ch_and_percentage_inputs() {
         cascade.computed[ch].width,
         ComputedLengthPercentageOrAuto::Px(64.0)
     );
-    let resolved_ch = style_dimension_length(doc.nodes[ch].style.size.width)
-        .expect("cascade-resolved ch width should be a finite length");
+    let resolved_ch =
+        style_dimension_length(doc.layout_node_with_style(ch).unwrap().style.size.width)
+            .expect("cascade-resolved ch width should be a finite length");
     assert_eq!(resolved_ch, 64.0);
     for page_width in [800.0, 400.0, 800.0] {
         let rebreak = AncestorFacts::new(&doc, &cascade, page_width);
