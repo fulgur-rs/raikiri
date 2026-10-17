@@ -444,6 +444,14 @@ pub struct Node {
     /// Whether separate-border empty-cell rules suppress this cell's box.
     /// Recomputed by the style bridge before every layout pass.
     pub(crate) hides_empty_table_cell: bool,
+    /// Whether this table row or row group has `visibility: collapse`, which
+    /// removes its rows from the table (CSS Tables 3, "Visibility-collapse
+    /// rendering"). Recomputed by the style bridge before every layout pass.
+    pub(crate) collapses_table_rows: bool,
+    /// Whether this table cell spans a collapsed row, so its contents are
+    /// clipped to its shrunken border box (CSS Tables 3,
+    /// "Visibility-collapse cell rendering"). Set by table placement.
+    pub(crate) clips_collapsed_table_span: bool,
     /// Computed caption position consumed by the native table layout.
     pub(crate) caption_side: CaptionSideValue,
     /// The table grid's border box within its wrapper, excluding captions.
@@ -675,6 +683,8 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
             hides_empty_table_cell: false,
+            collapses_table_rows: false,
+            clips_collapsed_table_span: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,

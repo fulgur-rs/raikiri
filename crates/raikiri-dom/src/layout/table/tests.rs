@@ -11,6 +11,7 @@ use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 mod anonymous_table_tests;
 mod cell_index_tests;
 mod rowspan_tests;
+mod visibility_collapse_tests;
 
 fn with_layout_session<R>(
     document: &mut Document,
@@ -55,7 +56,7 @@ fn place_cells_in_session(
     document: &mut Document,
     grid: &mut super::TableGrid,
     column_widths: &[f32],
-    row_tracks: (&[f32], &[f32]),
+    row_tracks: (&[f32], &[f32], &[bool]),
     origins: (&[f32], &[f32]),
     spacing: (f32, f32),
     vertical_writing: bool,
@@ -703,7 +704,7 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
                 &mut session,
                 &mut grid,
                 &[1.0, 1.0],
-                (&[1.0], &[0.0]),
+                (&[1.0], &[0.0], &[false]),
                 (&[0.0, 1.0, 2.0], &[0.0, 1.0]),
                 (0.0, 0.0),
                 false

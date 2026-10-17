@@ -211,6 +211,16 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].table_vertical_align = cv.vertical_align;
         doc.nodes[idx].hides_empty_table_cell =
             crate::paint_rules::hides_empty_table_cell(doc, cascade, idx);
+        doc.nodes[idx].collapses_table_rows = cv.visibility
+            == raikiri_style::property::Visibility::Collapse
+            && matches!(
+                cv.display,
+                DisplayValue::TableRow
+                    | DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+            );
+        doc.nodes[idx].clips_collapsed_table_span = false;
         doc.nodes[idx].caption_side = cv.caption_side;
         if !matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable) {
             doc.nodes[idx].table_grid_box = None;
