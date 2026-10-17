@@ -738,7 +738,43 @@ fn leaves_paragraph_lines(document: &Document, cascade: &CascadeResult, node_id:
         document.parent_of(node_id).is_some_and(|parent| {
             parent == root || outside_inline_stacking_contexts(document, cascade, root, parent)
         }) && !within_translucent_first_line(document, root, node_id)
+            && content_can_leave_paragraph(document, cascade, root)
     })
+}
+
+/// Whether the positioned content of paragraph `root` that forms a stacking
+/// context in the paragraph's stacking context can wait for the end of the
+/// layer, apart from the paragraph's lines.
+///
+/// It cannot when a translucent first line wraps part of it, as the group
+/// of the `::first-line` box holds that part (CSS Color 4 §3.3), or when a
+/// `::before` or `::after` forms such a stacking context too, as the lines
+/// order those groups by stack level among themselves; the content then
+/// paints with the lines, as all of it did before.
+fn content_can_leave_paragraph(document: &Document, cascade: &CascadeResult, root: usize) -> bool {
+    if first_line_opacity_layer(document, root).is_some() {
+        return false;
+    }
+    let Some(node) = document.get_node(root) else {
+        return false; // cov:ignore: a paragraph with content to leave is a node
+    };
+    !node
+        .ifc_lines()
+        .into_iter()
+        .flatten()
+        .flat_map(|line| line.fragments())
+        .filter_map(|fragment| match fragment {
+            shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
+            shodo::Fragment::Atomic(atomic) => Some(atomic.node.0 as usize),
+            shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
+            shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
+        })
+        .any(|id| {
+            crate::generated_content::generated_origin(id).is_some_and(|(element, _)| {
+                pseudo_stacking_group(document, cascade, root, id)
+                    && outside_inline_stacking_contexts(document, cascade, root, element)
+            })
+        })
 }
 
 /// The paragraph whose lines lay out box `node_id`: the paragraph root
@@ -1410,6 +1446,7 @@ pub fn leaves_paragraph_content(
         && document
             .parent_of(id)
             .is_some_and(|parent| outside_inline_stacking_contexts(document, cascade, root, parent))
+        && content_can_leave_paragraph(document, cascade, root)
 }
 
 /// Whether inline element `context` of paragraph `root`, which forms a

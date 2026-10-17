@@ -1854,3 +1854,27 @@ fn z_indexed_inline_content_inside_a_multicol_container_stays_in_the_lines() {
     );
     assert_eq!(red_and_lime(&result), (200, 100));
 }
+
+#[test]
+fn z_indexed_inline_content_stays_in_the_lines_beside_a_z_indexed_pseudo_element() {
+    // The lines order the groups of a `::before` and a span by stack level,
+    // so the higher `::before` covers the span moved over it.
+    let result = assert_same_order(
+        "<div id=p><span style=\"position: relative; z-index: 1; left: -20px; \
+         color: lime\">AA</span></div><div style=\"position: relative; height: 10px\"></div>",
+        "#p::before { content: \"AA\"; position: relative; z-index: 2; color: red }",
+    );
+    assert_eq!(red_and_lime(&result), (200, 0));
+}
+
+#[test]
+fn z_indexed_inline_content_stays_in_the_lines_of_a_translucent_first_line() {
+    // The group of the translucent first line holds the span's part on it,
+    // so the span paints with the lines on both of them.
+    assert_same_order(
+        "<div id=p style=\"width: 60px\">x <span style=\"position: relative; \
+         z-index: 1\">AAA AAAA</span></div>\
+         <div style=\"position: relative; height: 10px; background: lime\"></div>",
+        "#p::first-line { opacity: 0.5 }",
+    );
+}
