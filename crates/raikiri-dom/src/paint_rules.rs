@@ -502,6 +502,16 @@ pub fn atomic_on_first_line(document: &Document, root: usize, id: usize) -> bool
         })
 }
 
+/// The node a line fragment lays out, if any.
+fn fragment_node(fragment: shodo::Fragment<'_>) -> Option<usize> {
+    match fragment {
+        shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
+        shodo::Fragment::Atomic(atomic) => Some(atomic.node.0 as usize),
+        shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
+        shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
+    }
+}
+
 /// Whether paragraph `root` has a translucent first line (see
 /// [`first_line_opacity_layer`]) and `id`, an inline element or a `::before`
 /// or `::after` laid out in its lines, has no content on the lines after it.
@@ -532,12 +542,7 @@ fn within_translucent_first_line(document: &Document, root: usize, id: usize) ->
         .flatten()
         .skip(1)
         .flat_map(|line| line.fragments())
-        .filter_map(|fragment| match fragment {
-            shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
-            shodo::Fragment::Atomic(atomic) => Some(atomic.node.0 as usize),
-            shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
-            shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
-        })
+        .filter_map(fragment_node)
         .any(inside);
     // A block-level `::before` or `::after` paints its own box with the
     // line it goes with, which need not hold any of its content.
@@ -759,20 +764,13 @@ fn content_can_leave_paragraph(document: &Document, cascade: &CascadeResult, roo
     if first_line_opacity_layer(document, root).is_some() {
         return false;
     }
-    let Some(node) = document.get_node(root) else {
-        return false; // cov:ignore: a paragraph with content to leave is a node
-    };
-    !node
-        .ifc_lines()
+    !document
+        .get_node(root)
+        .and_then(|node| node.ifc_lines())
         .into_iter()
         .flatten()
         .flat_map(|line| line.fragments())
-        .filter_map(|fragment| match fragment {
-            shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
-            shodo::Fragment::Atomic(atomic) => Some(atomic.node.0 as usize),
-            shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
-            shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
-        })
+        .filter_map(fragment_node)
         .any(|id| {
             crate::generated_content::generated_origin(id).is_some_and(|(element, _)| {
                 pseudo_stacking_group(document, cascade, root, id)
