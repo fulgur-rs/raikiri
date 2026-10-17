@@ -221,6 +221,16 @@ impl HeaderRepeats {
         result
     }
 
+    /// The block size a copy of the repeated header takes above body row
+    /// `row` on a continuation page, including its gap to the row, or zero
+    /// when the row's table repeats no header.
+    pub(crate) fn repeated_height_before(&self, row: usize) -> f32 {
+        self.rows
+            .get(&row)
+            .and_then(|header_id| self.headers.get(header_id))
+            .map_or(0.0, |header| header.height + header.gap)
+    }
+
     pub(crate) fn owner(&self, source: usize) -> Option<usize> {
         self.owners.get(source).copied().flatten()
     }
