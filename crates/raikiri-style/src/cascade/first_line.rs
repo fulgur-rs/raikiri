@@ -348,9 +348,6 @@ pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues)
     parent.hyphenate_character = first.hyphenate_character.clone();
     parent.hyphenate_limit_chars = first.hyphenate_limit_chars;
     parent.hyphens = first.hyphens;
-    parent.letter_spacing_ch_factor = first.letter_spacing_ch_factor;
-    parent.letter_spacing_ch_font = first.letter_spacing_ch_font.clone();
-    parent.letter_spacing_ch_offset = first.letter_spacing_ch_offset;
     parent.letter_spacing_computed = first.letter_spacing_computed;
     parent.line_break = first.line_break;
     parent.line_height = first.line_height;
@@ -374,10 +371,6 @@ pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues)
     parent.text_emphasis_position = first.text_emphasis_position;
     parent.text_emphasis_style = first.text_emphasis_style.clone();
     parent.text_indent = first.text_indent;
-    parent.text_indent_ch_factor = first.text_indent_ch_factor;
-    parent.text_indent_ch_font = first.text_indent_ch_font.clone();
-    parent.text_indent_ch_inherited = first.text_indent_ch_inherited;
-    parent.text_indent_ch_offset = first.text_indent_ch_offset;
     parent.text_indent_each_line = first.text_indent_each_line;
     parent.text_indent_hanging = first.text_indent_hanging;
     parent.text_justify = first.text_justify;
@@ -396,9 +389,6 @@ pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues)
     parent.widows = first.widows;
     parent.word_break = first.word_break;
     parent.word_space_transform = first.word_space_transform;
-    parent.word_spacing_ch_factor = first.word_spacing_ch_factor;
-    parent.word_spacing_ch_font = first.word_spacing_ch_font.clone();
-    parent.word_spacing_ch_offset = first.word_spacing_ch_offset;
     parent.word_spacing_computed = first.word_spacing_computed;
     parent
 }

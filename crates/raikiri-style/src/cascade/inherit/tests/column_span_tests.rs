@@ -3,7 +3,7 @@ use super::*;
 fn span(values: &ComputedValues) -> String {
     crate::ComputedProperty::from_name("column-span")
         .expect("computed column-span")
-        .serialize(values, &mut |_| 10.0)
+        .serialize(values)
         .unwrap()
 }
 

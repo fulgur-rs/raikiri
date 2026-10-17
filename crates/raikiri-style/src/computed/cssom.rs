@@ -2,7 +2,6 @@
 
 use cssparser::ToCss as _;
 
-use crate::ChFontKey;
 use crate::computed::ComputedValues;
 use crate::property::{
     CalcLengthPercentage, CssColor, PropertyValue, serialize_calc_length_percentage,
@@ -220,14 +219,7 @@ impl ComputedProperty {
     /// when the value has no computed CSSOM form (such as an intermediate
     /// `text-align` value).
     ///
-    /// `ch_advance` returns the advance of `0` in the given font. It is only
-    /// called for lengths authored in `ch`, which need font data the style
-    /// layer does not have.
-    pub fn serialize(
-        self,
-        computed: &ComputedValues,
-        ch_advance: &mut dyn FnMut(&ChFontKey) -> f32,
-    ) -> Option<String> {
+    pub fn serialize(self, computed: &ComputedValues) -> Option<String> {
         let value = match self {
             ComputedProperty::Direction => computed.direction.as_css_str(),
             ComputedProperty::Font => return serialize_font_shorthand(computed),
@@ -402,18 +394,8 @@ impl ComputedProperty {
                 let value = match computed.text_decoration_inset {
                     crate::ComputedTextDecorationInset::Auto => "auto".to_owned(),
                     crate::ComputedTextDecorationInset::Lengths { start, end } => {
-                        let start_px = computed
-                            .text_decoration_inset_start_ch
-                            .as_ref()
-                            .map_or(start.px(), |provenance| {
-                                provenance.factor * ch_advance(&provenance.font)
-                            });
-                        let end_px = computed
-                            .text_decoration_inset_end_ch
-                            .as_ref()
-                            .map_or(end.px(), |provenance| {
-                                provenance.factor * ch_advance(&provenance.font)
-                            });
+                        let start_px = start.px();
+                        let end_px = end.px();
                         let start = ComputedLength(start_px).to_css_string();
                         if start_px == end_px {
                             start
@@ -481,41 +463,16 @@ impl ComputedProperty {
                 };
                 return Some(color.to_css_string());
             }
-            ComputedProperty::LetterSpacing => match measured_spacing(
-                computed.letter_spacing_computed,
-                computed.letter_spacing_ch_factor,
-                computed.letter_spacing_ch_font.as_ref(),
-                computed,
-                ch_advance,
-            ) {
+            ComputedProperty::LetterSpacing => match computed.letter_spacing_computed {
                 // `normal` computes to zero, so a zero length reads back as `normal`.
                 crate::ComputedLetterSpacing::Px(0.0) => "normal",
                 letter_spacing => return Some(letter_spacing.to_css_string()),
             },
             ComputedProperty::WordSpacing => {
-                let word_spacing = measured_spacing(
-                    computed.word_spacing_computed,
-                    computed.word_spacing_ch_factor,
-                    computed.word_spacing_ch_font.as_ref(),
-                    computed,
-                    ch_advance,
-                );
-                return Some(word_spacing.to_css_string());
+                return Some(computed.word_spacing_computed.to_css_string());
             }
             ComputedProperty::TextIndent => {
-                let text_indent = match (computed.text_indent_ch_factor, computed.text_indent) {
-                    (Some(factor), ComputedTextIndent::Px(_)) => {
-                        // An inherited `ch` indent keeps measuring against the
-                        // font that declared it.
-                        let font = computed
-                            .text_indent_ch_font
-                            .clone()
-                            .unwrap_or_else(|| own_ch_font(computed));
-                        ComputedTextIndent::Px(factor * ch_advance(&font))
-                    }
-                    (_, text_indent) => text_indent,
-                };
-                let mut value = text_indent.to_css_string();
+                let mut value = computed.text_indent.to_css_string();
                 if computed.text_indent_hanging {
                     value.push_str(" hanging");
                 }
@@ -632,40 +589,6 @@ fn serialize_font_family(families: &[crate::property::FontFamilyName]) -> Option
 // Computed-value serialization for types that exist only after cascade. Rules
 // that belong to one property rather than to the value type (such as
 // `letter-spacing: 0px` serializing as `normal`) stay with the caller.
-
-/// The element's own font as a `ch` measuring key.
-fn own_ch_font(computed: &ComputedValues) -> ChFontKey {
-    ChFontKey {
-        family: computed.font_family.clone(),
-        size: computed.font_size,
-        weight: computed.font_weight,
-        style: computed.font_style,
-        optical_sizing: computed.font_optical_sizing,
-    }
-}
-
-/// Replaces the style layer's `ch` fallback in a `letter-spacing` or
-/// `word-spacing` length with the measured `0` advance of the font that
-/// declared it, falling back to the element's own font. Percentages and
-/// `calc()` carry no `ch` factor.
-fn measured_spacing(
-    value: ComputedLetterSpacing,
-    ch_factor: Option<f32>,
-    ch_font: Option<&ChFontKey>,
-    computed: &ComputedValues,
-    ch_advance: &mut dyn FnMut(&ChFontKey) -> f32,
-) -> ComputedLetterSpacing {
-    match (ch_factor, value) {
-        (Some(factor), ComputedLetterSpacing::Px(_)) => {
-            let advance = match ch_font {
-                Some(font) => ch_advance(font),
-                None => ch_advance(&own_ch_font(computed)),
-            };
-            ComputedLetterSpacing::Px(factor * advance)
-        }
-        _ => value,
-    }
-}
 
 /// Serializes a computed mixed `calc()`. Cascade folds a zero term into the
 /// plain length or percentage form before a value reaches here; values built

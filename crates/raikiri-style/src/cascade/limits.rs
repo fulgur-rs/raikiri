@@ -103,12 +103,11 @@ pub struct CascadeOptions {
     /// the page box media queries see. `None` uses the media context's
     /// viewport.
     pub viewport: Option<(f32, f32)>,
-    /// Measures the used length of `line-height: normal`, the basis of the
-    /// `lh` and `rlh` units on elements whose line height is `normal`.
-    /// `None` takes the document's measurer
-    /// ([`crate::StyleDom::normal_line_height`]); without one either, that
-    /// basis is left unresolved, and each property falls back as its
-    /// resolver documents.
+    /// Measures the used length of `line-height: normal` and may supply the
+    /// U+0030 advance for `ch`. For `ch`, a `None` result falls through to the
+    /// document's provider before using the `0.5em` fallback. For
+    /// `line-height: normal`, this provider replaces the document provider,
+    /// preserving the existing options precedence.
     pub normal_line_height: Option<crate::resolve::NormalLineHeightSource>,
     /// Device pixels per CSS pixel for computed border-width snapping.
     ///
@@ -119,15 +118,44 @@ pub struct CascadeOptions {
 }
 
 impl CascadeOptions {
-    /// The measurer of `line-height: normal` a cascade of `dom` runs with:
-    /// this one's, else the document's.
+    /// Font metrics a cascade of `dom` runs with. The options provider
+    /// replaces the document provider for `normal` line-height. `ch` tries
+    /// the options provider first, then the document provider.
     pub(crate) fn normal_line_height_for<D: crate::StyleDom>(
         &self,
         dom: &D,
     ) -> Option<crate::resolve::NormalLineHeightSource> {
-        self.normal_line_height
-            .clone()
-            .or_else(|| dom.normal_line_height())
+        let document = dom.normal_line_height();
+        match (&self.normal_line_height, document) {
+            (Some(options), Some(document)) => {
+                Some(crate::resolve::NormalLineHeightSource::new(ChFallback {
+                    normal: options.clone(),
+                    ch_primary: options.clone(),
+                    ch_fallback: document,
+                }))
+            }
+            (Some(options), None) => Some(options.clone()),
+            (None, document) => document,
+        }
+    }
+}
+
+struct ChFallback {
+    normal: crate::resolve::NormalLineHeightSource,
+    ch_primary: crate::resolve::NormalLineHeightSource,
+    ch_fallback: crate::resolve::NormalLineHeightSource,
+}
+
+impl crate::resolve::NormalLineHeight for ChFallback {
+    fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<crate::ComputedLength> {
+        self.normal.0.normal_line_height(font)
+    }
+
+    fn ch_advance(&self, font: &crate::ChFontKey) -> Option<crate::ComputedLength> {
+        self.ch_primary
+            .0
+            .ch_advance(font)
+            .or_else(|| self.ch_fallback.0.ch_advance(font))
     }
 }
 

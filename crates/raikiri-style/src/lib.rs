@@ -106,8 +106,8 @@ pub use ruletree::{
 
 pub mod computed;
 pub use computed::{
-    ChFontKey, ChLengthProvenance, ComputedBackgroundLayer, ComputedBorderImage, ComputedProperty,
-    ComputedValues, FontSizeKeywordInfo, MAX_PAINTED_BACKGROUND_LAYERS, VerticalLogicalSize,
+    ChFontKey, ComputedBackgroundLayer, ComputedBorderImage, ComputedProperty, ComputedValues,
+    FontSizeKeywordInfo, MAX_PAINTED_BACKGROUND_LAYERS, VerticalLogicalSize,
 };
 pub use triomphe::Arc as PseudoValueArc;
 pub mod computed_api;
@@ -119,10 +119,9 @@ pub use resolve::{
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
-    ComputedLengthPercentageOrNormal, ComputedLengthPercentageWithCh, ComputedLengthWithCh,
-    ComputedLetterSpacing, ComputedLineHeight, ComputedOutline, ComputedTabSize,
-    ComputedTextDecorationInset, ComputedTextDecorationThickness, ComputedTextIndent,
-    ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
+    ComputedLengthPercentageOrNormal, ComputedLetterSpacing, ComputedLineHeight, ComputedOutline,
+    ComputedTabSize, ComputedTextDecorationInset, ComputedTextDecorationThickness,
+    ComputedTextIndent, ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
     ComputedWordSpacing, NormalLineHeight, NormalLineHeightSource, ResolveContext,
     lift_border_spacing, lift_font_size, lift_length_or_normal, lift_length_percentage,
     lift_length_percentage_or_calc, lift_letter_spacing, lift_line_height, lift_tab_size,
@@ -131,16 +130,14 @@ pub use resolve::{
     resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
     resolve_font_size_calc, resolve_grid_auto_track_list, resolve_grid_inflexible_breadth,
     resolve_grid_template_tracks, resolve_grid_track_breadth, resolve_grid_track_list,
-    resolve_grid_track_size, resolve_length_or_normal, resolve_length_or_normal_with_ch,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_calc, resolve_length_percentage_or_normal,
-    resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
-    resolve_line_height, resolve_margin_length_or_auto,
-    resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    resolve_grid_track_size, resolve_length_or_normal, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_calc,
+    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
+    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
     resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
-    resolve_transform_function, resolve_word_spacing, resolve_word_spacing_with_ch,
-    used_line_height_length, used_line_height_length_or,
+    resolve_transform_function, resolve_word_spacing, used_line_height_length,
+    used_line_height_length_or,
 };
 
 pub mod specified;

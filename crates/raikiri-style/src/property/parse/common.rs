@@ -367,9 +367,9 @@ pub(crate) fn parse_length_value(
             "rem" => Some(Length::Rem(*value)),
             "pt" => Some(Length::Pt(*value)),
             // Additional font-relative units (CSS Values 4 §6.1.1).
-            // The real-metric variants of `ex`/`ch`/`ic` always use their spec
-            // fallbacks because the style layer has no font metrics (see the
-            // `Length::Ex` / `Length::Ch` / `Length::Ic` docs).
+            // `ex` and `ic` use their documented fallbacks. The cascade uses
+            // the selected font's advance for `ch` when a provider supplies
+            // one, and otherwise uses its `0.5em` fallback.
             "ex" => Some(Length::Ex(*value)),
             "rex" => Some(Length::Rex(*value)),
             "ch" => Some(Length::Ch(*value)),

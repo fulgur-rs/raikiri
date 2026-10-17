@@ -10,14 +10,12 @@ use crate::computed::{
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
-    LengthPercentageOrCalc, LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize,
-    Sides, TextIndentLength, TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue,
-    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
-    resolve_text_align_match_parent,
+    LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize, Sides, TextWrapMode,
+    WhiteSpace, WhiteSpaceCollapse, WritingMode, initial_grid_auto_track_list,
+    resolve_text_align_internal_center, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
-    calc_ch_factor,
 };
 use crate::rule::{
     expand_background, expand_border, expand_border_bottom, expand_border_bottom_css_wide,
@@ -673,7 +671,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             // staging representation, so winner application order does not matter.
             let mut specified = SpecifiedValues::inherit_from(parent_computed);
             if let Some(candidates) = element_candidates {
-                apply_winners(
+                apply_winners_with_normal_line_height(
                     candidates,
                     &mut winners,
                     &mut specified,
@@ -682,6 +680,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                     Some(&mut out.page_values[idx]),
                     Some(&mut out.authored_writing_modes[idx]),
                     is_svg.then_some(&mut node_svg_properties),
+                    options.normal_line_height,
                 );
             }
 
@@ -1298,9 +1297,34 @@ pub(crate) fn apply_winners(
     specified: &mut SpecifiedValues,
     inherited: &ComputedValues,
     custom_properties: &CustomPropertyEnvironment,
+    page_value: Option<&mut crate::property::PageValue>,
+    authored_writing_mode: Option<&mut Option<WritingMode>>,
+    svg_properties: Option<&mut Vec<SvgStyleProperty>>,
+) {
+    apply_winners_with_normal_line_height(
+        candidates,
+        winners,
+        specified,
+        inherited,
+        custom_properties,
+        page_value,
+        authored_writing_mode,
+        svg_properties,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)] // winner application writes independent cascade metadata outputs
+fn apply_winners_with_normal_line_height(
+    candidates: ElementCandidates<'_>,
+    winners: &mut Vec<Option<RankedDecl>>,
+    specified: &mut SpecifiedValues,
+    inherited: &ComputedValues,
+    custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
+    normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
 ) {
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
     let flow = flow_mapping(candidates, inherited, |key, idx| {
@@ -1454,7 +1478,9 @@ pub(crate) fn apply_winners(
                             if color.key == crate::property::PropertyKey::Color
                                 && svg_color_is_current_color(&color.source))
                         || (value.is_none() && svg_property_is_inherited(winner_key)),
-                    expression: value.as_ref().and_then(svg_property_expression),
+                    expression: value.as_ref().and_then(|value| {
+                        svg_property_expression(value, inherited, normal_line_height)
+                    }),
                 });
             }
             if let Some(value) = value {
@@ -1529,27 +1555,65 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
     )
 }
 
-fn svg_property_expression(value: &PropertyValue) -> Option<String> {
+fn svg_ch_em_ratio(
+    inherited: &ComputedValues,
+    normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
+) -> f32 {
+    let advance = normal_line_height
+        .and_then(|measurer| {
+            measurer.ch_advance(&crate::ChFontKey {
+                family: inherited.font_family.clone(),
+                size: inherited.font_size,
+                weight: inherited.font_weight,
+                style: inherited.font_style,
+                optical_sizing: inherited.font_optical_sizing,
+            })
+        })
+        .unwrap_or(ComputedLength(inherited.font_size.0 * 0.5));
+    if inherited.font_size.0 == 0.0 {
+        0.5
+    } else {
+        advance.0 / inherited.font_size.0
+    }
+}
+
+fn svg_property_expression(
+    value: &PropertyValue,
+    inherited: &ComputedValues,
+    normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
+) -> Option<String> {
     match value {
         PropertyValue::FontSize(Length::Em(_) | Length::Percent(_) | Length::Ex(_)) => {
             crate::property::serialize_value(value)
         }
         // SVG 1.1 lengths, as SVG renderers such as usvg parse them, have no
-        // `ch` or `ic` unit. Export the em multiple of the fallback these units
-        // resolve with (see `Length::Ch` and `Length::Ic`), which stays
-        // relative to the font size of each instance.
+        // `ch` or `ic` unit. Export `ch` as an equivalent `em` multiple using
+        // the inherited font's measured U+0030 advance, or its `0.5em` fallback.
         PropertyValue::FontSize(Length::Ch(value)) => {
-            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(value * 0.5)))
+            let em = value * svg_ch_em_ratio(inherited, normal_line_height);
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(em)))
         }
         PropertyValue::FontSize(Length::Ic(value)) => {
             crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(*value)))
         }
-        // A calc that only scales the parent's size stays relative as its
-        // `em` multiple; any other calc keeps its computed px size (SVG 1.1
-        // lengths have no `calc()`).
-        PropertyValue::FontSizeCalc(calc) => calc.font_size_scale().and_then(|scale| {
-            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
-        }),
+        // A calc made only of percentages, `em`, and `ch` stays relative as
+        // its equivalent `em` multiple; a calc with an absolute length or
+        // another relative basis keeps its computed px size (SVG 1.1 lengths
+        // have no `calc()` or `ch`).
+        PropertyValue::FontSizeCalc(calc) => {
+            let ch_ratio = if calc
+                .relative_terms()
+                .any(|(unit, _)| unit == crate::property::RelativeCalcUnit::Ch)
+            {
+                svg_ch_em_ratio(inherited, normal_line_height)
+            } else {
+                0.5
+            };
+            calc.font_size_scale_with_ch_ratio(ch_ratio)
+                .and_then(|scale| {
+                    crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
+                })
+        }
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
@@ -3283,14 +3347,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::TextAlignLast(v) => target.text_align_last = v,
         PropertyValue::TextIndent(v) => {
             target.text_indent = v.length;
-            target.text_indent_ch_factor = match v.length {
-                TextIndentLength::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
-                TextIndentLength::Calc(calc) => calc_ch_factor(calc),
-                _ => None,
-            };
-            target.text_indent_ch_offset = 0.0;
-            target.text_indent_ch_font = None;
-            target.text_indent_ch_inherited = false;
             target.text_indent_hanging = v.hanging;
             target.text_indent_each_line = v.each_line;
         }
@@ -3458,25 +3514,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::OverflowWrap(ow) => target.overflow_wrap = ow,
         PropertyValue::LetterSpacing(ls) => {
             target.letter_spacing = ls;
-            target.letter_spacing_ch_factor = match ls {
-                LetterSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => {
-                    Some(factor)
-                }
-                LetterSpacingValue::Calc(calc) => calc_ch_factor(calc),
-                _ => None,
-            };
-            target.letter_spacing_ch_offset = 0.0;
-            target.letter_spacing_ch_font = None;
         }
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
-            target.word_spacing_ch_factor = match ws {
-                WordSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
-                WordSpacingValue::Calc(calc) => calc_ch_factor(calc),
-                _ => None,
-            };
-            target.word_spacing_ch_offset = 0.0;
-            target.word_spacing_ch_font = None;
         }
         PropertyValue::TabSize(ts) => target.tab_size = ts,
         PropertyValue::BreakBefore(bb) => target.break_before = bb,

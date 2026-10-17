@@ -674,10 +674,7 @@ impl DocumentHost for WptDocumentHost {
             .as_ref()
             .and_then(|styles| styles.get(node))
             .ok_or_else(|| HostError(format!("computed style is missing for DOM node {node}")))?;
-        let fonts = &self.setup.fonts;
-        let mut ch_advance =
-            |font: &raikiri_style::ChFontKey| raikiri_dom::layout::measure_ch_advance(fonts, font);
-        Ok(property.serialize(computed, &mut ch_advance))
+        Ok(property.serialize(computed))
     }
 
     fn parse_fragment(

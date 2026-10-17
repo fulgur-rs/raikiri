@@ -1,5 +1,5 @@
 use super::*;
-use crate::layout::ifc::test_support::{block_fixture, span};
+use crate::layout::ifc::test_support::{block_fixture, block_fixture_with_ahem, span};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::{
     FontFamily, GenericFamily, LineHeight, TextAlign, TextAlignLast, TextCombineUpright,
@@ -8,6 +8,17 @@ use shodo::style::{
 
 fn root_style(extra: &str) -> Result<InlineStyle, IfcError> {
     let fixture = block_fixture(extra, |doc, root| {
+        doc.append_text(root, "x");
+    });
+    inline_style(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+}
+
+fn root_style_with_ahem(extra: &str) -> Result<InlineStyle, IfcError> {
+    let fixture = block_fixture_with_ahem(extra, |doc, root| {
         doc.append_text(root, "x");
     });
     inline_style(
@@ -143,7 +154,7 @@ fn word_spacing_percent_and_calc_terms_map_to_shodo() {
 
 #[test]
 fn word_spacing_ch_calc_percent_maps_to_absolute_shodo_length() {
-    let ch_calc = root_style("font-size:20px;word-spacing:calc(2ch - 1px + 25%)")
+    let ch_calc = root_style_with_ahem("font-size:20px;word-spacing:calc(2ch - 1px + 25%)")
         .expect("map calc with ch and percentage");
     assert_eq!(ch_calc.word_spacing, 44.0);
     assert_eq!(ch_calc.word_spacing_percent, 0.0);
@@ -164,7 +175,7 @@ fn line_height_maps_number_and_length() {
 #[test]
 fn ch_spacing_is_measured_with_the_declaring_font() {
     // Ahem at 10px: one ch is 10px.
-    let style = root_style("letter-spacing:2ch;word-spacing:1ch").expect("map");
+    let style = root_style_with_ahem("letter-spacing:2ch;word-spacing:1ch").expect("map");
     assert_eq!(style.letter_spacing, 20.0);
     assert_eq!(style.word_spacing, 10.0);
 }
@@ -173,7 +184,7 @@ fn ch_spacing_is_measured_with_the_declaring_font() {
 fn an_inherited_ch_value_keeps_the_declaring_font() {
     // The root declares `2ch` at 10px; the span inherits the computed length
     // and must not re-measure it with its own 20px font.
-    let fixture = block_fixture("letter-spacing:2ch;word-spacing:1ch", |doc, root| {
+    let fixture = block_fixture_with_ahem("letter-spacing:2ch;word-spacing:1ch", |doc, root| {
         doc.append_text(root, "x");
         let inner = span(doc, root, "display:inline;font-size:20px");
         doc.append_text(inner, "y");
@@ -186,15 +197,15 @@ fn an_inherited_ch_value_keeps_the_declaring_font() {
 
 #[test]
 fn a_ch_calc_adds_its_length_term() {
-    let style =
-        root_style("letter-spacing:calc(1ch + 3px);word-spacing:calc(2ch - 1px)").expect("map");
+    let style = root_style_with_ahem("letter-spacing:calc(1ch + 3px);word-spacing:calc(2ch - 1px)")
+        .expect("map");
     assert_eq!(style.letter_spacing, 13.0);
     assert_eq!(style.word_spacing, 19.0);
 }
 
 #[test]
 fn text_indent_in_ch_is_measured() {
-    let fixture = block_fixture("text-indent:3ch", |doc, root| {
+    let fixture = block_fixture_with_ahem("text-indent:3ch", |doc, root| {
         doc.append_text(root, "x");
     });
     let (_, indent) = line_options(
@@ -208,7 +219,7 @@ fn text_indent_in_ch_is_measured() {
 
 #[test]
 fn an_inherited_ch_text_indent_keeps_the_declaring_font() {
-    let fixture = block_fixture("text-indent:calc(3ch + 1px)", |doc, root| {
+    let fixture = block_fixture_with_ahem("text-indent:calc(3ch + 1px)", |doc, root| {
         let inner = span(doc, root, "display:block;font-size:20px");
         doc.append_text(inner, "y");
     });
@@ -220,7 +231,7 @@ fn an_inherited_ch_text_indent_keeps_the_declaring_font() {
 
 #[test]
 fn a_ch_text_indent_keeps_its_percentage_term() {
-    let fixture = block_fixture("text-indent:calc(2ch + 10%)", |doc, root| {
+    let fixture = block_fixture_with_ahem("text-indent:calc(2ch + 10%)", |doc, root| {
         doc.append_text(root, "x");
     });
     let (_, indent) = line_options(
@@ -240,7 +251,7 @@ fn a_ch_text_indent_keeps_its_percentage_term() {
 
 #[test]
 fn inline_edges_in_ch_are_measured() {
-    let fixture = block_fixture("padding-left:2ch;margin-right:1ch", |doc, root| {
+    let fixture = block_fixture_with_ahem("padding-left:2ch;margin-right:1ch", |doc, root| {
         doc.append_text(root, "x");
     });
     let edges = inline_edges(
@@ -256,7 +267,7 @@ fn inline_edges_in_ch_are_measured() {
 
 #[test]
 fn inline_edges_in_calc_ch_add_the_rest_of_the_sum() {
-    let fixture = block_fixture(
+    let fixture = block_fixture_with_ahem(
         "padding-left:calc(2ch + 3px);margin-right:calc(1ch + 10%)",
         |doc, root| {
             doc.append_text(root, "x");
@@ -278,7 +289,7 @@ fn inline_edges_in_calc_ch_add_the_rest_of_the_sum() {
 
 #[test]
 fn inline_edges_in_calc_ch_with_a_percentage_keep_a_negative_padding_sum() {
-    let fixture = block_fixture("padding-left:calc(1ch + 10% - 100px)", |doc, root| {
+    let fixture = block_fixture_with_ahem("padding-left:calc(1ch + 10% - 100px)", |doc, root| {
         doc.append_text(root, "x");
     });
     let (edges, percents) = inline_edges(
@@ -294,7 +305,7 @@ fn inline_edges_in_calc_ch_with_a_percentage_keep_a_negative_padding_sum() {
 
 #[test]
 fn inline_edges_in_calc_ch_clamp_negative_padding_but_not_margin() {
-    let fixture = block_fixture(
+    let fixture = block_fixture_with_ahem(
         "padding-left:calc(1ch - 100px);margin-left:calc(1ch - 100px)",
         |doc, root| {
             doc.append_text(root, "x");
@@ -313,7 +324,7 @@ fn inline_edges_in_calc_ch_clamp_negative_padding_but_not_margin() {
 
 #[test]
 fn inline_edges_in_ch_use_the_declaring_element_font() {
-    let fixture = block_fixture("", |doc, root| {
+    let fixture = block_fixture_with_ahem("", |doc, root| {
         let inner = span(
             doc,
             root,
@@ -1132,13 +1143,4 @@ fn inline_relative_insets_prefer_the_start_side_of_a_vertical_containing_block()
         insets.offset_in(200.0, None, WritingMode::SidewaysLr, false),
         (5.0, -4.0)
     );
-}
-
-#[test]
-fn own_ch_font_carries_the_elements_optical_sizing() {
-    let mut cv = ComputedValues::initial();
-    cv.font_optical_sizing = raikiri_style::property::FontOpticalSizing::None;
-    let key = own_ch_font(&cv);
-    assert_eq!(key.optical_sizing, cv.font_optical_sizing);
-    assert_eq!(key.size, cv.font_size);
 }

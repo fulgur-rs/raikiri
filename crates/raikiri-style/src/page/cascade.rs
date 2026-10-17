@@ -1619,7 +1619,17 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // relies on the same fact for `font-size: 1lh`'s self-reference basis —
     // for the page context specifically, "parent" and "root" coincide (both
     // are `inherited`), so the one `ctx.root_line_height` serves both.
+    let inherited_ch_advance = normal_line_height.and_then(|measurer| {
+        measurer.ch_advance(&crate::ChFontKey {
+            family: inherited.font_family.clone(),
+            size: inherited.font_size,
+            weight: inherited.font_weight,
+            style: inherited.font_style,
+            optical_sizing: inherited.font_optical_sizing,
+        })
+    });
     let ctx = ResolveContext::with_root_line_height(inherited.font_size, inherited.lh_basis())
+        .with_ch_advance(inherited_ch_advance)
         .with_border_width_device_scale(border_width_device_scale);
     let radius_keys = [
         PropertyKey::BorderRadiusTopLeft,
@@ -1768,6 +1778,9 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // context's font-size, which step 3 only finalises once *all* winners have
     // been seen — `best` iteration order is `HashMap`-random.
     let font_size = page_context_font_size(&resolved, inherited);
+    let page_ch_advance =
+        page_context_ch_advance(&resolved, inherited, font_size, normal_line_height);
+    let ctx = ctx.with_ch_advance(page_ch_advance);
     // `rem` = "the computed value of the em unit on the root element"
     // (CSS Values 4 §6.1.1 <https://www.w3.org/TR/css-values-4/#rem>). The page
     // context is *not* the root element, so this stays the inheritance parent's
@@ -1968,6 +1981,60 @@ fn page_context_font_size(
     }
 }
 
+fn page_context_font_key(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+    inherited: &ComputedValues,
+    font_size: ComputedLength,
+) -> crate::ChFontKey {
+    let family = match declarations
+        .get(&PropertyKey::FontFamily)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontFamily(family)) => family.clone(),
+        _ => inherited.font_family.clone(),
+    };
+    let weight = match declarations
+        .get(&PropertyKey::FontWeight)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontWeight(weight)) => {
+            resolve_relative_weight(*weight, inherited.font_weight)
+        }
+        _ => inherited.font_weight,
+    };
+    let style = match declarations
+        .get(&PropertyKey::FontStyle)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontStyle(style)) => *style,
+        _ => inherited.font_style,
+    };
+    let optical_sizing = match declarations
+        .get(&PropertyKey::FontOpticalSizing)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontOpticalSizing(optical_sizing)) => *optical_sizing,
+        _ => inherited.font_optical_sizing,
+    };
+    crate::ChFontKey {
+        family,
+        size: font_size,
+        weight,
+        style,
+        optical_sizing,
+    }
+}
+
+fn page_context_ch_advance(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+    inherited: &ComputedValues,
+    font_size: ComputedLength,
+    measurer: Option<&dyn NormalLineHeight>,
+) -> Option<ComputedLength> {
+    let font = page_context_font_key(declarations, inherited, font_size);
+    measurer?.ch_advance(&font)
+}
+
 /// The page context's own `lh` basis — the resolve basis for `1lh` used in
 /// `padding`/`margin`/`border-*-width` in phase 3.
 ///
@@ -2040,40 +2107,12 @@ fn page_context_normal_line_height(
     font_size: ComputedLength,
     measurer: Option<&dyn NormalLineHeight>,
 ) -> Option<ComputedLength> {
-    let family = match declarations
-        .get(&PropertyKey::FontFamily)
-        .map(ResolvedAgainstInherited::as_property_value)
-    {
-        Some(PropertyValue::FontFamily(family)) => family.clone(),
-        _ => inherited.font_family.clone(),
-    };
-    let weight = match declarations
-        .get(&PropertyKey::FontWeight)
-        .map(ResolvedAgainstInherited::as_property_value)
-    {
-        Some(PropertyValue::FontWeight(weight)) => {
-            resolve_relative_weight(*weight, inherited.font_weight)
-        }
-        _ => inherited.font_weight,
-    };
-    let style = match declarations
-        .get(&PropertyKey::FontStyle)
-        .map(ResolvedAgainstInherited::as_property_value)
-    {
-        Some(PropertyValue::FontStyle(style)) => *style,
-        _ => inherited.font_style,
-    };
-    let optical_sizing = match declarations
-        .get(&PropertyKey::FontOpticalSizing)
-        .map(ResolvedAgainstInherited::as_property_value)
-    {
-        Some(PropertyValue::FontOpticalSizing(optical_sizing)) => *optical_sizing,
-        _ => inherited.font_optical_sizing,
-    };
-    let same_font = weight == inherited.font_weight
-        && style == inherited.font_style
-        && optical_sizing == inherited.font_optical_sizing
-        && (Arc::ptr_eq(&family, &inherited.font_family) || family == inherited.font_family);
+    let font = page_context_font_key(declarations, inherited, font_size);
+    let same_font = font.weight == inherited.font_weight
+        && font.style == inherited.font_style
+        && font.optical_sizing == inherited.font_optical_sizing
+        && (Arc::ptr_eq(&font.family, &inherited.font_family)
+            || font.family == inherited.font_family);
     if same_font
         && let Some(normal) = inherited.normal_line_height
         && inherited.font_size.0 > 0.0
@@ -2082,13 +2121,7 @@ fn page_context_normal_line_height(
             normal.0 * font_size.0 / inherited.font_size.0,
         ));
     }
-    measurer?.normal_line_height(&crate::ChFontKey {
-        family,
-        size: font_size,
-        weight,
-        style,
-        optical_sizing,
-    })
+    measurer?.normal_line_height(&font)
 }
 
 /// The page context's computed `border-*-style` per side — the gate input for

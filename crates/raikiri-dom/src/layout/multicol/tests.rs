@@ -369,7 +369,7 @@ fn multicol_min_constrained_child_requires_all_constraints() {
 }
 
 #[test]
-fn authored_containing_width_uses_the_resolved_ch_style_width() {
+fn authored_containing_width_uses_the_cascade_resolved_ch_width() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -382,15 +382,13 @@ fn authored_containing_width_uses_the_resolved_ch_style_width() {
         Some("display:block;width:4ch;font-size:25px;font-family:monospace"),
     );
     let text = doc.append_text(container, "test");
+    doc.set_font_collection(crate::fonts::system_font_collection());
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("styles");
 
-    doc.set_font_collection(crate::fonts::system_font_collection());
-    prepare_ch_box_values_before_taffy(&mut doc, &cascade);
-
     let taffy_width = style_dimension_length(doc.nodes[container].style.size.width)
-        .expect("resolved ch width should be a finite length");
+        .expect("cascade-resolved ch width should be a finite length");
     assert_eq!(
         AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
         Some(taffy_width),
@@ -398,7 +396,7 @@ fn authored_containing_width_uses_the_resolved_ch_style_width() {
 }
 
 #[test]
-fn content_widths_resolve_a_measured_ch_calc_with_a_percentage() {
+fn content_widths_resolve_a_cascade_ch_calc_with_a_percentage() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -417,11 +415,10 @@ fn content_widths_resolve_a_measured_ch_calc_with_a_percentage() {
         Some("display:block;width:calc(50% + 2ch);font-family:Ahem;font-size:10px"),
     );
     let text = doc.append_text(sized, "x");
+    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("styles");
-    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
-    prepare_ch_box_values_before_taffy(&mut doc, &cascade);
 
     // Half of the 200px container plus two 10px Ahem "0" advances.
     assert_eq!(
@@ -433,7 +430,7 @@ fn content_widths_resolve_a_measured_ch_calc_with_a_percentage() {
 }
 
 #[test]
-fn content_widths_skip_a_measured_ch_width_on_display_contents() {
+fn content_widths_skip_a_cascade_ch_width_on_display_contents() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -458,11 +455,10 @@ fn content_widths_skip_a_measured_ch_width_on_display_contents() {
         Some("display:block;width:50%"),
     );
     let text = doc.append_text(half, "x");
+    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("styles");
-    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
-    prepare_ch_box_values_before_taffy(&mut doc, &cascade);
 
     // The contents element has no box, so the child halves the 800px container.
     assert_eq!(
@@ -2672,7 +2668,7 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
 }
 
 #[test]
-fn ancestor_width_table_refreshes_measured_ch_and_percentage_inputs() {
+fn ancestor_width_table_uses_cascade_resolved_ch_and_percentage_inputs() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -2681,16 +2677,17 @@ fn ancestor_width_table_refreshes_measured_ch_and_percentage_inputs() {
     let text = doc.append_text(half, "percentage");
     let ch = doc.append_element(Some(body), "div", Style::default(), Some("width:4ch"));
     let ch_text = doc.append_text(ch, "ch");
+    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
-    doc.nodes[ch].style.size.width = Dimension::length(64.0);
-    let ComputedLengthPercentageOrAuto::Px(fallback) = cascade.computed[ch].width else {
-        panic!("ch cascade fallback must be px")
-    };
-    assert_ne!(fallback, 64.0);
-    let preparation = AncestorFacts::new(&doc, &cascade, 800.0);
-    assert_eq!(preparation.authored_containing_width(ch_text), Some(64.0));
-    for (page_width, measured_ch) in [(800.0, 64.0), (400.0, 96.0), (800.0, 64.0)] {
-        doc.nodes[ch].style.size.width = Dimension::length(measured_ch);
+    apply_computed_to_style(&mut doc, &cascade).expect("styles");
+    assert_eq!(
+        cascade.computed[ch].width,
+        ComputedLengthPercentageOrAuto::Px(64.0)
+    );
+    let resolved_ch = style_dimension_length(doc.nodes[ch].style.size.width)
+        .expect("cascade-resolved ch width should be a finite length");
+    assert_eq!(resolved_ch, 64.0);
+    for page_width in [800.0, 400.0, 800.0] {
         let rebreak = AncestorFacts::new(&doc, &cascade, page_width);
         assert_eq!(
             rebreak.authored_containing_width(text),
@@ -2698,7 +2695,7 @@ fn ancestor_width_table_refreshes_measured_ch_and_percentage_inputs() {
         );
         assert_eq!(
             rebreak.authored_containing_width(ch_text),
-            Some(measured_ch)
+            Some(resolved_ch)
         );
     }
 }

@@ -533,8 +533,10 @@ pub enum Length {
     /// vertical-lr and text-orientation is upright)." raikiri-style has not
     /// implemented vertical rendering for `writing-mode` (or the
     /// `text-orientation` property), so computed values always normalize to
-    /// `HorizontalTb` and the upright branch is unreachable. Resolve as
-    /// `0.5 * font-size`; revisit this when vertical rendering is implemented.
+    /// `HorizontalTb` and the upright branch is unreachable. When the cascade
+    /// has no supplied advance, resolve as `0.5 * font-size`; otherwise use
+    /// the measured U+0030 advance. Revisit the upright branch with vertical
+    /// rendering.
     Ch(f32),
     /// Font-relative length: `rch`, relative to the root element’s `ch`.
     /// `1rch` → `Rch(1.0)`.
@@ -887,10 +889,8 @@ pub struct CalcLengthPercentage {
 /// as `0.5em` and `ic` as `1em` (the style layer has no font metrics, as for
 /// [`Length::Ex`]), their root counterparts likewise fold into `rem`, and the
 /// small / large / dynamic viewport units fold into their default-viewport
-/// forms. A `ch` term keeps its own basis: style resolves it with the same
-/// `0.5em` fallback as a plain [`Length::Ch`], and the box properties whose
-/// layout measures the declaring font's `0` advance carry the coefficient as
-/// [`crate::ChLengthProvenance`].
+/// forms. The cascade resolves a `ch` term against the selected font's
+/// U+0030 advance, with the `0.5em` fallback when no provider supplies it.
 ///
 /// At most [`Self::MAX_RELATIVE_TERMS`] distinct relative bases are kept, so
 /// the value stays `Copy` and fixed-size inside [`LengthOrAuto`]; a sum with
@@ -1079,17 +1079,6 @@ impl RelativeCalcLengthPercentage {
             .map(|term| (term.unit, term.coefficient))
     }
 
-    /// The `ch` coefficient and the rest of the sum, when the value has a
-    /// `ch` term.
-    pub(crate) fn split_ch(mut self) -> Option<(f32, Self)> {
-        let slot = self
-            .terms
-            .iter_mut()
-            .find(|slot| slot.is_some_and(|term| term.unit == RelativeCalcUnit::Ch))?;
-        let factor = slot.take()?.coefficient;
-        Some((factor, self.normalized()?))
-    }
-
     /// The value with its `em` term, if any, marked as folding in an `ex` or
     /// `ic` approximation.
     pub(crate) fn approximating_font_metrics(mut self, approximates: bool) -> Self {
@@ -1097,6 +1086,32 @@ impl RelativeCalcLengthPercentage {
             term.approximates_font_metrics = approximates && term.unit == RelativeCalcUnit::Em;
         }
         self
+    }
+
+    /// The relative scale of this value when it is used as `font-size`,
+    /// replacing each `ch` term with its measured ratio to the parent font
+    /// size. Returns `None` for absolute lengths, other relative bases, or
+    /// terms that approximate `ex` / `ic` metrics.
+    pub(crate) fn font_size_scale_with_ch_ratio(&self, ch_ratio: f32) -> Option<f32> {
+        if self.px != 0.0 || !ch_ratio.is_finite() {
+            return None;
+        }
+        let mut scale = self.percent / 100.0;
+        let mut has_relative_term = false;
+        for term in self.terms.iter().flatten() {
+            let coefficient = match term.unit {
+                RelativeCalcUnit::Em if !term.approximates_font_metrics => term.coefficient,
+                RelativeCalcUnit::Ch if !term.approximates_font_metrics => {
+                    term.coefficient * ch_ratio
+                }
+                _ => return None,
+            };
+            scale += coefficient;
+            has_relative_term = true;
+        }
+        (has_relative_term || self.percent != 0.0)
+            .then_some(scale)
+            .filter(|scale| scale.is_finite() && *scale >= 0.0)
     }
 
     /// The factor that scales the parent's font size to this value when it
@@ -1152,7 +1167,8 @@ pub struct LengthPercentageCalc {
     /// `em` coefficient resolved against the element's computed font size.
     pub em: f32,
     /// `ch` coefficient, measured against the declaring font's `0` advance by
-    /// the layout consumer; style computes only a `0.5em` fallback for it.
+    /// the cascade; it uses a `0.5em` fallback when no provider supplies an
+    /// advance.
     pub ch: f32,
 }
 /// Specified `text-underline-offset` value.

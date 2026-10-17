@@ -25,6 +25,9 @@ fn paragraph(
     let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
     build(&mut doc, root);
     doc.mark_in_document_flags();
+    doc.set_font_collection(
+        raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("collection"),
+    );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     (doc, cascade, root)
