@@ -1087,6 +1087,9 @@ css/css-tables/subpixel-table-cell-width-001.html
 css/css-tables/subpixel-table-cell-width-002.html
 # --- css-tables reftest pin 2026-09-22 (visibility:hidden collapsed-border painting) ---
 css/css-tables/visibility-hidden-collapsed-borders.html
+# --- css-tables reftest pin 2026-10-17 (visibility:collapse rows lose height and spacing) ---
+css/css-tables/visibility-collapse-border-spacing-001.html
+css/css-tables/visibility-collapse-border-spacing-002.html
 # REMOVED 2026-09-16 (23 files): pinned-but-failing after whitespace-collapse
 # + segment-break work exposed real engine gaps (previously vacuous passes
 # under phantom strut layout). Re-pin with the fixes:

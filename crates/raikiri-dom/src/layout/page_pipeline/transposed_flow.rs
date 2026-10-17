@@ -266,7 +266,6 @@ pub(super) struct TransposedDocument {
     /// The layout of each key as it was handed to the paginator.
     transposed: Vec<TaffyLayout>,
     styles: Vec<taffy::Style>,
-    in_flow_heights: HashMap<usize, f32>,
 }
 
 impl TransposedDocument {
@@ -318,9 +317,6 @@ impl TransposedDocument {
                 style,
             ));
         }
-        // The heights recorded for boxes grown around floats are physical
-        // heights; on transposed axes they would be read as block sizes.
-        let in_flow_heights = std::mem::take(&mut document.context.in_flow_heights);
         document.context.pagination_on_transposed_axes = true;
         Self {
             axes,
@@ -330,7 +326,6 @@ impl TransposedDocument {
             physical,
             transposed,
             styles,
-            in_flow_heights,
         }
     }
 
@@ -370,7 +365,6 @@ impl TransposedDocument {
                 .layout_style_for_key_mut(key)
                 .expect("transposed box has a retained style") = style;
         }
-        document.context.in_flow_heights = self.in_flow_heights;
         document.context.pagination_on_transposed_axes = false;
     }
 }

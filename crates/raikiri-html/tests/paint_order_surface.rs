@@ -583,7 +583,8 @@ fn negative_pseudo_elements_paint_below_paragraph_blocks() {
 }
 
 /// A negative `::before` of a span that forms a stacking context stays in
-/// that span's group, which paints after the rest of the paragraph's lines.
+/// that span's group, which paints with the positioned boxes, after the
+/// inline content of the stacking context.
 #[test]
 fn negative_pseudo_elements_inside_inline_stacking_contexts_stay_in_the_lines() {
     assert_eq!(
@@ -592,7 +593,7 @@ fn negative_pseudo_elements_inside_inline_stacking_contexts_stay_in_the_lines() 
             "#s {position:relative;z-index:0} \
              #s::before {content:'X';position:relative;z-index:-1}",
         ),
-        ["box d", "box p", "text", "box s", "text s", "text"]
+        ["box d", "box p", "text", "text", "box s", "text s"]
     );
 }
 

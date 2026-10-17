@@ -2604,7 +2604,7 @@ fn translucent_before_over_several_lines_is_one_group() {
         command_kinds(&scene),
         [
             "fill", "glyphs 1", "push 0.5", "clip", "pop", "clip", "pop", "clip", "pop",
-            "glyphs 5", "glyphs 5", "glyphs 4", "pop"
+            "glyphs 5", "glyphs 1", "glyphs 4", "glyphs 1", "glyphs 3", "pop"
         ]
     );
 }
@@ -2865,8 +2865,8 @@ fn atomic_inline_on_the_first_line_paints_in_its_group() {
     assert_eq!(
         command_kinds(&scene),
         [
-            "fill", "glyphs 5", "glyphs 4", "fill", "push 0.5", "glyphs 1", "glyphs 1", "fill",
-            "pop"
+            "fill", "glyphs 1", "glyphs 4", "glyphs 1", "glyphs 3", "fill", "push 0.5", "glyphs 1",
+            "glyphs 1", "fill", "pop"
         ]
     );
 }
@@ -2952,7 +2952,8 @@ fn negative_inline_group_paints_above_its_split_parent_box() {
             "glyphs 1",
             "pop",
             "glyphs 5",
-            "glyphs 5",
+            "glyphs 1",
+            "glyphs 4",
             "pop"
         ]
     );
@@ -3105,9 +3106,7 @@ fn translucent_first_line_is_one_group() {
     );
     assert_eq!(
         command_kinds(&scene),
-        [
-            "fill", "glyphs 2", "glyphs 4", "push 0.5", "glyphs 5", "pop"
-        ]
+        ["fill", "glyphs 6", "push 0.5", "glyphs 5", "pop"]
     );
 }
 
