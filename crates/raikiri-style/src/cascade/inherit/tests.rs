@@ -3867,6 +3867,112 @@ fn writing_mode_cssom_values_preserve_keywords_without_changing_layout_fallback(
 }
 
 #[test]
+fn inter_character_ruby_annotations_compute_to_vertical_rl() {
+    let mut doc = TestDoc::new();
+    let ruby = doc.push_element(
+        0,
+        "ruby",
+        Some("display: ruby; ruby-position: inter-character"),
+    );
+    // An annotation in the ruby's anonymous annotation container.
+    let rt = doc.push_element(
+        ruby,
+        "rt",
+        Some("display: ruby-text; margin-inline-start: 5px"),
+    );
+    // An explicit annotation container keeps its writing mode; the
+    // annotation it holds is forced.
+    let rtc = doc.push_element(ruby, "rtc", Some("display: ruby-text-container"));
+    let inner = doc.push_element(rtc, "rt", Some("display: ruby-text"));
+    // An annotation's own writing mode is forced too.
+    let own = doc.push_element(
+        ruby,
+        "rt",
+        Some("display: ruby-text; writing-mode: vertical-lr"),
+    );
+    // A floated annotation is blockified and is not an annotation.
+    let floated = doc.push_element(
+        ruby,
+        "rt",
+        Some("display: ruby-text; float: left; margin-inline-start: 5px"),
+    );
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        r.computed[ruby].cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert_eq!(r.computed[rt].cssom_writing_mode, WritingMode::VerticalRl);
+    assert_eq!(
+        r.computed[rtc].cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert_eq!(
+        r.computed[inner].cssom_writing_mode,
+        WritingMode::VerticalRl
+    );
+    assert_eq!(r.computed[own].cssom_writing_mode, WritingMode::VerticalRl);
+    assert_eq!(
+        r.computed[floated].cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert_eq!(
+        r.computed[floated].margin.left,
+        ComputedLengthPercentageOrAuto::Px(5.0)
+    );
+    // Flow-relative sides map through the annotation's own writing mode.
+    assert_eq!(
+        r.computed[rt].margin.top,
+        ComputedLengthPercentageOrAuto::Px(5.0)
+    );
+    assert_eq!(
+        r.computed[rt].margin.left,
+        ComputedLengthPercentageOrAuto::Px(0.0)
+    );
+}
+
+#[test]
+fn ruby_annotations_keep_the_inherited_writing_mode_otherwise() {
+    for (ruby_style, rtc_style, expected) in [
+        // `over` annotations stay in the ruby's writing mode.
+        ("display: ruby", "", WritingMode::HorizontalTb),
+        // In a vertical ruby, inter-character acts like `over`.
+        (
+            "display: ruby; ruby-position: inter-character; writing-mode: vertical-lr",
+            "",
+            WritingMode::VerticalLr,
+        ),
+        // The annotation container's own `ruby-position` decides.
+        (
+            "display: ruby; ruby-position: inter-character",
+            "ruby-position: over",
+            WritingMode::HorizontalTb,
+        ),
+    ] {
+        let mut doc = TestDoc::new();
+        let ruby = doc.push_element(0, "ruby", Some(ruby_style));
+        let rtc_style =
+            format!("display: ruby-text-container; margin-inline-start: 5px; {rtc_style}");
+        let rtc = doc.push_element(ruby, "rtc", Some(&rtc_style));
+        let rt = doc.push_element(rtc, "rt", Some("display: ruby-text"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[rtc].cssom_writing_mode, expected, "{rtc_style}");
+        assert_eq!(r.computed[rt].cssom_writing_mode, expected, "{rtc_style}");
+        let start = if expected.is_vertical() {
+            r.computed[rtc].margin.top
+        } else {
+            r.computed[rtc].margin.left
+        };
+        assert_eq!(
+            start,
+            ComputedLengthPercentageOrAuto::Px(5.0),
+            "{rtc_style}"
+        );
+    }
+}
+
+#[test]
 fn unicode_bidi_values_cascade_and_do_not_inherit() {
     assert_eq!(ComputedValues::initial().unicode_bidi, UnicodeBidi::Normal);
 

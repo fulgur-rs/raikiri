@@ -1531,11 +1531,17 @@ impl SpecifiedValues {
     /// [`Self::finalize`], measuring `line-height: normal` with
     /// `normal_line_height` for the `lh` unit (see [`NormalLineHeight`]).
     pub fn finalize_with(
-        self,
+        mut self,
         parent: &ComputedValues,
         ctx: &ResolveContext,
         normal_line_height: Option<&dyn NormalLineHeight>,
     ) -> ComputedValues {
+        if is_inter_character_annotation(
+            resolve_display_for_float(self.display, self.float),
+            parent,
+        ) {
+            self.writing_mode = WritingMode::VerticalRl;
+        }
         // Find the parent's line-height reference (CSS Values 4 §6.1.1 self-reference rule). Both
         // `lh` in phase 2 font-size and `lh` in phase 2.5 line-height use this same parent
         // reference. The parent is already resolved before this call in the parent-to-child tree
@@ -2919,6 +2925,25 @@ pub(crate) struct BackgroundLists<'a> {
     pub(crate) attachment: Option<&'a [BackgroundAttachment]>,
     pub(crate) origin: Option<&'a [VisualBox]>,
     pub(crate) clip: Option<&'a [VisualBox]>,
+}
+
+/// Whether an element with the computed `display` and computed `parent` is
+/// a ruby annotation of a horizontal inter-character ruby, so that its
+/// computed `writing-mode` is `vertical-rl` whatever it declares (CSS Ruby 1
+/// §4.1, `inter-character`). The annotation container itself keeps its
+/// writing mode.
+///
+/// `ruby-position` applies to annotation containers. An annotation reads
+/// its explicit container's value from its parent; an annotation directly
+/// in its ruby sits in an anonymous container, which inherits the ruby's
+/// value, so the parent's value is the container's either way.
+pub(crate) fn is_inter_character_annotation(
+    display: DisplayValue,
+    parent: &ComputedValues,
+) -> bool {
+    display == DisplayValue::RubyText
+        && parent.ruby_position == RubyPosition::InterCharacter
+        && !parent.cssom_writing_mode.is_vertical()
 }
 
 /// Computes the background layers from the specified per-layer lists (CSS
