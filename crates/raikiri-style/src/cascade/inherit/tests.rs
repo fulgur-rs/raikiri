@@ -2005,6 +2005,15 @@ fn text_group_align_defaults_to_none_and_is_not_inherited() {
     );
     assert_eq!(parent.text_group_align, TextGroupAlign::Left);
     assert_eq!(child.text_group_align, TextGroupAlign::Left);
+    for keyword in ["initial", "unset"] {
+        let (_, child) = cascade_parent_child(
+            "div",
+            Some("text-group-align: left"),
+            "div",
+            Some(&format!("text-group-align: {keyword}")),
+        );
+        assert_eq!(child.text_group_align, TextGroupAlign::None, "{keyword}");
+    }
     // Only the keywords of CSS Text 4 parse.
     let (cv, _) = cascade_parent_child("div", Some("text-group-align: justify"), "div", None);
     assert_eq!(cv.text_group_align, TextGroupAlign::None);

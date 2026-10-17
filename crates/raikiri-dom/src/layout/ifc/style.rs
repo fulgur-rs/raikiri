@@ -866,7 +866,7 @@ pub(crate) fn line_options(
     let text_group_align = same_enum!(
         TextGroupAlign, cv.text_group_align, node;
         None, Start, End, Left, Right, Center
-    )?;
+    )?; // cov:ignore: the cascade has no text-group-align value outside these six.
     Ok((
         LineOptions {
             text_align,
