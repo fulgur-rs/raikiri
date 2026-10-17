@@ -812,18 +812,16 @@ fn stretches_on_both_grid_axes(doc: &Document, idx: usize, cv: &ComputedValues) 
     {
         return false;
     }
-    let Some(parent) = doc.taffy_parent_of(idx) else {
-        return false;
-    };
-    let container = &doc.nodes[parent].style;
-    if container.display != taffy::Display::Grid || !has_only_fixed_rows(doc, parent) {
-        return false;
-    }
     let stretch = |value: Option<taffy::AlignItems>, fallback: taffy::AlignItems| {
         value.unwrap_or(fallback).keyword == AlignItemsKeyword::Stretch
     };
-    stretch(style.justify_self, container.justify_items)
-        && stretch(style.align_self, container.align_items)
+    doc.taffy_parent_of(idx).is_some_and(|parent| {
+        let container = &doc.nodes[parent].style;
+        container.display == taffy::Display::Grid
+            && has_only_fixed_rows(doc, parent)
+            && stretch(style.justify_self, container.justify_items)
+            && stretch(style.align_self, container.align_items)
+    })
 }
 
 /// Whether every row an item of `grid` can land in has a fixed length, so

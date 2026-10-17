@@ -158,3 +158,32 @@ fn stretched_grid_images_in_implicit_auto_rows_keep_their_ratio() {
     });
     assert_eq!(size(&doc, images[1]), (100.0, 200.0));
 }
+
+#[test]
+fn stretched_grid_images_fill_fixed_implicit_rows_but_not_repeated_ones() {
+    let mut images = Vec::new();
+    let doc = laid_out(|doc, body| {
+        for rows in [
+            "grid-template-rows:100px;grid-auto-rows:100px",
+            "grid-template-rows:repeat(1, 100px)",
+        ] {
+            let grid = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(
+                    format!("display:grid;{rows};grid-template-columns:100px;place-items:stretch")
+                        .as_str(),
+                ),
+            );
+            for _ in 0..2 {
+                images.push(doc.append_element(Some(grid), "img", Style::default(), None::<&str>));
+            }
+        }
+    });
+    let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
+    // Implicit rows of a fixed size take the ratio-free stretch as well.
+    assert_eq!(&sizes[..2], &[(100.0, 100.0); 2]);
+    // A repeat() row list is not inspected and keeps the ratio.
+    assert_eq!(sizes[2], (100.0, 200.0));
+}
