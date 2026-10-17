@@ -177,3 +177,46 @@ fn line_shifts_match_a_direct_sum_in_and_out_of_line_order() {
         assert_eq!(shifts.total().to_bits(), all.to_bits());
     }
 }
+
+/// An empty inline-block `::before` keeps its clamped size when the lines
+/// are broken again, and its piece names the inline element it belongs to.
+#[test]
+fn an_empty_atomic_before_keeps_its_size_through_a_rebreak() {
+    use crate::layout::ifc::test_support::{sheet_fixture, span};
+    use crate::layout::test_support::page_box_800x600;
+    let mut owner = 0;
+    let fixture = sheet_fixture(
+        "span::before{content:'';display:inline-block;width:30px;height:10px;max-width:20px;min-width:25px}",
+        "line-height:10px",
+        |doc, root| {
+            doc.append_text(root, "aa ");
+            owner = span(doc, root, "display:inline");
+            doc.append_text(owner, "b");
+        },
+    );
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    doc.set_font_collection_with_limits(ahem_fonts(), Limits::default());
+    crate::layout::layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600())
+        .expect("layout");
+    crate::layout::relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
+    let before =
+        crate::generated_content::generated_node_id(owner, raikiri_style::PseudoElem::Before);
+    let atomic = doc.nodes[root]
+        .ifc_lines()
+        .expect("lines")
+        .iter()
+        .flat_map(|line| line.fragments())
+        .find_map(|fragment| match fragment {
+            shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == before => Some(atomic),
+            _ => None,
+        })
+        .expect("the pseudo-element is on a line");
+    assert_eq!(atomic.border_rect.inline_size, 25.0);
+    let piece = doc.nodes[root]
+        .ifc_inline_boxes()
+        .expect("pieces")
+        .into_iter()
+        .find(|piece| piece.node == before)
+        .expect("the pseudo-element has a piece");
+    assert_eq!(piece.parent, Some(owner));
+}
