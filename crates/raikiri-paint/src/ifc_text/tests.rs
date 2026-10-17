@@ -3840,8 +3840,9 @@ fn vertical_emphasis_marks_a_combined_square_that_starts_without_a_glyph() {
 }
 
 /// [`paragraph`] and [`lay_out`] with a Noto Sans subset, whose `ffi` is one
-/// ligature glyph, registered as the `Liga` family.
-fn lay_out_ligature(css: &str, text: &str) -> Vec<(u32, f64, f64, anyrender::Paint)> {
+/// ligature glyph, registered as the `Liga` family. `text` sits in a span
+/// styled with `span` when that is not empty.
+fn lay_out_ligature(css: &str, span: &str, text: &str) -> Vec<(u32, f64, f64, anyrender::Paint)> {
     let fonts = || {
         let fonts =
             raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("fonts");
@@ -3859,7 +3860,13 @@ fn lay_out_ligature(css: &str, text: &str) -> Vec<(u32, f64, f64, anyrender::Pai
         fonts
     };
     let (mut doc, cascade, root) = paragraph(&format!("font-family:Liga;{css}"), |doc, root| {
-        doc.append_text(root, text);
+        let parent = if span.is_empty() {
+            root
+        } else {
+            let style = format!("display:inline;{span}");
+            doc.append_element(Some(root), "span", Style::default(), Some(style.as_str()))
+        };
+        doc.append_text(parent, text);
     });
     doc.set_font_collection(fonts());
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout");
@@ -3874,6 +3881,7 @@ fn emphasis_marks_split_a_ligature_among_its_characters() {
                 "writing-mode:{mode};line-height:40px;text-emphasis:dot;\
                  text-emphasis-color:rgb(255,0,0)"
             ),
+            "",
             "ffi",
         );
         let red = solid(255, 0, 0);
@@ -3896,4 +3904,14 @@ fn emphasis_marks_split_a_ligature_among_its_characters() {
             "{mode}: {along:?}"
         );
     }
+    // A right-to-left run lays the ligature's characters out from the right,
+    // and each still takes a mark.
+    let placed = lay_out_ligature(
+        "line-height:40px;text-emphasis:dot;text-emphasis-color:rgb(255,0,0)",
+        "direction:rtl;unicode-bidi:bidi-override",
+        "ffi",
+    );
+    let red = solid(255, 0, 0);
+    let marks = placed.iter().filter(|g| g.3 == red).count();
+    assert_eq!(marks, 3, "{placed:?}");
 }
