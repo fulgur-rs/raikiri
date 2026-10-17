@@ -4797,13 +4797,13 @@ fn paginate_flow(
                     // A float does not lengthen the block around it; its
                     // own shift ends with its subtree.
                     let mut moved_in_bounded_ancestor = false;
-                    let nested_block = !candidate.context.is_direct_body_element
-                        && node_delta > 0.0
+                    let moves_in_flow_down = node_delta > 0.0
                         && !is_floating_box_for_pagination(document, cascade, node_id);
+                    let nested_block =
+                        !candidate.context.is_direct_body_element && moves_in_flow_down;
                     if (page_overflow
                         || (forced_transition && candidate.context.is_direct_body_element))
-                        && node_delta > 0.0
-                        && !is_floating_box_for_pagination(document, cascade, node_id)
+                        && moves_in_flow_down
                     {
                         moved_in_bounded_ancestor = grow_ancestors_for_shift(
                             document,
@@ -4840,13 +4840,11 @@ fn paginate_flow(
                     if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
                         move_flex_line_siblings(document, parent_id, node_id, raw_y, shift_delta);
                     }
+                    // A kept margin moves the box's descendants and its
+                    // later siblings along with the box.
+                    flow_shift += node_delta;
                     if node_target_y < target_y {
-                        flow_shift += node_delta;
                         deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
-                    } else {
-                        // A kept margin moves the box's descendants and its
-                        // later siblings along with the box.
-                        flow_shift += node_delta;
                     }
                     if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
                         let inherited =
