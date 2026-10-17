@@ -1909,3 +1909,18 @@ fn z_indexed_inline_content_stays_in_the_lines_beside_an_empty_block_pseudo_elem
     );
     assert_eq!(red_and_lime(&result), (200, 0));
 }
+
+#[test]
+fn z_indexed_inline_content_holding_a_block_stays_in_the_lines() {
+    // The block inside the span paints with the paragraph's blocks, which
+    // the span's group does not carry, so the span's text stays in the lines
+    // with it, before the later positioned box.
+    let result = assert_same_order(
+        "<div id=p><span style=\"position: relative; z-index: 2\">A\
+         <span style=\"display: block\">b</span></span></div>\
+         <div id=b style=\"position: relative; z-index: 1; height: 10px\"></div>",
+        "",
+    );
+    let [p, b] = ["p", "b"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Text(p)) < step_at(&result, Step::Box(b)));
+}

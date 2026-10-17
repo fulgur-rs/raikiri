@@ -777,8 +777,9 @@ impl LeavingParagraphs {
 /// It cannot when a translucent first line wraps part of it, as the group
 /// of the `::first-line` box holds that part (CSS Color 4 §3.3), or when a
 /// `::before` or `::after` forms such a stacking context too, as the lines
-/// order those groups by stack level among themselves; the content then
-/// paints with the lines, as all of it did before.
+/// order those groups by stack level among themselves, or when such an
+/// inline element holds a block, which paints with the paragraph's blocks;
+/// the content then paints with the lines, as all of it did before.
 pub fn content_can_leave_paragraph(
     document: &Document,
     cascade: &CascadeResult,
@@ -790,7 +791,18 @@ pub fn content_can_leave_paragraph(
     // A block-level `::before` or `::after` with no content has no line
     // fragment, only its piece.
     document.get_node(root).is_none_or(|node| {
-        !node
+        // An in-flow block inside such an inline element paints apart from
+        // the element's group.
+        !node.ifc_boxes().into_iter().any(|id| {
+            cascade.computed.get(id).is_some_and(|cv| {
+                !cv.display.is_inline_level()
+                    && matches!(cv.position, PositionValue::Static)
+                    && matches!(cv.float, FloatValue::None)
+            }) && document
+                .ancestors(id)
+                .take_while(|&ancestor| ancestor != root)
+                .any(|ancestor| inline_stacking_group(document, cascade, root, ancestor))
+        }) && !node
             .ifc_lines()
             .into_iter()
             .flatten()
