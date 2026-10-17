@@ -1891,12 +1891,12 @@ fn shodo_group_align(
     use raikiri_style::property::TextGroupAlign as P;
     use shodo::style::TextGroupAlign as S;
     match value {
-        P::None => S::None,
         P::Start => S::Start,
         P::End => S::End,
         P::Left => S::Left,
         P::Right => S::Right,
         P::Center => S::Center,
-        _ => S::None, // cov:ignore: the cascade has no value outside these six.
+        // `none`, and any value the cascade does not produce.
+        _ => S::None,
     }
 }
