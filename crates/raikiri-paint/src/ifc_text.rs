@@ -736,8 +736,9 @@ pub(crate) fn hold_ifc_lines<'a>(
                         run_transform,
                     );
                 }
-                // Emphasis marks sit over or under their characters; vertical
-                // runs need rotated placement, which is not drawn yet.
+                // Emphasis marks sit over or under their characters. A
+                // vertical annotation run's clusters are laid out on its own
+                // line, whose inline axis the marks are not placed along yet.
                 if !vertical && !draw.turned {
                     crate::emphasis::draw_marks(
                         scene,
@@ -745,6 +746,20 @@ pub(crate) fn hold_ifc_lines<'a>(
                         &draw.run,
                         &draw.glyphs,
                         emphasis_origin(position, line.block_offset(), draw),
+                        owner_style,
+                        draw.color,
+                    );
+                } else if vertical && draw.annotation_baseline.is_none() {
+                    crate::emphasis::draw_vertical_marks(
+                        scene,
+                        document,
+                        &draw.run,
+                        (writing_mode, &converter),
+                        (
+                            position.x + draw.offset.0,
+                            position.y + position.shift_y + draw.offset.1,
+                        ),
+                        line.block_offset() + draw.run.baseline(),
                         owner_style,
                         draw.color,
                     );

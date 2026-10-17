@@ -3150,6 +3150,42 @@ fn emphasis_marks_follow_the_text_color_by_default_and_can_go_under() {
 }
 
 #[test]
+fn vertical_emphasis_marks_sit_beside_each_cluster_but_not_punctuation() {
+    for (mode, position, right) in [
+        ("vertical-rl", "over right", true),
+        ("vertical-lr", "over right", true),
+        ("vertical-rl", "over left", false),
+    ] {
+        let (mut doc, cascade, root) = paragraph(
+            &format!(
+                "writing-mode:{mode};text-orientation:upright;line-height:40px;\
+                 text-emphasis:dot;text-emphasis-position:{position};\
+                 text-emphasis-color:rgb(255,0,0)"
+            ),
+            |doc, root| {
+                doc.append_text(root, "aa,a");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let placed = glyphs(&draw_root(&doc, &cascade, root));
+        let red = solid(255, 0, 0);
+        let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+        assert_eq!(text.len(), 4, "{mode}: every character is drawn");
+        assert_eq!(marks.len(), 3, "{mode}: the comma takes no mark");
+        let column = text[0].1;
+        assert!(
+            marks.iter().all(|mark| (mark.1 > column) == right),
+            "{mode} {position}: marks go on the {} side: {marks:?} {text:?}",
+            if right { "right" } else { "left" }
+        );
+        // Each mark is centered on its 10px cluster down the line.
+        let ys: Vec<f64> = marks.iter().map(|mark| mark.2).collect();
+        assert!((ys[1] - ys[0] - 10.0).abs() < 0.01, "{mode}: {ys:?}");
+        assert!((ys[2] - ys[1] - 20.0).abs() < 0.01, "{mode}: {ys:?}");
+    }
+}
+
+#[test]
 fn ellipsis_is_painted_in_the_root_style() {
     let css =
         "width:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgb(0,0,255)";
