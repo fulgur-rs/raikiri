@@ -4636,17 +4636,12 @@ fn paginate_flow(
         // §3.2): the block boxes inside an avoiding inline box break as they
         // would without it. An atomic inline, such as an inline table, is a
         // single box in its line and still moves as a whole.
-        let page_overflow = matches!(
-            computed.break_inside,
-            raikiri_style::property::BreakInside::Avoid
-                | raikiri_style::property::BreakInside::AvoidPage
-        ) && (!document.nodes[node_id].display().is_inline_flow()
-            || page_applies_to_box(document, node_id))
-            // A box already at the top of its page would break inside on
-            // any page, so moving it would only leave a blank page.
-            && flow_y - margin_top.max(0.0) > page_start + 0.001
-            && starts_on_page_and_runs_past_it(
+        let page_overflow = avoids_page_break_inside(computed.break_inside)
+            && (!document.nodes[node_id].display().is_inline_flow()
+                || page_applies_to_box(document, node_id))
+            && avoided_box_moves(
                 flow_y,
+                margin_top,
                 flow_y + height + trailing_margin,
                 page_start,
                 page_end,
@@ -5433,11 +5428,7 @@ fn avoided_row_groups(
             DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
         ) || (document.nodes[group].display() == DisplayValue::TableHeaderGroup
             && !table_headers.headers.contains_key(&group)))
-            && matches!(
-                cascade.computed[group].break_inside,
-                raikiri_style::property::BreakInside::Avoid
-                    | raikiri_style::property::BreakInside::AvoidPage
-            )
+            && avoids_page_break_inside(cascade.computed[group].break_inside)
     };
     if candidates.iter().any(|candidate| {
         candidate.is_table_row
@@ -6627,6 +6618,33 @@ fn avoided_run_moves(
         && effective_y > page_start
         && effective_y < page_end
         && effective_y + run_height > page_end
+}
+
+/// Whether `break_inside` avoids page breaks inside its box.
+fn avoids_page_break_inside(break_inside: raikiri_style::property::BreakInside) -> bool {
+    matches!(
+        break_inside,
+        raikiri_style::property::BreakInside::Avoid
+            | raikiri_style::property::BreakInside::AvoidPage
+    )
+}
+
+/// Whether a box at `flow_y` that avoids breaks inside it, with its
+/// block-start `margin_top`, moves whole to the next page: it starts on the
+/// page spanning `page_start..page_end` and ends at `box_end` past that
+/// page's end.
+///
+/// A box whose margin box is already at the top of its page would break
+/// inside on any page, so moving it would only leave a blank page.
+fn avoided_box_moves(
+    flow_y: f32,
+    margin_top: f32,
+    box_end: f32,
+    page_start: f32,
+    page_end: f32,
+) -> bool {
+    flow_y - margin_top.max(0.0) > page_start + 0.001
+        && starts_on_page_and_runs_past_it(flow_y, box_end, page_start, page_end)
 }
 
 /// Whether a table row group of `group_height` at `flow_y` that avoids
