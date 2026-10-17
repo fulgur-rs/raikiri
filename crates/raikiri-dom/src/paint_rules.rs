@@ -168,7 +168,7 @@ pub(crate) fn is_replaced_element(document: &Document, node_id: usize) -> bool {
         node.is_inline_svg_root()
             || matches!(
                 node.tag_name(),
-                Some("img" | "canvas" | "video" | "iframe" | "embed" | "object")
+                Some("img" | "canvas" | "video" | "audio" | "iframe" | "embed" | "object")
             )
     })
 }

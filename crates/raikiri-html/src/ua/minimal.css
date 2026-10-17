@@ -477,7 +477,7 @@ img {
 /* CSS Overflow 3 §3.1 and CSS Overflow 4 §3.2: replaced elements clip
  * their content at the content box by default, and authors can let it
  * overflow with `overflow: visible`. */
-img, video, canvas, iframe, embed, object {
+img, video, audio, canvas, iframe, embed, object {
   overflow: clip;
   overflow-clip-margin: content-box;
 }

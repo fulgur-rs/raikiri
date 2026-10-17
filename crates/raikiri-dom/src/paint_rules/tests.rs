@@ -773,3 +773,21 @@ fn a_scroll_container_applies_only_an_inward_clip_margin() {
     let clip = overflow_clip(&doc, &cascade, border_box_value, border_box, border).unwrap();
     assert_eq!(clip.rect, PaintRect::new(12.0, 22.0, 96.0, 46.0));
 }
+
+#[test]
+fn an_audio_element_uses_its_hidden_overflow_as_clip() {
+    let mut doc = Document::new();
+    let audio = doc.append_element(
+        Some(doc.root_index()),
+        "audio",
+        Style::default(),
+        Some("display:block;overflow:hidden;overflow-clip-margin:10px"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
+    let border = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
+    // Used as `clip`, the outward margin applies from the padding box.
+    let clip = overflow_clip(&doc, &cascade, audio, border_box, border).unwrap();
+    assert_eq!(clip.rect, PaintRect::new(2.0, 12.0, 116.0, 66.0));
+}
