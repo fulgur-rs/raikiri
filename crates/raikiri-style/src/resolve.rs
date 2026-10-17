@@ -299,19 +299,6 @@ pub enum ComputedTextUnderlineOffset {
     Calc(crate::property::CalcLengthPercentage),
 }
 
-/// Computed absolute length plus authored `ch` provenance.
-///
-/// The computed value remains an absolute fallback for consumers that do not
-/// have a shaping context. The optional factor lets a font-aware consumer
-/// replace that fallback with the selected face's `0` glyph advance.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ComputedLengthWithCh {
-    /// Style-layer computed fallback in CSS px.
-    pub value: ComputedLength,
-    /// Authored `ch` multiplier, when the specified value used `ch`.
-    pub ch_factor: Option<f32>,
-}
-
 /// Computed `<length-percentage>` — px or a percentage.
 ///
 /// Used for properties such as `padding-*` whose grammar accepts
@@ -455,19 +442,6 @@ pub enum ComputedLetterSpacing {
 /// [`ComputedLetterSpacing`]: percentages remain deferred and mixed calcs keep
 /// their percentage and absolute-length terms.
 pub type ComputedWordSpacing = ComputedLetterSpacing;
-
-/// Computed `<length-percentage>` plus authored `ch` provenance.
-///
-/// The absolute fallback remains available to consumers that do not have a
-/// shaping context; text layout can replace it with the selected face's
-/// U+0030 advance when `ch_factor` is present.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ComputedLengthPercentageWithCh {
-    /// Style-layer computed fallback.
-    pub value: ComputedLengthPercentage,
-    /// Authored `ch` multiplier, when the specified value used `ch`.
-    pub ch_factor: Option<f32>,
-}
 
 /// Computed `<length-percentage> | auto`.
 ///
@@ -1574,6 +1548,12 @@ pub struct ResolveContext {
     ///
     /// [`Length::Lh`]: crate::property::Length::Lh
     pub root_line_height: Option<ComputedLength>,
+    /// U+0030 advance of this element's selected font, used to resolve `ch`.
+    ///
+    /// `None` uses the CSS Values 4 fallback of half the font size. The
+    /// font-size property uses the parent font's advance in its phase 2
+    /// context; later properties use this element's advance.
+    pub ch_advance: Option<ComputedLength>,
     /// Width of the viewport in CSS px: the basis of `vw` (and of `vi`,
     /// `vmin` and `vmax`).
     ///
@@ -1644,6 +1624,12 @@ impl ResolveContext {
         self
     }
 
+    /// Set the U+0030 advance, in CSS px, used to resolve `ch`.
+    pub fn with_ch_advance(mut self, advance: Option<ComputedLength>) -> Self {
+        self.ch_advance = advance;
+        self
+    }
+
     /// This context with the root element's writing mode vertical or not.
     pub fn with_vertical_root(mut self, vertical: bool) -> Self {
         self.vertical_root = vertical;
@@ -1683,6 +1669,7 @@ impl ResolveContext {
         Self {
             root_font_size,
             root_line_height: None,
+            ch_advance: None,
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
@@ -1703,6 +1690,7 @@ impl ResolveContext {
         Self {
             root_font_size,
             root_line_height,
+            ch_advance: None,
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
@@ -1748,6 +1736,7 @@ impl ResolveContext {
         Self {
             root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
             root_line_height: None,
+            ch_advance: None,
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
@@ -1892,21 +1881,31 @@ pub fn used_line_height_length_or(
     }
 }
 
-/// Measures the used length of `line-height: normal` for the `lh` and `rlh`
-/// units.
+/// Measures font metrics used by cascade length resolution.
 ///
 /// CSS Values 4 §6.1.1 [`lh`](https://www.w3.org/TR/css-values-4/#lh)
 /// converts `normal` "to an absolute length by using only the metrics of the
 /// first available font". The style layer has no fonts, so a consumer that
 /// has them passes an implementation through
 /// [`crate::CascadeOptions::normal_line_height`], or the document provides
-/// one through [`crate::StyleDom::normal_line_height`]. Without either,
-/// `normal` stays unresolved and each property applies the fallback its resolver
-/// documents.
+/// one through [`crate::StyleDom::normal_line_height`]. The same provider may
+/// supply the U+0030 advance for `ch`. Without those metrics, `normal` stays
+/// unresolved and `ch` uses its specified `0.5em` fallback.
 pub trait NormalLineHeight: Send + Sync {
     /// The used `normal` line height in CSS px of the first available font
     /// that `font` selects, or `None` when no font can be measured.
     fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<ComputedLength>;
+
+    /// The U+0030 advance, in CSS px, of the first available font selected by
+    /// `font`, or `None` when this provider does not measure `ch`.
+    ///
+    /// The default keeps existing normal-line-height-only providers source
+    /// compatible. A provider may return `Some(0.5em)` when its selected font
+    /// has no usable U+0030 glyph; `None` means this provider does not resolve
+    /// `ch`. When no provider supplies an advance, cascade uses `0.5em`.
+    fn ch_advance(&self, _font: &crate::ChFontKey) -> Option<ComputedLength> {
+        None
+    }
 }
 
 /// A shared [`NormalLineHeight`] for [`crate::CascadeOptions`].
@@ -1965,17 +1964,18 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// |---|---|---|
 /// | `Npx` | `N` px | identity |
 /// | `Npt` / `Ncm` / `Nmm` / `NQ` / `Nin` / `Npc` | per conversion table | CSS Values 4 §6.2 <https://www.w3.org/TR/css-values-4/#absolute-lengths> |
-/// | `Nem` / `Nex` / `Nch` | `parent_font_size * N` (`ex`/`ch`: also `* 0.5`) | parent-metrics clause below + fallback docs for [`Length::Ex`] / [`Length::Ch`] |
+/// | `Nem` / `Nex` / `Nch` | `parent_font_size * N` for `em`; `ex` falls back to `0.5em`; `ch` uses the parent's supplied U+0030 advance or falls back to `0.5em` | parent-metrics clause below + fallback docs for [`Length::Ex`] / [`Length::Ch`] |
 /// | `Nic` | `parent_font_size * N` | parent-metrics clause below + fallback docs for [`Length::Ic`] |
 /// | `Nrem` / `Nrex` / `Nrch` / `Nric` | `ctx.root_font_size * N` (`rex`/`rch`: also `* 0.5`) | CSS Values 4 §6.1.1 `rem` <https://www.w3.org/TR/css-values-4/#rem> |
 /// | `N%` | `parent_font_size * N / 100` | CSS Fonts 4 `font-size` propdef "Percentages: refer to parent element's font size" <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> |
 /// | `Nlh` | `self_reference_basis * N`, or [`INITIAL_FONT_SIZE_PX`] if the basis is `None` | "Self-reference for `lh` / `rlh`" below |
 /// | `Nrlh` | `ctx.root_line_height * N`, or [`INITIAL_FONT_SIZE_PX`] if the basis is `None` | same |
 ///
-/// Without real font metrics in the style layer, `ex` / `rex` / `ch` / `rch` /
-/// `ic` / `ric` always use the spec's unknown-metric fallbacks (see the docs
-/// for their variants, such as [`Length::Ex`]). `font-size` is a font-* property,
-/// so it uses the **parent** basis under the parent-metrics clause, like `em`.
+/// Without a [`ResolveContext::ch_advance`], `ch` uses the spec's `0.5em`
+/// unknown-metric fallback. When the cascade supplies a font metric, `ch` uses
+/// that advance. `ex` / `rex` / `rch` / `ic` / `ric` use their documented
+/// fallbacks (see [`Length::Ex`]). `font-size` is a font-* property, so it uses
+/// the **parent** basis under the parent-metrics clause, like `em`.
 ///
 /// [`INITIAL_FONT_SIZE_PX`]: crate::computed::INITIAL_FONT_SIZE_PX
 ///
@@ -2098,10 +2098,15 @@ pub fn resolve_font_size(
         Length::Pc(v) => ComputedLength(pc_to_px(v)),
         Length::Em(v) => ComputedLength(parent_font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
-        // ex / ch: unknown-metric fallback = 0.5em (see `Length::Ex` /
-        // `Length::Ch`). Use the parent basis because this is font-size itself
-        // (parent-metrics clause above, as for `em`).
-        Length::Ex(v) | Length::Ch(v) => ComputedLength(parent_font_size.0 * v * 0.5),
+        // ex: unknown-metric fallback = 0.5em. `ch` uses the selected
+        // parent's U+0030 advance when available, with the same fallback.
+        Length::Ex(v) => ComputedLength(parent_font_size.0 * v * 0.5),
+        Length::Ch(v) => ComputedLength(
+            ctx.ch_advance
+                .unwrap_or(ComputedLength(parent_font_size.0 * 0.5))
+                .0
+                * v,
+        ),
         // ic: unknown-metric fallback = 1em (see `Length::Ic`).
         Length::Ic(v) => ComputedLength(parent_font_size.0 * v),
         // rex / rch: use the same fallback against root_font_size (as for `rem`).
@@ -2238,9 +2243,15 @@ pub(crate) fn resolve_length(
         Length::Pc(v) => ComputedLength(pc_to_px(v)),
         Length::Em(v) => ComputedLength(font_size.0 * v),
         Length::Rem(v) => ComputedLength(ctx.root_font_size.0 * v),
-        // ex / ch / ic: use unknown-metric fallbacks against this element's
-        // font-size (same 0.5em / 1em as `resolve_font_size`, different basis).
-        Length::Ex(v) | Length::Ch(v) => ComputedLength(font_size.0 * v * 0.5),
+        // ex uses its unknown-metric fallback. `ch` uses the selected
+        // element font's U+0030 advance when available.
+        Length::Ex(v) => ComputedLength(font_size.0 * v * 0.5),
+        Length::Ch(v) => ComputedLength(
+            ctx.ch_advance
+                .unwrap_or(ComputedLength(font_size.0 * 0.5))
+                .0
+                * v,
+        ),
         Length::Ic(v) => ComputedLength(font_size.0 * v),
         Length::Rex(v) | Length::Rch(v) => ComputedLength(ctx.root_font_size.0 * v * 0.5),
         Length::Ric(v) => ComputedLength(ctx.root_font_size.0 * v),
@@ -2296,28 +2307,6 @@ pub fn resolve_length_or_normal(
     }
 }
 
-/// Resolve a spacing length while retaining authored `ch` provenance.
-///
-/// The ordinary [`resolve_length_or_normal`] API intentionally returns only
-/// the computed absolute length. Text layout additionally needs to know that
-/// the source was `Nch`, because the actual `0` advance is only available once
-/// a font/shaping context is present.
-pub fn resolve_length_or_normal_with_ch(
-    specified: LengthOrNormal,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> ComputedLengthWithCh {
-    let ch_factor = match specified {
-        LengthOrNormal::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
-        _ => None,
-    };
-    ComputedLengthWithCh {
-        value: resolve_length_or_normal(specified, font_size, own_line_height, ctx),
-        ch_factor,
-    }
-}
-
 /// Resolve the computed CSS value for `letter-spacing`.
 ///
 /// Simple percentages and mixed calc percentages remain deferred. Relative
@@ -2338,7 +2327,10 @@ pub fn resolve_letter_spacing(
             ComputedLetterSpacing::Px(resolve_length(length, font_size, own_line_height, ctx).px())
         }
         LetterSpacingValue::Calc(calc) => {
-            let px = calc.px + calc.em * font_size.px() + calc.ch * font_size.px() * 0.5;
+            let ch_advance = ctx
+                .ch_advance
+                .unwrap_or(ComputedLength(font_size.px() * 0.5));
+            let px = calc.px + calc.em * font_size.px() + calc.ch * ch_advance.px();
             if calc.percent == 0.0 {
                 ComputedLetterSpacing::Px(px)
             } else if px == 0.0 {
@@ -2362,47 +2354,6 @@ pub fn resolve_word_spacing(
     ctx: &ResolveContext,
 ) -> ComputedWordSpacing {
     resolve_letter_spacing(specified, font_size, own_line_height, ctx)
-}
-
-/// Resolve the renderer-facing fallback while retaining authored `ch`.
-///
-/// Percentage and calc values keep the legacy zero fallback until text layout
-/// consumes their computed representation.
-pub fn resolve_letter_spacing_with_ch(
-    specified: LetterSpacingValue,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> ComputedLengthWithCh {
-    match specified {
-        LetterSpacingValue::Normal => resolve_length_or_normal_with_ch(
-            LengthOrNormal::Normal,
-            font_size,
-            own_line_height,
-            ctx,
-        ),
-        LetterSpacingValue::Length(length) => resolve_length_or_normal_with_ch(
-            LengthOrNormal::Length(length),
-            font_size,
-            own_line_height,
-            ctx,
-        ),
-        LetterSpacingValue::Calc(calc) => ComputedLengthWithCh {
-            value: ComputedLength::ZERO,
-            ch_factor: calc_ch_factor(calc),
-        },
-    }
-}
-
-/// Resolve the existing absolute renderer/layout fallback for `word-spacing`,
-/// retaining authored `ch` provenance just like the letter-spacing path.
-pub fn resolve_word_spacing_with_ch(
-    specified: WordSpacingValue,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> ComputedLengthWithCh {
-    resolve_letter_spacing_with_ch(specified, font_size, own_line_height, ctx)
 }
 
 /// Absolutize specified `tab-size` (**phase 3**, using this node's basis).
@@ -2610,11 +2561,17 @@ pub fn resolve_text_underline_offset(
             own_line_height,
             ctx,
         )),
-        TextUnderlineOffset::Calc(calc) => match resolve_text_indent_calc(calc, font_size) {
-            ComputedTextIndent::Px(px) => ComputedTextUnderlineOffset::Length(ComputedLength(px)),
-            ComputedTextIndent::Percent(percent) => ComputedTextUnderlineOffset::Percent(percent),
-            ComputedTextIndent::Calc(calc) => ComputedTextUnderlineOffset::Calc(calc),
-        },
+        TextUnderlineOffset::Calc(calc) => {
+            match resolve_text_indent_calc_with_context(calc, font_size, ctx) {
+                ComputedTextIndent::Px(px) => {
+                    ComputedTextUnderlineOffset::Length(ComputedLength(px))
+                }
+                ComputedTextIndent::Percent(percent) => {
+                    ComputedTextUnderlineOffset::Percent(percent)
+                }
+                ComputedTextIndent::Calc(calc) => ComputedTextUnderlineOffset::Calc(calc),
+            }
+        }
     }
 }
 
@@ -2654,8 +2611,15 @@ pub fn resolve_length_percentage(
         Length::Pc(v) => ComputedLengthPercentage::Px(pc_to_px(v)),
         Length::Em(v) => ComputedLengthPercentage::Px(font_size.0 * v),
         Length::Rem(v) => ComputedLengthPercentage::Px(ctx.root_font_size.0 * v),
-        // ex / ch / ic: same fallback ratios as `resolve_length`.
-        Length::Ex(v) | Length::Ch(v) => ComputedLengthPercentage::Px(font_size.0 * v * 0.5),
+        // ex and ic use the same fallback ratios as `resolve_length`; ch uses
+        // the selected font's advance when the context provides one.
+        Length::Ex(v) => ComputedLengthPercentage::Px(font_size.0 * v * 0.5),
+        Length::Ch(v) => ComputedLengthPercentage::Px(
+            ctx.ch_advance
+                .unwrap_or(ComputedLength(font_size.0 * 0.5))
+                .0
+                * v,
+        ),
         Length::Ic(v) => ComputedLengthPercentage::Px(font_size.0 * v),
         Length::Rex(v) | Length::Rch(v) => {
             ComputedLengthPercentage::Px(ctx.root_font_size.0 * v * 0.5)
@@ -2684,22 +2648,6 @@ pub fn resolve_length_percentage(
     }
 }
 
-/// Authored `ch` coefficient of a mixed `calc()`, when it has one.
-///
-/// A calc that mixes `ch` with other terms keeps the coefficient as `ch_factor`
-/// provenance; [`calc_ch_offset`] gives the remaining absolute part.
-pub fn calc_ch_factor(calc: LengthPercentageCalc) -> Option<f32> {
-    (calc.ch != 0.0 && calc.ch.is_finite()).then_some(calc.ch)
-}
-
-/// Absolute (non-`ch`, non-percentage) part of a mixed `calc()` in CSS px.
-///
-/// A font-aware consumer resolves a `ch`-bearing calc as
-/// `ch_factor * advance + offset`, so a plain `Nch` value has offset zero.
-pub fn calc_ch_offset(calc: LengthPercentageCalc, font_size: ComputedLength) -> f32 {
-    calc.px + calc.em * font_size.0
-}
-
 /// Resolve the deferred `em` coefficient in a `text-indent` calc against the
 /// element's computed font size. Percentages remain unresolved for used-value
 /// processing. A pure result is collapsed to `Px` or `Percent`; only a mixed
@@ -2708,9 +2656,17 @@ pub fn resolve_text_indent_calc(
     specified: LengthPercentageCalc,
     font_size: ComputedLength,
 ) -> ComputedTextIndent {
-    // `ch` keeps only the `0.5em` fallback here; the font-aware consumer
-    // replaces it using the factor and offset recorded by the caller.
-    let px = specified.px + specified.em * font_size.0 + specified.ch * font_size.0 * 0.5;
+    resolve_text_indent_calc_with_context(specified, font_size, &ResolveContext::new(font_size))
+}
+
+/// Resolve a text-indent-style calc using the context's selected `ch` advance.
+pub(crate) fn resolve_text_indent_calc_with_context(
+    specified: LengthPercentageCalc,
+    font_size: ComputedLength,
+    ctx: &ResolveContext,
+) -> ComputedTextIndent {
+    let ch_advance = ctx.ch_advance.unwrap_or(ComputedLength(font_size.0 * 0.5));
+    let px = specified.px + specified.em * font_size.0 + specified.ch * ch_advance.0;
     if specified.percent == 0.0 {
         ComputedTextIndent::Px(px)
     } else if px == 0.0 {
@@ -2720,23 +2676,6 @@ pub fn resolve_text_indent_calc(
             percent: specified.percent,
             px,
         })
-    }
-}
-
-/// Resolve a length-percentage while retaining authored `ch` provenance.
-pub fn resolve_length_percentage_with_ch(
-    specified: Length,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> ComputedLengthPercentageWithCh {
-    let ch_factor = match specified {
-        Length::Ch(factor) if factor.is_finite() => Some(factor),
-        _ => None,
-    };
-    ComputedLengthPercentageWithCh {
-        value: resolve_length_percentage(specified, font_size, own_line_height, ctx),
-        ch_factor,
     }
 }
 
@@ -2908,36 +2847,6 @@ fn resolve_relative_calc_with(
     })
 }
 
-/// The `ch` coefficient of a relative `calc()` and the rest of the sum, its
-/// length terms absolutized as [`resolve_relative_calc`] does and its
-/// percentage kept, for a layout consumer that measures `ch` with the
-/// declaring font.
-///
-/// `None` when the value has no `ch` term, or when the rest has an `lh` term
-/// without a basis or is not finite.
-pub(crate) fn relative_calc_ch_parts(
-    value: RelativeCalcLengthPercentage,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Option<(f32, CalcLengthPercentage)> {
-    let (factor, rest) = value.split_ch()?;
-    let px = relative_calc_length_px(
-        rest,
-        font_size,
-        own_line_height,
-        ctx,
-        |coefficient, basis| resolve_lh_multiplier(coefficient, basis).map(ComputedLength::px),
-    )?;
-    Some((
-        factor,
-        CalcLengthPercentage {
-            percent: rest.percent,
-            px,
-        },
-    ))
-}
-
 /// The length terms of a relative `calc()` summed in CSS px, or `None` when
 /// `lh_term` gives `None` or the sum is not finite.
 fn relative_calc_length_px(
@@ -2952,10 +2861,16 @@ fn relative_calc_length_px(
     for (unit, coefficient) in value.relative_terms() {
         px += match unit {
             RelativeCalcUnit::Em => coefficient * font_size.0,
-            // Style has no font metrics; this is the `0.5em` fallback of a
-            // plain `ch` length, which layout replaces where it measures the
-            // declaring font.
-            RelativeCalcUnit::Ch => coefficient * font_size.0 * 0.5,
+            // Without a supplied `ch_advance`, use the `0.5em` fallback for
+            // a plain `ch` length. Cascade resolves it with the selected
+            // font's advance when a metric provider is available.
+            RelativeCalcUnit::Ch => {
+                coefficient
+                    * ctx
+                        .ch_advance
+                        .unwrap_or(ComputedLength(font_size.0 * 0.5))
+                        .0
+            }
             RelativeCalcUnit::Rem => coefficient * ctx.root_font_size.0,
             RelativeCalcUnit::Lh => lh_term(coefficient, own_line_height)?,
             RelativeCalcUnit::Rlh => lh_term(coefficient, ctx.root_line_height)?,

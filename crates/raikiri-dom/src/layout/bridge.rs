@@ -145,9 +145,7 @@ fn vertical_logical_sized(cascade: &CascadeResult, idx: usize) -> Option<Compute
     let size = vertical_logical_size(cascade, idx)?;
     let mut sized = cascade.computed[idx].clone();
     sized.width = size.width;
-    sized.width_ch = size.width_ch.clone();
     sized.height = size.height;
-    sized.height_ch = size.height_ch.clone();
     Some(sized)
 }
 

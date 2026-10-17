@@ -27,8 +27,8 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{
-    ChFontKey, ChLengthProvenance, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues,
-    FontSizeKeywordInfo, RunningTemplate, VerticalLogicalSize, initial_background_layers,
+    ChFontKey, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues, FontSizeKeywordInfo,
+    RunningTemplate, VerticalLogicalSize, initial_background_layers,
 };
 use crate::property::{
     AlignSelfValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
@@ -66,21 +66,20 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent,
-    NormalLineHeight, ResolveContext, calc_ch_factor, calc_ch_offset,
-    empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
-    lift_font_size, lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent,
-    lift_word_spacing, relative_calc_ch_parts, resolve_background_image, resolve_background_size,
-    resolve_border_radius, resolve_border_spacing, resolve_border_with_width_provenance,
-    resolve_box_shadow_item, resolve_column_width, resolve_css_position, resolve_flex_basis,
-    resolve_font_size, resolve_font_size_calc, resolve_grid_auto_track_list,
-    resolve_grid_template_tracks, resolve_length, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
-    resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    NormalLineHeight, ResolveContext, empty_computed_box_shadow_list,
+    empty_computed_text_shadow_list, lift_border_spacing, lift_font_size, lift_letter_spacing,
+    lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing, resolve_background_image,
+    resolve_background_size, resolve_border_radius, resolve_border_spacing,
+    resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_column_width,
+    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_font_size_calc,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
+    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
-    resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
-    resolve_text_underline_offset, resolve_transform_function, resolve_vertical_align,
-    resolve_word_spacing, resolve_word_spacing_with_ch, used_line_height_length_or,
+    resolve_text_decoration_thickness, resolve_text_indent_calc_with_context,
+    resolve_text_shadow_item, resolve_text_underline_offset, resolve_transform_function,
+    resolve_vertical_align, resolve_word_spacing, used_line_height_length_or,
 };
 
 /// The `text-shadow` of a node's [`SpecifiedValues`].
@@ -284,16 +283,6 @@ pub struct SpecifiedValues {
     /// into the staging type. CSS Text 3 §8.1
     /// <https://www.w3.org/TR/css-text-3/#text-indent-property>.
     pub text_indent: TextIndentLength,
-    /// Authored `ch` factor retained through inheritance for the layout sink.
-    pub text_indent_ch_factor: Option<f32>,
-    /// Absolute part (px) of a `ch`-bearing `calc()` for `text-indent`, paired with
-    /// the factor: a font-aware consumer resolves it as
-    /// `factor * advance + offset`. Zero for a plain `Nch` value.
-    pub text_indent_ch_offset: f32,
-    /// Source font for an inherited `ch` value.
-    pub text_indent_ch_font: Option<ChFontKey>,
-    /// Whether this value was inherited from an ancestor's `text-indent: ch`.
-    pub text_indent_ch_inherited: bool,
     /// `text-indent`'s `hanging` flag staging. Inherited, initial `false`.
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag staging. Inherited, initial `false`.
@@ -473,28 +462,9 @@ pub struct SpecifiedValues {
     /// **Specified** `letter-spacing`; phase 3 ([`crate::resolve::resolve_letter_spacing`])
     /// resolves it into a computed CSS value and a renderer-facing absolute fallback.
     pub letter_spacing: LetterSpacingValue,
-    /// Authored `ch` factor retained through inheritance so the text-layout
-    /// sink can replace the style fallback with a font metric.
-    pub letter_spacing_ch_factor: Option<f32>,
-    /// Absolute part (px) of a `ch`-bearing `calc()` for `letter-spacing`, paired with
-    /// the factor: a font-aware consumer resolves it as
-    /// `factor * advance + offset`. Zero for a plain `Nch` value.
-    pub letter_spacing_ch_offset: f32,
-    /// Font that declared an inherited `ch` [`Self::letter_spacing_ch_factor`],
-    /// so descendants measure it with that font rather than their own.
-    pub letter_spacing_ch_font: Option<ChFontKey>,
     /// **Specified** `word-spacing`; its CSS Text 4 length-percentage grammar remains available
     /// through phase 3 for CSSOM computed-value exposure.
     pub word_spacing: WordSpacingValue,
-    /// Authored `ch` factor retained through inheritance so the text-layout
-    /// sink can replace the style-layer fallback with a font metric.
-    pub word_spacing_ch_factor: Option<f32>,
-    /// Absolute part (px) of a `ch`-bearing `calc()` for `word-spacing`, paired with
-    /// the factor: a font-aware consumer resolves it as
-    /// `factor * advance + offset`. Zero for a plain `Nch` value.
-    pub word_spacing_ch_offset: f32,
-    /// Font that declared an inherited `ch` [`Self::word_spacing_ch_factor`].
-    pub word_spacing_ch_font: Option<ChFontKey>,
     /// **Specified** `tab-size`; phase 3 ([`resolve_tab_size`]) absolutizes `<length>` against
     /// this node's computed font size. `<number>` needs no absolutization, as with
     /// [`Self::flex_grow`].
@@ -864,10 +834,6 @@ impl SpecifiedValues {
             ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: text-indent is initially `0`.
             text_indent: TextIndentLength::Length(Length::Px(0.0)),
-            text_indent_ch_factor: None,
-            text_indent_ch_offset: 0.0,
-            text_indent_ch_font: None,
-            text_indent_ch_inherited: false,
             text_indent_hanging: false,
             text_indent_each_line: false,
             padding: Sides::all(LengthPercentageOrCalc::Length(Length::Px(0.0))),
@@ -976,13 +942,7 @@ impl SpecifiedValues {
             overflow_wrap: OverflowWrap::Normal,
             // CSS Text 3 §7.2 / §7.1: both letter-spacing and word-spacing are initially `normal`.
             letter_spacing: LetterSpacingValue::Normal,
-            letter_spacing_ch_factor: None,
-            letter_spacing_ch_offset: 0.0,
-            letter_spacing_ch_font: None,
             word_spacing: WordSpacingValue::Normal,
-            word_spacing_ch_factor: None,
-            word_spacing_ch_offset: 0.0,
-            word_spacing_ch_font: None,
             // CSS Text Module Level 3 §4.2: tab-size is initially `8`.
             tab_size: TabSize::Number(8.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before, break-after, and
@@ -1222,11 +1182,6 @@ impl SpecifiedValues {
             // CSS Text 3 §8.1: text-indent is inherited. Lift mixed calc
             // terms without reapplying the parent's em basis to the child.
             text_indent: lift_text_indent(parent.text_indent),
-            text_indent_ch_factor: parent.text_indent_ch_factor,
-            text_indent_ch_offset: parent.text_indent_ch_offset,
-            text_indent_ch_font: parent.text_indent_ch_font.clone(),
-            text_indent_ch_inherited: parent.text_indent_ch_inherited
-                || parent.text_indent_ch_factor.is_some(),
             text_indent_hanging: parent.text_indent_hanging,
             text_indent_each_line: parent.text_indent_each_line,
             // CSS Fonts 4 §2.4: font-style is inherited.
@@ -1268,13 +1223,7 @@ impl SpecifiedValues {
             // corresponding lift helpers; the absolute layout fallback remains
             // separate in `ComputedValues::word_spacing`.
             letter_spacing: lift_letter_spacing(parent.letter_spacing_computed),
-            letter_spacing_ch_factor: parent.letter_spacing_ch_factor,
-            letter_spacing_ch_offset: parent.letter_spacing_ch_offset,
-            letter_spacing_ch_font: parent.letter_spacing_ch_font.clone(),
             word_spacing: lift_word_spacing(parent.word_spacing_computed),
-            word_spacing_ch_factor: parent.word_spacing_ch_factor,
-            word_spacing_ch_offset: parent.word_spacing_ch_offset,
-            word_spacing_ch_font: parent.word_spacing_ch_font.clone(),
             // CSS Text Module Level 3 §4.2: tab-size is inherited. Lift a computed `<number>` or
             // `<length>` into its specified representation, as for `lift_line_height`.
             tab_size: lift_tab_size(parent.tab_size),
@@ -1564,11 +1513,23 @@ impl SpecifiedValues {
         // Values 4 §6.1.1). `lh` uses `parent_line_height_basis`; `rlh` uses the tree-global
         // `ctx.root_line_height`. See the self-reference section for `lh` / `rlh` in the
         // `resolve_font_size` docs.
+        let parent_ch_advance = normal_line_height.and_then(|measurer| {
+            measurer.ch_advance(&ChFontKey {
+                family: parent.font_family.clone(),
+                size: parent.font_size,
+                weight: parent.font_weight,
+                style: parent.font_style,
+                optical_sizing: parent.font_optical_sizing,
+            })
+        });
+        let font_size_ctx = ctx.with_ch_advance(parent_ch_advance);
         let font_size = match self.keyword_font_size(&parent.font_family) {
             Some(size) => size,
-            None => {
-                self.resolve_declared_font_size(parent.font_size, parent_line_height_basis, ctx)
-            }
+            None => self.resolve_declared_font_size(
+                parent.font_size,
+                parent_line_height_basis,
+                &font_size_ctx,
+            ),
         };
         // Resolve text-align: match-parent (CSS Text 3 §6.1) for a node with a parent. The root's
         // "computes to start" branch is in `finalize_as_root`.
@@ -1581,8 +1542,22 @@ impl SpecifiedValues {
         // `ctx.root_line_height`. Do not use that reference for this node's padding and other
         // phase 3 values: `absolutize_with` calculates **this node's own** reference with
         // `used_line_height_length(line_height, font_size)`.
-        let line_height =
-            resolve_line_height(self.line_height, font_size, parent_line_height_basis, ctx);
+        let ch_advance = normal_line_height.and_then(|measurer| {
+            measurer.ch_advance(&ChFontKey {
+                family: self.font_family.clone(),
+                size: font_size,
+                weight: self.font_weight,
+                style: self.font_style,
+                optical_sizing: self.font_optical_sizing,
+            })
+        });
+        let element_ctx = ctx.with_ch_advance(ch_advance);
+        let line_height = resolve_line_height(
+            self.line_height,
+            font_size,
+            parent_line_height_basis,
+            &element_ctx,
+        );
         let normal = self.measure_normal_line_height(
             line_height,
             font_size,
@@ -1590,7 +1565,7 @@ impl SpecifiedValues {
             normal_line_height,
         );
         // Phase 3: absolutize everything else against **this node's** font size and line height.
-        self.absolutize_with(font_size, line_height, normal, text_align, ctx)
+        self.absolutize_with(font_size, line_height, normal, text_align, &element_ctx)
     }
 
     /// The used length of `line-height: normal` for this node's first
@@ -1827,8 +1802,18 @@ impl SpecifiedValues {
                     optical_sizing: FontOpticalSizing::Auto,
                 })
             });
+        let initial_ch_advance = normal_line_height.and_then(|measurer| {
+            measurer.ch_advance(&ChFontKey {
+                family: initial_font_family(),
+                size: initial_font_size,
+                weight: 400.0,
+                style: FontStyle::Normal,
+                optical_sizing: FontOpticalSizing::Auto,
+            })
+        });
         let initial = ResolveContext {
             root_line_height: initial_line_height,
+            ch_advance: initial_ch_advance,
             ..ResolveContext::initial()
         }
         .with_viewport(width, height)
@@ -1842,6 +1827,15 @@ impl SpecifiedValues {
                 self.resolve_declared_font_size(initial_font_size, initial_line_height, &initial)
             }
         };
+        let ch_advance = normal_line_height.and_then(|measurer| {
+            measurer.ch_advance(&ChFontKey {
+                family: self.font_family.clone(),
+                size: font_size,
+                weight: self.font_weight,
+                style: self.font_style,
+                optical_sizing: self.font_optical_sizing,
+            })
+        });
         // CSS Text 3 §6.1: "Computes to start when specified on the root element." This special
         // case does not consult any parent text_align or direction and stays local to this
         // function (see the docs above).
@@ -1858,6 +1852,7 @@ impl SpecifiedValues {
         // since the initial-value basis applies to `font-size` alone.
         let line_height_ctx = ResolveContext {
             root_font_size: font_size,
+            ch_advance,
             ..initial
         };
         let line_height = resolve_line_height(
@@ -1876,6 +1871,7 @@ impl SpecifiedValues {
             self.measure_normal_line_height(line_height, font_size, None, normal_line_height);
         let own_line_height = used_line_height_length_or(line_height, font_size, normal);
         let ctx = ResolveContext::with_root_line_height(font_size, own_line_height)
+            .with_ch_advance(ch_advance)
             .with_viewport(width, height)
             .with_vertical_root(self.writing_mode.is_vertical())
             .with_border_width_device_scale(border_width_device_scale);
@@ -2008,120 +2004,36 @@ impl SpecifiedValues {
         let own_line_height =
             used_line_height_length_or(line_height, font_size, normal_line_height);
         let column_width = resolve_column_width(self.column_width, font_size, own_line_height, ctx);
-        let letter_spacing =
-            resolve_letter_spacing_with_ch(self.letter_spacing, font_size, own_line_height, ctx);
         let letter_spacing_computed =
             resolve_letter_spacing(self.letter_spacing, font_size, own_line_height, ctx);
-        let word_spacing =
-            resolve_word_spacing_with_ch(self.word_spacing, font_size, own_line_height, ctx);
+        let letter_spacing = match self.letter_spacing {
+            LetterSpacingValue::Normal => ComputedLength::ZERO,
+            LetterSpacingValue::Length(length) => {
+                resolve_length(length, font_size, own_line_height, ctx)
+            }
+            LetterSpacingValue::Calc(_) => ComputedLength::ZERO,
+        };
         let word_spacing_computed =
             resolve_word_spacing(self.word_spacing, font_size, own_line_height, ctx);
-        let (text_indent, authored_text_indent_ch_factor) = match self.text_indent {
+        let word_spacing = match self.word_spacing {
+            LetterSpacingValue::Normal => ComputedLength::ZERO,
+            LetterSpacingValue::Length(length) => {
+                resolve_length(length, font_size, own_line_height, ctx)
+            }
+            LetterSpacingValue::Calc(_) => ComputedLength::ZERO,
+        };
+        let text_indent = match self.text_indent {
             TextIndentLength::Length(length) => {
-                let resolved =
-                    resolve_length_percentage_with_ch(length, font_size, own_line_height, ctx);
-                let value = match resolved.value {
+                match resolve_length_percentage(length, font_size, own_line_height, ctx) {
                     crate::resolve::ComputedLengthPercentage::Px(px) => ComputedTextIndent::Px(px),
                     crate::resolve::ComputedLengthPercentage::Percent(percent) => {
                         ComputedTextIndent::Percent(percent)
                     }
-                };
-                (value, resolved.ch_factor)
-            }
-            TextIndentLength::Calc(calc) => (
-                resolve_text_indent_calc(calc, font_size),
-                calc_ch_factor(calc),
-            ),
-        };
-        // Font-metric `ch` provenance comes from a plain `Nch` length or from
-        // a `ch` term inside a calc; an inherited value keeps the ancestor's.
-        let text_indent_ch_factor = self
-            .text_indent_ch_factor
-            .or(authored_text_indent_ch_factor);
-        // A calc authored on this node contributes its own absolute part; an
-        // inherited one keeps the ancestor's, and a plain `Nch` has none.
-        let text_indent_ch_offset = match self.text_indent {
-            TextIndentLength::Calc(calc) if authored_text_indent_ch_factor.is_some() => {
-                calc_ch_offset(calc, font_size)
-            }
-            _ if authored_text_indent_ch_factor.is_some() => 0.0,
-            _ => self.text_indent_ch_offset,
-        };
-        let own_ch_font = || ChFontKey {
-            family: self.font_family.clone(),
-            size: font_size,
-            weight: self.font_weight,
-            style: self.font_style,
-            optical_sizing: self.font_optical_sizing,
-        };
-        // A `ch` value declared on this node measures with its own font; one
-        // inherited from an ancestor keeps measuring with the ancestor's font.
-        let declaring_ch_font =
-            |authored: Option<f32>, factor: Option<f32>, inherited: &Option<ChFontKey>| {
-                if authored.is_some() {
-                    Some(own_ch_font())
-                } else if factor.is_some() {
-                    inherited.clone()
-                } else {
-                    None
                 }
-            };
-        let letter_spacing_ch_offset = match self.letter_spacing {
-            LetterSpacingValue::Calc(calc) if letter_spacing.ch_factor.is_some() => {
-                calc_ch_offset(calc, font_size)
             }
-            _ if letter_spacing.ch_factor.is_some() => 0.0,
-            _ => self.letter_spacing_ch_offset,
-        };
-        let letter_spacing_ch_font = declaring_ch_font(
-            letter_spacing.ch_factor,
-            self.letter_spacing_ch_factor,
-            &self.letter_spacing_ch_font,
-        );
-        let word_spacing_ch_offset = match self.word_spacing {
-            LetterSpacingValue::Calc(calc) if word_spacing.ch_factor.is_some() => {
-                calc_ch_offset(calc, font_size)
+            TextIndentLength::Calc(calc) => {
+                resolve_text_indent_calc_with_context(calc, font_size, ctx)
             }
-            _ if word_spacing.ch_factor.is_some() => 0.0,
-            _ => self.word_spacing_ch_offset,
-        };
-        let word_spacing_ch_font = declaring_ch_font(
-            word_spacing.ch_factor,
-            self.word_spacing_ch_factor,
-            &self.word_spacing_ch_font,
-        );
-        let text_indent_ch_font = if authored_text_indent_ch_factor.is_some() {
-            Some(own_ch_font())
-        } else if text_indent_ch_factor.is_some() {
-            self.text_indent_ch_font.clone()
-        } else {
-            None
-        };
-        let ch_provenance = |length: Length| match length {
-            Length::Ch(factor) if factor.is_finite() => Some(ChLengthProvenance {
-                factor,
-                font: own_ch_font(),
-                offset: 0.0,
-                percent: 0.0,
-            }),
-            _ => None,
-        };
-        // A `calc()` with a `ch` term keeps the rest of its sum so layout can
-        // add it to the measured `ch` part.
-        let calc_ch_provenance = |calc| {
-            relative_calc_ch_parts(calc, font_size, own_line_height, ctx).map(|(factor, rest)| {
-                ChLengthProvenance {
-                    factor,
-                    font: own_ch_font(),
-                    offset: rest.px,
-                    percent: rest.percent,
-                }
-            })
-        };
-        let size_ch = |size: LengthOrAuto| match size {
-            LengthOrAuto::Length(length) => ch_provenance(length),
-            LengthOrAuto::RelativeCalc(calc) => calc_ch_provenance(calc),
-            _ => None,
         };
         let vertical_logical_size =
             vertical_logical_size.map(|(width, height)| VerticalLogicalSize {
@@ -2131,30 +2043,13 @@ impl SpecifiedValues {
                     own_line_height,
                     ctx,
                 ),
-                width_ch: size_ch(width),
                 height: resolve_size_length_percentage_or_auto(
                     height,
                     font_size,
                     own_line_height,
                     ctx,
                 ),
-                height_ch: size_ch(height),
             });
-        let width_ch = size_ch(self.width);
-        let height_ch = size_ch(self.height);
-        let padding_ch = self.padding.map(|value| match value {
-            LengthPercentageOrCalc::Length(length) => ch_provenance(length),
-            LengthPercentageOrCalc::RelativeCalc(calc) => calc_ch_provenance(calc),
-            _ => None,
-        });
-        let margin_ch = self.margin.map(size_ch);
-        let (text_decoration_inset_start_ch, text_decoration_inset_end_ch) =
-            match self.text_decoration_inset {
-                TextDecorationInset::Auto => (None, None),
-                TextDecorationInset::Lengths { start, end } => {
-                    (ch_provenance(start), ch_provenance(end))
-                }
-            };
         let min_width =
             resolve_size_length_percentage_or_auto(self.min_width, font_size, own_line_height, ctx);
         let min_height = resolve_size_length_percentage_or_auto(
@@ -2170,30 +2065,6 @@ impl SpecifiedValues {
             (physical_min_block.unwrap_or(min_width), min_height)
         } else {
             (min_width, physical_min_block.unwrap_or(min_height))
-        };
-        let max_width_ch = size_ch(self.max_width);
-        let max_height_ch = size_ch(self.max_height);
-        let min_block_size_ch = self.min_block_size.and_then(size_ch);
-        let min_width_ch = size_ch(self.min_width);
-        let min_height_ch = size_ch(self.min_height);
-        let (min_width_ch, min_height_ch) = if self.writing_mode.is_vertical() {
-            (
-                if self.min_block_size.is_some() {
-                    min_block_size_ch.clone()
-                } else {
-                    min_width_ch
-                },
-                min_height_ch,
-            )
-        } else {
-            (
-                min_width_ch,
-                if self.min_block_size.is_some() {
-                    min_block_size_ch.clone()
-                } else {
-                    min_height_ch
-                },
-            )
         };
         // CSS2 §9.7: same-node coupling forces the computed `display` value to depend on the
         // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
@@ -2296,24 +2167,18 @@ impl SpecifiedValues {
             // non-inherited and always resets, `Self::text_align` sibling
             // comment above shows the inherited counterpart pattern).
             text_indent,
-            text_indent_ch_factor,
-            text_indent_ch_offset,
-            text_indent_ch_font,
-            text_indent_ch_inherited: self.text_indent_ch_inherited,
             // Flags pass through untouched (no absolutization needed).
             text_indent_hanging: self.text_indent_hanging,
             text_indent_each_line: self.text_indent_each_line,
             padding: self.padding.map(|l| {
                 resolve_non_negative_length_percentage_or_calc(l, font_size, own_line_height, ctx)
             }),
-            padding_ch,
             // Although `margin` shares a type with `width` and `height`, it has a different
             // fallback when `Lh` / `Rlh` cannot be resolved (see Finding A in the
             // `resolve_margin_length_or_auto` docs).
             margin: self
                 .margin
                 .map(|l| resolve_margin_length_or_auto(l, font_size, own_line_height, ctx)),
-            margin_ch,
             border: Sides {
                 top: resolve_border_with_width_provenance(
                     self.border.top,
@@ -2377,34 +2242,27 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            width_ch,
             height: resolve_size_length_percentage_or_auto(
                 self.height,
                 font_size,
                 own_line_height,
                 ctx,
             ),
-            height_ch,
             max_width: resolve_size_length_percentage_or_auto(
                 self.max_width,
                 font_size,
                 own_line_height,
                 ctx,
             ),
-            max_width_ch,
             max_height: resolve_size_length_percentage_or_auto(
                 self.max_height,
                 font_size,
                 own_line_height,
                 ctx,
             ),
-            max_height_ch,
             min_width,
-            min_width_ch,
             min_height,
-            min_height_ch,
             min_block_size: physical_min_block,
-            min_block_size_ch,
             vertical_logical_size,
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),
@@ -2511,8 +2369,6 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            text_decoration_inset_start_ch,
-            text_decoration_inset_end_ch,
             text_underline_offset: resolve_text_underline_offset(
                 self.text_underline_offset,
                 font_size,
@@ -2598,18 +2454,10 @@ impl SpecifiedValues {
             overflow_wrap: self.overflow_wrap,
             // `1lh` in letter-spacing and word-spacing uses own_line_height like any box property
             // (CSS Text 3 §7.2 / §7.1 special-cases only the conversion of `normal` to `0`).
-            letter_spacing: letter_spacing.value,
+            letter_spacing,
             letter_spacing_computed,
-            // Preserve the `ch` provenance through inheritance for the
-            // font-metric-aware text-layout consumer.
-            letter_spacing_ch_factor: self.letter_spacing_ch_factor.or(letter_spacing.ch_factor),
-            letter_spacing_ch_offset,
-            letter_spacing_ch_font,
-            word_spacing: word_spacing.value,
+            word_spacing,
             word_spacing_computed,
-            word_spacing_ch_factor: self.word_spacing_ch_factor.or(word_spacing.ch_factor),
-            word_spacing_ch_offset,
-            word_spacing_ch_font,
             // `1lh` in tab-size uses own_line_height like any box property (CSS Text Module Level
             // 3 §4.2 specifies no special line-height reference).
             tab_size: resolve_tab_size(self.tab_size, font_size, own_line_height, ctx),

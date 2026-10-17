@@ -5,11 +5,9 @@
 //! the box tree or to painting (size, position, color, background) are not
 //! text input and are ignored here.
 
-use super::ch::ch_advance;
 use super::error::IfcError;
 use crate::node::BoxPropertiesRef;
 use raikiri_style::property::{self as p, FontFamilyKind, FontFamilyName};
-use raikiri_style::{ChFontKey, ChLengthProvenance};
 use raikiri_style::{
     ComputedLengthPercentageOrAuto as LengthOrAuto, ComputedLengthPercentageOrCalc,
     ComputedLetterSpacing, ComputedLineHeight, ComputedTabSize, ComputedTextIndent, ComputedValues,
@@ -230,18 +228,6 @@ pub(crate) fn inset_precedence(mode: WritingMode, rtl: bool) -> (bool, bool) {
     }
 }
 
-/// The key of this element's own font, which measures a `ch` value declared
-/// on it.
-fn own_ch_font(cv: &ComputedValues) -> ChFontKey {
-    ChFontKey {
-        family: cv.font_family.clone(),
-        size: cv.font_size,
-        weight: cv.font_weight,
-        style: cv.font_style,
-        optical_sizing: cv.font_optical_sizing,
-    }
-}
-
 /// The `font-family` list as shodo families. A generic family shodo does not
 /// name is an error.
 pub(crate) fn map_font_families(names: &[FontFamilyName]) -> Result<Vec<FontFamily>, &'static str> {
@@ -281,7 +267,7 @@ pub(crate) fn map_font_family(family: &FontFamilyName) -> Option<FontFamily> {
 pub(crate) fn inline_style(
     cv: &ComputedValues,
     node: usize,
-    fonts: &FontCollection,
+    _fonts: &FontCollection,
 ) -> Result<InlineStyle, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
     // Percentage or calc() letter spacing remains deferred, so project its
@@ -290,28 +276,12 @@ pub(crate) fn inline_style(
         ComputedLetterSpacing::Px(value) => Ok::<f32, IfcError>(*value),
         _ => Ok(fallback),
     };
-    // A `ch` value is measured with the font of the element that declared it;
-    // an inherited one carries that font's key, one declared here has none.
-    let ch_length = |factor: f32, font: &Option<ChFontKey>, offset: f32| {
-        let key = font.clone().unwrap_or_else(|| own_ch_font(cv));
-        factor * ch_advance(fonts, &key) + offset
-    };
-    let letter_spacing = match cv.letter_spacing_ch_factor {
-        Some(factor) => ch_length(
-            factor,
-            &cv.letter_spacing_ch_font,
-            cv.letter_spacing_ch_offset,
-        ),
-        None => absolute_letter_spacing(&cv.letter_spacing_computed, cv.letter_spacing.px())?,
-    };
+    let letter_spacing =
+        absolute_letter_spacing(&cv.letter_spacing_computed, cv.letter_spacing.px())?;
     let (word_spacing_absolute, word_spacing_percent) = match cv.word_spacing_computed {
         ComputedLetterSpacing::Px(value) => (value, 0.0),
         ComputedLetterSpacing::Percent(percent) => (0.0, percent),
         ComputedLetterSpacing::Calc(value) => (value.px, value.percent),
-    };
-    let word_spacing_absolute = match cv.word_spacing_ch_factor {
-        Some(factor) => ch_length(factor, &cv.word_spacing_ch_font, cv.word_spacing_ch_offset),
-        None => word_spacing_absolute,
     };
     // CSS Text resolves word-spacing percentages against font-size; Shodo's
     // relative field uses the space advance, so resolve the percentage here.
@@ -812,30 +782,10 @@ pub(crate) fn shodo_writing_mode(
 pub(crate) fn line_options(
     cv: &ComputedValues,
     node: usize,
-    fonts: &FontCollection,
+    _fonts: &FontCollection,
 ) -> Result<(LineOptions, ComputedTextIndent), IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    let indent = match cv.text_indent_ch_factor {
-        None => cv.text_indent,
-        Some(factor) => {
-            let key = cv
-                .text_indent_ch_font
-                .clone()
-                .unwrap_or_else(|| own_ch_font(cv));
-            let measured = factor * ch_advance(fonts, &key) + cv.text_indent_ch_offset;
-            match cv.text_indent {
-                // A `ch` value with a percentage keeps the percentage term and
-                // takes the measured length as its absolute term.
-                ComputedTextIndent::Calc(calc) => {
-                    ComputedTextIndent::Calc(p::CalcLengthPercentage {
-                        percent: calc.percent,
-                        px: measured,
-                    })
-                }
-                _ => ComputedTextIndent::Px(measured),
-            }
-        }
-    };
+    let indent = cv.text_indent;
     let text_align = match cv.text_align {
         p::TextAlign::Start => s::TextAlign::Start,
         p::TextAlign::End => s::TextAlign::End,
@@ -883,29 +833,18 @@ pub(crate) fn line_options(
 
 /// Inline-box edges as logical sides: the absolute px parts, and the
 /// percentage parts as fractions of the containing block's inline size,
-/// which only line layout knows (`calc(10% + 4px)` is `4.0` and `0.1`). A
-/// `ch` edge is measured with the font that declared it.
+/// which only line layout knows (`calc(10% + 4px)` is `4.0` and `0.1`).
 pub(crate) fn inline_edges(
     cv: &ComputedValues,
     node: usize,
-    fonts: &FontCollection,
+    _fonts: &FontCollection,
 ) -> Result<(InlineEdges, InlineEdgePercents), IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    // An edge in `ch` records the font of the element that declared it, with
-    // the rest of its calc() sum.
-    let ch = |provenance: &Option<ChLengthProvenance>| {
-        provenance.as_ref().map(|value| {
-            let used = value.with_advance(ch_advance(fonts, &value.font));
-            (used.px, used.percent / 100.0)
-        })
-    };
-    let padding = |value: ComputedLengthPercentageOrCalc,
-                   provenance: &Option<ChLengthProvenance>| {
-        let (px, percent) = match (ch(provenance), value) {
-            (Some(parts), _) => parts,
-            (None, ComputedLengthPercentageOrCalc::Px(value)) => return (value, 0.0),
-            (None, ComputedLengthPercentageOrCalc::Percent(percent)) => (0.0, percent / 100.0),
-            (None, ComputedLengthPercentageOrCalc::Calc(calc)) => (calc.px, calc.percent / 100.0),
+    let padding = |value: ComputedLengthPercentageOrCalc| {
+        let (px, percent) = match value {
+            ComputedLengthPercentageOrCalc::Px(value) => return (value, 0.0),
+            ComputedLengthPercentageOrCalc::Percent(percent) => (0.0, percent / 100.0),
+            ComputedLengthPercentageOrCalc::Calc(calc) => (calc.px, calc.percent / 100.0),
         };
         // A calc() sum can go negative; padding cannot. With a percentage
         // the sum is only known against the basis, where the engine clamps
@@ -916,16 +855,12 @@ pub(crate) fn inline_edges(
             (px, percent)
         }
     };
-    let margin = |value: LengthOrAuto, provenance: &Option<ChLengthProvenance>| match (
-        ch(provenance),
-        value,
-    ) {
-        (Some(parts), _) => parts,
-        (None, LengthOrAuto::Px(value)) => (value, 0.0),
-        (None, LengthOrAuto::Percent(percent)) => (0.0, percent / 100.0),
-        (None, LengthOrAuto::Calc(calc)) => (calc.px, calc.percent / 100.0),
+    let margin = |value: LengthOrAuto| match value {
+        LengthOrAuto::Px(value) => (value, 0.0),
+        LengthOrAuto::Percent(percent) => (0.0, percent / 100.0),
+        LengthOrAuto::Calc(calc) => (calc.px, calc.percent / 100.0),
         // `auto` inline margins are zero (CSS 2.1 §10.3.1).
-        (None, LengthOrAuto::Auto | LengthOrAuto::MinContent) => (0.0, 0.0),
+        LengthOrAuto::Auto | LengthOrAuto::MinContent => (0.0, 0.0),
     };
     let writing_mode = match cv.cssom_writing_mode {
         p::WritingMode::HorizontalTb => WritingMode::HorizontalTb,
@@ -995,16 +930,16 @@ pub(crate) fn inline_edges(
         ))
     };
     let (margin_px, margin_percent) = sides(
-        margin(cv.margin.top, &cv.margin_ch.top),
-        margin(cv.margin.right, &cv.margin_ch.right),
-        margin(cv.margin.bottom, &cv.margin_ch.bottom),
-        margin(cv.margin.left, &cv.margin_ch.left),
+        margin(cv.margin.top),
+        margin(cv.margin.right),
+        margin(cv.margin.bottom),
+        margin(cv.margin.left),
     )?;
     let (padding_px, padding_percent) = sides(
-        padding(cv.padding.top, &cv.padding_ch.top),
-        padding(cv.padding.right, &cv.padding_ch.right),
-        padding(cv.padding.bottom, &cv.padding_ch.bottom),
-        padding(cv.padding.left, &cv.padding_ch.left),
+        padding(cv.padding.top),
+        padding(cv.padding.right),
+        padding(cv.padding.bottom),
+        padding(cv.padding.left),
     )?;
     Ok((
         InlineEdges {

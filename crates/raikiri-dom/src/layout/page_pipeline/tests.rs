@@ -1581,12 +1581,12 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
         Style::default(),
         Some("display:block;width:100%;height:1px"),
     );
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
     doc.set_font_collection(
         crate::fonts::build_wpt_font_collection(&fonts_dir)
             .expect("bundled WPT fonts should register"),
     );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
@@ -8392,9 +8392,41 @@ fn a_relatively_positioned_block_child_is_offset() {
 
 // ── `ch` on box properties through the inline engine's fonts ──
 
+fn ch_ahem_paragraph_with(
+    css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, CascadeResult, usize) {
+    let fixture = crate::layout::ifc::test_support::block_fixture_with_font_collection(
+        &format!("line-height:10px;{css}"),
+        build,
+        ifc_ahem_fonts(),
+    );
+    (fixture.doc, fixture.cascade, fixture.root)
+}
+
+fn ch_ahem_paragraph(text: &str, css: &str) -> (Document, CascadeResult, usize) {
+    ch_ahem_paragraph_with(css, |doc, root| {
+        doc.append_text(root, text);
+    })
+}
+
+#[test]
+fn ch_is_resolved_in_the_cascade_from_the_document_font_metrics() {
+    let fixture = crate::layout::ifc::test_support::block_fixture_with_font_collection(
+        "font-size:16px;width:4ch",
+        |_, _| {},
+        ifc_ahem_fonts(),
+    );
+
+    assert_eq!(
+        fixture.cascade.computed[fixture.root].width,
+        raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(64.0),
+    );
+}
+
 /// The border box of an Ahem block styled `css` (10px font), on either path.
 fn ch_box_size(css: &str) -> (f32, f32, f32, f32) {
-    let (mut doc, cascade, root) = ahem_paragraph("aa", css);
+    let (mut doc, cascade, root) = ch_ahem_paragraph("aa", css);
     lay_out(&mut doc, &cascade);
     let layout = doc.nodes[root].unrounded_layout;
     (
@@ -8458,7 +8490,7 @@ fn calc_ch_box_values_add_the_measured_advance_to_the_rest_of_the_sum() {
 #[test]
 fn ch_box_values_reach_every_padding_and_margin_side() {
     // Ahem's "0" advance is 1 em, 10px here, so each side is hand-computable.
-    let (mut doc, cascade, root) = ahem_paragraph(
+    let (mut doc, cascade, root) = ch_ahem_paragraph(
         "aa",
         "padding:1ch calc(2ch + 1px) 3ch 4ch;margin:1ch calc(2ch - 1px) 3ch 4ch",
     );
@@ -8508,8 +8540,6 @@ fn ch_constraints_preserve_logical_minimums_and_ordinary_values() {
 
 #[test]
 fn ch_constraints_keep_the_empty_font_collection_fallback() {
-    let (mut doc, cascade, root) =
-        ahem_paragraph_with("font-size:16px;width:100px;max-width:4ch", |_, _| {});
     let fonts = shodo::font::FontCollection::with_options(
         &shodo::limits::Limits::default(),
         shodo::font::FontOptions {
@@ -8517,7 +8547,14 @@ fn ch_constraints_keep_the_empty_font_collection_fallback() {
             ..Default::default()
         },
     );
-    doc.set_font_collection(fonts);
+    let fixture = crate::layout::ifc::test_support::block_fixture_with_font_collection(
+        "line-height:10px;font-size:16px;width:100px;max-width:4ch",
+        |_, _| {},
+        fonts,
+    );
+    let mut doc = fixture.doc;
+    let root = fixture.root;
+    let cascade = fixture.cascade;
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
     assert_eq!(doc.nodes[root].unrounded_layout.size.width, 32.0);
 }
@@ -8539,7 +8576,7 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
         ),
     ] {
         let css = format!("font-size:16px;width:16px;height:16px;{css}");
-        let (mut doc, cascade, root) = ahem_paragraph("aa", &css);
+        let (mut doc, cascade, root) = ch_ahem_paragraph("aa", &css);
         lay_out(&mut doc, &cascade);
         assert_eq!(
             doc.nodes[root].style.min_size.width.into_raw().value(),
@@ -8557,7 +8594,7 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
 #[test]
 fn max_width_ch_uses_the_inherited_font_before_laying_out_children() {
     let mut child = 0;
-    let (mut doc, cascade, _) = ahem_paragraph_with("font-size:16px", |doc, parent| {
+    let (mut doc, cascade, _) = ch_ahem_paragraph_with("font-size:16px", |doc, parent| {
         child = doc.append_element(
             Some(parent),
             "div",

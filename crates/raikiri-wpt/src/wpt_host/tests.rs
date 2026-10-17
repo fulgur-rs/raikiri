@@ -225,9 +225,7 @@ fn computed_value_returns_none_for_an_unsupported_property_name() {
     assert_eq!(host.computed_value(0, "no-such-prop").unwrap(), None);
 }
 
-/// A `ch`-authored length needs a font's zero-glyph advance to resolve to a
-/// concrete pixel value, which only the closure passed to
-/// `ComputedProperty::serialize` can measure.
+/// A `ch`-authored length is resolved to px during cascade.
 #[test]
 fn computed_letter_spacing_in_ch_units_measures_font_advance() {
     let (_dir, mut rt) = runtime("<div id=t style='letter-spacing: 1ch'>x</div>");

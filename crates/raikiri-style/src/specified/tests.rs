@@ -20,6 +20,7 @@ use crate::resolve::{
 const CTX: ResolveContext = ResolveContext {
     root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
     root_line_height: None,
+    ch_advance: None,
     viewport_width: 480.0,
     viewport_height: 288.0,
     vertical_root: false,
@@ -43,144 +44,6 @@ fn initial_specified_finalizes_to_initial_computed() {
         SpecifiedValues::initial().finalize(&ComputedValues::initial(), &ResolveContext::initial()),
         ComputedValues::initial(),
     );
-}
-
-#[test]
-fn box_ch_provenance_keeps_authored_factor_and_font() {
-    let mut specified = SpecifiedValues::initial();
-    specified.width = LengthOrAuto::Length(Length::Ch(2.0));
-    specified.height = LengthOrAuto::Length(Length::Ch(3.0));
-    specified.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Ch(1.0)));
-    specified.margin = Sides::all(LengthOrAuto::Length(Length::Ch(4.0)));
-    let computed = specified.clone().finalize(&ComputedValues::initial(), &CTX);
-
-    assert_eq!(
-        computed.width_ch.as_ref().map(|value| value.factor),
-        Some(2.0)
-    );
-    assert_eq!(
-        computed.height_ch.as_ref().map(|value| value.factor),
-        Some(3.0)
-    );
-    assert_eq!(
-        computed.padding_ch.top.as_ref().map(|value| value.factor),
-        Some(1.0)
-    );
-    assert_eq!(
-        computed.margin_ch.left.as_ref().map(|value| value.factor),
-        Some(4.0)
-    );
-    let width_font = &computed.width_ch.as_ref().expect("width marker").font;
-    assert_eq!(width_font.family, computed.font_family);
-    assert_eq!(width_font.size, computed.font_size);
-    assert_eq!(computed.width, ComputedLengthPercentageOrAuto::Px(16.0));
-
-    specified.width = LengthOrAuto::Length(Length::Percent(25.0));
-    specified.height = LengthOrAuto::Auto;
-    specified.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Px(2.0)));
-    specified.margin = Sides::all(LengthOrAuto::Auto);
-    let ordinary = specified.finalize(&ComputedValues::initial(), &CTX);
-    assert!(ordinary.width_ch.is_none());
-    assert!(ordinary.height_ch.is_none());
-    assert!(ordinary.padding_ch.top.is_none());
-    assert!(ordinary.margin_ch.top.is_none());
-}
-
-#[test]
-fn box_calc_ch_provenance_keeps_the_rest_of_the_sum() {
-    let calc = |source| {
-        crate::cascade::parse_relative_calc_length_percentage(source).expect("relative calc")
-    };
-    let mut specified = SpecifiedValues::initial();
-    specified.width = LengthOrAuto::RelativeCalc(calc("calc(20ch + 10px)"));
-    specified.padding = Sides::all(LengthPercentageOrCalc::RelativeCalc(calc(
-        "calc(10% + 1ch)",
-    )));
-    specified.margin = Sides::all(LengthOrAuto::RelativeCalc(calc("calc(2ch - 1em)")));
-    let computed = specified.finalize(&ComputedValues::initial(), &CTX);
-
-    let parts = |provenance: &Option<ChLengthProvenance>| {
-        provenance
-            .as_ref()
-            .map(|value| (value.factor, value.offset, value.percent))
-    };
-    assert_eq!(parts(&computed.width_ch), Some((20.0, 10.0, 0.0)));
-    assert_eq!(parts(&computed.padding_ch.top), Some((1.0, 0.0, 10.0)));
-    assert_eq!(parts(&computed.margin_ch.left), Some((2.0, -16.0, 0.0)));
-    assert_eq!(
-        computed.width_ch.as_ref().map(|value| value.font.size),
-        Some(computed.font_size)
-    );
-    // Until layout measures the font, `ch` keeps the `0.5em` fallback.
-    assert_eq!(computed.width, ComputedLengthPercentageOrAuto::Px(170.0));
-    assert_eq!(
-        computed
-            .width_ch
-            .as_ref()
-            .map(|value| value.with_advance(9.0)),
-        Some(crate::property::CalcLengthPercentage {
-            percent: 0.0,
-            px: 190.0,
-        })
-    );
-}
-
-#[test]
-fn min_max_ch_provenance_tracks_the_declaring_font_and_logical_axis() {
-    for mode in [
-        WritingMode::HorizontalTb,
-        WritingMode::VerticalRl,
-        WritingMode::VerticalLr,
-        WritingMode::SidewaysRl,
-        WritingMode::SidewaysLr,
-    ] {
-        let mut specified = SpecifiedValues::initial();
-        specified.font_family = std::sync::Arc::new(vec![FontFamilyName::named("Ahem")]);
-        specified.font_size = Length::Px(16.0);
-        specified.font_weight = 700.0;
-        specified.writing_mode = mode;
-        specified.max_width = LengthOrAuto::Length(Length::Ch(2.0));
-        specified.max_height = LengthOrAuto::Length(Length::Ch(3.0));
-        specified.min_width = LengthOrAuto::Length(Length::Ch(4.0));
-        specified.min_height = LengthOrAuto::Length(Length::Ch(5.0));
-        specified.min_block_size = Some(LengthOrAuto::Length(Length::Ch(6.0)));
-        let computed = specified.clone().finalize(&ComputedValues::initial(), &CTX);
-        let (min_width, min_height) = if mode == WritingMode::HorizontalTb {
-            (4.0, 6.0)
-        } else {
-            (6.0, 5.0)
-        };
-        for (provenance, factor) in [
-            (&computed.max_width_ch, 2.0),
-            (&computed.max_height_ch, 3.0),
-            (&computed.min_width_ch, min_width),
-            (&computed.min_height_ch, min_height),
-            (&computed.min_block_size_ch, 6.0),
-        ] {
-            let provenance = provenance.as_ref().unwrap();
-            assert_eq!(provenance.factor, factor);
-            assert_eq!(provenance.font.family, computed.font_family);
-            assert_eq!(provenance.font.size.0, 16.0);
-            assert_eq!(provenance.font.weight, 700.0);
-        }
-        specified.max_width = LengthOrAuto::Length(Length::Percent(25.0));
-        specified.max_height = LengthOrAuto::Auto;
-        specified.min_width = LengthOrAuto::Length(Length::Px(7.0));
-        specified.min_height = LengthOrAuto::Auto;
-        specified.min_block_size = Some(LengthOrAuto::Length(Length::Px(9.0)));
-        let ordinary = specified.finalize(&ComputedValues::initial(), &CTX);
-        assert!(
-            [
-                ordinary.max_width_ch,
-                ordinary.max_height_ch,
-                ordinary.min_width_ch,
-                ordinary.min_height_ch,
-                ordinary.min_block_size_ch
-            ]
-            .iter()
-            .all(Option::is_none)
-        );
-    }
 }
 
 /// The specified initial border has `medium` (3px) / `none` / `currentcolor`; style gating
@@ -342,16 +205,10 @@ fn parent_fixture() -> ComputedValues {
         ruby_writing_mode: WritingMode::VerticalLr,
         ruby_position: RubyPosition::Under,
         text_indent: ComputedTextIndent::Px(9.0),
-        text_indent_ch_factor: None,
-        text_indent_ch_offset: 0.0,
-        text_indent_ch_font: None,
-        text_indent_ch_inherited: false,
         text_indent_hanging: true,
         text_indent_each_line: false,
         padding: Sides::all(ComputedLengthPercentageOrCalc::Px(7.0)),
-        padding_ch: Sides::all(None),
         margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
-        margin_ch: Sides::all(None),
         border: Sides::all(ComputedBorder {
             width: ComputedLength(5.0),
             style: BorderStyle::Solid,
@@ -382,19 +239,12 @@ fn parent_fixture() -> ComputedValues {
             offset: ComputedLength(3.0),
         },
         width: ComputedLengthPercentageOrAuto::Px(200.0),
-        width_ch: None,
         height: ComputedLengthPercentageOrAuto::Px(200.0),
-        height_ch: None,
         max_width: ComputedLengthPercentageOrAuto::Auto,
-        max_width_ch: None,
         max_height: ComputedLengthPercentageOrAuto::Auto,
-        max_height_ch: None,
         min_width: ComputedLengthPercentageOrAuto::Auto,
-        min_width_ch: None,
         min_height: ComputedLengthPercentageOrAuto::Auto,
-        min_height_ch: None,
         min_block_size: None,
-        min_block_size_ch: None,
         vertical_logical_size: None,
         top: ComputedLengthPercentageOrAuto::Px(10.0),
         right: ComputedLengthPercentageOrAuto::Px(20.0),
@@ -418,8 +268,6 @@ fn parent_fixture() -> ComputedValues {
             start: ComputedLength(3.0),
             end: ComputedLength(4.0),
         },
-        text_decoration_inset_start_ch: None,
-        text_decoration_inset_end_ch: None,
         text_underline_offset: ComputedTextUnderlineOffset::Length(ComputedLength(5.0)),
         text_underline_position: TextUnderlinePosition {
             from_font: true,
@@ -492,14 +340,8 @@ fn parent_fixture() -> ComputedValues {
         overflow_wrap: OverflowWrap::Anywhere,
         letter_spacing: ComputedLength(2.0),
         letter_spacing_computed: ComputedLetterSpacing::Px(2.0),
-        letter_spacing_ch_factor: None,
-        letter_spacing_ch_offset: 0.0,
-        letter_spacing_ch_font: None,
         word_spacing: ComputedLength(4.0),
         word_spacing_computed: ComputedLetterSpacing::Px(4.0),
-        word_spacing_ch_factor: None,
-        word_spacing_ch_offset: 0.0,
-        word_spacing_ch_font: None,
         tab_size: ComputedTabSize::Length(ComputedLength(11.0)),
         break_before: BreakBetween::Page,
         break_after: BreakBetween::AvoidPage,

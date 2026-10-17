@@ -10,14 +10,12 @@ use crate::computed::{
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
-    LengthPercentageOrCalc, LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize,
-    Sides, TextIndentLength, TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue,
-    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
-    resolve_text_align_match_parent,
+    LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize, Sides, TextWrapMode,
+    WhiteSpace, WhiteSpaceCollapse, WritingMode, initial_grid_auto_track_list,
+    resolve_text_align_internal_center, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
-    calc_ch_factor,
 };
 use crate::rule::{
     expand_background, expand_border, expand_border_bottom, expand_border_bottom_css_wide,
@@ -1535,9 +1533,8 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
             crate::property::serialize_value(value)
         }
         // SVG 1.1 lengths, as SVG renderers such as usvg parse them, have no
-        // `ch` or `ic` unit. Export the em multiple of the fallback these units
-        // resolve with (see `Length::Ch` and `Length::Ic`), which stays
-        // relative to the font size of each instance.
+        // `ch` or `ic` unit. Keep `ch` on its `0.5em` fallback because this
+        // export has no per-instance font metrics for SVG `<use>`.
         PropertyValue::FontSize(Length::Ch(value)) => {
             crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(value * 0.5)))
         }
@@ -1546,10 +1543,13 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         }
         // A calc that only scales the parent's size stays relative as its
         // `em` multiple; any other calc keeps its computed px size (SVG 1.1
-        // lengths have no `calc()`).
-        PropertyValue::FontSizeCalc(calc) => calc.font_size_scale().and_then(|scale| {
-            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
-        }),
+        // lengths have no `calc()`). Relative `ch` terms use the `0.5em`
+        // fallback because this export has no per-instance font metrics.
+        PropertyValue::FontSizeCalc(calc) => {
+            calc.font_size_scale_with_ch_ratio(0.5).and_then(|scale| {
+                crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
+            })
+        }
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
@@ -3283,14 +3283,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::TextAlignLast(v) => target.text_align_last = v,
         PropertyValue::TextIndent(v) => {
             target.text_indent = v.length;
-            target.text_indent_ch_factor = match v.length {
-                TextIndentLength::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
-                TextIndentLength::Calc(calc) => calc_ch_factor(calc),
-                _ => None,
-            };
-            target.text_indent_ch_offset = 0.0;
-            target.text_indent_ch_font = None;
-            target.text_indent_ch_inherited = false;
             target.text_indent_hanging = v.hanging;
             target.text_indent_each_line = v.each_line;
         }
@@ -3458,25 +3450,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::OverflowWrap(ow) => target.overflow_wrap = ow,
         PropertyValue::LetterSpacing(ls) => {
             target.letter_spacing = ls;
-            target.letter_spacing_ch_factor = match ls {
-                LetterSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => {
-                    Some(factor)
-                }
-                LetterSpacingValue::Calc(calc) => calc_ch_factor(calc),
-                _ => None,
-            };
-            target.letter_spacing_ch_offset = 0.0;
-            target.letter_spacing_ch_font = None;
         }
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
-            target.word_spacing_ch_factor = match ws {
-                WordSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
-                WordSpacingValue::Calc(calc) => calc_ch_factor(calc),
-                _ => None,
-            };
-            target.word_spacing_ch_offset = 0.0;
-            target.word_spacing_ch_font = None;
         }
         PropertyValue::TabSize(ts) => target.tab_size = ts,
         PropertyValue::BreakBefore(bb) => target.break_before = bb,

@@ -22,10 +22,10 @@ use raikiri_style::property::{
     TextShadowColor, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
-    CascadeResult, ChLengthProvenance, ComputedBackgroundSize, ComputedBorder, ComputedCssPosition,
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
-    CounterStyleRegistry, MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot,
+    CascadeResult, ComputedBackgroundSize, ComputedBorder, ComputedCssPosition,
+    ComputedLengthPercentageOrAuto, ComputedValues, CounterStyleRegistry,
+    MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult, PageMarginBoxCascadeResult,
+    PageMarginBoxSlot,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
 use smol_str::SmolStr;
@@ -587,38 +587,16 @@ fn finite_or_zero(value: f32) -> f32 {
     if value.is_finite() { value } else { 0.0 }
 }
 
-/// The used px of a length authored in `ch`, measured with the inline
-/// engine's fonts against `basis` for its percentage part. `None` when the
-/// length has no `ch` part, or before the document is laid out, when the
-/// computed value's approximation stands.
-fn ch_length_px(
-    document: &Document,
-    provenance: Option<&ChLengthProvenance>,
-    basis: f32,
-) -> Option<f32> {
-    let provenance = provenance?;
-    let fonts = &document.ifc.as_ref()?.fonts;
-    let used = provenance.with_advance(crate::layout::ifc::ch::ch_advance(fonts, &provenance.font));
-    Some(finite_or_zero(used.px + basis * used.percent / 100.0))
-}
-
 /// The used px of a box length against `basis`; `None` for `auto` and the
 /// intrinsic sizing keywords, which size the box to its content.
-fn length_or_auto_px(
-    document: &Document,
-    value: ComputedLengthPercentageOrAuto,
-    ch: Option<&ChLengthProvenance>,
-    basis: f32,
-) -> Option<f32> {
+fn length_or_auto_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
     let px = match value {
         ComputedLengthPercentageOrAuto::Px(px) => px,
         ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
         ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
         _ => return None,
     };
-    Some(finite_or_zero(
-        ch_length_px(document, ch, basis).unwrap_or(px),
-    ))
+    Some(finite_or_zero(px))
 }
 
 /// The used `text-shadow` of a margin box. `currentcolor` is the box's own
@@ -1117,14 +1095,12 @@ fn margin_box_spec(
     // against its width.
     // Margins may be negative; `auto` margins are distributed by the edge
     // layout.
-    let margin_px = |value, ch: &Option<ChLengthProvenance>, basis| {
-        length_or_auto_px(document, value, ch.as_ref(), basis).unwrap_or(0.0)
-    };
+    let margin_px = |value, basis| length_or_auto_px(value, basis).unwrap_or(0.0);
     let margin = [
-        margin_px(style.margin.top, &style.margin_ch.top, height_basis),
-        margin_px(style.margin.right, &style.margin_ch.right, width_basis),
-        margin_px(style.margin.bottom, &style.margin_ch.bottom, height_basis),
-        margin_px(style.margin.left, &style.margin_ch.left, width_basis),
+        margin_px(style.margin.top, height_basis),
+        margin_px(style.margin.right, width_basis),
+        margin_px(style.margin.bottom, height_basis),
+        margin_px(style.margin.left, width_basis),
     ];
     let margin_auto = [
         style.margin.top,
@@ -1133,16 +1109,14 @@ fn margin_box_spec(
         style.margin.left,
     ]
     .map(|value| matches!(value, ComputedLengthPercentageOrAuto::Auto));
-    let padding_px = |value: ComputedLengthPercentageOrCalc, ch: &Option<ChLengthProvenance>| {
-        let px = ch_length_px(document, ch.as_ref(), width_basis)
-            .unwrap_or_else(|| value.resolve(width_basis));
-        finite_or_zero(px).max(0.0)
+    let padding_px = |value: raikiri_style::ComputedLengthPercentageOrCalc| {
+        finite_or_zero(value.resolve(width_basis)).max(0.0)
     };
     let padding = [
-        padding_px(style.padding.top, &style.padding_ch.top),
-        padding_px(style.padding.right, &style.padding_ch.right),
-        padding_px(style.padding.bottom, &style.padding_ch.bottom),
-        padding_px(style.padding.left, &style.padding_ch.left),
+        padding_px(style.padding.top),
+        padding_px(style.padding.right),
+        padding_px(style.padding.bottom),
+        padding_px(style.padding.left),
     ];
     let background = (style.background_color.a != 0).then_some(style.background_color);
     let background_layers = margin_box_background_layers(&style);
@@ -1150,15 +1124,8 @@ fn margin_box_spec(
         .iter()
         .any(|layer| layer.url.ends_with("/green.png") || layer.url == "green.png");
     let border = margin_box_borders(&style);
-    let width = length_or_auto_px(document, style.width, style.width_ch.as_ref(), width_basis)
-        .map(|width| width.max(0.0));
-    let height = length_or_auto_px(
-        document,
-        style.height,
-        style.height_ch.as_ref(),
-        height_basis,
-    )
-    .map(|height| height.max(0.0));
+    let width = length_or_auto_px(style.width, width_basis).map(|width| width.max(0.0));
+    let height = length_or_auto_px(style.height, height_basis).map(|height| height.max(0.0));
     let alignment = match style.text_align {
         TextAlign::Right => StandaloneAlign::Right,
         TextAlign::End => StandaloneAlign::End,

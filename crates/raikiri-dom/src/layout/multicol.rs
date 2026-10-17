@@ -2585,16 +2585,17 @@ impl AncestorFacts {
             .is_some_and(WritingMode::is_vertical);
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
         let cv = &cascade.computed[id];
-        let resolved_ch = measured_ch_width(doc, cascade, id, parent_width);
-        self.content_width[id] = match (resolved_ch, cv.width) {
+        self.content_width[id] = match cv.width {
             // Contents has no box; both preparation and rebreaking inherit its parent width.
             _ if doc.nodes[id].display() == DisplayValue::Contents => parent_width.max(0.0),
-            (Some(width), _) => width.max(0.0),
-            (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
-                value.max(0.0)
-            }
-            (None, ComputedLengthPercentageOrAuto::Percent(value)) if value.is_finite() => {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+            ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
                 (parent_width * value / 100.0).max(0.0)
+            }
+            ComputedLengthPercentageOrAuto::Calc(calc)
+                if calc.px.is_finite() && calc.percent.is_finite() =>
+            {
+                (calc.px + parent_width * calc.percent / 100.0).max(0.0)
             }
             _ => parent_width.max(0.0),
         };

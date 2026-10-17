@@ -6,6 +6,7 @@ fn measures_are_kept_apart_per_optical_sizing() {
     let measurer = EngineNormalLineHeight {
         fonts: crate::layout::ifc::test_support::ahem_fonts(),
         measured: Mutex::default(),
+        ch_measured: Mutex::default(),
     };
     let mut font = ChFontKey {
         family: Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
@@ -27,4 +28,34 @@ fn measures_are_kept_apart_per_optical_sizing() {
     let measured = measurer.measured.lock().unwrap();
     let entries: Vec<_> = measured.values().flatten().map(|e| e.1).collect();
     assert_eq!(entries, [FontOpticalSizing::Auto, FontOpticalSizing::None]);
+}
+
+#[test]
+fn ch_advances_are_cached_independently_of_normal_line_height() {
+    let measurer = EngineNormalLineHeight {
+        fonts: crate::layout::ifc::test_support::ahem_fonts(),
+        measured: Mutex::default(),
+        ch_measured: Mutex::default(),
+    };
+    let font = ChFontKey {
+        family: Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        size: ComputedLength(20.0),
+        weight: 400.0,
+        style: FontStyle::Normal,
+        optical_sizing: FontOpticalSizing::Auto,
+    };
+
+    assert_eq!(measurer.ch_advance(&font), Some(ComputedLength(20.0)));
+    assert_eq!(measurer.ch_advance(&font), Some(ComputedLength(20.0)));
+    assert!(measurer.measured.lock().unwrap().is_empty());
+    assert_eq!(
+        measurer
+            .ch_measured
+            .lock()
+            .unwrap()
+            .values()
+            .flatten()
+            .count(),
+        1
+    );
 }
