@@ -1,5 +1,12 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 use taffy::Style;
+
+fn enforce_layout_invariants_for_test(document: &mut Document, root: usize) -> Vec<LayoutWarn> {
+    let mut session = LayoutSession::new(document);
+    super::enforce_layout_invariants(&mut session, root);
+    std::mem::take(&mut session.context.layout_warnings)
+}
 
 /// Whether `v` sits exactly on the symmetric clamp boundary of [`MAX_TAFFY_MAGNITUDE`].
 /// `sanitize_finite` rounds out-of-range finite values exactly to `±MAX_TAFFY_MAGNITUDE`, so this
@@ -713,7 +720,7 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
         margin: Rect::zero(),
     };
 
-    enforce_layout_invariants(&mut doc, parent);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
         doc.nodes[parent].unrounded_layout,
@@ -727,7 +734,7 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
              ゼロ化されること — 壊れた親を基準にした古い座標を残さない"
     );
     assert!(
-        doc.layout_warnings.iter().any(|w| matches!(
+        warnings.iter().any(|w| matches!(
             w,
             LayoutWarn::GeometryInvariantViolated {
                 invariant: "content_box_non_negative",
@@ -735,7 +742,7 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
             }
         )),
         "content box invariant 違反が LayoutWarn として記録されること: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -807,7 +814,7 @@ fn saturated_child_outside_parent_is_not_reset() {
 
     let child_before = doc.nodes[child].unrounded_layout;
     let grandchild_before = doc.nodes[grandchild].unrounded_layout;
-    enforce_layout_invariants(&mut doc, parent);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -834,11 +841,11 @@ fn saturated_child_outside_parent_is_not_reset() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -871,6 +878,7 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let warnings = enforce_layout_invariants_for_test(&mut doc, body);
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -897,12 +905,12 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
         "負 margin による legitimate overflow の size はゼロ化されないこと"
     );
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "飽和していない legitimate overflow は invariant 2 の gate を \
              通らないので GeometryInvariantViolated は 1 件も積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -965,7 +973,7 @@ fn saturated_but_contained_layout_is_not_reset() {
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
-    enforce_layout_invariants(&mut doc, parent);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
         doc.nodes[parent].unrounded_layout.size,
@@ -983,11 +991,11 @@ fn saturated_but_contained_layout_is_not_reset() {
              で収まっているかどうかは無関係 (containment はもう見ていない)"
     );
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -1049,7 +1057,7 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
-    enforce_layout_invariants(&mut doc, parent);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -1060,11 +1068,11 @@ fn saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_i
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -1142,7 +1150,7 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
-    enforce_layout_invariants(&mut doc, parent);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
         doc.nodes[child].unrounded_layout, child_before,
@@ -1152,11 +1160,11 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
              旧 axis-mixing 実装との直接の分岐点 (本 test の doc 参照)"
     );
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -1204,7 +1212,7 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
-    enforce_layout_invariants(&mut doc, parent);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     assert_eq!(
         doc.nodes[child].unrounded_layout, child_before,
@@ -1213,11 +1221,11 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
              以前指摘された finding そのもの"
     );
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -1330,7 +1338,7 @@ fn saturated_negative_location_is_not_reset() {
     };
 
     let child_before = doc.nodes[child].unrounded_layout;
-    enforce_layout_invariants(&mut doc, parent);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, parent);
 
     // The assert messages from this point onward are intentionally written on a single physical line (not
     // multiple lines with backslash continuation, which is the convention for other tests in this file) —
@@ -1348,11 +1356,11 @@ fn saturated_negative_location_is_not_reset() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -1398,6 +1406,7 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let warnings = enforce_layout_invariants_for_test(&mut doc, body);
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -1427,11 +1436,11 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -1480,6 +1489,7 @@ fn saturated_positive_margin_percentage_child_is_not_reset() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let warnings = enforce_layout_invariants_for_test(&mut doc, body);
 
     let parent_layout = doc.nodes[parent].unrounded_layout;
     let child_layout = doc.nodes[child].unrounded_layout;
@@ -1509,11 +1519,11 @@ fn saturated_positive_margin_percentage_child_is_not_reset() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert!(
-        doc.layout_warnings
+        warnings
             .iter()
             .all(|w| !matches!(w, LayoutWarn::GeometryInvariantViolated { .. })),
         "reset が起きていないので GeometryInvariantViolated は積まれないこと: {:?}",
-        doc.layout_warnings
+        warnings
     );
 }
 
@@ -1893,7 +1903,7 @@ fn an_element_of_an_ifc_subtree_is_not_zeroed_for_a_narrow_content_box() {
         bottom: 0.0,
     };
     doc.nodes[inner].unrounded_layout = layout;
-    enforce_layout_invariants(&mut doc, body);
+    let warnings = enforce_layout_invariants_for_test(&mut doc, body);
     assert_eq!(doc.nodes[inner].unrounded_layout.size.width, 10.0);
-    assert!(doc.layout_warnings.is_empty());
+    assert!(warnings.is_empty());
 }

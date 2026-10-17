@@ -296,7 +296,7 @@ pub(crate) fn apply_computed_to_style_in_session(
             style,
             cv,
             &mut doc.document.calc_values,
-            &mut doc.document.layout_warnings,
+            &mut doc.context.layout_warnings,
         );
         bridge_overflow(style, cv);
         // Layout and paint containment establish an independent formatting
@@ -316,41 +316,41 @@ pub(crate) fn apply_computed_to_style_in_session(
             style,
             cv,
             &mut doc.document.calc_values,
-            &mut doc.document.layout_warnings,
+            &mut doc.context.layout_warnings,
         );
         bridge_padding(
             style,
             cv,
             &mut doc.document.calc_values,
-            &mut doc.document.layout_warnings,
+            &mut doc.context.layout_warnings,
         );
         bridge_min_max_size(
             style,
             cv,
             vertical_axes,
             &mut doc.document.calc_values,
-            &mut doc.document.layout_warnings,
+            &mut doc.context.layout_warnings,
         );
-        bridge_border(style, cv, &mut doc.document.layout_warnings);
+        bridge_border(style, cv, &mut doc.context.layout_warnings);
         bridge_box_sizing(style, cv);
         bridge_flex(
             style,
             cv,
             &mut doc.document.calc_values,
-            &mut doc.document.layout_warnings,
+            &mut doc.context.layout_warnings,
         );
         bridge_alignment(style, cv);
         bridge_gap(
             style,
             cv,
             &mut doc.document.calc_values,
-            &mut doc.document.layout_warnings,
+            &mut doc.context.layout_warnings,
         );
         bridge_grid(
             style,
             cv,
             &mut doc.document.calc_values,
-            &mut doc.document.layout_warnings,
+            &mut doc.context.layout_warnings,
         );
         if is_contents {
             // A `display: contents` element generates no box (CSS Display 3
@@ -810,21 +810,21 @@ fn bridge_inset(
 ///
 /// Page dimensions belong to a separate initial-containing-block box. The
 /// element's preferred width and height remain the authored sizing inputs.
-fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
+fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues) {
     // width and height are written together, so use a struct literal.
     let width = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.calc_values,
+        &mut doc.document.calc_values,
         cv.width,
         "width",
-        &mut doc.layout_warnings,
+        &mut doc.context.layout_warnings,
     );
     let height = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.calc_values,
+        &mut doc.document.calc_values,
         cv.height,
         "height",
-        &mut doc.layout_warnings,
+        &mut doc.context.layout_warnings,
     );
-    doc.nodes[node_id].style.size = Size { width, height };
+    doc.document.nodes[node_id].style.size = Size { width, height };
 }
 
 /// Whether in-flow replaced grid item `idx` with auto width and height is

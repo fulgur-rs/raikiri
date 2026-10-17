@@ -95,9 +95,9 @@ pub(super) fn compute_orthogonal_block(
         },
         ..inputs
     };
-    let outer = tree.orthogonal_block_in_layout.replace(idx);
+    let outer = tree.context.orthogonal_block_in_layout.replace(idx);
     let output = tree.compute_child_layout_with_block_ctx(node_id, final_inputs, None);
-    tree.orthogonal_block_in_layout = outer;
+    tree.context.orthogonal_block_in_layout = outer;
     output
 }
 

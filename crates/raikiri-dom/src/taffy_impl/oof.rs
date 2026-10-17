@@ -32,12 +32,15 @@ impl LayoutContainingBlock for LayoutSession<'_> {
     }
 
     fn clear_hoisted_children(&mut self, node: NodeId) {
-        self.taffy_hoisted_children.remove(&usize::from(node));
+        self.context
+            .taffy_hoisted_children
+            .remove(&usize::from(node));
     }
 
     fn add_hoisted_children(&mut self, node: NodeId, children: &[NodeId]) {
         if !children.is_empty() {
-            self.taffy_hoisted_children
+            self.context
+                .taffy_hoisted_children
                 .entry(usize::from(node))
                 .or_default()
                 .extend_from_slice(children);
@@ -45,7 +48,8 @@ impl LayoutContainingBlock for LayoutSession<'_> {
     }
 
     fn get_detailed_layout_info(&self, node: NodeId) -> &DetailedLayoutInfo<String> {
-        self.grid_layout_info
+        self.context
+            .grid_layout_info
             .get(&usize::from(node))
             .unwrap_or(&DetailedLayoutInfo::None)
     }

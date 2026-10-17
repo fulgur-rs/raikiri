@@ -3,12 +3,28 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use crate::document::Document;
+use crate::fragment::FragmentationContext;
+use crate::layout::LayoutWarn;
 use crate::node::arena::BoxKey;
 
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
 pub(crate) struct LayoutContext {
     pub(crate) node_states: RefCell<HashMap<BoxKey, NodeLayoutState>>,
+    pub(crate) layout_warnings: Vec<LayoutWarn>,
+    pub(crate) table_layout_error: Option<String>,
+    pub(crate) ifc_width_probe: bool,
+    pub(crate) fragmentation_stack: Vec<FragmentationContext>,
+    pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
+    pub(crate) orthogonal_block_in_layout: Option<usize>,
+    pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
+    pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
+    pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
+    pub(crate) size_contained_measure: Vec<usize>,
+    pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<String>>,
+    pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
+    pub(crate) pagination_on_transposed_axes: bool,
+    pub(crate) in_flow_heights: HashMap<usize, f32>,
 }
 
 #[derive(Debug)]

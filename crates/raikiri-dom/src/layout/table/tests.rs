@@ -21,13 +21,11 @@ fn with_layout_session<R>(
 }
 
 fn compute_table_layout_in_session(
-    document: &mut Document,
+    session: &mut LayoutSession<'_>,
     table: taffy::NodeId,
     inputs: LayoutInput,
 ) -> taffy::LayoutOutput {
-    with_layout_session(document, |session| {
-        super::compute_table_layout(session, table, inputs)
-    })
+    super::compute_table_layout(session, table, inputs)
 }
 
 fn resolve_column_widths_in_session(
@@ -315,8 +313,10 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
         );
         let mut inputs = column_probe_input();
         inputs.known_dimensions.width = Some(40.0);
-        let output = with_layout_session(&mut doc, |session| {
-            compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+        let (output, error_none) = with_layout_session(&mut doc, |session| {
+            let output =
+                compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs);
+            (output, session.context.table_layout_error.is_none())
         });
         assert_eq!(
             output.size,
@@ -325,7 +325,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
                 height: 10.0
             }
         );
-        assert!(doc.table_layout_error.is_none());
+        assert!(error_none);
         for (column, &cell) in children.iter().enumerate() {
             let layout = &doc.nodes[cell].unrounded_layout;
             assert_eq!(
@@ -504,8 +504,13 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
             .iter()
             .all(|cell| !cell.is_ifc_root())
     );
-    let output = with_layout_session(&mut doc, |session| {
-        compute_table_layout_in_session(session, taffy::NodeId::from(table), column_probe_input())
+    let (output, error_none) = with_layout_session(&mut doc, |session| {
+        let output = compute_table_layout_in_session(
+            session,
+            taffy::NodeId::from(table),
+            column_probe_input(),
+        );
+        (output, session.context.table_layout_error.is_none())
     });
     assert_eq!(
         output.size,
@@ -514,7 +519,7 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
             height: 40.0
         }
     );
-    assert!(doc.table_layout_error.is_none());
+    assert!(error_none);
     assert!(doc.ifc.is_none());
     for (index, child) in children.into_iter().enumerate() {
         assert_eq!(
@@ -658,7 +663,7 @@ fn table_column_grid_accepts_exact_representable_boundary() {
 }
 
 #[test]
-fn rejected_table_layout_cannot_be_reused_from_cache_and_recovers_after_repair() {
+fn layout_error_drops_scratch_before_document_reuse() {
     let mut doc = oversized_columns_document(true, false);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
@@ -668,9 +673,14 @@ fn rejected_table_layout_cannot_be_reused_from_cache_and_recovers_after_repair()
     for cell in 5..doc.nodes.len() {
         doc.set_element_attributes(cell, vec![("colspan".into(), "1".into())]);
     }
-    let cr = cascade(&doc, &rules).unwrap();
+    doc.set_element_inline_style(
+        5,
+        Some("display: table-cell; width: 10px; height: 10px".into()),
+    );
+    let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
-    assert!(doc.table_layout_error.is_none());
+    assert!(doc.nodes[3].unrounded_layout.size.width > 0.0);
+    assert!(doc.nodes[5].unrounded_layout.size.width > 0.0);
 }
 
 #[test]

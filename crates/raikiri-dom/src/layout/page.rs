@@ -592,6 +592,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                             first_child,
                             None,
                             resolved_layout,
+                            false,
                         )
                     {
                         return Some(name);
@@ -623,6 +624,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                     child_id,
                     None,
                     resolved_layout,
+                    false,
                 );
                 return propagated;
             }
@@ -1226,12 +1228,19 @@ fn static_absolute_with_boxes(document: &Document, node_id: usize, boxes: BoxTre
 /// vertical document is paginated on transposed axes, a box laid out on
 /// horizontal axes. Its content offers no class A break points, and its
 /// descendants' page names neither open pages nor propagate to the box.
-pub(crate) fn is_monolithic_for_pagination(
+pub(crate) fn is_monolithic_for_pagination_with_transposed_axes(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
+    pagination_on_transposed_axes: bool,
 ) -> bool {
-    monolithic_with_boxes(document, cascade, node_id, BoxTree::for_layout(document))
+    monolithic_with_boxes(
+        document,
+        cascade,
+        node_id,
+        BoxTree::for_layout(document),
+        pagination_on_transposed_axes,
+    )
 }
 
 fn monolithic_with_boxes(
@@ -1239,6 +1248,7 @@ fn monolithic_with_boxes(
     cascade: &CascadeResult,
     node_id: usize,
     boxes: BoxTree<'_>,
+    pagination_on_transposed_axes: bool,
 ) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     let node = &document.nodes[node_id];
@@ -1256,7 +1266,7 @@ fn monolithic_with_boxes(
         || (!page_applies_with_boxes(boxes, node_id)
             && boxes.identity(node_id).display().is_atomic_inline_level())
         || orthogonal_flow_with_boxes(document, cascade, node_id, boxes)
-        || (document.pagination_on_transposed_axes
+        || (pagination_on_transposed_axes
             && node.kind() == NodeKind::Element
             && !crate::layout::bridge::uses_vertical_axes(cascade, node_id))
 }
@@ -1305,13 +1315,37 @@ fn orthogonal_flow_with_boxes(
 /// that child participates in a class-A break point. Nested named boxes
 /// therefore do not each open a page; the deepest first in-flow box owns
 /// the value compared at the boundary.
+#[cfg(test)]
 pub(crate) fn propagated_start_page_name(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
     inherited_page_name: Option<&str>,
 ) -> (bool, Option<String>) {
-    propagated_start_page_name_with_order(document, cascade, node_id, inherited_page_name, true)
+    propagated_start_page_name_with_transposed_axes(
+        document,
+        cascade,
+        node_id,
+        inherited_page_name,
+        false,
+    )
+}
+
+pub(crate) fn propagated_start_page_name_with_transposed_axes(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    inherited_page_name: Option<&str>,
+    pagination_on_transposed_axes: bool,
+) -> (bool, Option<String>) {
+    propagated_start_page_name_with_order(
+        document,
+        cascade,
+        node_id,
+        inherited_page_name,
+        true,
+        pagination_on_transposed_axes,
+    )
 }
 
 fn propagated_start_page_name_with_order(
@@ -1320,6 +1354,7 @@ fn propagated_start_page_name_with_order(
     node_id: usize,
     inherited_page_name: Option<&str>,
     resolved_layout: bool,
+    pagination_on_transposed_axes: bool,
 ) -> (bool, Option<String>) {
     let boxes = if resolved_layout {
         BoxTree::for_layout(document)
@@ -1389,7 +1424,13 @@ fn propagated_start_page_name_with_order(
         };
         let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
         // A monolithic box does not pass a descendant's page value up.
-        if monolithic_with_boxes(document, cascade, node_id, boxes) {
+        if monolithic_with_boxes(
+            document,
+            cascade,
+            node_id,
+            boxes,
+            pagination_on_transposed_axes,
+        ) {
             return (true, used_page_name);
         }
         let child_order = if resolved_layout {

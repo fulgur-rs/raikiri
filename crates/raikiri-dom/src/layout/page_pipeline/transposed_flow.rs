@@ -25,6 +25,7 @@
 //! or an orthogonal flow) is not broken: pagination treats it as monolithic.
 
 use super::*;
+use crate::layout::context::LayoutSession;
 
 /// How the physical sides of a box map onto the transposed view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,7 +273,7 @@ impl TransposedDocument {
     /// Put `document` on transposed axes. The returned value maps it back
     /// with [`Self::restore`].
     pub(super) fn transpose(
-        document: &mut Document,
+        document: &mut LayoutSession<'_>,
         flow_root: usize,
         axes: FlowAxes,
         page_area_width: f32,
@@ -311,8 +312,8 @@ impl TransposedDocument {
         }
         // The heights recorded for boxes grown around floats are physical
         // heights; on transposed axes they would be read as block sizes.
-        let in_flow_heights = std::mem::take(&mut document.in_flow_heights);
-        document.pagination_on_transposed_axes = true;
+        let in_flow_heights = std::mem::take(&mut document.context.in_flow_heights);
+        document.context.pagination_on_transposed_axes = true;
         Self {
             axes,
             page_area_width,
@@ -337,7 +338,7 @@ impl TransposedDocument {
     /// Map the paginated `document` back to physical axes. A box that
     /// pagination left alone, in a parent that kept its size, gets its
     /// original layout back exactly.
-    pub(super) fn restore(self, document: &mut Document) {
+    pub(super) fn restore(self, document: &mut LayoutSession<'_>) {
         let keys = self.physical.len();
         let current: Vec<TaffyLayout> = (0..keys)
             .map(|key| document.table_layout_node_mut(key).unrounded_layout)
@@ -360,8 +361,8 @@ impl TransposedDocument {
             node.unrounded_layout = layout;
             node.style = style;
         }
-        document.in_flow_heights = self.in_flow_heights;
-        document.pagination_on_transposed_axes = false;
+        document.context.in_flow_heights = self.in_flow_heights;
+        document.context.pagination_on_transposed_axes = false;
     }
 }
 

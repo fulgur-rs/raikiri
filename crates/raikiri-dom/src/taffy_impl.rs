@@ -99,9 +99,9 @@ fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> 
 /// size without a main-axis parent size, so that a percentage *size* does not
 /// contribute to them (CSS Sizing 3 §5.2.1). Percentage edges still refer to
 /// the containing block's width, which a definite flex container knows; it is
-/// read from [`Document::flex_item_percent_bases`] then.
+/// read from the active [`LayoutSession`] then.
 fn ifc_parent_inline_size(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     node: usize,
     parent_size: Size<Option<f32>>,
 ) -> Option<f32> {
@@ -127,8 +127,9 @@ fn ifc_parent_inline_size(
 
 /// The content-box size of the flex container being laid out, when `node`
 /// is one of its items; each axis is `None` where that size is not definite.
-fn flex_item_percent_basis(tree: &Document, node: usize) -> Option<Size<Option<f32>>> {
-    tree.flex_item_percent_bases
+fn flex_item_percent_basis(tree: &LayoutSession<'_>, node: usize) -> Option<Size<Option<f32>>> {
+    tree.context
+        .flex_item_percent_bases
         .last()
         .filter(|&&(container, _)| {
             tree.nodes[node].taffy_position() != TaffyPosition::Absolute
@@ -255,10 +256,11 @@ pub struct TaffyChildIter<'a> {
 }
 
 impl<'a> TaffyChildIter<'a> {
-    fn new(doc: &'a Document, parent: NodeId) -> Self {
+    fn new(session: &'a LayoutSession<'_>, parent: NodeId) -> Self {
+        let doc = &*session.document;
         let node = &doc.nodes[usize::from(parent)];
         // A size-contained box measured as if it had no content.
-        let hidden = doc.size_contained_measure.last() == Some(&usize::from(parent));
+        let hidden = session.context.size_contained_measure.last() == Some(&usize::from(parent));
         Self {
             doc,
             flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
@@ -404,20 +406,20 @@ impl LayoutPartialTree for LayoutSession<'_> {
 
     /// The **only** path by which taffy writes layout into the arena.
     ///
-    /// Storing through [`Document::store_unrounded_layout`] here structurally
+    /// Storing through [`LayoutSession::store_unrounded_layout`] here structurally
     /// guarantees that `Node.unrounded_layout` contains no non-finite f32 values.
     /// The input guard in the bridge (`layout::sanitize_taffy`) alone cannot
     /// close the gap: nested percentages compound at the used-value layer
     /// and can become non-finite again. See the documentation for
     /// `layout::sanitize_taffy_layout` for the reasoning and measurements.
     ///
-    /// Record fields actually clamped in `self.layout_warnings` (an owned buffer).
+    /// Record fields actually clamped in `self.context.layout_warnings`.
     /// The `taffy` crate fixes this trait-method signature, so diagnostic
     /// arguments cannot be added. Instead, write to the owned buffer through
     /// `self` without changing the signature. At pass end, `layout_single_page`
     /// drains the buffer to an observer or eprintln (see the documentation for
     /// the diagnostics buffer below).
-    /// See [`Document::layout_warnings`](crate::document::Document).
+    /// The session context drops this buffer when the layout operation ends.
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
         self.note_transposed_layout(usize::from(node_id));
         self.store_unrounded_layout(usize::from(node_id), layout);
@@ -473,8 +475,8 @@ impl LayoutSession<'_> {
             for node in self.nodes.layout_nodes_mut() {
                 node.cache.clear();
             }
-            self.grid_layout_info.clear();
-            self.taffy_hoisted_children.clear();
+            self.context.grid_layout_info.clear();
+            self.context.taffy_hoisted_children.clear();
             self.layout_dirty = false;
         }
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
@@ -501,7 +503,7 @@ impl LayoutSession<'_> {
         // A size-only cache cannot replay them after a speculative layout is restored.
         let uncached = block_ctx.is_some()
             || (paragraph && ifc_basis.is_some() && has_percent_edge(&self.nodes[idx].style))
-            || self.size_contained_measure.last() == Some(&idx);
+            || self.context.size_contained_measure.last() == Some(&idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against
@@ -517,7 +519,7 @@ impl LayoutSession<'_> {
             .filter(|_| has_percent_padding_or_border(&self.nodes[idx].style));
         let compute = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
             let idx = usize::from(node_id);
-            let empty = tree.size_contained_measure.last() == Some(&idx);
+            let empty = tree.context.size_contained_measure.last() == Some(&idx);
             let inputs = if empty {
                 inputs
             } else {
@@ -567,7 +569,7 @@ impl LayoutSession<'_> {
             if !empty
                 && inputs.known_dimensions.width.is_some()
                 && inputs.sizing_mode == taffy::SizingMode::InherentSize
-                && tree.orthogonal_block_in_layout != Some(idx)
+                && tree.context.orthogonal_block_in_layout != Some(idx)
                 && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
             {
                 return orthogonal_flow::compute_orthogonal_block(tree, node_id, inputs);
@@ -583,7 +585,7 @@ impl LayoutSession<'_> {
             // splits its lines in columns.
             if formatting_context == FormattingContext::Multicol
                 && !empty
-                && tree.fragmentation_stack.len() < MAX_NESTED_MULTICOL_DEPTH
+                && tree.context.fragmentation_stack.len() < MAX_NESTED_MULTICOL_DEPTH
             {
                 return crate::layout::compute_multicol_layout(tree, node_id, inputs, block_ctx); // cov:ignore: exercised by ignored nested multicol WPT reftests
             }
@@ -688,11 +690,13 @@ impl LayoutSession<'_> {
                         let vertical_cb =
                             vertical_oof::containing_block_inline_size(tree, idx, &inputs);
                         if let Some(inline_size) = vertical_cb {
-                            tree.vertical_oof_containing_blocks.push((idx, inline_size));
+                            tree.context
+                                .vertical_oof_containing_blocks
+                                .push((idx, inline_size));
                         }
                         let output = block_layout(tree, node_id, inputs, block_ctx);
                         if vertical_cb.is_some() {
-                            tree.vertical_oof_containing_blocks.pop();
+                            tree.context.vertical_oof_containing_blocks.pop();
                         }
                         if inputs.run_mode == RunMode::PerformLayout {
                             vertical_oof::place_static_block_start(tree, idx, output.size);
@@ -1139,7 +1143,7 @@ fn measure_ifc_root(
     mut block_ctx: Option<&mut BlockContext<'_>>,
 ) -> IfcMeasurement {
     use crate::layout::ifc::{flow, root::with_state};
-    let width_only = std::mem::take(&mut tree.ifc_width_probe);
+    let width_only = std::mem::take(&mut tree.context.ifc_width_probe);
     let Some((probe, writing_mode, fixed, direction)) = tree.nodes[idx].ifc.as_ref().map(|root| {
         (
             root.without_lines(),
@@ -1472,12 +1476,12 @@ fn measure_ifc_root(
 }
 
 fn fragmentation_context_for_ifc(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     idx: usize,
     root: &crate::layout::ifc::root::IfcRoot,
 ) -> Option<crate::fragment::FragmentationContext> {
     use crate::layout::ifc::boxes::IfcBoxKind;
-    let context = *tree.fragmentation_stack.last()?;
+    let context = *tree.context.fragmentation_stack.last()?;
     context.available_height?;
     if !root.boxes.iter().any(|box_| box_.kind == IfcBoxKind::Float) {
         return None;
@@ -1595,7 +1599,7 @@ fn compute_inline_block_shrink_wrap(
     let idx = usize::from(node_id);
     // A size-contained box measured as if it had no content has no lines and
     // no natural size.
-    let empty = tree.size_contained_measure.last() == Some(&idx);
+    let empty = tree.context.size_contained_measure.last() == Some(&idx);
     // An ifc root's children are hidden from the block algorithm: the inline
     // engine measures and lays out its content in the same steps below.
     let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty;
@@ -1757,14 +1761,14 @@ pub(crate) fn block_layout(
     }
     let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
     let basis = width.map(|width| width - inline_inset);
-    tree.block_item_percent_bases.push((idx, basis));
+    tree.context.block_item_percent_bases.push((idx, basis));
     let mut output = compute_block_flow(tree, node_id, inputs, block_ctx.as_deref_mut());
-    tree.block_item_percent_bases.pop();
+    tree.context.block_item_percent_bases.pop();
     if basis.is_none() && block_ctx.is_none() && tree.has_percent_vertical_edge_child(idx) {
         let basis = Some(output.size.width - inline_inset);
-        tree.block_item_percent_bases.push((idx, basis));
+        tree.context.block_item_percent_bases.push((idx, basis));
         output = compute_block_flow(tree, node_id, inputs, None);
-        tree.block_item_percent_bases.pop();
+        tree.context.block_item_percent_bases.pop();
     }
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
@@ -1773,7 +1777,7 @@ pub(crate) fn block_layout(
 /// `inputs` with the axes in which `node_id` has size containment sized as
 /// if the box had no content (CSS Containment 2 §3.1, §3.2).
 ///
-/// The box is measured once with [`Document::size_contained_measure`]
+/// The box is measured once with the session's `size_contained_measure`
 /// hiding its children, through the same layout algorithm and with the same
 /// constraints, so that its padding, borders, sizing properties and, for a
 /// grid, its explicit tracks still count. The size found becomes a known
@@ -1793,7 +1797,7 @@ fn size_contained_inputs(
     if !width && !height {
         return inputs;
     }
-    tree.size_contained_measure.push(idx);
+    tree.context.size_contained_measure.push(idx);
     let empty = tree
         .compute_child_layout(
             node_id,
@@ -1804,7 +1808,7 @@ fn size_contained_inputs(
             },
         )
         .size;
-    tree.size_contained_measure.pop();
+    tree.context.size_contained_measure.pop();
     let mut inputs = inputs;
     if width {
         inputs.known_dimensions.width = Some(empty.width);
@@ -1959,10 +1963,10 @@ pub(crate) fn flex_layout(
         width: size.width.map(|width| (width - inset.width).max(0.0)),
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
-    tree.flex_item_percent_bases.push((idx, basis));
+    tree.context.flex_item_percent_bases.push((idx, basis));
     let mut output = compute_flexbox_layout(tree, node_id, inputs);
     oof::layout_local_oof(tree, node_id, &mut output);
-    tree.flex_item_percent_bases.pop();
+    tree.context.flex_item_percent_bases.pop();
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
 }
@@ -1973,14 +1977,14 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     let mut output = compute_grid_layout(tree, node_id, inputs);
     oof::layout_local_oof(tree, node_id, &mut output);
     // Taffy reports the tracks only from a layout it performs.
-    let grid = tree.grid_layout_info.remove(&idx);
+    let grid = tree.context.grid_layout_info.remove(&idx);
     if let Some(taffy::DetailedLayoutInfo::Grid(grid)) = grid {
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(&grid));
     }
     output
 }
 
-impl Document {
+impl LayoutSession<'_> {
     /// Whether the bridged writing mode of `idx` has a vertical inline axis.
     fn has_vertical_writing_mode(&self, idx: usize) -> bool {
         self.nodes[idx].used_writing_mode.is_vertical()
@@ -2269,7 +2273,7 @@ impl LayoutBlockContainer for LayoutSession<'_> {
     /// Taffy also reads a child's style when it places the child as an
     /// absolutely positioned box, against a different basis (the padding
     /// box of the containing block), so only in-flow children of the
-    /// container on top of [`Document::block_item_percent_bases`] get their
+    /// container on top of the session's block item percent basis get their
     /// vertical edges resolved here. Neither do the children of a container
     /// whose width is not known yet when taffy lists them (an auto-width
     /// float, say): taffy sizes such a container from its contents only
@@ -2281,6 +2285,7 @@ impl LayoutBlockContainer for LayoutSession<'_> {
         }
         let style = &self.nodes[child].style;
         let basis = self
+            .context
             .block_item_percent_bases
             .last()
             .filter(|&&(container, _)| {
@@ -2384,7 +2389,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         self.nodes[parent].grid_column_count = grid_column_count;
-        self.grid_layout_info.insert(
+        self.context.grid_layout_info.insert(
             parent,
             taffy::DetailedLayoutInfo::Grid(Box::new(detailed_grid_info)),
         );
@@ -2398,14 +2403,14 @@ impl TraversePartialTree for LayoutSession<'_> {
         Self: 'a;
 
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
-        TaffyChildIter::new(self.document, node_id)
+        TaffyChildIter::new(self, node_id)
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
         let parent = usize::from(node_id);
-        let count = TaffyChildIter::new(self.document, node_id).count();
-        let children = (count >= WALKED_CHILDREN_MIN)
-            .then(|| TaffyChildIter::new(self.document, node_id).collect());
+        let count = TaffyChildIter::new(self, node_id).count();
+        let children =
+            (count >= WALKED_CHILDREN_MIN).then(|| TaffyChildIter::new(self, node_id).collect());
         if let Some(mut state) = self.node_state(parent) {
             state.taffy_child_walks = children;
         }
@@ -2423,7 +2428,7 @@ impl TraversePartialTree for LayoutSession<'_> {
             }
             return child;
         }
-        TaffyChildIter::new(self.document, node_id)
+        TaffyChildIter::new(self, node_id)
             .nth(index)
             .expect("get_child_id: index out of range")
     }

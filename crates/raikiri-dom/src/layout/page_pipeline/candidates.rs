@@ -2,13 +2,15 @@
 //! texts pagination may move to a later page, in source order.
 
 use super::super::box_tree::BoxTree;
+use super::super::context::LayoutSession;
 use super::{
     BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue, FloatValue,
     FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl, PositionValue,
     TextLineIndex, clears_float_side, has_bounded_clipping_ancestor, has_side_by_side_ancestor,
-    is_block_level_flow_box, is_floating_box_for_pagination, is_monolithic_for_pagination,
-    page_applies_to_box, page_break_is_forced, pagination_child_order, pagination_child_parent_y,
-    positioned_owned_text_line_bounds, propagated_start_page_name, selected_page_name,
+    is_block_level_flow_box, is_floating_box_for_pagination,
+    is_monolithic_for_pagination_with_transposed_axes, page_applies_to_box, page_break_is_forced,
+    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
+    propagated_start_page_name_with_transposed_axes, selected_page_name,
 };
 
 #[derive(Clone, Copy, Default)]
@@ -77,6 +79,7 @@ fn has_nested_named_page_descendant(
     cascade: &CascadeResult,
     node_id: usize,
     depth: u32,
+    pagination_on_transposed_axes: bool,
 ) -> bool {
     let mut pending: Vec<_> = document
         .get_node(node_id)
@@ -104,7 +107,12 @@ fn has_nested_named_page_descendant(
             return true;
         }
         // Names inside a monolithic box have no effect on pagination.
-        if is_monolithic_for_pagination(document, cascade, current_id) {
+        if is_monolithic_for_pagination_with_transposed_axes(
+            document,
+            cascade,
+            current_id,
+            pagination_on_transposed_axes,
+        ) {
             continue;
         }
         if let Some(node) = document.get_node(current_id) {
@@ -229,8 +237,8 @@ pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usiz
 /// Collects the page candidates of a laid-out subtree. Page membership is
 /// decided from source coordinates before local page offsets, so the
 /// recursion carries each node's inherited state in a [`CandidateFrame`].
-pub(super) struct CandidateCollector<'a, 'c> {
-    document: &'a Document,
+pub(super) struct CandidateCollector<'a, 'doc, 'c> {
+    document: &'a LayoutSession<'doc>,
     cascade: &'a CascadeResult,
     roots: FlowRoots,
     page_step: f32,
@@ -239,9 +247,9 @@ pub(super) struct CandidateCollector<'a, 'c> {
     control: &'a PageLayoutControl<'c>,
 }
 
-impl<'a, 'c> CandidateCollector<'a, 'c> {
+impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     pub(super) fn new(
-        document: &'a Document,
+        document: &'a LayoutSession<'doc>,
         cascade: &'a CascadeResult,
         roots: FlowRoots,
         page_step: f32,
@@ -449,12 +457,14 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                 } else {
                     None
                 };
-                let (has_propagated_page_name, propagated_page_name) = propagated_start_page_name(
-                    document,
-                    cascade,
-                    node_id,
-                    frame.inherited_page_name.as_deref(),
-                );
+                let (has_propagated_page_name, propagated_page_name) =
+                    propagated_start_page_name_with_transposed_axes(
+                        document,
+                        cascade,
+                        node_id,
+                        frame.inherited_page_name.as_deref(),
+                        document.context.pagination_on_transposed_axes,
+                    );
                 let is_flex = document.nodes[node_id].formatting_context == FormattingContext::Flex;
                 let column_flex = is_flex
                     && matches!(
@@ -464,7 +474,13 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                 let deferred_named_break_after =
                     document.nodes[node_id].display().is_flex_container()
                         && !column_flex
-                        && has_nested_named_page_descendant(document, cascade, node_id, 0);
+                        && has_nested_named_page_descendant(
+                            document,
+                            cascade,
+                            node_id,
+                            0,
+                            document.context.pagination_on_transposed_axes,
+                        );
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
                 // container's start page value.
@@ -635,8 +651,13 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                 // monolithic: like a float, its content offers no class A
                 // break points and its page names do not open pages. A
                 // blockified flex or grid item is no longer atomic.
-                let monolithic =
-                    !is_body && is_monolithic_for_pagination(document, cascade, node_id);
+                let monolithic = !is_body
+                    && is_monolithic_for_pagination_with_transposed_axes(
+                        document,
+                        cascade,
+                        node_id,
+                        document.context.pagination_on_transposed_axes,
+                    );
                 let child_order = pagination_child_order(document, cascade, node_id);
                 for child_id in child_order {
                     let child_parent_y =

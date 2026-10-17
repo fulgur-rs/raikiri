@@ -15,10 +15,11 @@ fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
         let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
         let node = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
         tree.nodes[parent].used_writing_mode = mode;
+        let session = LayoutSession::new(&mut tree);
 
         assert_eq!(
             ifc_parent_inline_size(
-                &tree,
+                &session,
                 node,
                 Size {
                     width: Some(60.0),
@@ -233,10 +234,11 @@ fn a_horizontal_override_keeps_the_vertical_ancestor_fragmentation_guard() {
             doc.nodes[columns].multicol.unwrap(),
         )
         .unwrap();
-        doc.fragmentation_stack.push(context);
+        let mut session = LayoutSession::new(&mut doc);
+        session.context.fragmentation_stack.push(context);
         let expected = (mode == "horizontal-tb").then_some(context);
         assert_eq!(
-            fragmentation_context_for_ifc(&doc, paragraph, &root),
+            fragmentation_context_for_ifc(&session, paragraph, &root),
             expected
         );
     }

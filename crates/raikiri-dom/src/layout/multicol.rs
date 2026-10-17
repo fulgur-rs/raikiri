@@ -79,12 +79,12 @@ pub(crate) fn compute_multicol_layout(
         .iter()
         .any(|&child| spanning::is_spanner(tree, child));
     let custom_scope = (span_scope
-        || tree.fragmentation_stack.is_empty()
+        || tree.context.fragmentation_stack.is_empty()
             && (multicol_has_nested_descendant(tree, index)
                 || (multicol_has_direct_block_child(tree, index)
                     && tree.nodes[index].style.size.height == Dimension::auto())
                 || multicol_has_direct_break_flow(tree, index))
-        || !tree.fragmentation_stack.is_empty())
+        || !tree.context.fragmentation_stack.is_empty())
         && (!multicol_has_min_constrained_child(tree, index)
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
@@ -93,7 +93,7 @@ pub(crate) fn compute_multicol_layout(
     // too.
     let definite_paragraphs = !custom_scope
         && !span_scope
-        && tree.fragmentation_stack.is_empty()
+        && tree.context.fragmentation_stack.is_empty()
         && style.horizontal
         && available_height.is_some_and(|height| height > 0.0)
         && multicol_has_direct_block_child(tree, index)
@@ -109,20 +109,20 @@ pub(crate) fn compute_multicol_layout(
     // A nested container whose children are sliced only because they hold
     // absolutely positioned boxes.
     let nested_out_of_flow = lineless_children.is_some()
-        && !tree.fragmentation_stack.is_empty()
+        && !tree.context.fragmentation_stack.is_empty()
         && lineless::supported(tree, index, false).is_none();
     // A nested container that turns out taller than its outer column falls
     // back to the custom path, which also breaks it at the outer column end.
-    let nested_fallback = custom_scope && !tree.fragmentation_stack.is_empty();
+    let nested_fallback = custom_scope && !tree.context.fragmentation_stack.is_empty();
     let mut custom_scope = custom_scope && lineless_children.is_none();
-    let stack_depth = tree.fragmentation_stack.len();
+    let stack_depth = tree.context.fragmentation_stack.len();
     let outer_height = stack_depth
         .checked_sub(1)
-        .and_then(|outer| tree.fragmentation_stack[outer].available_height);
-    tree.fragmentation_stack.push(context);
+        .and_then(|outer| tree.context.fragmentation_stack[outer].available_height);
+    tree.context.fragmentation_stack.push(context);
     let mut output = crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     if tree.fragment_tree.limit_exceeded {
-        tree.fragmentation_stack.truncate(stack_depth);
+        tree.context.fragmentation_stack.truncate(stack_depth);
         return output;
     }
     // Columns sliced here are not cut again at the end of an outer column,
@@ -189,7 +189,7 @@ pub(crate) fn compute_multicol_layout(
         let content_width = multicol_content_width(tree, index, output.size.width, parent_width);
         let resolved = FragmentationContext::resolve(content_width, fragmentainer_height, style)
             .unwrap_or(context);
-        if let Some(active) = tree.fragmentation_stack.last_mut() {
+        if let Some(active) = tree.context.fragmentation_stack.last_mut() {
             *active = resolved;
         }
         // The parent writes the container's layout after this callback.
@@ -340,7 +340,7 @@ pub(crate) fn compute_multicol_layout(
     }
     // Truncating to the depth captured on entry keeps the stack balanced if a
     // future child strategy starts pushing a nested context of its own.
-    tree.fragmentation_stack.truncate(stack_depth);
+    tree.context.fragmentation_stack.truncate(stack_depth);
     output
 }
 
@@ -857,7 +857,7 @@ fn layout_column_group(
     // Paragraphs in definite-height columns are placed by the same planner,
     // so that a paragraph broken between columns hands its end to the next.
     let definite_paragraphs = fragment_height.is_some()
-        && tree.fragmentation_stack.len() <= 1
+        && tree.context.fragmentation_stack.len() <= 1
         && multicol_has_only_paragraph_children(tree, index)
         && !multicol_has_nested_descendant(tree, index);
     let auto_measurements = if (context.column_fill != ColumnFillValue::Auto

@@ -29,8 +29,7 @@ use taffy::Style;
 
 use raikiri_traits::{QuirksMode, StylesheetKind};
 
-use crate::fragment::{FragmentTree, FragmentationContext};
-use crate::layout::LayoutWarn;
+use crate::fragment::FragmentTree;
 use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData};
 
 mod mutation;
@@ -413,10 +412,6 @@ pub struct Document {
     /// Page values and forced breaks that paged layout gives clearance by in
     /// place of the cascade's, for a relayout whose cascade drops them.
     pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
-    /// Set around a table's intrinsic width probe of a cell that is an ifc
-    /// root: the next ifc measurement only needs the cell's width, so it
-    /// skips breaking the paragraph into lines.
-    pub(crate) ifc_width_probe: bool,
     /// Inline-engine state; `None` until fonts are set or the first layout
     /// takes the installed fonts.
     pub(crate) ifc: Option<crate::layout::ifc::root::IfcState>,
@@ -431,15 +426,6 @@ pub struct Document {
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
     pub(crate) fixed_page_area: Option<(f32, f32)>,
-    /// The laid-out border-box height of each auto-height box that the most
-    /// recent layout then grew to hold a float descendant it does not
-    /// contain: the flow after such a box follows this height, not its grown
-    /// one (CSS 2.1 §10.6.3).
-    pub(crate) in_flow_heights: HashMap<usize, f32>,
-    /// Whether the paginator is running on the transposed axes of a document
-    /// whose root element lays out its blocks on vertical axes. Pagination
-    /// then treats the boxes laid out on horizontal axes as monolithic.
-    pub(crate) pagination_on_transposed_axes: bool,
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -477,47 +463,6 @@ pub struct Document {
     /// Parsing is deferred to the cascade phase.
     /// Call order determines cascade source_order within each kind.
     stylesheets: Vec<(Cow<'static, str>, StylesheetKind)>,
-    /// Buffered [`LayoutWarn`] diagnostic events for the current (or most
-    /// recent) `layout_single_page` pass (generalizing
-    /// the `fonts.rs` `FontWarn` observer pattern to this crate's other
-    /// "silent clamp" site).
-    ///
-    /// Owned (`Vec`, no borrowed observer) rather than a closure field —
-    /// deliberately, not as a simplification of convenience.
-    /// [`Document::store_unrounded_layout`] is the choke point that writes
-    /// non-finite-clamped layouts into the arena, and taffy's
-    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout` reaches
-    /// it through a signature fixed by the `taffy` trait — it cannot receive an extra observer
-    /// parameter. Storing a borrowed `&mut dyn FnMut` here instead would
-    /// require adding a lifetime parameter to `Document` itself, which is a
-    /// public-shape break every consumer of this type would have to absorb
-    /// (dom→paint wall territory) for a capability nothing external can
-    /// plug into yet. An owned buffer sidesteps that: `set_unrounded_layout`
-    /// pushes through `self` with no signature change, and
-    /// `layout_single_page` drains + replays the buffer through the same
-    /// [`crate::diag::emit_warn_via`] mechanism the rest of this module's
-    /// diagnostics use, once per pass, after the taffy compute step returns.
-    ///
-    /// Cleared at the start of each `layout_single_page` call (re-entrance
-    /// safety) and drained near its end.
-    ///
-    /// # Scope boundary: only `layout_single_page` clears/drains this
-    ///
-    /// A `Document` driven through `taffy::compute_root_layout` directly
-    /// (bypassing `layout_single_page` — e.g. this crate's own `lib.rs` unit
-    /// tests) still has `set_unrounded_layout` pushing into this buffer, but
-    /// nothing clears or drains it. [`LAYOUT_WARN_CAP`]-plus-one bounds the
-    /// memory either way, so this is not a leak, but on such a `Document` the
-    /// first pathological layout pass fills the buffer and every event after
-    /// that collapses into the trailing `Truncated` counter, with nothing
-    /// ever reading it back out. Not a problem for `layout_single_page`
-    /// callers (the only production path); worth knowing if a future
-    /// consumer drives taffy directly and expects these diagnostics.
-    ///
-    /// [`LAYOUT_WARN_CAP`]: crate::layout::sanitize::LAYOUT_WARN_CAP
-    pub(crate) layout_warnings: Vec<LayoutWarn>,
-    /// Terminal error raised inside Taffy's infallible table callback.
-    pub(crate) table_layout_error: Option<String>,
     /// Stable storage for Taffy calc resolver payloads used by the current
     /// layout pass. The heap allocations keep pointees stable while styles hold raw handles.
     pub(crate) calc_values: Vec<Arc<crate::taffy_impl::ArenaCalc>>,
@@ -525,39 +470,6 @@ pub struct Document {
     pub(crate) fragment_tree: FragmentTree,
     /// Column rules retained from final placements, relative to each owner.
     pub(crate) column_rules: std::collections::BTreeMap<usize, Vec<raikiri_traits::PaintRect>>,
-    /// Active nested fragmentainer stack while Taffy recursively lays out nodes.
-    pub(crate) fragmentation_stack: Vec<FragmentationContext>,
-    /// Vertical block containers being laid out whose absolutely positioned
-    /// children use the recorded physical height as their containing
-    /// block's inline size; see `taffy_impl::vertical_oof`.
-    pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
-    /// The vertical box under a horizontal block container that is being
-    /// laid out at its content-based width; see `taffy_impl::orthogonal_flow`.
-    pub(crate) orthogonal_block_in_layout: Option<usize>,
-    /// Vertical block containers being laid out on transposed axes, the
-    /// innermost last; see [`crate::taffy_impl::TransposedBlock`].
-    pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
-    /// Block containers being laid out, each with the content-box width its
-    /// children's percentage padding and borders resolve against; see
-    /// [`crate::taffy_impl::BlockChildStyle`].
-    pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
-    /// Flex containers being laid out, each with its content-box size where
-    /// that is definite. Taffy measures the automatic minimum size of an item
-    /// without a main-axis parent size, so an item finds the basis of its
-    /// percentage padding, borders and margins here instead; see
-    /// [`crate::taffy_impl::flex_layout`].
-    pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
-    /// Size-contained boxes being measured as if they had no content, the
-    /// innermost last; taffy sees no children under them; see
-    /// [`mod@crate::taffy_impl`]'s `size_contained_inputs`.
-    pub(crate) size_contained_measure: Vec<usize>,
-    /// Per-container tracks kept from
-    /// [`taffy::LayoutGridContainer::set_detailed_grid_info`] until
-    /// [`mod@crate::taffy_impl`]'s `grid_layout` finishes positioning that
-    /// container's children. Nested grids retain their ancestors' entries.
-    pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<String>>,
-    /// Out-of-flow boxes recorded by the public Taffy containing-block interface.
-    pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -733,13 +645,10 @@ impl Document {
             forced_break_clearance: Vec::new(),
             forced_break_line_clearance: Vec::new(),
             clearance_breaks: None,
-            ifc_width_probe: false,
             ifc: None,
             normal_line_height: None,
             layout_cascade_generation: None,
             fixed_page_area: None,
-            in_flow_heights: HashMap::new(),
-            pagination_on_transposed_axes: false,
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
@@ -749,20 +658,9 @@ impl Document {
             // detached nodes yet, so the flag is not dirty.
             flags_dirty: false,
             stylesheets: Vec::new(),
-            layout_warnings: Vec::new(),
-            table_layout_error: None,
             calc_values: Vec::new(),
             fragment_tree: FragmentTree::default(),
             column_rules: std::collections::BTreeMap::new(),
-            fragmentation_stack: Vec::new(),
-            vertical_oof_containing_blocks: Vec::new(),
-            orthogonal_block_in_layout: None,
-            transposed_blocks: Vec::new(),
-            block_item_percent_bases: Vec::new(),
-            flex_item_percent_bases: Vec::new(),
-            size_contained_measure: Vec::new(),
-            grid_layout_info: HashMap::new(),
-            taffy_hoisted_children: HashMap::new(),
             quirks_mode: QuirksMode::default(),
             base_url: None,
         }
@@ -2100,33 +1998,19 @@ impl Document {
             forced_break_clearance: _,
             forced_break_line_clearance: _,
             clearance_breaks: _,
-            ifc_width_probe: _,
             ifc,
             normal_line_height,
             layout_cascade_generation: _,
             fixed_page_area: _,
-            in_flow_heights: _,
-            pagination_on_transposed_axes: _,
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,
             later_fragments: _,
             flags_dirty: _,
             stylesheets,
-            layout_warnings: _,
-            table_layout_error: _,
             calc_values: _,
             fragment_tree: _,
             column_rules: _,
-            fragmentation_stack: _,
-            vertical_oof_containing_blocks: _,
-            orthogonal_block_in_layout: _,
-            transposed_blocks: _,
-            block_item_percent_bases: _,
-            flex_item_percent_bases: _,
-            size_contained_measure: _,
-            grid_layout_info: _,
-            taffy_hoisted_children: _,
             quirks_mode,
             base_url,
         } = self;

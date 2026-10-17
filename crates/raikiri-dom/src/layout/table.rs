@@ -321,7 +321,7 @@ fn layout_table_caption(
 }
 
 fn position_table_caption(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     table_idx: usize,
     grid_size: Size<f32>,
     caption_size: Option<Size<f32>>,
@@ -400,7 +400,7 @@ pub fn compute_table_layout(
     match compute_table_layout_checked(doc, table_id, inputs) {
         Ok(output) => output,
         Err(error) => {
-            doc.table_layout_error = Some(error.to_string());
+            doc.context.table_layout_error = Some(error.to_string());
             LayoutOutput::from_outer_size(Size::ZERO)
         }
     }
@@ -967,7 +967,7 @@ fn compute_table_layout_checked(
 /// Give source rows and groups used boxes, while cell placement remains
 /// measured in table coordinates until the final parent-relative projection.
 fn position_source_table_parts(
-    doc: &mut Document,
+    doc: &mut LayoutSession<'_>,
     table: usize,
     grid: &TableGrid,
     columns: &[f32],
@@ -1588,7 +1588,7 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
     // that probe would carry no height, so the cell's cache is restored.
     let width_only = is_plain_paragraph_cell(doc, cell_id);
     let saved_cache = width_only.then(|| doc.table_layout_node_mut(cell_id).cache.clone());
-    doc.ifc_width_probe = width_only;
+    doc.context.ifc_width_probe = width_only;
     // Use a fresh measure: indefinite parent size so that % widths resolve to auto (spec §2.3).
     // Height available is MAX_CONTENT (intrinsic).
     let output = doc.compute_child_layout(
@@ -1610,7 +1610,7 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
             vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
         },
     );
-    doc.ifc_width_probe = false;
+    doc.context.ifc_width_probe = false;
     if let Some(cache) = saved_cache {
         doc.table_layout_node_mut(cell_id).cache = cache;
     }

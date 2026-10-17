@@ -71,7 +71,7 @@ pub(super) fn layout(
                 origin_y: block_offset,
                 ..context
             };
-            if let Some(active) = tree.fragmentation_stack.last_mut() {
+            if let Some(active) = tree.context.fragmentation_stack.last_mut() {
                 *active = group_context;
             }
             block_offset = layout_column_group(
@@ -96,7 +96,7 @@ pub(super) fn layout(
         if let Some(child) = spanner {
             // A spanner establishes an independent formatting context. The
             // owner's column stack must not fragment its text or descendants.
-            let stack = std::mem::take(&mut tree.fragmentation_stack);
+            let stack = std::mem::take(&mut tree.context.fragmentation_stack);
             clear_column_state(tree, child);
             let fragment_start = tree.fragment_tree.fragments.len();
             let margin = &tree.nodes[child].style.margin;
@@ -137,7 +137,7 @@ pub(super) fn layout(
                     vertical_margins_are_collapsible: TaffyLine::FALSE,
                 },
             );
-            tree.fragmentation_stack = stack;
+            tree.context.fragmentation_stack = stack;
             let mut child_layout = tree.nodes[child].unrounded_layout;
             child_layout.order = end as u32;
             child_layout.size = output.size;

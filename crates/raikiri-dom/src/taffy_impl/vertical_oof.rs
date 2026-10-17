@@ -19,6 +19,7 @@ use taffy::{AvailableSpace, LayoutInput, Position as TaffyPosition, Size};
 
 use super::resolve_calc;
 use crate::document::Document;
+use crate::layout::context::LayoutSession;
 use crate::node::NodeFlags;
 use raikiri_style::property::WritingMode;
 
@@ -92,11 +93,11 @@ pub(super) fn containing_block_inline_size(
 /// a vertical containing block recorded by [`containing_block_inline_size`]
 /// as its available physical height.
 pub(super) fn absolute_child_inputs(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     node: usize,
     inputs: LayoutInput,
 ) -> LayoutInput {
-    let Some(&(container, inline_size)) = tree.vertical_oof_containing_blocks.last() else {
+    let Some(&(container, inline_size)) = tree.context.vertical_oof_containing_blocks.last() else {
         return inputs;
     };
     let parent = tree

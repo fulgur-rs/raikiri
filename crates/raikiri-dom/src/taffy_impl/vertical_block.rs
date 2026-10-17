@@ -97,11 +97,12 @@ fn is_vertical(tree: &Document, idx: usize) -> bool {
     block_right_to_left(tree, idx).is_some()
 }
 
-impl Document {
+impl LayoutSession<'_> {
     /// The transposed style of the container being laid out, when `idx` is
     /// that container.
     pub(super) fn transposed_container_style(&self, idx: usize) -> Option<&Style> {
-        self.transposed_blocks
+        self.context
+            .transposed_blocks
             .last()
             .filter(|block| block.container == idx)
             .map(|block| &block.container_style)
@@ -110,14 +111,15 @@ impl Document {
     /// The transposed style of `idx`, when it is a child of the container
     /// being laid out.
     pub(super) fn transposed_child_style(&self, idx: usize) -> Option<&Style> {
-        self.transposed_blocks
+        self.context
+            .transposed_blocks
             .last()
             .and_then(|block| block.child_styles.get(&idx))
     }
 
     /// Record that taffy stored a transposed layout for `idx`.
     pub(super) fn note_transposed_layout(&mut self, idx: usize) {
-        if let Some(block) = self.transposed_blocks.last_mut()
+        if let Some(block) = self.context.transposed_blocks.last_mut()
             && block.child_styles.contains_key(&idx)
         {
             block.placed.push(idx);
@@ -137,10 +139,11 @@ impl LayoutSession<'_> {
         inputs: LayoutInput,
     ) -> Option<LayoutOutput> {
         let idx = usize::from(node_id);
-        self.transposed_blocks
+        self.context
+            .transposed_blocks
             .last()
             .filter(|block| block.child_styles.contains_key(&idx))?;
-        let block = self.transposed_blocks.pop()?;
+        let block = self.context.transposed_blocks.pop()?;
         let inputs =
             orthogonal_child_inputs(self, idx, transpose_inputs(inputs), block.block_space);
         // Taffy resolves a box's percentage padding against the width of
@@ -163,7 +166,7 @@ impl LayoutSession<'_> {
         if let Some(padding) = physical_padding {
             self.nodes[idx].style.padding = padding;
         }
-        self.transposed_blocks.push(block);
+        self.context.transposed_blocks.push(block);
         Some(transpose_output(output))
     }
 }
@@ -257,6 +260,7 @@ fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
 /// size of the containing block on every side (CSS Writing Modes 4 §7.1).
 fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
     let block = tree
+        .context
         .transposed_blocks
         .last_mut()
         .expect("the container's block is pushed");
@@ -321,7 +325,7 @@ pub(super) fn compute_vertical_block(
         let border = container_style.border.resolve_or_zero(None, resolve_calc);
         (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
     });
-    tree.transposed_blocks.push(TransposedBlock {
+    tree.context.transposed_blocks.push(TransposedBlock {
         container: idx,
         block_space,
         container_style,
@@ -335,7 +339,7 @@ pub(super) fn compute_vertical_block(
         resolve_child_padding(tree, width);
     }
     let output = compute_block_flow(tree, node_id, inputs, None);
-    let mut block = tree.transposed_blocks.pop().expect("pushed above");
+    let mut block = tree.context.transposed_blocks.pop().expect("pushed above");
     let output = transpose_output(output);
     // Taffy may store a child's layout more than once; the last one stands.
     block.placed.sort_unstable();

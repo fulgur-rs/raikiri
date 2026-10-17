@@ -4,6 +4,27 @@ use crate::node::Node;
 use crate::node::arena::BoxKey;
 
 #[test]
+fn a_new_session_starts_with_empty_warning_and_error_scratch() {
+    let mut document = Document::new();
+    {
+        let mut session = LayoutSession::new(&mut document);
+        session
+            .context
+            .layout_warnings
+            .push(crate::layout::LayoutWarn::NonFiniteClamped {
+                site: "test",
+                raw: f32::INFINITY,
+                clamped: f32::MAX,
+            });
+        session.context.table_layout_error = Some("table failed".to_owned());
+    }
+
+    let session = LayoutSession::new(&mut document);
+    assert!(session.context.layout_warnings.is_empty());
+    assert!(session.context.table_layout_error.is_none());
+}
+
+#[test]
 fn layout_session_state_covers_every_box_key_kind() {
     let mut document = Document::new();
     document
