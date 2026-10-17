@@ -136,3 +136,41 @@ fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
         p_taffy
     );
 }
+
+#[test]
+fn document_child_indexing_matches_filtered_flat_tree_order() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        None::<&str>,
+    );
+    let first = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
+    doc.append_text(parent, " \n");
+    doc.append_comment(Some(parent), "ignored");
+    doc.append_processing_instruction(Some(parent), "xml-stylesheet", "href='x'");
+    let contents = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    doc.set_display(contents, raikiri_style::property::DisplayValue::Contents);
+    let nested_first = doc.append_element(Some(contents), "div", Style::default(), None::<&str>);
+    let nested_second = doc.append_element(Some(contents), "div", Style::default(), None::<&str>);
+    let last = doc.append_element(Some(parent), "section", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+
+    let parent_id = taffy::NodeId::from(parent);
+    let expected = [first, nested_first, nested_second, last].map(taffy::NodeId::from);
+    let children: Vec<_> = <Document as TraversePartialTree>::child_ids(&doc, parent_id).collect();
+
+    assert_eq!(children, expected);
+    assert_eq!(
+        <Document as TraversePartialTree>::child_count(&doc, parent_id),
+        expected.len()
+    );
+    for (index, child) in expected.into_iter().enumerate() {
+        assert_eq!(
+            <Document as TraversePartialTree>::get_child_id(&doc, parent_id, index),
+            child,
+            "Document child index {index}"
+        );
+    }
+}

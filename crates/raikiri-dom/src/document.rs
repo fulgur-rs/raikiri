@@ -501,21 +501,6 @@ impl std::ops::Deref for LayoutNodeRef<'_> {
 
 pub(crate) struct LayoutNodeMut<'a> {
     pub(crate) style: &'a mut Style,
-    node: &'a mut Node,
-}
-
-impl std::ops::Deref for LayoutNodeMut<'_> {
-    type Target = Node;
-
-    fn deref(&self) -> &Self::Target {
-        self.node
-    }
-}
-
-impl std::ops::DerefMut for LayoutNodeMut<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.node
-    }
 }
 
 impl Document {
@@ -2949,13 +2934,8 @@ impl Document {
 
     pub(crate) fn layout_node_with_style_mut(&mut self, key: usize) -> Option<LayoutNodeMut<'_>> {
         let box_key = self.nodes.box_key(key)?;
-        let Self {
-            nodes,
-            retained_layout_styles,
-            ..
-        } = self;
+        let retained_layout_styles = &mut self.retained_layout_styles;
         Some(LayoutNodeMut {
-            node: &mut nodes[key],
             style: retained_layout_styles.get_mut(box_key)?,
         })
     }

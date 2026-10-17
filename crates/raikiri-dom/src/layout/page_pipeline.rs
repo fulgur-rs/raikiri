@@ -3388,7 +3388,7 @@ fn clear_floats_at_forced_breaks(
                 pagination_on_transposed_axes,
             ) {
                 (true, name) => name,
-                (false, _) => inherited.clone(),
+                (false, _) => inherited.clone(), // cov:ignore: child_boxes only yields visible boxes with propagated page names.
             };
             let named_break = changes_page(&previous_page_name, &start_page_name);
             let forced = after_forced_break
