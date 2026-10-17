@@ -4266,17 +4266,15 @@ fn paginate_flow(
                     // side keep below.
                     if let Some(index) = float_side_index(cascade.computed[node_id].float) {
                         let layout = &document.nodes[node_id].unrounded_layout;
-                        let top = flow_raw_y + flow_shift;
-                        float_shifts.record_edge(
-                            float_context,
-                            FloatEdge {
-                                node: node_id,
-                                side: index,
-                                top: top - layout.margin.top,
-                                bottom: top + layout.size.height + layout.margin.bottom,
-                                width: layout.size.width + layout.margin.left + layout.margin.right,
-                            },
+                        let edge = float_margin_edge(
+                            document,
+                            node_id,
+                            index,
+                            flow_raw_y + flow_shift,
+                            layout.size.height,
+                            layout.margin.top,
                         );
+                        float_shifts.record_edge(float_context, edge);
                     }
                 }
                 if !floating && !candidate.context.is_direct_body_element {
@@ -7677,18 +7675,34 @@ fn moved_float_edge(
     margin_top: f32,
     forced_transition: bool,
 ) -> FloatEdge {
+    let kept_margin_top = if forced_transition { margin_top } else { 0.0 };
+    float_margin_edge(
+        document,
+        node_id,
+        side,
+        flow_target_y,
+        height,
+        kept_margin_top,
+    )
+}
+
+/// The margin-box edge on `side` of the float `node_id` whose border box,
+/// `height` tall, starts at `border_top` in normal-flow coordinates, below a
+/// block-start margin of `margin_top`.
+fn float_margin_edge(
+    document: &Document,
+    node_id: usize,
+    side: usize,
+    border_top: f32,
+    height: f32,
+    margin_top: f32,
+) -> FloatEdge {
     let layout = &document.nodes[node_id].unrounded_layout;
-    let outer_bottom = flow_target_y + height + layout.margin.bottom;
-    let outer_top = if forced_transition {
-        flow_target_y - margin_top
-    } else {
-        flow_target_y
-    };
     FloatEdge {
         node: node_id,
         side,
-        top: outer_top,
-        bottom: outer_bottom,
+        top: border_top - margin_top,
+        bottom: border_top + height + layout.margin.bottom,
         width: layout.size.width + layout.margin.left + layout.margin.right,
     }
 }
