@@ -2629,7 +2629,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shodo",
- "skrifa 0.44.0",
+ "skrifa 0.48.0",
  "smol_str",
  "stacker",
  "taffy 0.15.0",
@@ -2735,7 +2735,7 @@ dependencies = [
  "raikiri-svg",
  "raikiri-traits",
  "shodo",
- "skrifa 0.44.0",
+ "skrifa 0.48.0",
  "taffy 0.15.0",
  "url",
 ]
