@@ -4507,74 +4507,78 @@ fn paginate_flow(
                     cascade.computed[block_id].widows,
                 );
                 let block_height = document.nodes[block_id].unrounded_layout.size.height;
-                let fits_on_page = block_fits_page_step(block_height, page_step_at(current_page));
-                // Lines move down inside the paragraph only when it has
-                // lines enough for both constraints, is its own inline layout
-                // root, has no earlier split pending, and can shift its lines.
-                let splittable = line_fit.has_room_for_both_constraints()
-                    && paragraph_root == Some(block_id)
-                    && deferred_shifts.line_splits.is_empty()
-                    && lines_can_shift_inside(document, block_id);
-                let [earlier_break, final_break] = if splittable {
-                    line_fit.line_moves(&line_metrics, effective_y, current_page, &page_origins)
-                } else {
-                    [None, None]
-                };
-                if earlier_break.is_some() || final_break.is_some() {
-                    for (line, shift, page) in earlier_break.into_iter().chain(final_break) {
-                        check_candidate_page!('candidate_loop, page);
-                        shift_ifc_lines_from(document, block_id, line, shift);
-                        if let Some((item, container)) = flex_line_paragraph {
-                            shift_later_flex_lines(document, container, item, shift);
+                let can_move_block = line_block_parent.is_some()
+                    && block_fits_page_step(block_height, page_step_at(current_page));
+                let fix = line_fit.fix(
+                    &line_metrics,
+                    effective_y,
+                    current_page,
+                    &page_origins,
+                    can_move_block,
+                    // Lines move down inside the paragraph only when it is
+                    // its own inline layout root, has no earlier split
+                    // pending, and can shift its lines.
+                    || {
+                        paragraph_root == Some(block_id)
+                            && deferred_shifts.line_splits.is_empty()
+                            && lines_can_shift_inside(document, block_id)
+                    },
+                );
+                match fix {
+                    LineBreakFix::MoveLines(moves) => {
+                        for (line, shift, page) in moves.into_iter().flatten() {
+                            check_candidate_page!('candidate_loop, page);
+                            shift_ifc_lines_from(document, block_id, line, shift);
+                            if let Some((item, container)) = flex_line_paragraph {
+                                shift_later_flex_lines(document, container, item, shift);
+                            }
+                            grow_ancestors_for_shift(
+                                document,
+                                cascade,
+                                block_id,
+                                shift,
+                                body_id,
+                                &mut subtree_shifts,
+                                page_before_candidate,
+                                &IfcBoxShifts::default(),
+                            );
+                            if text_lines
+                                .get(node_id)
+                                .and_then(|owned| owned.lines.last())
+                                .is_some_and(|last| last.line >= line)
+                            {
+                                height += shift;
+                            }
+                            deferred_shifts.line_splits.push((block_id, line, shift));
                         }
-                        grow_ancestors_for_shift(
+                    }
+                    LineBreakFix::MoveBlock => {
+                        // The move is measured from where the block is now.
+                        let block_effective_y = block_effective_y(
+                            document,
+                            block_id,
+                            raw_y,
+                            effective_y,
+                            root_flow_offset,
+                            flow_shift,
+                        );
+                        let target_page = current_page.saturating_add(1);
+                        check_candidate_page!('candidate_loop, target_page);
+                        let delta = move_line_block(
                             document,
                             cascade,
-                            block_id,
-                            shift,
                             body_id,
+                            block_id,
+                            nested,
+                            block_effective_y,
+                            page_origin(target_page),
                             &mut subtree_shifts,
                             page_before_candidate,
-                            &IfcBoxShifts::default(),
                         );
-                        if text_lines
-                            .get(node_id)
-                            .and_then(|owned| owned.lines.last())
-                            .is_some_and(|last| last.line >= line)
-                        {
-                            height += shift;
-                        }
-                        deferred_shifts.line_splits.push((block_id, line, shift));
+                        flow_shift += delta;
+                        effective_y += delta;
                     }
-                } else if line_block_parent.is_some()
-                    && line_fit.starts_on_page
-                    && fits_on_page
-                    && line_fit.violates_line_constraints
-                {
-                    // The move is measured from where the block is now.
-                    let block_effective_y = block_effective_y(
-                        document,
-                        block_id,
-                        raw_y,
-                        effective_y,
-                        root_flow_offset,
-                        flow_shift,
-                    );
-                    let target_page = current_page.saturating_add(1);
-                    check_candidate_page!('candidate_loop, target_page);
-                    let delta = move_line_block(
-                        document,
-                        cascade,
-                        body_id,
-                        block_id,
-                        nested,
-                        block_effective_y,
-                        page_origin(target_page),
-                        &mut subtree_shifts,
-                        page_before_candidate,
-                    );
-                    flow_shift += delta;
-                    effective_y += delta;
+                    LineBreakFix::Keep => {}
                 }
             }
             place_text_candidate(
@@ -7109,6 +7113,18 @@ fn lines_can_shift_inside(document: &Document, block_id: usize) -> bool {
             .is_some_and(|ifc| ifc.boxes.is_empty() && ifc.multicol_fragments.is_none())
 }
 
+/// How a paragraph that crosses the page end is repaired so that its break
+/// honors `orphans` and `widows`.
+#[derive(Debug, PartialEq)]
+enum LineBreakFix {
+    /// The natural break stays.
+    Keep,
+    /// Lines move down inside the paragraph, the earlier break first.
+    MoveLines([Option<LineBreakMove>; 2]),
+    /// The whole block moves to the next page.
+    MoveBlock,
+}
+
 /// How a paragraph's lines fall against the end of the current page, and
 /// whether the natural break between them honors `orphans` and `widows`.
 struct ParagraphLineFit {
@@ -7171,6 +7187,34 @@ impl ParagraphLineFit {
             page_origins,
         );
         [earlier_break, final_break]
+    }
+
+    /// How to repair the break between the paragraph's lines on the page
+    /// `current_page`. Lines move down inside the paragraph when it has
+    /// lines enough for both constraints and `can_move_lines` allows it; else
+    /// the whole block moves when `can_move_block` and the break violates a
+    /// constraint; otherwise the natural break stays.
+    fn fix(
+        &self,
+        line_metrics: &[(f32, f32)],
+        effective_y: f32,
+        current_page: u32,
+        page_origins: &PageOrigins,
+        can_move_block: bool,
+        can_move_lines: impl FnOnce() -> bool,
+    ) -> LineBreakFix {
+        let moves = if self.has_room_for_both_constraints() && can_move_lines() {
+            self.line_moves(line_metrics, effective_y, current_page, page_origins)
+        } else {
+            [None, None]
+        };
+        if moves.iter().any(Option::is_some) {
+            LineBreakFix::MoveLines(moves)
+        } else if can_move_block && self.starts_on_page && self.violates_line_constraints {
+            LineBreakFix::MoveBlock
+        } else {
+            LineBreakFix::Keep
+        }
     }
 
     /// Measures `line_metrics`, the block-start and block-end edges of each

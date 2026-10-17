@@ -16708,3 +16708,66 @@ fn a_block_fits_a_page_step_within_a_thousandth() {
     assert!(!block_fits_page_step(f32::NAN, 100.0));
     assert!(!block_fits_page_step(f32::INFINITY, f32::INFINITY));
 }
+
+#[test]
+fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
+    let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
+    // Room for both constraints and shiftable lines: the break moves up.
+    assert_eq!(
+        fit.fix(&lines, 70.0, 0, &pages, true, || true),
+        LineBreakFix::MoveLines([Some((2, 10.0, 1)), None])
+    );
+    // Lines that cannot shift fall back to moving the whole block.
+    assert_eq!(
+        fit.fix(&lines, 70.0, 0, &pages, true, || false),
+        LineBreakFix::MoveBlock
+    );
+    // A block that cannot move keeps its natural break.
+    assert_eq!(
+        fit.fix(&lines, 70.0, 0, &pages, false, || false),
+        LineBreakFix::Keep
+    );
+    // Too few lines for both constraints never ask whether lines can shift.
+    let short = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)];
+    let fit = ParagraphLineFit::measure(&short, 80.0, 0.0, 100.0, 2, 2);
+    assert_eq!(
+        fit.fix(&short, 80.0, 0, &pages, true, || unreachable!()),
+        LineBreakFix::MoveBlock
+    );
+    // A break that honors both constraints needs no repair.
+    let fit = ParagraphLineFit::measure(&lines, 60.0, 0.0, 100.0, 2, 2);
+    assert_eq!(
+        fit.fix(&lines, 60.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // A paragraph that starts on a later page is left alone.
+    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 2, 2);
+    assert_eq!(
+        fit.fix(&lines, 100.0, 0, &pages, true, || true),
+        LineBreakFix::Keep
+    );
+    // A single orphan has no break to move up, so allowed lines still fall
+    // back to the block, or to the natural break when it cannot move.
+    let fit = ParagraphLineFit::measure(&lines, 90.0, 0.0, 100.0, 2, 1);
+    assert_eq!(
+        fit.fix(&lines, 90.0, 0, &pages, true, || true),
+        LineBreakFix::MoveBlock
+    );
+    assert_eq!(
+        fit.fix(&lines, 90.0, 0, &pages, false, || true),
+        LineBreakFix::Keep
+    );
+    // A paragraph over three pages whose last page holds one line moves the
+    // break before that page up, though its first break is fine.
+    let long: Vec<(f32, f32)> = (0..14)
+        .map(|line| (line as f32 * 10.0, line as f32 * 10.0 + 10.0))
+        .collect();
+    let fit = ParagraphLineFit::measure(&long, 70.0, 0.0, 100.0, 2, 2);
+    assert_eq!(
+        fit.fix(&long, 70.0, 0, &pages, false, || true),
+        LineBreakFix::MoveLines([None, Some((12, 10.0, 2))])
+    );
+}
