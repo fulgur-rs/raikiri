@@ -4011,19 +4011,8 @@ fn paginate_flow(
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
     let page_index_in_flow = |y: f32| page_origins.page_index_in_flow(y);
     let page_index_for_end = |end: f32| page_origins.page_index_for_end(end);
-    // The document element has its own used margin, outside its BFC.
-    // Truncate the part adjoining an unforced break without changing any
-    // relative positioning offset carried by its border-box location.
-    let root_margin = document.nodes[body_id].unrounded_layout.margin.top;
-    let root_margin_page = page_index_for_y(root_margin);
-    if root_margin_page > 0 {
-        control.check_discovery_page_index(root_margin_page)?;
-        document.nodes[body_id].unrounded_layout.location.y -=
-            root_margin - page_origin(root_margin_page);
-    }
     let leading_margins_moved =
-        leading_margins::truncate(document, cascade, body_id, &page_origins, control)?
-            || root_margin_page > 0;
+        leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
     let root_flow_offset = 0.0;
 
     // Page heights are known here, after source layout has established each
