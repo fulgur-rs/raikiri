@@ -6307,7 +6307,8 @@ fn same_bfc_float_end_in_subtree(
 ) -> f32 {
     if document.nodes[branch].kind() != NodeKind::Element
         || holds_floats(document, cascade, branch)
-        || matches!(cascade.computed[branch].float, FloatValue::Footnote)
+        || (matches!(cascade.computed[branch].float, FloatValue::Footnote)
+            && is_floating_box_for_pagination(document, cascade, branch))
         || !matches!(
             document.nodes[branch].position(),
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
@@ -6338,9 +6339,6 @@ fn same_bfc_float_end_in_subtree(
         if node.display() == DisplayValue::None {
             continue;
         }
-        if matches!(cascade.computed[child].float, FloatValue::Footnote) {
-            continue;
-        }
         if node.display() == DisplayValue::Contents {
             let child_offset = if document.contributes_layout_offset(child) {
                 offset + layout.location.y
@@ -6353,6 +6351,11 @@ fn same_bfc_float_end_in_subtree(
                     .rev()
                     .map(|&descendant| (descendant, child_offset)),
             );
+            continue;
+        }
+        if matches!(cascade.computed[child].float, FloatValue::Footnote)
+            && is_floating_box_for_pagination(document, cascade, child)
+        {
             continue;
         }
         if matches!(
@@ -6378,7 +6381,7 @@ fn same_bfc_float_end_in_subtree(
         let child_offset = if document.contributes_layout_offset(child) {
             offset + layout.location.y - relative_offset
         } else {
-            offset
+            offset - relative_offset
         };
         pending.extend(
             node.children
