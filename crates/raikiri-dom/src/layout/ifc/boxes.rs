@@ -9,6 +9,7 @@ use crate::fragment::FragmentationContext;
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
 use crate::taffy_impl::resolve_calc;
 use shodo::geometry::{Direction, WritingMode};
+use shodo::style::TextGroupAlign;
 use shodo::{
     AtomicIntrinsic, AtomicIntrinsics, AtomicSize, AtomicSizes, BreakToken, FloatClear,
     FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
@@ -138,7 +139,7 @@ pub(crate) fn layout_with_boxes_in(
     bottom_margin_escapes: bool,
 ) -> IfcLines {
     resolve_root_percentages(tree, idx, &geometry);
-    let Some(root) = tree.nodes[idx]
+    let Some(mut root) = tree.nodes[idx]
         .ifc
         .as_ref()
         .map(|root| root.without_lines())
@@ -162,26 +163,88 @@ pub(crate) fn layout_with_boxes_in(
     // context and a local one cannot share a lifetime, because the pointee of
     // `&mut BlockContext<'_>` is invariant.
     match block_ctx {
-        Some(ctx) => run_boxes(
-            tree,
-            idx,
-            &root,
-            geometry,
-            ctx,
-            perform,
-            false,
-            top_margin_escapes,
-            bottom_margin_escapes,
-        ),
+        Some(ctx) => {
+            root.options.group_padding = group_padding(
+                tree,
+                &root,
+                geometry,
+                ctx,
+                false,
+                top_margin_escapes,
+                bottom_margin_escapes,
+            );
+            run_boxes(
+                tree,
+                idx,
+                &root,
+                geometry,
+                ctx,
+                perform,
+                false,
+                top_margin_escapes,
+                bottom_margin_escapes,
+            )
+        }
         None => {
             let mut bfc = BlockFormattingContext::new();
             let mut ctx = bfc.root_block_context();
             ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
+            root.options.group_padding =
+                group_padding(tree, &root, geometry, &mut ctx, true, false, false);
             run_boxes(
                 tree, idx, &root, geometry, &mut ctx, perform, true, false, false,
             )
         }
     }
+}
+
+/// The padding `text-group-align` takes from every line of the root: the
+/// shortest space a line leaves unfilled (CSS Text 4, group alignment). The
+/// lines are laid out once without it to find that space, against a copy of
+/// the float context; group padding only takes space a line leaves, so the
+/// lines break the same with it.
+///
+/// Only the root's own lines take part. Lines inside block children with
+/// their own inline formatting context are aligned on their own, and a root
+/// split across fragmentainers is not group-aligned.
+fn group_padding(
+    tree: &mut Document,
+    root: &IfcRoot,
+    geometry: FlowGeometry,
+    ctx: &mut BlockContext<'_>,
+    local: bool,
+    top_margin_escapes: bool,
+    bottom_margin_escapes: bool,
+) -> f32 {
+    if root.options.text_group_align == TextGroupAlign::None {
+        return 0.0;
+    }
+    let saved = ctx.snapshot();
+    let probe = run_boxes_segment(
+        tree,
+        root,
+        geometry,
+        ctx,
+        false,
+        local,
+        top_margin_escapes,
+        bottom_margin_escapes,
+        root.line_paragraph.start_token(),
+        None,
+        None,
+        false,
+        None,
+        LineStart::PARAGRAPH,
+    );
+    ctx.restore(&saved);
+    probe
+        .lines
+        .lines
+        .iter()
+        .filter(|line| !line.is_empty())
+        .map(shodo::Line::remaining_inline_size)
+        .reduce(f32::min)
+        .unwrap_or(0.0)
 }
 
 /// Lay an IFC root across horizontal fragmentainers with a fresh float context per column.
@@ -623,10 +686,16 @@ fn run_boxes_segment(
         // The lines of a generated block take its own alignment and indent.
         // Its content is part of the paragraph's text, so its lines keep the
         // paragraph's base direction.
-        let (line_options, first_line) = open_block.as_ref().map_or_else(
+        let (mut line_options, first_line) = open_block.as_ref().map_or_else(
             || (options, start.first && lines.is_empty()),
             |open| open.line_options(lines.len()),
         );
+        // Group alignment pads every line of the root, generated blocks'
+        // lines included.
+        if options.text_group_align != TextGroupAlign::None {
+            line_options.text_group_align = options.text_group_align;
+            line_options.group_padding = options.group_padding;
+        }
         let mut constraint = LineConstraint::from_physical_insets(
             width,
             space.inline_start,

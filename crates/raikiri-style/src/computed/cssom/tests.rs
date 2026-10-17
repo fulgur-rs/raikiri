@@ -412,3 +412,20 @@ fn overflow_axes_serialize_separately() {
         Some("scroll")
     );
 }
+
+#[test]
+fn text_group_align_serializes_its_computed_keyword() {
+    let mut computed = ComputedValues::initial();
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("text-group-align uses no ch lengths") };
+    let property =
+        ComputedProperty::from_name("text-group-align").expect("text-group-align is computed");
+    assert_eq!(
+        property.serialize(&computed, &mut ch_advance),
+        Some("none".to_owned())
+    );
+    computed.text_group_align = crate::property::TextGroupAlign::Right;
+    assert_eq!(
+        property.serialize(&computed, &mut ch_advance),
+        Some("right".to_owned())
+    );
+}

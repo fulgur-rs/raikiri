@@ -116,6 +116,7 @@ fn parse_value_with_black_currentcolor(
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
                 | PropertyKey::ColumnSpan
+                | PropertyKey::TextGroupAlign
                 | PropertyKey::BorderImage
                 | PropertyKey::BorderImageSource
                 | PropertyKey::BorderImageSlice
@@ -1060,6 +1061,8 @@ pub(crate) fn parse_property_grammar(
         "line-break" => parse_line_break(input).map(PropertyValue::LineBreak),
         // CSS Text 3 §6.2 text-justify. grammar: `auto | none | inter-word | inter-character`.
         "text-justify" => parse_text_justify(input).map(PropertyValue::TextJustify),
+        "text-group-align" => TextGroupAlign::from_css_ident(input.expect_ident().ok()?)
+            .map(PropertyValue::TextGroupAlign),
         // CSS Text 3 §6.1 text-align-all longhand.
         "text-align-all" => parse_text_align_all(input).map(PropertyValue::TextAlignAll),
         // CSS Text 3 §6.1 text-align-last longhand.

@@ -863,12 +863,17 @@ pub(crate) fn line_options(
     }?;
     let text_wrap_style =
         same_enum!(TextWrapStyle, cv.text_wrap_style, node; Auto, Balance, Pretty, Stable)?;
+    let text_group_align = same_enum!(
+        TextGroupAlign, cv.text_group_align, node;
+        None, Start, End, Left, Right, Center
+    )?;
     Ok((
         LineOptions {
             text_align,
             text_align_last,
             text_justify,
             text_wrap_style,
+            text_group_align,
             hanging_punctuation: hanging_punctuation(cv.hanging_punctuation, node)?,
             text_indent: s::TextIndent {
                 length: 0.0,

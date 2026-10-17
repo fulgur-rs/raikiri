@@ -73,6 +73,7 @@ pub enum ComputedProperty {
     TextAlign,
     TextAlignLast,
     TextJustify,
+    TextGroupAlign,
     TextIndent,
     TabSize,
     LetterSpacing,
@@ -138,6 +139,7 @@ impl ComputedProperty {
         Self::TextAlign,
         Self::TextAlignLast,
         Self::TextJustify,
+        Self::TextGroupAlign,
         Self::TextIndent,
         Self::TabSize,
         Self::LetterSpacing,
@@ -207,6 +209,7 @@ impl ComputedProperty {
             "text-align" => Self::TextAlign,
             "text-align-last" => Self::TextAlignLast,
             "text-justify" => Self::TextJustify,
+            "text-group-align" => Self::TextGroupAlign,
             "text-indent" => Self::TextIndent,
             "tab-size" => Self::TabSize,
             "letter-spacing" => Self::LetterSpacing,
@@ -543,6 +546,7 @@ impl ComputedProperty {
             ComputedProperty::TextWrapMode => computed.text_wrap.as_css_str(),
             ComputedProperty::TextWrapStyle => computed.text_wrap_style.as_css_str(),
             ComputedProperty::TextAlignLast => computed.text_align_last.as_css_str(),
+            ComputedProperty::TextGroupAlign => computed.text_group_align.as_css_str(),
             ComputedProperty::TextJustify => match computed.text_justify {
                 // CSS Text 3 defines legacy `distribute` as computing to `inter-character`.
                 crate::property::TextJustify::Distribute => "inter-character",

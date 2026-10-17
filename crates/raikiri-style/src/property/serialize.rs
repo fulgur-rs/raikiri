@@ -509,6 +509,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         PropertyValue::Hyphens(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::LineBreak(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::TextJustify(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::TextGroupAlign(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::TextAlignLast(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::TextCombineUpright(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::TextOrientation(value) => Some(value.as_css_str().to_owned()),

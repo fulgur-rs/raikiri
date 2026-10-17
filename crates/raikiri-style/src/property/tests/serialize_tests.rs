@@ -665,6 +665,7 @@ fn serialize_value_canonicalizes_single_keyword_properties() {
         // the computed layer remaps it to `inter-character`.
         ("text-justify", "DISTRIBUTE", "distribute"),
         ("text-align-last", "JUSTIFY", "justify"),
+        ("text-group-align", "CENTER", "center"),
         ("text-combine-upright", "ALL", "all"),
         ("text-orientation", "UPRIGHT", "upright"),
         ("unicode-bidi", "Bidi-Override", "bidi-override"),

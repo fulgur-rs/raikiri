@@ -1986,6 +1986,31 @@ fn column_fill_defaults_to_balance_and_is_not_inherited() {
 }
 
 #[test]
+fn text_group_align_defaults_to_none_and_is_not_inherited() {
+    use crate::property::TextGroupAlign;
+    let (parent, child) =
+        cascade_parent_child("div", Some("text-group-align: center"), "div", None);
+    assert_eq!(parent.text_group_align, TextGroupAlign::Center);
+    assert_eq!(child.text_group_align, TextGroupAlign::None);
+    assert_eq!(
+        ComputedValues::initial().text_group_align,
+        TextGroupAlign::None
+    );
+
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("text-group-align: left"),
+        "div",
+        Some("text-group-align: inherit"),
+    );
+    assert_eq!(parent.text_group_align, TextGroupAlign::Left);
+    assert_eq!(child.text_group_align, TextGroupAlign::Left);
+    // Only the keywords of CSS Text 4 parse.
+    let (cv, _) = cascade_parent_child("div", Some("text-group-align: justify"), "div", None);
+    assert_eq!(cv.text_group_align, TextGroupAlign::None);
+}
+
+#[test]
 fn author_multicol_shorthand_fans_out_through_cascade() {
     let cv = cascade_with_ua("", "div { columns: 3 2em; }", "div", None);
     assert_eq!(cv.column_count, crate::property::ColumnCountValue::Count(3));

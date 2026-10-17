@@ -225,6 +225,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         empty_cells: _,
         column_count: _,
         column_fill: _,
+        text_group_align: _,
         column_span: _,
         column_width: _,
         column_rule: _,

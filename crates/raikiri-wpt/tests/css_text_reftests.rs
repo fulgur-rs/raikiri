@@ -80,8 +80,9 @@ fn writing_system_font_unpinned_exact_passes() {
     );
 }
 /// `run_pair` leaves out the pages' support stylesheet, so this guards only
-/// the rendering without it. With the stylesheet loaded these pages are
-/// expected failures, since `text-group-align` is not implemented.
+/// the rendering without it. The baseline report loads the stylesheet, where
+/// the vertical pages still differ: their references size a vertical
+/// `inline-size: min-content` group to the container instead of its content.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn text_group_align_matches_without_its_support_stylesheet() {
