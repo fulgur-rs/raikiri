@@ -1078,3 +1078,23 @@ fn a_replaced_inline_before_turns_its_image() {
         .collect();
     assert_eq!(events, ["turn 30 0", "box Before", "image", "unturn"]);
 }
+
+#[test]
+fn a_generated_box_on_a_line_taller_than_the_page_is_on_every_page_of_its_line() {
+    let document = lay_out(
+        "<div style=\"line-height:100px\">A</div>",
+        "div::before{content:'B';background:red}",
+    );
+    assert_eq!(document.page_count(), 2);
+    for number in 0..document.page_count() {
+        let page = document.page(number).unwrap();
+        let runs = page.text_runs();
+        assert!(runs.iter().any(|run| run.text == "A"), "page {number}");
+        let boxes = page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .filter(|event| matches!(event, PaintEvent::GeneratedBox(_)))
+            .count();
+        assert_eq!(boxes, 1, "page {number}");
+    }
+}

@@ -4,9 +4,7 @@
 use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
-use crate::layout::{
-    LineGlyph, PositionedLine, PositionedLines, PositionedRun, line_center_on_page,
-};
+use crate::layout::{LineGlyph, PositionedLine, PositionedLines, PositionedRun};
 use crate::node::FormattingContext;
 use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
@@ -1524,6 +1522,7 @@ fn root_runs<'a>(
     document: &'a Document,
     cascade: &'a CascadeResult,
     page: &PageFragment,
+    pages: &[PageFragment],
     context: &RunContext,
     root: &ProjectedTextRoot,
     out: &mut Vec<PositionedGlyphRun<'a>>,
@@ -1548,12 +1547,12 @@ fn root_runs<'a>(
         let Some(offset) = positioned.line_offset(index) else {
             continue;
         };
-        if let Some((start, end)) = flow_range {
+        if flow_range.is_some() {
             let top = root.y + offset.1 + line.block_offset();
             let (top, bottom) = page
                 .flow_axis
                 .line_extent(root, top, top + line.block_size());
-            if !line_center_on_page(top, bottom, start, end) {
+            if !page.owns_line(pages, top, bottom) {
                 continue;
             }
         }
@@ -1633,10 +1632,12 @@ fn text_source(document: &Document, node: usize) -> usize {
     generated_origin(node).map_or_else(|| document.ifc_source_owner(node), |(owner, _)| owner)
 }
 
-/// The lowest and highest block-axis line center of `root` in shared flow
-/// coordinates, over the lines [`root_runs`] can draw. `None` when no line
-/// has a finite center.
-fn line_center_span(
+/// The block-axis span of the lines of `root` in shared flow coordinates,
+/// over the lines [`root_runs`] can draw: the lowest and highest line center
+/// across the page, or the top of the first line and the bottom of the last
+/// down the page, which [`PageFragment::owns_line`] can give to every page
+/// they reach. `None` when no line has a finite extent.
+fn line_span(
     document: &Document,
     cascade: &CascadeResult,
     root: &ProjectedTextRoot,
@@ -1648,15 +1649,21 @@ fn line_center_span(
         let Some(offset) = positioned.line_offset(index) else {
             continue;
         };
-        // The same arithmetic as `root_runs` and `line_center_on_page`.
+        // The same arithmetic as `root_runs`.
         let top = root.y + offset.1 + line.block_offset();
         let (top, bottom) = axis.line_extent(root, top, top + line.block_size());
-        let center = (top + bottom) * 0.5;
-        if !center.is_finite() {
+        let (low, high) = match axis {
+            FlowAxis::Y => (top, bottom),
+            FlowAxis::X { .. } => {
+                let center = (top + bottom) * 0.5;
+                (center, center)
+            }
+        };
+        if !low.is_finite() || !high.is_finite() {
             continue;
         }
-        span = Some(span.map_or((center, center), |(low, high)| {
-            (low.min(center), high.max(center))
+        span = Some(span.map_or((low, high), |(first, last)| {
+            (first.min(low), last.max(high))
         }));
     }
     span
@@ -1666,8 +1673,8 @@ fn line_center_span(
 /// of the text roots that can draw on it, in document order.
 ///
 /// A root is left out only when [`Document::page_text_runs`] would draw
-/// nothing of it on that page: a paragraph none of whose line centers falls
-/// in the page's flow slice, or a marker on a page other than its first.
+/// nothing of it on that page: a paragraph none of whose lines that page
+/// owns, or a marker on a page other than its first.
 /// Repeated roots, and roots that a repeated table header may move, are kept
 /// on every page and filtered per page as before.
 pub(super) fn roots_by_page(
@@ -1711,10 +1718,11 @@ pub(super) fn roots_by_page(
         let axis = pages
             .first()
             .map_or_else(Default::default, |page| page.flow_axis);
-        let Some((low, high)) = line_center_span(document, cascade, root, axis) else {
+        let Some((low, high)) = line_span(document, cascade, root, axis) else {
             continue;
         };
-        // `line_center_on_page` keeps a center in `[start - 0.001, end - 0.001)`.
+        // A superset of the pages `PageFragment::owns_line` gives a line: those
+        // holding its center, or reached by its extent down the page.
         let reaches = |range: (f32, f32)| high >= range.0 - 0.001 && low < range.1 - 0.001;
         let first = if ordered {
             pages.partition_point(|page| page.flow_range.is_some_and(|(_, end)| end - 0.001 <= low))
@@ -1774,7 +1782,15 @@ impl Document {
                         }
                     }
                 } else {
-                    root_runs(self, cascade, page, context, &root, &mut runs);
+                    root_runs(
+                        self,
+                        cascade,
+                        page,
+                        &projection.pages,
+                        context,
+                        &root,
+                        &mut runs,
+                    );
                 }
             }
         }
