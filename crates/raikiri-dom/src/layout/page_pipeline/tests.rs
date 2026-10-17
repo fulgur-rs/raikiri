@@ -11644,6 +11644,45 @@ fn a_root_margin_crossing_pages_keeps_the_body_margin() {
 }
 
 #[test]
+fn a_root_margin_crossing_a_scheduled_page_uses_that_page_origin() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:250px"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    layout_pages_with_page_steps(&mut doc, &cascade, page, &[150.0, 80.0]).unwrap();
+
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, child).1,
+        238.0
+    );
+}
+
+#[test]
 fn a_relative_offset_is_not_truncated_as_a_margin() {
     // The offset moves only the box itself; it is not a margin that adjoins
     // the break, and later siblings keep their flow positions.

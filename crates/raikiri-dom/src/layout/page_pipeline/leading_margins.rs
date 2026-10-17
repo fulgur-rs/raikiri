@@ -3,6 +3,25 @@
 use super::*;
 use taffy::TraversePartialTree;
 
+/// Truncate the root and descendant leading margins for one pagination pass.
+pub(super) fn truncate_flow(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    root: usize,
+    pages: &PageOrigins,
+    control: &PageLayoutControl<'_>,
+) -> Result<bool, LayoutError> {
+    let root_margin = document.nodes[root].unrounded_layout.margin.top;
+    let root_margin_page = pages.page_index_for_y(root_margin);
+    if root_margin_page > 0 {
+        control.check_discovery_page_index(root_margin_page)?;
+        document.nodes[root].unrounded_layout.location.y -=
+            root_margin - pages.origin(root_margin_page);
+    }
+
+    Ok(truncate(document, cascade, root, pages, control)? || root_margin_page > 0)
+}
+
 /// Truncate the leading margin of a flow child when it crosses a page edge.
 /// The parent's content edge and the child's used location already include
 /// ordinary margin collapse; no CSS margin set is recomputed here.
