@@ -415,18 +415,18 @@ impl Document {
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
+        let root = usize::try_from(run.line.root.0).ok()?;
         let start = match run.source {
             RunSource::Text(node) => self.parent_of(usize::try_from(node.0).ok()?)?,
             RunSource::Generated(owner, kind @ (GeneratedKind::Before | GeneratedKind::After)) => {
                 let owner = usize::try_from(owner.0).ok()?;
-                if let Some(group) = generated_group(cascade, owner, kind) {
+                if let Some(group) = generated_group(self, cascade, root, owner, kind) {
                     return Some(NodeId::new(group as u64));
                 }
                 owner
             }
             _ => return None,
         };
-        let root = usize::try_from(run.line.root.0).ok()?;
         self.inline_opacity_group(cascade, root, start)
             .map(|group| NodeId::new(group as u64))
     }
@@ -449,7 +449,7 @@ impl Document {
                 return None;
             }
             let cv = cascade.computed.get(id)?;
-            if is_inline_opacity_group(node, cv) {
+            if is_inline_group(self, cascade, root, id, node, cv) {
                 return Some(id);
             }
             // Anything but an inline element or a `display: contents` one is
@@ -635,8 +635,17 @@ impl Document {
                         push_paragraph(self, &items, node_id, None, lines, part, &mut content);
                     let groups = self.groups_with_content(&items, node_id, groups, lines, part);
                     let boxes = self.ifc_boxes_in_group(cascade, node_id, None, part);
-                    let frames =
+                    let mut frames =
                         self.paragraph_frames(cascade, node_id, boxes, groups, part, first_line);
+                    // The blocks inside the paragraph paint above the content
+                    // positioned below them and below the rest of it.
+                    if paint_rules::holds_negative_stack_level(self, cascade, node_id) {
+                        frames.blocks = self
+                            .paragraph_blocks(cascade, node_id)
+                            .into_iter()
+                            .map(Frame::Visit)
+                            .collect();
+                    }
                     list_paragraph(content, 0, frames, &mut events, &mut held, &mut stack);
                     continue;
                 }
@@ -707,7 +716,11 @@ impl Document {
                     // its content is listed where layout put it, as its runs
                     // are.
                     let turned = paint_rules::pseudo_transform(cascade, group);
-                    if alpha.is_none() && turned.is_none() {
+                    if alpha.is_none()
+                        && turned.is_none()
+                        && !paint_rules::negative_inline_group(self, cascade, root, group)
+                        && !paint_rules::negative_pseudo_group(self, cascade, root, group)
+                    {
                         continue; // cov:ignore: groups are found by their opacity or transform
                     }
                     if turned.is_some_and(super::paint_transform::is_singular) {
@@ -955,8 +968,12 @@ impl Document {
                         && clipped
                         && paint_rules::merges_clipped_inline_content(self, cascade, node_id);
                     // In-flow blocks inside a paragraph's inline content paint
-                    // their backgrounds before its lines.
-                    let blocks: Vec<usize> = if node.is_ifc_root() {
+                    // their backgrounds before its lines. With content
+                    // positioned below them, the paragraph's content lists
+                    // them after that content.
+                    let blocks: Vec<usize> = if node.is_ifc_root()
+                        && !paint_rules::holds_negative_stack_level(self, cascade, node_id)
+                    {
                         self.paragraph_blocks(cascade, node_id)
                     } else {
                         Vec::new()
@@ -1313,6 +1330,7 @@ impl Document {
         let above = entries.split_off(split);
         ParagraphFrames {
             below: entries.into_iter().map(|(_, frame)| frame).collect(),
+            blocks: Vec::new(),
             above: above.into_iter().map(|(_, frame)| frame).collect(),
         }
     }
@@ -1409,14 +1427,9 @@ impl Document {
     /// that paint before its lines (see
     /// [`paint_rules::paints_before_paragraph_lines`]), in tree order.
     fn paragraph_blocks(&self, cascade: &CascadeResult, root: usize) -> Vec<usize> {
-        let boxes = self
-            .get_node(root)
+        self.get_node(root)
             .map(|node| node.ifc_boxes())
-            .unwrap_or_default();
-        if boxes.is_empty() || paint_rules::holds_negative_stack_level(self, cascade, root) {
-            return Vec::new();
-        }
-        boxes
+            .unwrap_or_default()
             .into_iter()
             .filter(|&id| paint_rules::paints_before_paragraph_lines(self, cascade, root, id))
             .collect()
@@ -1775,12 +1788,9 @@ fn push_paragraph<'a>(
         }
         match node.kind() {
             NodeKind::Element if !node.is_display_none() && !node.is_hidden_by_text_overflow() => {
-                if items
-                    .cascade
-                    .computed
-                    .get(node_id)
-                    .is_some_and(|cv| is_inline_opacity_group(node, cv))
-                {
+                if items.cascade.computed.get(node_id).is_some_and(|cv| {
+                    is_inline_group(document, items.cascade, root, node_id, node, cv)
+                }) {
                     nested.push(node_id);
                     continue;
                 }
@@ -1849,7 +1859,8 @@ fn push_paragraph<'a>(
                 // listed after this content with its boxes, images and text.
                 // Its `::first-letter` slot still follows.
                 if matches!(kind, GeneratedKind::Before | GeneratedKind::After)
-                    && let Some(pseudo) = generated_group(items.cascade, node_id, kind)
+                    && let Some(pseudo) =
+                        generated_group(document, items.cascade, root, node_id, kind)
                 {
                     if pseudo_on_paragraph(items, root, node_id, kind, lines)
                         && !nested.contains(&pseudo)
@@ -1915,7 +1926,14 @@ fn push_paragraph<'a>(
                 };
                 // The images of a `::before` group are listed in the group.
                 if !after
-                    && generated_group(items.cascade, node_id, GeneratedKind::Before).is_some()
+                    && generated_group(
+                        document,
+                        items.cascade,
+                        root,
+                        node_id,
+                        GeneratedKind::Before,
+                    )
+                    .is_some()
                 {
                     continue;
                 }
@@ -2183,11 +2201,18 @@ fn letter_groups(
     found
 }
 
-/// The group the pseudo-element with generated id `id` forms in its
-/// paragraph: its id, when it has one (see
-/// [`paint_rules::pseudo_forms_group`]).
-fn pseudo_opacity_group(cascade: &CascadeResult, id: usize) -> Option<usize> {
-    paint_rules::pseudo_forms_group(cascade, id).then_some(id)
+/// The group the pseudo-element with generated id `id` forms in paragraph
+/// `root`: its id, when it has one (see [`paint_rules::pseudo_forms_group`]
+/// and [`paint_rules::negative_pseudo_group`]).
+fn pseudo_opacity_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> Option<usize> {
+    (paint_rules::pseudo_forms_group(cascade, id)
+        || paint_rules::negative_pseudo_group(document, cascade, root, id))
+    .then_some(id)
 }
 
 /// The border box of the `::before` or `::after` with generated id `group`
@@ -2213,16 +2238,24 @@ fn pseudo_box(
         .map(|piece| piece.rect)
 }
 
-/// The opacity group the `::before` or `::after` of `element` forms in its
-/// paragraph, if any.
-fn generated_group(cascade: &CascadeResult, element: usize, kind: GeneratedKind) -> Option<usize> {
+/// The group the `::before` or `::after` of `element` forms in paragraph
+/// `root`, if any.
+fn generated_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    element: usize,
+    kind: GeneratedKind,
+) -> Option<usize> {
     let pseudo = if kind == GeneratedKind::After {
         PseudoElem::After
     } else {
         PseudoElem::Before
     };
     pseudo_opacity_group(
+        document,
         cascade,
+        root,
         crate::generated_content::generated_node_id(element, pseudo),
     )
 }
@@ -2276,14 +2309,17 @@ fn contains(outer: PaintRect, inner: PaintRect) -> bool {
 struct ParagraphFrames {
     /// Stacking contexts with negative stack levels, listed before it.
     below: Vec<Frame>,
+    /// In-flow blocks inside the paragraph, listed after the frames below
+    /// and before the content.
+    blocks: Vec<Frame>,
     /// Everything else, listed after it.
     above: Vec<Frame>,
 }
 
 /// List a paragraph's own inline content, `content`, between the frames
-/// below and above it. The first `own` events, the boxes of the opacity
-/// group being listed, go first. Without frames below, the content is
-/// listed at once.
+/// below it, then its blocks, and the frames above it. The first `own`
+/// events, the boxes of the group being listed, go first. Without frames
+/// below or blocks, the content is listed at once.
 fn list_paragraph<'a>(
     mut content: Vec<PaintEvent<'a>>,
     own: usize,
@@ -2293,13 +2329,14 @@ fn list_paragraph<'a>(
     stack: &mut Vec<Frame>,
 ) {
     stack.extend(frames.above.into_iter().rev());
-    if frames.below.is_empty() {
+    if frames.below.is_empty() && frames.blocks.is_empty() {
         events.append(&mut content);
     } else {
         let rest = content.split_off(own);
         events.append(&mut content);
         stack.push(Frame::HeldContent(held.len()));
         held.push(rest);
+        stack.extend(frames.blocks.into_iter().rev());
         stack.extend(frames.below.into_iter().rev());
     }
 }
@@ -2329,9 +2366,20 @@ fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
         .count()
 }
 
-/// Whether a captured inline box composites its fragments as one opacity group.
-fn is_inline_opacity_group(node: &crate::Node, cv: &raikiri_style::ComputedValues) -> bool {
-    node.display().is_inline_flow() && cv.opacity < 1.0
+/// Whether inline element `id` of paragraph `root` composites its
+/// fragments as one group: one with an opacity below one, or one positioned
+/// below the paragraph's blocks (see
+/// [`paint_rules::negative_inline_group`]).
+fn is_inline_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+    node: &crate::Node,
+    cv: &raikiri_style::ComputedValues,
+) -> bool {
+    (node.display().is_inline_flow() && cv.opacity < 1.0)
+        || paint_rules::negative_inline_group(document, cascade, root, id)
 }
 
 #[cfg(test)]

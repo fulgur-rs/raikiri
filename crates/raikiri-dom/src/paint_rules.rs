@@ -342,6 +342,52 @@ pub fn atomic_on_first_line(document: &Document, root: usize, id: usize) -> bool
         })
 }
 
+/// Whether paragraph `root` has a translucent first line (see
+/// [`first_line_opacity_layer`]) and `id`, an inline element or a `::before`
+/// or `::after` laid out in its lines, has no content on the lines after it.
+///
+/// The `::first-line` box wraps such content (CSS Pseudo 4 §2.1.1), and its
+/// opacity group is a stacking context that holds it whatever its stack
+/// level (CSS Color 4 §3.3), so the content does not paint below the
+/// paragraph's blocks.
+fn within_translucent_first_line(document: &Document, root: usize, id: usize) -> bool {
+    if first_line_opacity_layer(document, root).is_none() {
+        return false;
+    }
+    let inside = |node: usize| {
+        node == id
+            || document
+                .inclusive_ancestors(
+                    crate::generated_content::generated_origin(node)
+                        .map_or(node, |(element, _)| element),
+                )
+                .any(|ancestor| ancestor == id)
+    };
+    let Some(node) = document.get_node(root) else {
+        return false; // cov:ignore: a translucent first line belongs to a paragraph node
+    };
+    let on_later_lines = node
+        .ifc_lines()
+        .into_iter()
+        .flatten()
+        .skip(1)
+        .flat_map(|line| line.fragments())
+        .filter_map(|fragment| match fragment {
+            shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0 as usize),
+            shodo::Fragment::Atomic(atomic) => Some(atomic.node.0 as usize),
+            shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
+            shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
+        })
+        .any(inside);
+    // A block-level `::before` or `::after` paints its own box with the
+    // line it goes with, which need not hold any of its content.
+    !on_later_lines
+        && !node
+            .ifc_generated_block_pieces()
+            .iter()
+            .any(|piece| piece.line > 0 && inside(piece.node))
+}
+
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
 /// composites at among the other groups of its paragraph: the `z-index` of a
 /// relatively positioned pseudo-element, and 0 otherwise, the level of the
@@ -881,10 +927,10 @@ fn is_z_indexed_item(
 /// Its background is a block background of the layer (CSS 2.1 Appendix E
 /// step 4), below the lines around it (step 7), and its own inline content
 /// defers like any other block's. Blocks inside an inline element, or on
-/// the first line, stay with the paragraph's content and its groups. The
-/// painters keep all blocks of a paragraph with the paragraph's content when
-/// [`holds_negative_stack_level`] says it holds content that paints below
-/// the blocks.
+/// the first line, stay with the paragraph's content and its groups. When
+/// [`holds_negative_stack_level`] says the paragraph holds content that
+/// paints below the blocks, the painters paint the blocks with the
+/// paragraph's content, after that content and before the rest.
 pub fn paints_before_paragraph_lines(
     document: &Document,
     cascade: &CascadeResult,
@@ -914,10 +960,11 @@ pub fn paints_before_paragraph_lines(
 ///
 /// Such content paints below the in-flow blocks of the layer (CSS 2.1
 /// Appendix E step 3), and the painters list it with the paragraph, so the
-/// blocks inside the paragraph (see [`paints_before_paragraph_lines`]) stay
-/// there too. Only the paragraph's own inline content is searched, not the
-/// blocks inside it or the content of inline boxes that form stacking
-/// contexts.
+/// blocks inside the paragraph (see [`paints_before_paragraph_lines`]) are
+/// listed there too, between that content and the rest. Only the
+/// paragraph's own inline content is searched, not the blocks inside it,
+/// the content of inline boxes that form stacking contexts, or content a
+/// translucent first line wraps whole.
 pub fn holds_negative_stack_level(
     document: &Document,
     cascade: &CascadeResult,
@@ -933,7 +980,9 @@ pub fn holds_negative_stack_level(
         [PseudoElem::Before, PseudoElem::After]
             .map(|pseudo| crate::generated_content::generated_node_id(id, pseudo))
     };
-    if pseudos(root).into_iter().any(negative) {
+    // Content wrapped by a translucent `::first-line` paints in its group.
+    let below = |key: usize| negative(key) && !within_translucent_first_line(document, root, key);
+    if pseudos(root).into_iter().any(below) {
         return true;
     }
     let mut stack = Vec::new();
@@ -947,21 +996,26 @@ pub fn holds_negative_stack_level(
         else {
             continue;
         };
-        if negative(id) {
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: elements in a laid-out paragraph have computed values
+        };
+        // A `display: contents` element has no box, so it neither paints at
+        // a level of its own nor forms a stacking context (CSS Display 3
+        // §2.5).
+        let contents = cv.display == DisplayValue::Contents;
+        if !contents && below(id) {
             return true;
         }
         // Content inside an inline box that forms a stacking context paints
         // within that box, not below the paragraph's blocks.
-        let Some(cv) = cascade.computed.get(id) else {
-            continue; // cov:ignore: elements in a laid-out paragraph have computed values
-        };
-        let stacking = establishes_stacking_context(document, id, cv)
-            || (!matches!(cv.position, PositionValue::Static)
-                && matches!(cv.z_index, ZIndexValue::Integer(_)));
+        let stacking = !contents
+            && (establishes_stacking_context(document, id, cv)
+                || (!matches!(cv.position, PositionValue::Static)
+                    && matches!(cv.z_index, ZIndexValue::Integer(_))));
         if stacking {
             continue;
         }
-        if pseudos(id).into_iter().any(negative) {
+        if pseudos(id).into_iter().any(below) {
             return true;
         }
         if cv.display.is_inline_flow() || cv.display == DisplayValue::Contents {
@@ -969,6 +1023,87 @@ pub fn holds_negative_stack_level(
         }
     }
     false
+}
+
+/// Whether inline element `id` of paragraph `root` is positioned with a
+/// negative `z-index` outside every inline box of the paragraph that forms
+/// a stacking context, with content beyond the paragraph's translucent
+/// first line, if it has one (see [`within_translucent_first_line`]).
+///
+/// Its boxes and text paint as a group below the in-flow blocks inside the
+/// paragraph and the rest of its lines (CSS 2.1 Appendix E steps 3, 4 and
+/// 7). Such an element is part of the content
+/// [`holds_negative_stack_level`] finds; so is a `::before` or `::after`
+/// that [`negative_pseudo_group`] finds.
+pub fn negative_inline_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> bool {
+    document
+        .get_node(id)
+        .is_some_and(|node| node.kind() == NodeKind::Element)
+        && cascade.computed.get(id).is_some_and(|cv| {
+            cv.display.is_inline_flow()
+                && !matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0)
+        })
+        && document
+            .parent_of(id)
+            .is_some_and(|parent| outside_inline_stacking_contexts(document, cascade, root, parent))
+        && !within_translucent_first_line(document, root, id)
+}
+
+/// Whether the `::before` or `::after` with generated id `id`, laid out in
+/// the lines of paragraph `root`, is relatively positioned with a negative
+/// `z-index` outside every inline box of the paragraph that forms a
+/// stacking context, with content beyond the paragraph's translucent first
+/// line, if it has one.
+///
+/// Like the elements [`negative_inline_group`] finds, its boxes, images and
+/// text paint as a group below the in-flow blocks inside the paragraph and
+/// the rest of its lines.
+pub fn negative_pseudo_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> bool {
+    crate::generated_content::generated_origin(id).is_some_and(|(element, pseudo)| {
+        matches!(pseudo, PseudoElem::Before | PseudoElem::After)
+            && pseudo_stack_level(cascade, id) < 0
+            && outside_inline_stacking_contexts(document, cascade, root, element)
+            && !within_translucent_first_line(document, root, id)
+    })
+}
+
+/// Whether `start` and the elements around it, up to paragraph `root`, are
+/// inline elements of the paragraph that form no stacking context.
+fn outside_inline_stacking_contexts(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    start: usize,
+) -> bool {
+    let owner = document.ifc_source_owner(root);
+    document
+        .inclusive_ancestors(start)
+        .take_while(|&ancestor| ancestor != root && ancestor != owner)
+        .all(|ancestor| {
+            document
+                .get_node(ancestor)
+                .is_some_and(|node| node.kind() == NodeKind::Element)
+                && cascade.computed.get(ancestor).is_some_and(|cv| {
+                    // A `display: contents` element has no box to form a
+                    // stacking context with (CSS Display 3 §2.5).
+                    cv.display == DisplayValue::Contents
+                        || (cv.display.is_inline_flow()
+                            && !establishes_stacking_context(document, ancestor, cv)
+                            && (matches!(cv.position, PositionValue::Static)
+                                || !matches!(cv.z_index, ZIndexValue::Integer(_))))
+                })
+        })
 }
 
 /// Whether the inline content deferred in front of an element paints

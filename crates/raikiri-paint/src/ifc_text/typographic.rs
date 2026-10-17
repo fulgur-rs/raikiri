@@ -128,6 +128,9 @@ pub(super) struct TypographicPaint {
     /// Boxes laid out beside the lines outside every group, placed in
     /// `normal` like groups.
     root_children: Vec<Child>,
+    /// In-flow blocks inside the paragraph's inline content, in the order
+    /// they were placed.
+    blocks: Vec<Scene>,
     groups: Vec<Group>,
     nearest_groups: HashMap<FragmentKey, Option<usize>>,
     piece_groups: HashMap<FragmentKey, Option<usize>>,
@@ -138,16 +141,18 @@ pub(super) struct TypographicPaint {
 
 impl TypographicPaint {
     /// A non-atomic inline element with an opacity below one composites its
-    /// fragments on the paragraph's lines as one group, and so do the
+    /// fragments on the paragraph's lines as one group, as does one
+    /// positioned below the paragraph's blocks, and so do the
     /// `::before`, `::after` and `::first-letter` boxes (CSS Color 4 §3.3).
     /// An atomic `::before` or `::after` with a transform is a group too,
-    /// turned as a whole (CSS Transforms 1 §6). The groups nest as their
-    /// boxes do.
+    /// turned as a whole (CSS Transforms 1 §6), and so is one positioned
+    /// below the paragraph's blocks. The groups nest as their boxes do.
     pub(super) fn new(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
         let cascade = paragraph.cascade;
         let mut paint = Self {
             normal: Scene::new(),
             root_children: Vec::new(),
+            blocks: Vec::new(),
             groups: Vec::new(),
             nearest_groups: HashMap::new(),
             piece_groups: HashMap::new(),
@@ -156,7 +161,10 @@ impl TypographicPaint {
         let mut by_box = HashMap::new();
         let mut parents = HashMap::new();
         let mut opacities = HashMap::new();
-        let mut turned = std::collections::HashSet::new();
+        // The keys that form a group without an opacity: an atomic
+        // pseudo-element with a transform, or one positioned below the
+        // paragraph's blocks.
+        let mut grouped = std::collections::HashSet::new();
         for piece in pieces {
             let key = FragmentKey {
                 node: piece.node,
@@ -186,8 +194,15 @@ impl TypographicPaint {
             {
                 opacities.insert(key, opacity);
             }
-            if raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node).is_some() {
-                turned.insert(key);
+            if raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node).is_some()
+                || raikiri_dom::paint_rules::negative_pseudo_group(
+                    paragraph.document,
+                    cascade,
+                    paragraph.root_id,
+                    piece.node,
+                )
+            {
+                grouped.insert(key);
             }
         }
         // Resolve parents before children. Equal opacities share a group only
@@ -221,7 +236,7 @@ impl TypographicPaint {
             };
             for key in path.into_iter().rev() {
                 let opacity = opacities.get(&key).copied();
-                if opacity.is_some() || turned.contains(&key) {
+                if opacity.is_some() || grouped.contains(&key) {
                     let index = *by_box
                         .entry((key.node, opacity.map(f32::to_bits), group))
                         .or_insert_with(|| {
@@ -268,7 +283,9 @@ impl TypographicPaint {
     }
 
     /// The innermost group of a translucent inline element of `paragraph`
-    /// around `id`, an element or generated box, `id` included. The walk up
+    /// around `id`, an element or generated box, `id` included, or of one
+    /// positioned below the paragraph's blocks (see
+    /// [`raikiri_dom::paint_rules::negative_inline_group`]). The walk up
     /// stops at the paragraph root and at any box that is not an inline
     /// element. Elements with `display: contents` form no group.
     pub(super) fn element_group(&mut self, paragraph: Paragraph<'_>, id: usize) -> Option<usize> {
@@ -286,11 +303,18 @@ impl TypographicPaint {
         // Allocate the outer groups first, in the order their elements are
         // first painted.
         for (id, opacity) in path.into_iter().rev() {
-            if let Some(opacity) = opacity {
+            if opacity.is_some()
+                || raikiri_dom::paint_rules::negative_inline_group(
+                    paragraph.document,
+                    paragraph.cascade,
+                    paragraph.root_id,
+                    id,
+                )
+            {
                 let index = self.groups.len();
                 self.groups.push(Group {
                     scene: Scene::new(),
-                    opacity: Some(opacity),
+                    opacity,
                     transform: None,
                     level: element_stack_level(paragraph.cascade, id),
                     parent: group,
@@ -387,6 +411,15 @@ impl TypographicPaint {
         }
     }
 
+    /// Place the paint of an in-flow block inside the paragraph's inline
+    /// content: above the groups and boxes with negative stack levels
+    /// outside every group, below the rest of the paragraph's paint (CSS 2.1
+    /// Appendix E steps 3, 4 and 7). Blocks keep the order they are placed
+    /// in.
+    pub(super) fn add_block(&mut self, content: Scene) {
+        self.blocks.push(content);
+    }
+
     /// Whether the paragraph composites any group.
     pub(super) fn has_groups(&self) -> bool {
         !self.groups.is_empty()
@@ -412,12 +445,29 @@ impl TypographicPaint {
     /// with that opacity: a group composited before the others of the
     /// paragraph, as it comes first in tree order.
     pub(super) fn finish(
-        mut self,
+        self,
         scene: &mut impl PaintScene,
         clip: Rect,
         paint_transform: Affine,
         first_line: Option<(Self, f32)>,
     ) {
+        let (below, blocks, above) = self.finish_around_blocks(clip, paint_transform, first_line);
+        scene.append_scene(below, Affine::IDENTITY);
+        for block in blocks {
+            scene.append_scene(block, Affine::IDENTITY);
+        }
+        scene.append_scene(above, Affine::IDENTITY);
+    }
+
+    /// Composite the groups like [`Self::finish`], apart from the
+    /// paragraph's blocks: the paint below them, the blocks, and the paint
+    /// above them.
+    pub(super) fn finish_around_blocks(
+        mut self,
+        clip: Rect,
+        paint_transform: Affine,
+        first_line: Option<(Self, f32)>,
+    ) -> (Scene, Vec<Scene>, Scene) {
         // The enclosing TransformScene transforms recorded commands on replay.
         // Counter-transform only the opacity clip so it remains in page space.
         let inverse = paint_transform.inverse();
@@ -500,7 +550,15 @@ impl TypographicPaint {
                 None => roots.push(child),
             }
         }
-        scene.append_scene(merge_children(self.normal, roots), Affine::IDENTITY);
+        // Groups and boxes with negative stack levels outside every group
+        // paint below the blocks, at the start of the paragraph's paint.
+        let (below, above): (Vec<_>, Vec<_>) =
+            roots.into_iter().partition(|&(_, level, _, _)| level < 0);
+        (
+            merge_children(Scene::new(), below),
+            self.blocks,
+            merge_children(self.normal, above),
+        )
     }
 }
 

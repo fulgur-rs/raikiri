@@ -181,6 +181,11 @@ fn api_steps(page: &Page<'_>) -> Vec<Step> {
             PaintEvent::Text(fragment) => {
                 Step::Text(paragraph_root(document, node_index(fragment.node())))
             }
+            // The walker draws the box of an inline `::before` or `::after`
+            // with its paragraph's lines.
+            PaintEvent::GeneratedBox(fragment) => {
+                Step::Text(paragraph_root(document, node_index(fragment.line.root)))
+            }
             _ => panic!("unexpected event {event:?}"),
         };
         if matches!(step, Step::Text(_)) && steps.last() == Some(&step) {
@@ -735,15 +740,85 @@ fn blocks_inside_paragraphs_paint_before_the_lines() {
     }
 }
 
-/// A paragraph with content positioned below its blocks keeps the blocks
-/// with that content.
+/// A paragraph with content positioned below its blocks paints that
+/// content, then the blocks, then the rest of its lines, whether it defers
+/// its content or not.
 #[test]
-fn blocks_inside_paragraphs_with_negative_content_stay_with_it() {
+fn blocks_inside_paragraphs_paint_between_negative_content_and_the_lines() {
+    for page_css in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let result = assert_same_order(
+                &format!(
+                    "<div id=m style=\"{style}\">over\
+                     <span style=\"position: relative; z-index: -1\">x</span>\
+                     <div id=k style=\"background: gray; height: 10px\"></div>tail</div>"
+                ),
+                page_css,
+            );
+            let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+            let page = result.pages().next().expect("a page");
+            let steps = walker_steps(&page);
+            let at = step_at(&result, Step::Box(k));
+            assert_eq!(steps[at - 1], Step::Text(m), "{page_css} {style}");
+            assert_eq!(steps[at + 1], Step::Text(m), "{page_css} {style}");
+        }
+    }
+}
+
+/// The text of a `::before` positioned below a paragraph's blocks is traced
+/// before the blocks, like the paragraph's other text positioned there.
+#[test]
+fn negative_pseudo_text_is_traced_before_the_blocks() {
+    let css = "#m::before { content: 'x'; position: relative; z-index: -1 }";
+    for page_css in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let result = assert_same_order(
+                &format!(
+                    "<div id=m style=\"{style}\">over\
+                     <div id=k style=\"background: gray; height: 10px\"></div>tail</div>"
+                ),
+                &format!("{page_css} {css}"),
+            );
+            let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+            let page = result.pages().next().expect("a page");
+            let steps = walker_steps(&page);
+            let at = step_at(&result, Step::Box(k));
+            assert_eq!(steps[at - 1], Step::Text(m), "{page_css} {style}");
+            assert_eq!(steps[at + 1], Step::Text(m), "{page_css} {style}");
+        }
+    }
+}
+
+/// The text of a `::before` inside an inline element positioned below a
+/// paragraph's blocks is traced once, before the blocks.
+#[test]
+fn pseudo_text_inside_negative_inline_content_is_traced_before_the_blocks() {
+    let result = assert_same_order(
+        "<div id=m><span id=s style=\"position: relative; z-index: -1\"></span>\
+         <div id=k style=\"background: gray; height: 10px\"></div></div>",
+        "#s::before { content: 'x' }",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let texts = steps.iter().filter(|s| **s == Step::Text(m)).count();
+    assert_eq!(texts, 1, "{}", describe(&page, &steps));
+    assert!(step_at(&result, Step::Text(m)) < step_at(&result, Step::Box(k)));
+}
+
+/// A paragraph whose only text is positioned below its blocks traces that
+/// text once, before the blocks.
+#[test]
+fn negative_text_alone_is_traced_before_the_blocks() {
     let result = same_order(
-        "<div id=m>over<span style=\"position: relative; z-index: -1\">x</span>\
+        "<div id=m><span style=\"position: relative; z-index: -1\">x</span>\
          <div id=k style=\"background: gray; height: 10px\"></div></div>",
     );
     let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let texts = steps.iter().filter(|s| **s == Step::Text(m)).count();
+    assert_eq!(texts, 1, "{}", describe(&page, &steps));
     assert!(step_at(&result, Step::Text(m)) < step_at(&result, Step::Box(k)));
 }
 
@@ -1267,4 +1342,188 @@ fn stacking_contexts_across_boxes_keep_native_and_public_order() {
         ),
         "",
     );
+}
+
+/// The pixels of the first page of `result`, 300×200 like [`PAGE`].
+fn render_first_page(result: &DocumentLayout) -> Vec<u8> {
+    let page = result.pages().next().expect("a page");
+    let (document, cascade, page_box, origin) = page.paint_inputs();
+    let mut scene = anyrender::Scene::new();
+    raikiri_paint::paint_single_page_with_origin(&mut scene, document, cascade, page_box, origin)
+        .expect("paint");
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| {
+            use anyrender::PaintScene;
+            out.append_scene(scene, kurbo::Affine::IDENTITY);
+        },
+        300,
+        200,
+    )
+}
+
+/// How many pixels of `pixels` are exactly `rgb`.
+fn pixels_of(pixels: &[u8], rgb: [u8; 3]) -> usize {
+    pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[..3] == rgb)
+        .count()
+}
+
+/// Page margins that leave a content box at most half as wide as the page,
+/// to which flowed text is clipped.
+const NARROW_PAGE: &str = "@page { margin: 20px 80px }";
+
+/// A block inside a paragraph covers the text positioned below it and stays
+/// below the paragraph's other text, also on a page that clips the text to
+/// its content box.
+#[test]
+fn paragraph_blocks_cover_negative_text_and_stay_below_the_rest() {
+    for page in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let result = lay_out(
+                &format!(
+                    "<div style=\"{style}; color: black\">AA\
+                     <span style=\"position: relative; z-index: -1; color: red\">BB</span>CC\
+                     <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+                ),
+                page,
+            );
+            let pixels = render_first_page(&result);
+            assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{page} {style}");
+            assert_eq!(pixels_of(&pixels, [0, 0, 0]), 400, "{page} {style}");
+        }
+    }
+}
+
+/// Inline elements positioned below a paragraph's blocks paint in stack
+/// level order, not tree order.
+#[test]
+fn negative_inline_elements_paint_by_stack_level() {
+    let result = lay_out(
+        "<div>A<span style=\"position: relative; z-index: -1; color: lime\">BB</span>\
+         <span style=\"position: relative; z-index: -2; left: -20px; color: red\">CC</span></div>",
+        "",
+    );
+    let pixels = render_first_page(&result);
+    assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0);
+    assert_eq!(pixels_of(&pixels, [0, 255, 0]), 200);
+}
+
+/// A `::before` positioned with a negative stack level paints below the
+/// block inside its paragraph, which stays below the paragraph's other
+/// text.
+#[test]
+fn paragraph_blocks_cover_negative_pseudo_elements() {
+    let css = "#m::before { content: 'BB'; position: relative; z-index: -1; color: red }";
+    for page in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let body = format!(
+                "<div id=m style=\"{style}; color: black\">AA\
+                 <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+            );
+            let pixels = render_first_page(&lay_out(&body, &format!("{page} {css}")));
+            assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{page} {style}");
+            assert_eq!(pixels_of(&pixels, [0, 0, 0]), 200, "{page} {style}");
+        }
+    }
+}
+
+/// A `display: contents` element forms no stacking context, so the negative
+/// span inside it still paints below the paragraph's block in both orders.
+#[test]
+fn negative_content_inside_display_contents_paints_below_the_blocks() {
+    let result = same_order(
+        "<div id=m>over<span style=\"display: contents; position: relative; z-index: 0\">\
+         <span style=\"position: relative; z-index: -1\">x</span></span>\
+         <div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = step_at(&result, Step::Box(k));
+    assert_eq!(steps[at - 1], Step::Text(m));
+    assert_eq!(steps[at + 1], Step::Text(m));
+}
+
+/// A translucent `::first-line` group holds the negative content it wraps,
+/// so in both orders that content paints above the paragraph's blocks with
+/// the rest of the first line.
+/// Content spread over later lines still paints below the blocks.
+#[test]
+fn negative_content_on_a_translucent_first_line_paints_above_the_blocks() {
+    for (body, css) in [
+        (
+            "<div id=m>over <span style=\"position: relative; z-index: -1\">x</span>\
+             <div id=k style=\"background: gray; height: 10px\"></div>tail <b style=\"padding: 1px\">b</b> \
+             <i style=\"display: inline-block\">i</i> <em style=\"position: absolute\">a</em> \
+             <ruby>r<rt>t</rt></ruby></div>",
+            "#m::first-line { opacity: 0.5 }",
+        ),
+        (
+            "<div id=m>over<div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+            "#m::first-line { opacity: 0.5 } \
+             #m::before { content: 'x'; position: relative; z-index: -1 }",
+        ),
+    ] {
+        let result = assert_same_order(body, css);
+        let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+        let page = result.pages().next().expect("a page");
+        let steps = walker_steps(&page);
+        let at = step_at(&result, Step::Box(k));
+        assert!(
+            !steps[..at].contains(&Step::Text(m)),
+            "{css}: {}",
+            describe(&page, &steps)
+        );
+    }
+    let result = assert_same_order(
+        "<div id=m>over <span style=\"position: relative; z-index: -1\">x<br>y</span>\
+         <div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+        "#m::first-line { opacity: 0.5 }",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    assert_eq!(steps[step_at(&result, Step::Box(k)) - 1], Step::Text(m));
+}
+
+/// The negative span on a translucent first line paints over the block
+/// that follows it in the paragraph.
+#[test]
+fn negative_text_on_a_translucent_first_line_covers_the_blocks() {
+    let blue = |color: &str| {
+        let result = lay_out(
+            &format!(
+                "<div id=m>AA<span style=\"position: relative; z-index: -1; color: {color}\">BB</span>\
+                 <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+            ),
+            "#m::first-line { opacity: 0.5 }",
+        );
+        pixels_of(&render_first_page(&result), [0, 0, 255])
+    };
+    assert!(blue("red") < blue("transparent"));
+}
+
+/// A block-level `::after` on a later line than a translucent first line
+/// paints below the paragraph's block, even with no content of its own.
+#[test]
+fn negative_block_pseudo_elements_after_a_translucent_first_line_paint_below_the_blocks() {
+    let css = "#m::first-line { opacity: 0.5 } \
+               #m::after { content: ''; display: block; height: 5px; background: red; \
+               position: relative; z-index: -1 }";
+    let result = assert_same_order(
+        "<div id=m>one<br>two<div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+        css,
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    assert_eq!(steps[step_at(&result, Step::Box(k)) - 1], Step::Text(m));
+    // The block covers the `::after` drawn over it.
+    let result = lay_out(
+        "<div id=m>one<br>two\
+         <div style=\"background: gray; height: 40px; margin-bottom: -40px\"></div></div>",
+        css,
+    );
+    assert_eq!(pixels_of(&render_first_page(&result), [255, 0, 0]), 0);
 }

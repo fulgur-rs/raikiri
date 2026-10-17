@@ -187,7 +187,7 @@ impl Document {
                 PseudoElem::After => GeneratedKind::After,
                 _ => GeneratedKind::Before,
             };
-            return super::generated_group(cascade, element, kind)
+            return super::generated_group(self, cascade, root, element, kind)
                 .or_else(|| self.inline_opacity_group(cascade, root, element));
         }
         let anchor = match self.get_node(owner)?.kind() {
