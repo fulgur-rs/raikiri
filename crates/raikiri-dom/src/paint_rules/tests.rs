@@ -724,9 +724,9 @@ fn a_replaced_element_clips_every_hidden_axis_from_its_content_box() {
     // `hidden` is used as `clip`, at the content box.
     let clip = overflow_clip(&doc, &cascade, hidden, border_box, border).unwrap();
     assert_eq!(clip.rect, PaintRect::new(15.0, 25.0, 90.0, 40.0));
-    // An omitted box is the padding box; only the clipping axis moves.
+    // An omitted box is the content box; only the clipping axis moves.
     let clip = overflow_clip(&doc, &cascade, outset, border_box, border).unwrap();
-    assert_eq!(clip.rect, PaintRect::new(2.0, 22.0, 116.0, 46.0));
+    assert_eq!(clip.rect, PaintRect::new(5.0, 22.0, 110.0, 46.0));
     assert!(clip.clip_x && !clip.clip_y);
 }
 
@@ -787,7 +787,7 @@ fn an_audio_element_uses_its_hidden_overflow_as_clip() {
     let cascade = cascaded(&doc);
     let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
     let border = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
-    // Used as `clip`, the outward margin applies from the padding box.
+    // Used as `clip`, the outward margin applies.
     let clip = overflow_clip(&doc, &cascade, audio, border_box, border).unwrap();
     assert_eq!(clip.rect, PaintRect::new(2.0, 12.0, 116.0, 66.0));
 }
