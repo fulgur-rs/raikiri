@@ -1496,6 +1496,34 @@ impl PageOrigins {
         (self.page_index_for_y(margin_start + edge_slack) + 1).min(last_page)
     }
 
+    /// Where a box starts when an unforced break falls in the collapsed
+    /// margin above it at the edge that opens `natural_page`: the top of the
+    /// page it lands on and its border-box top.
+    ///
+    /// A forced break that already coincides with that edge sits before the
+    /// margin, which therefore stays on the new page above the box's
+    /// `margin_top`. Otherwise the margin, which starts at `margin_start`,
+    /// breaks at the first page edge inside it, and the rest of it is
+    /// truncated together with the blank pages it would fill.
+    fn truncated_margin_target(
+        &self,
+        natural_page: u32,
+        forced_before: bool,
+        margin_top: f32,
+        margin_start: impl FnOnce() -> f32,
+        follows_forced_break: bool,
+    ) -> (f32, f32) {
+        if forced_before {
+            let page_top = self.origin(natural_page);
+            (page_top, page_top + margin_top)
+        } else {
+            let first_edge =
+                self.first_edge_in_margin(margin_start(), follows_forced_break, natural_page);
+            let page_top = self.origin(first_edge);
+            (page_top, page_top)
+        }
+    }
+
     /// The page a box at flow position `effective_y` falls on when it starts
     /// a page transition from `current_page`, or `current_page` when the
     /// position is outside the flow.
@@ -4950,30 +4978,22 @@ fn paginate_flow(
                         // between two nested candidates.
                         && adjoins_previous_sibling(document, cascade, node_id, previous)
                     {
-                        // A forced break that already coincides with this
-                        // page edge sits before the margin, which therefore
-                        // stays on the new page. Otherwise the margin breaks
-                        // at the first page edge inside it, and the rest of
-                        // it is truncated together with the blank pages it
-                        // would fill.
-                        let (target_top, target_y) = if forced_before {
-                            (page_top, page_top + margin_top)
-                        } else {
-                            let margin_start = collapsed_margin_start(
-                                document,
-                                cascade,
-                                previous,
-                                node_id,
-                                previous_bottom,
-                                effective_y,
-                            );
-                            let first_edge = page_origins.first_edge_in_margin(
-                                margin_start,
-                                follows_forced_break,
-                                natural_page,
-                            );
-                            (page_origin(first_edge), page_origin(first_edge))
-                        };
+                        let (target_top, target_y) = page_origins.truncated_margin_target(
+                            natural_page,
+                            forced_before,
+                            margin_top,
+                            || {
+                                collapsed_margin_start(
+                                    document,
+                                    cascade,
+                                    previous,
+                                    node_id,
+                                    previous_bottom,
+                                    effective_y,
+                                )
+                            },
+                            follows_forced_break,
+                        );
                         let delta = target_y - effective_y;
                         sibling_margins.moved_boxes |= delta != 0.0;
                         move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
