@@ -178,7 +178,7 @@ pub(crate) fn function_matrix(cv: &ComputedValues, width: f64, height: f64) -> A
 
 /// Whether `cv`'s transform maps its box to a degenerate shape, so that
 /// nothing of the element is painted (CSS Transforms 1 §5).
-pub(super) fn is_singular(cv: &ComputedValues) -> bool {
+pub(crate) fn is_singular(cv: &ComputedValues) -> bool {
     // The linear part does not depend on the box, and a percentage
     // translation of a finite box is finite.
     !function_matrix(cv, 1.0, 1.0).is_invertible()
@@ -188,7 +188,7 @@ pub(super) fn is_singular(cv: &ComputedValues) -> bool {
 /// `transform`: the matrix turned about the box's transform origin, in the
 /// coordinates `rect` is in. Like [`element_transform`], it works on the box
 /// snapped to whole pixels, as the painter does.
-pub(super) fn box_transform(
+pub(crate) fn box_transform(
     cv: &ComputedValues,
     rect: raikiri_traits::PaintRect,
 ) -> PaintTransform {

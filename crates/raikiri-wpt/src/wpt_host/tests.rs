@@ -1411,6 +1411,29 @@ fn generated_boxes_in_a_paragraph_extend_the_scroll_size_and_area() {
 }
 
 #[test]
+fn a_transformed_generated_box_extends_the_scroll_size_where_it_is_drawn() {
+    let style = "<style>body{margin:0;line-height:20px}\
+         #box::before{content:'x';display:inline-block;TRANSFORM}</style>\
+         <div id='box' style='height:100px;overflow:hidden'>text</div>";
+    let scroll_height = |transform: &str| {
+        let (_dir, mut rt) = runtime(&style.replace("TRANSFORM", transform));
+        text(
+            &mut rt,
+            "String(document.getElementById('box').scrollHeight)",
+        )
+    };
+    let moved: f64 = scroll_height("transform:translateY(3000px)")
+        .parse()
+        .expect("scroll height");
+    assert!(moved > 3000.0, "translated box at {moved}");
+    // A singular transform draws nothing, so the box adds nothing either.
+    assert_eq!(
+        scroll_height("transform:translateY(3000px) scale(0)"),
+        "100"
+    );
+}
+
+#[test]
 fn boxes_a_singular_transform_hides_add_nothing() {
     let (_dir, mut rt) = runtime(
         "<style>body{margin:0}</style>\
