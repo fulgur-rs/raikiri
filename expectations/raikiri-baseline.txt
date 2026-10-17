@@ -4535,6 +4535,7 @@ css/css-ruby/ruby-intrinsic-isize-002.html
 css/css-ruby/ruby-intrinsic-isize-003.html
 css/css-ruby/ruby-justification-002.html
 css/css-ruby/ruby-line-break-suppression-004.html
+css/css-ruby/ruby-line-break-suppression-005.html
 css/css-ruby/ruby-line-breaking-003.html
 css/css-ruby/ruby-reflow-001-transparentruby.html
 css/css-ruby/ruby-span-001.html
