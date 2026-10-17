@@ -3748,12 +3748,6 @@ pub(crate) fn paint_document_impl(
                     } else {
                         false
                     };
-                    if content_clip.is_some() {
-                        if let Some(t) = trace.as_deref_mut() {
-                            t.push(crate::PaintTraceEvent::PopClip);
-                        }
-                        scene.pop_layer();
-                    }
                     if !painted_image
                         && pixel_source.is_none()
                         && node.tag_name() == Some("img")
@@ -3794,6 +3788,14 @@ pub(crate) fn paint_document_impl(
                         if clip_background.is_some() {
                             scene.pop_layer();
                         }
+                    }
+                    // The fallback stands in for the image content, so it
+                    // stays inside the same clip.
+                    if content_clip.is_some() {
+                        if let Some(t) = trace.as_deref_mut() {
+                            t.push(crate::PaintTraceEvent::PopClip);
+                        }
+                        scene.pop_layer();
                     }
                     if has_column_rules && cv.visibility == Visibility::Visible {
                         // Rules obey the owner's overflow, while an outside marker

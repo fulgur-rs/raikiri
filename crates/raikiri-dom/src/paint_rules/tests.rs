@@ -701,7 +701,7 @@ fn a_replaced_element_clips_every_hidden_axis_from_its_content_box() {
         Some(doc.root_index()),
         "img",
         Style::default(),
-        Some("display:block;overflow:hidden"),
+        Some("display:block;overflow:hidden;overflow-clip-margin:content-box"),
     );
     let outset = doc.append_element(
         Some(doc.root_index()),
@@ -724,8 +724,8 @@ fn a_replaced_element_clips_every_hidden_axis_from_its_content_box() {
     // `hidden` is used as `clip`, at the content box.
     let clip = overflow_clip(&doc, &cascade, hidden, border_box, border).unwrap();
     assert_eq!(clip.rect, PaintRect::new(15.0, 25.0, 90.0, 40.0));
-    // An omitted box is the content box; only the clipping axis moves.
+    // An omitted box is the padding box; only the clipping axis moves.
     let clip = overflow_clip(&doc, &cascade, outset, border_box, border).unwrap();
-    assert_eq!(clip.rect, PaintRect::new(5.0, 22.0, 110.0, 46.0));
+    assert_eq!(clip.rect, PaintRect::new(2.0, 22.0, 116.0, 46.0));
     assert!(clip.clip_x && !clip.clip_y);
 }

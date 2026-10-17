@@ -1492,6 +1492,39 @@ fn transformed_text_and_image_fallback_keep_page_content_clips_untransformed() {
 }
 
 #[test]
+fn image_fallback_paints_inside_the_content_clip() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><img style='display:block;width:20px;height:20px;padding:5px' src='green-100.png'>",
+    );
+    let start = scene
+        .commands
+        .iter()
+        .position(|command| match command {
+            RenderCommand::PushClipLayer(clip) => {
+                kurbo::Shape::bounding_box(&clip.clip) == kurbo::Rect::new(5.0, 5.0, 25.0, 25.0)
+            }
+            _ => false,
+        })
+        .expect("the image clips at its content box");
+    let mut depth = 0usize;
+    let mut fills = 0;
+    for command in &scene.commands[start..] {
+        match command {
+            RenderCommand::PushClipLayer(_) | RenderCommand::PushLayer(_) => depth += 1,
+            RenderCommand::PopLayer => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            RenderCommand::Fill(_) => fills += 1,
+            _ => {}
+        }
+    }
+    assert!(fills > 0, "the fallback colour paints inside the clip");
+}
+
+#[test]
 fn flowed_text_page_clip_includes_page_padding() {
     let scene = transform_markup_scene(
         "<style>@page { margin:10px 200px; padding:20px 30px }</style><body style='margin:0'>TEXT</body>",

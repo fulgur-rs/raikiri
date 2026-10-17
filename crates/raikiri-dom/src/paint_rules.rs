@@ -227,11 +227,9 @@ impl OverflowClipGeometry {
             y: used(cv.overflow.y),
         };
         let margin = cv.overflow_clip_margin;
-        let visual_box = margin.visual_box.unwrap_or(if replaced {
-            VisualBox::ContentBox
-        } else {
-            VisualBox::PaddingBox
-        });
+        // An omitted box is padding-box everywhere; replaced elements clip
+        // from the content box through the UA style sheet instead.
+        let visual_box = margin.visual_box.unwrap_or(VisualBox::PaddingBox);
         let margin_edge = |border: f32, padding: f32| {
             let inset = match visual_box {
                 VisualBox::BorderBox => 0.0,
