@@ -1464,8 +1464,10 @@ fn nested_transforms_cover_descendant_glyphs_and_overflow_without_leaking_to_sib
 #[test]
 fn transformed_text_and_image_fallback_keep_page_content_clips_untransformed() {
     let scene = transform_markup_scene(
-        "<style>@page { margin-left:200px; margin-right:200px }</style><body style='margin:0'><div style='width:100px;height:50px;background:green;transform:scale(2);transform-origin:0 0'>TEXT<img style='display:block;width:10px;height:10px' src='green-100.png'></div>",
+        "<style>@page { margin-left:200px; margin-right:200px }</style><body style='margin:0'><div style='width:100px;height:50px;background:green;transform:scale(2);transform-origin:0 0'>TEXT<img style='display:block;width:10px;height:10px;overflow:visible' src='green-100.png'></div>",
     );
+    // The image is not clipped (`overflow: visible`), so every clip layer is a
+    // page content clip.
     let clips: Vec<_> = scene
         .commands
         .iter()
