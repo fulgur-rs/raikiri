@@ -16369,3 +16369,20 @@ fn a_page_type_change_opens_the_page_after_the_overflowed_margin_box() {
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 0, 1, true), 2);
     assert_eq!(pages.transition_natural_page(250.0, 10.0, 2, 3, true), 2);
 }
+
+#[test]
+fn a_page_edge_falls_in_the_margin_between_two_siblings() {
+    // The edge at 100 lies between the bottom at 90 and the top at 120.
+    assert!(page_edge_falls_in_margin(1, 100.0, 90.0, 120.0, false));
+    // A border box ending exactly at the edge still has its margin after it.
+    assert!(page_edge_falls_in_margin(1, 100.0, 100.0, 120.0, false));
+    // The first page has no edge above it.
+    assert!(!page_edge_falls_in_margin(0, 0.0, -10.0, 20.0, false));
+    // A box starting at the edge, or a previous box ending past it, leaves
+    // no margin across the edge.
+    assert!(!page_edge_falls_in_margin(1, 100.0, 90.0, 100.0, false));
+    assert!(!page_edge_falls_in_margin(1, 100.0, 105.0, 120.0, false));
+    // A forced break at the edge keeps the margin after it.
+    assert!(!page_edge_falls_in_margin(1, 100.0, 100.0, 120.0, true));
+    assert!(page_edge_falls_in_margin(1, 100.0, 90.0, 120.0, true));
+}
