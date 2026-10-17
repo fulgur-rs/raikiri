@@ -4235,16 +4235,7 @@ fn paginate_flow(
     let mut reach = PageReach::default();
     let mut pending_break = PendingBreak::default();
     let mut deferred_shifts = DeferredShifts::default();
-    // Where each table row sits in its parent before pagination; the table
-    // boxes around the rows that moved follow them once every row is placed.
-    let table_row_origins: Vec<(usize, f32)> = candidates
-        .iter()
-        .filter(|candidate| candidate.context.is_table_row)
-        .map(|candidate| {
-            let row = candidate.node_id;
-            (row, document.nodes[row].unrounded_layout.location.y)
-        })
-        .collect();
+    let table_row_origins = table_row_origins(document, &candidates);
     let mut float_shifts = FloatShifts::default();
     let mut subtree_shifts = SubtreeShifts::default();
     let mut sibling_margins = SiblingMargins::default();
@@ -5245,6 +5236,20 @@ fn paginate_flow(
                 .flatten(),
         })
         .collect())
+}
+
+/// Where each table row among `candidates` sits in its parent before
+/// pagination; the table boxes around the rows that moved follow them once
+/// every row is placed.
+fn table_row_origins(document: &Document, candidates: &[PageCandidate]) -> Vec<(usize, f32)> {
+    candidates
+        .iter()
+        .filter(|candidate| candidate.context.is_table_row)
+        .map(|candidate| {
+            let row = candidate.node_id;
+            (row, document.nodes[row].unrounded_layout.location.y)
+        })
+        .collect()
 }
 
 /// The first row of a table without a caption above its grid carries its
