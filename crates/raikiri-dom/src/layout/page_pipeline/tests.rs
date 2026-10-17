@@ -4475,10 +4475,9 @@ fn an_in_flow_paragraph_does_not_grow_for_its_floats() {
     // One 10px line; the float hangs below the content, which is what a block
     // that is not a formatting context does.
     assert_eq!(stored_lines(&doc, root).height, 10.0);
-    // `propagate_float_bottoms_to_auto_height_ancestors` later grows every
-    // auto-height ancestor of a float to the float's bottom; the float starts at the
-    // top of the paragraph, so that is 50px.
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 50.0);
+    // The float hangs below the paragraph; only its own formatting context
+    // includes the float in its used height.
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 10.0);
 }
 
 #[test]
@@ -9379,10 +9378,10 @@ fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
         avoiding_block_in_wrapper("", "min-height:10%;max-height:50%", "display:block"),
         (100.0, 160.0, 100.0)
     );
-    // A moved float does not lengthen the block around it.
+    // A moved float does not contribute to a normal block's auto height.
     assert_eq!(
         avoiding_block_in_wrapper("", "", "float:left"),
-        (100.0, 60.0, 60.0)
+        (100.0, 60.0, 0.0)
     );
 }
 

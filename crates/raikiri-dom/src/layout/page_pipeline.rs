@@ -1261,7 +1261,6 @@ fn layout_single_page_with_table_projection(
     // Again for the boxes inside fixed boxes that relayout put back; the
     // pass is idempotent, so the boxes placed above stay where they are.
     super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
-    propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
     // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only
@@ -1693,48 +1692,6 @@ impl PageOrigins {
 /// The projection is deterministic
 /// and keeps source-node identity stable, so a consumer can select
 /// continuation lines without re-running pagination.
-/// Grow every auto-height ancestor of a left or right float to the float's
-/// bottom edge, including the ancestor's bottom border.
-///
-/// Taffy does not include floated descendants in an auto-height containing
-/// block's used height. This keeps following flow from moving upward after a
-/// fragmented flex item with a float descendant.
-pub(crate) fn propagate_float_bottoms_to_auto_height_ancestors(
-    doc: &mut super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
-) {
-    for idx in 0..doc.nodes.len() {
-        if doc.nodes[idx].kind() != NodeKind::Element
-            || !doc.nodes[idx].is_in_document()
-            || !matches!(
-                cascade.computed[idx].float,
-                FloatValue::Left | FloatValue::Right
-            )
-        {
-            continue;
-        }
-        let mut child = idx;
-        // A float in a paragraph sits in the paragraph root's coordinates and
-        // adds no height to the inline elements that hold it (CSS 2.1 §10.6.1).
-        while let Some(parent) = doc.layout_parent_of(child) {
-            if matches!(
-                cascade.computed[parent].height,
-                ComputedLengthPercentageOrAuto::Auto
-            ) {
-                let child_bottom = doc.nodes[child].unrounded_layout.location.y
-                    + doc.nodes[child].unrounded_layout.size.height
-                    + cascade.computed[parent].border.bottom.width().px();
-                let height = doc.nodes[parent].unrounded_layout.size.height;
-                if child_bottom > height {
-                    doc.context.in_flow_heights.entry(parent).or_insert(height);
-                    doc.nodes[parent].unrounded_layout.size.height = child_bottom;
-                }
-            }
-            child = parent;
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) fn layout_page_fragments(
     document: &mut Document,
@@ -6082,27 +6039,27 @@ mod tests;
 struct GrownHeight {
     /// The used border-box height.
     height: f32,
-    /// The border-box height the flow after the box follows, before and
-    /// after the move. It is less than the used height when floats the box
-    /// does not contain hang below its in-flow content.
-    in_flow_heights: (f32, f32),
+    /// The height the flow after the box follows, before and after the move.
+    flow_heights: (f32, f32),
+    /// The change to the furthest same-BFC descendant float end.
+    float_extent_delta: f32,
     /// Whether `max-height` keeps the box from holding its moved content.
     capped: bool,
 }
 
-/// The used border-box height of the `height: auto` box `parent` after its
-/// child `moved` (already moved by `flow_delta`, or grown by `size_delta`
-/// while the in-flow content inside it moved by `flow_delta`) and the
-/// in-flow children after it shift down by `flow_delta`, clamped by
-/// `min-height` and `max-height` (CSS 2.1 §10.7). `None` when the height is
-/// not `auto`, so the ancestor keeps its size. `lines_moved` tells whether
-/// the lines of `parent`'s paragraph after `moved` already carry the shift.
+/// The used border-box height of `parent` after its child `moved` (already
+/// moved by `flow_delta`, or grown by `size_delta` while the in-flow content
+/// inside it moved by `flow_delta`) and the in-flow children after it shift
+/// down by `flow_delta`, clamped by `min-height` and `max-height` (CSS 2.1
+/// §10.7). A fixed-height box keeps its height, but can still pass a changed
+/// float extent to an ancestor that holds those floats. `None` when the
+/// movement does not affect tracked content. `lines_moved` tells whether the
+/// lines of `parent`'s paragraph after `moved` already carry the shift.
 ///
-/// Layout also grows a box that does not hold its floats to the floats'
-/// bottom (see [`propagate_float_bottoms_to_auto_height_ancestors`]), while
-/// the flow after it follows only its in-flow content (CSS 2.1 §10.6.3).
-/// Both edges are tracked, so the content moving inside a float that hangs
-/// below it does not also push the flow after the box.
+/// A box that holds its floats grows to their margin-box end; a box that
+/// shares its BFC with an ancestor passes the float-end change to that root.
+/// The flow after a non-BFC box follows only its in-flow content (CSS 2.1
+/// §10.6.3).
 #[allow(clippy::too_many_arguments)]
 fn grown_auto_height(
     document: &super::context::LayoutSession<'_>,
@@ -6111,6 +6068,7 @@ fn grown_auto_height(
     moved: usize,
     flow_delta: f32,
     size_delta: f32,
+    float_delta: f32,
     lines_moved: bool,
     body_id: usize,
 ) -> Option<GrownHeight> {
@@ -6118,9 +6076,8 @@ fn grown_auto_height(
     let style = &node.style;
     // A percentage height against an indefinite containing block behaves
     // as `auto` (CSS 2.1 §10.5).
-    if !style.size.height.is_auto() && definite_content_height(document, parent).is_some() {
-        return None;
-    }
+    let can_grow =
+        style.size.height.is_auto() || definite_content_height(document, parent).is_none();
     let layout = &node.unrounded_layout;
     let vertical_edges =
         layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
@@ -6159,12 +6116,26 @@ fn grown_auto_height(
     // the flow after the box follows, `size` for the box's border box.
     let mut flow = (f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut size = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let mut float_extent = (f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut shifted = false;
+    let mut float_shifted = false;
     let mut last = None;
     // The ends of `moved` and of the children after it, before and after
     // the shift, from their current `end`. `moved_by` is how far `moved`'s
     // end moved.
     let shift = |child: usize, end: f32, moved_by: f32, shifted: &mut bool| {
+        if child == moved {
+            *shifted = true;
+            (end - moved_by, end)
+        } else if *shifted && siblings_moved {
+            (end - flow_delta, end)
+        } else if *shifted {
+            (end, end + flow_delta)
+        } else {
+            (end, end)
+        }
+    };
+    let shift_float = |child: usize, end: f32, moved_by: f32, shifted: &mut bool| {
         if child == moved {
             *shifted = true;
             (end - moved_by, end)
@@ -6200,48 +6171,44 @@ fn grown_auto_height(
         let child_layout = &child_node.unrounded_layout;
         let top = pagination_child_parent_y(document, parent, child, child_layout.location.y);
         if is_floating_box_for_pagination(document, cascade, child) {
-            if contains_floats {
-                // A float's margin box ends the content.
-                let ends = shift(
+            if matches!(
+                cascade.computed[child].float,
+                FloatValue::Left | FloatValue::Right
+            ) {
+                let moved_by = if child == moved {
+                    float_delta
+                } else {
+                    flow_delta
+                };
+                let ends = shift_float(
                     child,
                     top + child_layout.size.height + child_layout.margin.bottom,
-                    flow_delta,
-                    &mut shifted,
+                    moved_by,
+                    &mut float_shifted,
                 );
-                extend(&mut flow, ends);
-                extend(&mut size, ends);
-            } else if matches!(
-                cascade.computed[parent].height,
-                ComputedLengthPercentageOrAuto::Auto
-            ) {
-                // Layout grew the box to the float's border box and the
-                // box's bottom border; the edges below are added back last.
-                let ends = shift(
-                    child,
-                    top + child_layout.size.height + layout.border.bottom - edges_below,
-                    flow_delta,
-                    &mut shifted,
-                );
-                extend(&mut size, ends);
+                extend(&mut float_extent, ends);
+                shifted |= child == moved;
             }
             continue;
+        }
+        let descendant_float_end =
+            same_bfc_float_end_in_subtree(document, cascade, body_id, child, top);
+        if descendant_float_end.is_finite() {
+            let moved_by = if child == moved {
+                float_delta
+            } else {
+                flow_delta
+            };
+            let ends = shift_float(child, descendant_float_end, moved_by, &mut float_shifted);
+            extend(&mut float_extent, ends);
         }
         let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
         let size_end = top + child_layout.size.height - relative_offset;
         let size_ends = shift(child, size_end, size_delta, &mut shifted);
-        // A box holding its floats holds those of its children too, which
-        // their grown heights include.
         let flow_ends = if contains_floats {
             size_ends
         } else {
-            let in_flow_height = document
-                .context
-                .in_flow_heights
-                .get(&child)
-                .map_or(child_layout.size.height, |&height| {
-                    height.min(child_layout.size.height)
-                });
-            let end = top + in_flow_height - relative_offset;
+            let end = top + child_layout.size.height - relative_offset;
             shift(child, end, flow_delta, &mut shifted)
         };
         if let Some(((flow_ends, size_ends), _)) =
@@ -6257,6 +6224,10 @@ fn grown_auto_height(
         let margin = if contains_margins { margin } else { 0.0 };
         extend(&mut flow, (flow_ends.0 + margin, flow_ends.1 + margin));
         extend(&mut size, (size_ends.0 + margin, size_ends.1 + margin));
+    }
+    if contains_floats {
+        extend(&mut flow, float_extent);
+        extend(&mut size, float_extent);
     }
     // The lines of a paragraph laid out around block children end the
     // content too; those after the moved box move with it.
@@ -6297,17 +6268,117 @@ fn grown_auto_height(
         };
         (height, grown > max + 0.001)
     };
-    let old_in_flow = document
-        .context
-        .in_flow_heights
-        .get(&parent)
-        .map_or(old, |&height| height.min(old));
-    let (in_flow_height, capped) = grow(old_in_flow, flow);
+    let (in_flow_height, capped) = if can_grow {
+        grow(old, flow)
+    } else {
+        (old, false)
+    };
+    let float_extent_delta = if float_shifted && float_extent.0.is_finite() {
+        float_extent.1 - float_extent.0
+    } else {
+        0.0
+    };
     shifted.then(|| GrownHeight {
-        height: grow(old, size).0.max(in_flow_height),
-        in_flow_heights: (old_in_flow, in_flow_height),
+        height: if can_grow {
+            grow(old, size).0.max(in_flow_height)
+        } else {
+            old
+        },
+        flow_heights: (old, in_flow_height),
+        float_extent_delta,
         capped,
     })
+}
+
+/// The furthest left or right float end in `branch`, in `parent`'s flow
+/// coordinates. Traversal stops at an independent BFC so its floats stay
+/// represented by its border box.
+fn same_bfc_float_end_in_subtree(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    branch: usize,
+    branch_top: f32,
+) -> f32 {
+    if document.nodes[branch].kind() != NodeKind::Element
+        || holds_floats(document, cascade, branch)
+        || !matches!(
+            document.nodes[branch].position(),
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
+    {
+        return f32::NEG_INFINITY;
+    }
+    let branch_offset = branch_top - layout_relative_offset_y(document, cascade, body_id, branch);
+    let mut pending: Vec<(usize, f32)> = document.nodes[branch]
+        .children
+        .iter()
+        .rev()
+        .map(|&child| (child, branch_offset))
+        .collect();
+    let mut end = f32::NEG_INFINITY;
+    while let Some((child, offset)) = pending.pop() {
+        let node = &document.nodes[child];
+        if node.kind() != NodeKind::Element || !node.is_in_document() {
+            continue;
+        }
+        let layout = &node.unrounded_layout;
+        if node.display() == DisplayValue::None {
+            continue;
+        }
+        if node.display() == DisplayValue::Contents {
+            let in_ifc = document
+                .parent_of(child)
+                .is_some_and(|parent| in_inline_context(document, parent));
+            let child_offset = if in_ifc {
+                offset
+            } else {
+                offset + layout.location.y
+            };
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&descendant| (descendant, child_offset)),
+            );
+            continue;
+        }
+        if matches!(
+            document.nodes[child].position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        ) {
+            continue;
+        }
+        if matches!(
+            cascade.computed[child].float,
+            FloatValue::Left | FloatValue::Right
+        ) {
+            let bottom = offset + layout.location.y + layout.size.height + layout.margin.bottom;
+            if bottom.is_finite() {
+                end = end.max(bottom);
+            }
+            continue;
+        }
+        if holds_floats(document, cascade, child) {
+            continue;
+        }
+        let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
+        let in_ifc = document
+            .parent_of(child)
+            .is_some_and(|parent| in_inline_context(document, parent));
+        let child_offset = if in_ifc {
+            offset
+        } else {
+            offset + layout.location.y - relative_offset
+        };
+        pending.extend(
+            node.children
+                .iter()
+                .rev()
+                .map(|&descendant| (descendant, child_offset)),
+        );
+    }
+    end
 }
 
 /// The content-box height of `block` when it is definite: a length, or a
@@ -7373,6 +7444,7 @@ fn grow_ancestors_for_shift(
     // grew: a float hanging below its content can take up part of the move.
     let mut flow_delta = delta;
     let mut size_delta = delta;
+    let mut float_delta = delta;
     let mut next = document.parent_of(child);
     while let Some(parent) = next {
         if document.nodes[parent].kind() != NodeKind::Element {
@@ -7393,38 +7465,47 @@ fn grow_ancestors_for_shift(
             child,
             flow_delta,
             size_delta,
+            float_delta,
             child == node_id,
             body_id,
         );
         let Some(grown) = grown else {
-            shifts.bounded.push((parent, flow_delta, flow_page));
-            bounded = true;
+            if flow_delta.abs() > 0.001 {
+                shifts.bounded.push((parent, flow_delta, flow_page));
+                bounded = true;
+            }
+            if float_delta.abs() > 0.001 && !holds_floats(document, cascade, parent) {
+                flow_delta = 0.0;
+                size_delta = 0.0;
+                child = parent;
+                continue;
+            }
             break;
         };
-        let (old_in_flow, in_flow) = grown.in_flow_heights;
-        let limit = flow_delta.max(size_delta);
+        let (old_flow, new_flow) = grown.flow_heights;
+        let limit = flow_delta.max(size_delta).max(float_delta);
         let size_absorbed = (grown.height - height).clamp(0.0, limit);
-        let flow_absorbed = (in_flow - old_in_flow).clamp(0.0, limit);
+        let flow_absorbed = (new_flow - old_flow).clamp(0.0, limit);
+        let owns_floats = holds_floats(document, cascade, parent);
+        bounded |= grown.capped;
         if flow_absorbed < flow_delta - 0.001 {
             shifts
                 .bounded
                 .push((parent, flow_delta - flow_absorbed, flow_page));
-            bounded |= grown.capped;
         } else if flow_absorbed > flow_delta + 0.001 {
             // A box holding its floats grew around a float that moved with
             // the content it overflowed: the flow after the box follows.
             shifts.growth.push((parent, flow_absorbed - flow_delta));
         }
-        if flow_absorbed <= 0.001 && size_absorbed <= 0.001 {
+        float_delta = if owns_floats {
+            0.0
+        } else {
+            grown.float_extent_delta
+        };
+        if flow_absorbed <= 0.001 && size_absorbed <= 0.001 && float_delta.abs() <= 0.001 {
             break;
         }
         let height = height + size_absorbed;
-        let in_flow = old_in_flow + flow_absorbed;
-        if in_flow < height - 0.001 {
-            document.context.in_flow_heights.insert(parent, in_flow);
-        } else {
-            document.context.in_flow_heights.remove(&parent);
-        }
         document.nodes[parent].unrounded_layout.size.height = height;
         flow_delta = flow_absorbed;
         size_delta = size_absorbed;
@@ -7467,6 +7548,7 @@ fn shrink_ancestors_after_margin_truncation(
     let mut child = node;
     let mut flow_delta = delta;
     let mut size_delta = delta;
+    let mut float_delta = delta;
     let mut next = document.layout_parent_of(child);
     while let Some(parent) = next {
         next = document.layout_parent_of(parent);
@@ -7487,22 +7569,28 @@ fn shrink_ancestors_after_margin_truncation(
             child,
             flow_delta,
             size_delta,
+            float_delta,
             child == node,
             flow_root,
         ) else {
             break;
         };
         document.nodes[parent].unrounded_layout.size.height = adjusted.height;
-        let (old_flow, new_flow) = adjusted.in_flow_heights;
-        if document.context.in_flow_heights.contains_key(&parent)
-            || (adjusted.height - new_flow).abs() > 0.001
-        {
-            document.context.in_flow_heights.insert(parent, new_flow);
-        }
+        let (old_flow, new_flow) = adjusted.flow_heights;
+        let owns_floats = holds_floats(document, cascade, parent);
+        float_delta = if owns_floats {
+            0.0
+        } else {
+            adjusted.float_extent_delta
+        };
         size_delta = adjusted.height - old_height;
         flow_delta = new_flow - old_flow;
         child = parent;
-        if parent == flow_root {
+        if parent == flow_root
+            || (flow_delta.abs() <= 0.001
+                && size_delta.abs() <= 0.001
+                && float_delta.abs() <= 0.001)
+        {
             break;
         }
     }

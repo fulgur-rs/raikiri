@@ -126,7 +126,36 @@ fn the_flow_after_a_block_with_a_hanging_float_follows_its_moved_content() {
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
-    assert_eq!((ys, wrapper_height), (vec![60.0, 100.0, 160.0], 150.0));
+    assert_eq!((ys, wrapper_height), (vec![60.0, 100.0, 160.0], 100.0));
+}
+
+#[test]
+fn a_shared_ifc_block_child_reports_its_float_from_the_content_edge() {
+    let mut root = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        root = block(doc, body, "display:flow-root");
+        let paragraph = block(
+            doc,
+            root,
+            "display:block;padding-top:20px;border-top:2px solid black",
+        );
+        let child = block(doc, paragraph, "display:block");
+        block(doc, child, "float:left;width:20px;height:50px");
+    });
+    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 72.0);
+}
+
+#[test]
+fn a_nested_bfc_hides_its_overflowing_float_from_the_outer_bfc() {
+    let mut outer = 0;
+    let mut inner = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        outer = block(doc, body, "display:flow-root");
+        inner = block(doc, outer, "display:flow-root;height:20px");
+        block(doc, inner, "float:left;width:20px;height:50px");
+    });
+    assert_eq!(doc.nodes[inner].unrounded_layout.size.height, 20.0);
+    assert_eq!(doc.nodes[outer].unrounded_layout.size.height, 20.0);
 }
 
 #[test]
@@ -243,6 +272,38 @@ fn a_formatting_context_grows_with_a_float_that_moved_inside_a_min_height_block(
     let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
     // The float moves with its block to 100..250, and the flow-root holds it.
     assert_eq!((ys, root_height), (vec![60.0, 100.0, 250.0], 190.0));
+}
+
+#[test]
+fn a_formatting_context_keeps_its_max_height_when_a_float_moves_inside_a_min_height_block() {
+    for (max_height, expected_height, expected_following_y) in
+        [("120px", 120.0, 180.0), ("170px", 170.0, 230.0)]
+    {
+        let mut root = 0;
+        let mut following = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            block(doc, body, "display:block;height:60px");
+            root = block(
+                doc,
+                body,
+                &format!("display:flow-root;max-height:{max_height}"),
+            );
+            let wrapper = block(doc, root, "display:block;min-height:100px");
+            let moved = block(doc, wrapper, "display:block;break-inside:avoid");
+            block(doc, moved, "float:left;width:20px;height:150px");
+            block(doc, moved, "display:block;height:60px");
+            following = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(
+            (
+                page_flow_y(&doc, root),
+                doc.nodes[root].unrounded_layout.size.height,
+                page_flow_y(&doc, following),
+            ),
+            (60.0, expected_height, expected_following_y),
+            "max-height: {max_height}"
+        );
+    }
 }
 
 #[test]
