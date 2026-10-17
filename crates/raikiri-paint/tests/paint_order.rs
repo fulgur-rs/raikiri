@@ -789,6 +789,23 @@ fn negative_pseudo_text_is_traced_before_the_blocks() {
     }
 }
 
+/// The text of a `::before` inside an inline element positioned below a
+/// paragraph's blocks is traced once, before the blocks.
+#[test]
+fn pseudo_text_inside_negative_inline_content_is_traced_before_the_blocks() {
+    let result = assert_same_order(
+        "<div id=m><span id=s style=\"position: relative; z-index: -1\"></span>\
+         <div id=k style=\"background: gray; height: 10px\"></div></div>",
+        "#s::before { content: 'x' }",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let texts = steps.iter().filter(|s| **s == Step::Text(m)).count();
+    assert_eq!(texts, 1, "{}", describe(&page, &steps));
+    assert!(step_at(&result, Step::Text(m)) < step_at(&result, Step::Box(k)));
+}
+
 /// A paragraph whose only text is positioned below its blocks traces that
 /// text once, before the blocks.
 #[test]
