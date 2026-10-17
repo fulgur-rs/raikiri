@@ -535,6 +535,14 @@ fn document_has_resolved_pagination_order(document: &Document, cascade: &Cascade
 /// must not change the initial layout geometry. The scan therefore stops after
 /// the first rendered in-flow body child.
 pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
+    first_page_name_with_transposed_axes(document, cascade, false)
+}
+
+pub(crate) fn first_page_name_with_transposed_axes(
+    document: &Document,
+    cascade: &CascadeResult,
+    pagination_on_transposed_axes: bool,
+) -> Option<String> {
     let body_id = find_body(document)?;
     let resolved_layout = document_has_resolved_pagination_order(document, cascade);
     let boxes = if resolved_layout {
@@ -592,7 +600,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                             first_child,
                             None,
                             resolved_layout,
-                            false,
+                            pagination_on_transposed_axes,
                         )
                     {
                         return Some(name);
@@ -624,7 +632,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                     child_id,
                     None,
                     resolved_layout,
-                    false,
+                    pagination_on_transposed_axes,
                 );
                 return propagated;
             }

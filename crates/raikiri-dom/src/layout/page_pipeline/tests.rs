@@ -2925,6 +2925,62 @@ fn layout_pages_ignores_page_names_inside_monolithic_boxes() {
 }
 
 #[test]
+fn layout_pages_does_not_seed_transposed_pages_from_names_inside_a_table() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let absolute = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:absolute"),
+    );
+    let table = doc.append_element(
+        Some(absolute),
+        "table",
+        Style::default(),
+        Some("display:table"),
+    );
+    let group = doc.append_element(
+        Some(table),
+        "tbody",
+        Style::default(),
+        Some("display:table-row-group;page:inner"),
+    );
+    let row = doc.append_element(
+        Some(group),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    assert_eq!(slices.len(), 1);
+    assert_eq!(slices[0].page_name, None);
+}
+
+#[test]
 fn layout_pages_does_not_propagate_row_flex_item_page_names() {
     let pages = named_page_slices(
         "display:block",

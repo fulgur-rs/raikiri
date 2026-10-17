@@ -4222,9 +4222,13 @@ fn paginate_flow(
     // bottom edge of their anchor page. The normal-flow height is removed
     // from `flow_shift`, leaving the box only in this page-local area.
     let mut footnote_areas = FootnoteAreas::default();
-    let mut page_names = PageNames::new(
-        selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade)),
-    );
+    let mut page_names = PageNames::new(selected_page_name(cascade, body_id).or_else(|| {
+        super::page::first_page_name_with_transposed_axes(
+            document,
+            cascade,
+            document.context.pagination_on_transposed_axes,
+        )
+    }));
     let mut column_contexts = ColumnContexts::new(document.nodes.len());
     let mut preceding_flex_items = PrecedingFlexItems::default();
     let mut trailing_flex_children = TrailingFlexChildren::default();
