@@ -235,17 +235,19 @@ fn leave_group(
     if own_group {
         // A root with its own group measures and pads itself.
         tree.context.text_group = outer;
-        return;
+    } else if let TextGroupScope::Probing { shortest } = &mut tree.context.text_group {
+        *shortest = shortest_remaining(lines, *shortest);
     }
-    if let TextGroupScope::Probing { shortest, .. } = &mut tree.context.text_group {
-        *shortest = lines
-            .lines
-            .iter()
-            .filter(|line| !line.is_empty())
-            .map(shodo::Line::remaining_inline_size)
-            .chain(*shortest)
-            .reduce(f32::min);
-    }
+}
+
+/// The least space a non-empty line of `lines` leaves unfilled, or `other`
+/// when that is less.
+fn shortest_remaining(lines: &IfcLines, other: Option<f32>) -> Option<f32> {
+    let remaining = lines.lines.iter().filter(|line| !line.is_empty());
+    remaining
+        .map(shodo::Line::remaining_inline_size)
+        .chain(other)
+        .reduce(f32::min)
 }
 
 /// The padding `text-group-align` takes from every line of the root: the
@@ -296,15 +298,7 @@ fn group_padding(
         TextGroupScope::Probing { shortest, .. } => shortest,
         _ => None, // cov:ignore: the probe leaves its own scope in place.
     };
-    let padding = probe
-        .lines
-        .lines
-        .iter()
-        .filter(|line| !line.is_empty())
-        .map(shodo::Line::remaining_inline_size)
-        .chain(reported)
-        .reduce(f32::min)
-        .unwrap_or(0.0);
+    let padding = shortest_remaining(&probe.lines, reported).unwrap_or(0.0);
     tree.context.text_group = TextGroupScope::Applying { align, padding };
     padding
 }
