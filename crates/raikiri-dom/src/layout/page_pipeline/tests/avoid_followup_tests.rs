@@ -149,6 +149,112 @@ fn a_shared_ifc_block_child_reports_its_float_from_the_content_edge() {
 }
 
 #[test]
+fn a_second_line_inline_branch_does_not_add_its_origin_to_float_end() {
+    let mut paragraph = 0;
+    let mut inline = 0;
+    let mut float = 0;
+    let (doc, _) = paged_body_with_ifc(|doc, body| {
+        let root = block(doc, body, "display:flow-root");
+        paragraph = block(
+            doc,
+            root,
+            "display:block;font-family:Ahem;font-size:10px;line-height:50px",
+        );
+        doc.append_text(paragraph, "0");
+        doc.append_element(
+            Some(paragraph),
+            "br",
+            Style::default(),
+            Some("display:inline"),
+        );
+        doc.append_text(paragraph, "1");
+        inline = block(doc, paragraph, "display:inline");
+        float = block(doc, inline, "float:left;width:20px;height:80px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let branch_top = super::super::pagination_child_parent_y(
+        &doc,
+        paragraph,
+        inline,
+        doc.nodes[inline].unrounded_layout.location.y,
+    );
+    let expected = doc.nodes[float].unrounded_layout.location.y
+        + doc.nodes[float].unrounded_layout.size.height
+        + doc.nodes[float].unrounded_layout.margin.bottom;
+
+    assert!(doc.nodes[paragraph].is_ifc_root());
+    assert!(doc.nodes[float].unrounded_layout.location.y > 0.0);
+    assert_eq!(
+        super::super::same_bfc_float_end_in_subtree(
+            &doc,
+            &cascade,
+            doc.parent_of(paragraph).unwrap(),
+            inline,
+            branch_top,
+        ),
+        expected
+    );
+}
+
+#[test]
+fn a_nested_float_in_a_footnote_is_excluded_from_bfc_extent() {
+    let mut wrapper = 0;
+    let mut footnote = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        wrapper = block(doc, body, "display:block");
+        footnote = block(
+            doc,
+            wrapper,
+            "display:block;float:footnote;width:20px;height:10px",
+        );
+        let nested = block(doc, footnote, "display:block");
+        block(doc, nested, "float:left;width:20px;height:80px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+
+    assert_eq!(cascade.computed[footnote].float, FloatValue::Footnote);
+    assert_eq!(
+        super::super::same_bfc_float_end_in_subtree(
+            &doc,
+            &cascade,
+            doc.parent_of(wrapper).unwrap(),
+            wrapper,
+            doc.nodes[wrapper].unrounded_layout.location.y,
+        ),
+        f32::NEG_INFINITY
+    );
+}
+
+#[test]
+fn moving_a_sibling_does_not_shift_a_nested_footnote_float_extent() {
+    let mut wrapper = 0;
+    let mut moved = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        wrapper = block(doc, body, "display:block");
+        moved = block(doc, wrapper, "display:block;height:20px");
+        let container = block(doc, wrapper, "display:block");
+        let footnote = block(
+            doc,
+            container,
+            "display:block;float:footnote;width:20px;height:10px",
+        );
+        let nested = block(doc, footnote, "display:block");
+        block(doc, nested, "float:left;width:20px;height:80px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let body = doc.parent_of(wrapper).unwrap();
+    let grown = super::super::grown_auto_height(
+        &doc, &cascade, wrapper, moved, 40.0, 40.0, 0.0, false, body,
+    )
+    .unwrap();
+
+    assert_eq!(grown.float_extent_delta, 0.0);
+}
+
+#[test]
 fn a_local_ifc_root_holds_its_own_float_end() {
     let mut root = 0;
     let (doc, _) = paged_body_with_ifc(|doc, body| {
