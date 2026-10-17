@@ -90,6 +90,17 @@ pub struct AnnotationRun<'a> {
     /// Decorations and emphasis marks, which are drawn along the paragraph's
     /// inline axis, are not drawn for such a run.
     pub turned: bool,
+    /// The map from the logical coordinates of `line` to the paragraph's.
+    placement: Placement,
+}
+
+impl AnnotationRun<'_> {
+    /// The point at `inline` and `block` in the logical coordinates of the
+    /// annotation's line, with the line's block offset included, in the
+    /// paragraph's logical coordinates.
+    pub fn to_paragraph(&self, inline: f32, block: f32) -> (f32, f32) {
+        self.placement.apply(inline, block)
+    }
 }
 
 /// An affine map from the logical coordinates of a line holding ruby
@@ -564,6 +575,7 @@ impl<'a> PositionedLines<'a> {
                             text_offset,
                             glyph_transform: placement.glyph_transform(run.glyph_transform()),
                             turned: placement.turned(),
+                            placement,
                         }),
                     });
                 }

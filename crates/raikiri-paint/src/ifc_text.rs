@@ -582,6 +582,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 position,
                 offsets,
                 custom_highlights,
+                &positioned_line.runs,
             );
         }
         let resolved_decorations = raikiri_dom::text_decoration::positioned_line_decorations(
@@ -853,17 +854,77 @@ fn draw_custom_highlights(
     position: IfcPosition,
     offsets: &[(usize, (f32, f32))],
     custom_highlights: &[crate::TextHighlightRange],
+    runs: &[raikiri_dom::PositionedRun<'_>],
+) {
+    let highlights = LineHighlights {
+        paragraph,
+        position,
+        offsets,
+        custom_highlights,
+    };
+    draw_line_highlights(
+        paint,
+        &highlights,
+        line,
+        hit_layout,
+        line_index,
+        |inline, block| (inline, block),
+    );
+    // A ruby annotation's text lies on a line of its own, which the
+    // paragraph's line layout does not hold.
+    let mut annotations: Vec<raikiri_dom::AnnotationRun<'_>> = Vec::new();
+    for annotation in runs.iter().filter_map(|run| run.annotation) {
+        // An annotation with several runs is drawn once.
+        if !annotations
+            .iter()
+            .any(|seen| std::ptr::eq(seen.line, annotation.line))
+        {
+            annotations.push(annotation);
+        }
+    }
+    for annotation in annotations {
+        let layout = LineLayout::new(std::slice::from_ref(annotation.line));
+        draw_line_highlights(
+            paint,
+            &highlights,
+            annotation.line,
+            &layout,
+            0,
+            |inline, block| annotation.to_paragraph(inline, block),
+        );
+    }
+}
+
+/// The custom highlights of one line of a paragraph and where they paint.
+struct LineHighlights<'a> {
+    paragraph: Paragraph<'a>,
+    position: IfcPosition,
+    offsets: &'a [(usize, (f32, f32))],
+    custom_highlights: &'a [crate::TextHighlightRange],
+}
+
+/// Fill the highlighted text of `line`, line `line_index` of
+/// `hit_layout`, whose logical coordinates `place` maps to the
+/// paragraph's.
+fn draw_line_highlights(
+    paint: &mut typographic::TypographicPaint,
+    highlights: &LineHighlights<'_>,
+    line: &shodo::Line,
+    hit_layout: &LineLayout<'_>,
+    line_index: usize,
+    place: impl Fn(f32, f32) -> (f32, f32),
 ) {
     let Paragraph {
         document,
         cascade,
         root_id,
-    } = paragraph;
+    } = highlights.paragraph;
+    let position = highlights.position;
     let line_range = line.text_range();
     let Some(offset_mapping) = line.offset_mapping() else {
         return;
     };
-    for highlight in custom_highlights {
+    for highlight in highlights.custom_highlights {
         let foreground = cascade
             .computed
             .get(highlight.node)
@@ -907,26 +968,28 @@ fn draw_custom_highlights(
             continue;
         }
         let color = css_color_to_peniko(color);
-        let (offset_x, offset_y) = cumulative_offset(document, root_id, offsets, highlight.node);
+        let (offset_x, offset_y) =
+            cumulative_offset(document, root_id, highlights.offsets, highlight.node);
         // The highlight paints with its text, in the groups of the inline
         // elements around it.
         let group = paint.element_group(
-            paragraph,
+            highlights.paragraph,
             paint_box(document, cascade, highlight.node, highlight.node),
         );
         let scene = paint.target(group);
         for selected in selection {
+            let (x0, y0) = place(selected.inline_start, selected.block_start);
+            let (x1, y1) = place(
+                selected.inline_start + selected.inline_size,
+                selected.block_start + selected.block_size,
+            );
+            let x = position.x + offset_x;
+            let y = position.y + position.shift_y + offset_y;
             let rect = Rect::new(
-                f64::from(position.x + offset_x + selected.inline_start),
-                f64::from(position.y + position.shift_y + offset_y + selected.block_start),
-                f64::from(position.x + offset_x + selected.inline_start + selected.inline_size),
-                f64::from(
-                    position.y
-                        + position.shift_y
-                        + offset_y
-                        + selected.block_start
-                        + selected.block_size,
-                ),
+                f64::from(x + x0.min(x1)),
+                f64::from(y + y0.min(y1)),
+                f64::from(x + x0.max(x1)),
+                f64::from(y + y0.max(y1)),
             );
             scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
         }
