@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-net"
-version = "0.1.0"
+version = "0.1.1"
 description = "NetworkProvider and ReplacedResolver implementations for raikiri, including SSRF-safe and trusted-system HTTP providers."
 edition.workspace = true
 rust-version.workspace = true
