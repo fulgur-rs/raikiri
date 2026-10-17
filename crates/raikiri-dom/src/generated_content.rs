@@ -214,7 +214,10 @@ pub fn is_in_flow_generated_text(
     };
     cv.display != DisplayValue::None
         && cv.float == FloatValue::None
-        && matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+        && matches!(
+            cv.position,
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        )
         && !cv.content.is_empty()
         && !cv
             .content

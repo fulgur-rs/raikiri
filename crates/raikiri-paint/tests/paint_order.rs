@@ -1428,6 +1428,92 @@ fn paragraph_blocks_cover_negative_pseudo_elements() {
     }
 }
 
+/// A sticky `::before` stays in its paragraph's lines like a relative one
+/// (CSS Positioned Layout 3 §3.4): it paints its text, below the block
+/// inside the paragraph with a negative stack level and above it otherwise,
+/// in the same order in both painters.
+#[test]
+fn sticky_pseudo_elements_paint_in_their_lines_by_stack_level() {
+    for (z_index, red) in [("auto", 200), ("1", 200), ("-1", 0)] {
+        let css = format!(
+            "#m::before {{ content: 'BB'; position: sticky; z-index: {z_index}; color: red }}"
+        );
+        let body = "<div id=m style=\"color: black\">AA\
+                    <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>";
+        let pixels = render_first_page(&lay_out(body, &css));
+        assert_eq!(pixels_of(&pixels, [255, 0, 0]), red, "{z_index}");
+        assert_same_order(body, &css);
+    }
+}
+
+/// A sticky `::before`, or a relative one with a stack level of zero or
+/// more, forms a stacking context that paints after the rest of its
+/// paragraph's inline content, so it covers the later span that overlaps
+/// it, in both painters.
+#[test]
+fn stacking_pseudo_elements_paint_over_the_later_text_of_their_paragraph() {
+    for position in ["sticky", "sticky; z-index: 2", "relative; z-index: 0"] {
+        let css = format!("#m::before {{ content: 'AA'; position: {position}; color: red }}");
+        let body = "<div id=m><span style=\"margin-left: -10px; color: lime\">BB</span></div>";
+        let pixels = render_first_page(&lay_out(body, &css));
+        let reddish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > p[1] && p[0] > p[2])
+            .count();
+        let greenish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[1] > p[0] && p[1] > p[2])
+            .count();
+        assert_eq!((reddish, greenish), (200, 100), "{position}");
+        assert_same_order(body, &css);
+    }
+    // Inside a translucent span, the sticky pseudo-element still forms a
+    // group of its own, which paints after the rest of the span's content.
+    // A `display: contents` one generates no box to form a stacking context
+    // with, so the later span paints over it.
+    for (body, css, expected) in [
+        (
+            "<div><span id=m style=\"opacity: 0.5\"><span style=\"margin-left: -10px; color: lime\">BB</span></span></div>",
+            "#m::before { content: 'AA'; position: sticky; color: red }",
+            (200, 100),
+        ),
+        (
+            "<div id=m><span style=\"margin-left: -10px; color: lime\">BB</span></div>",
+            "#m::before { content: 'AA'; display: contents; position: sticky; color: red }",
+            (100, 200),
+        ),
+    ] {
+        let result = lay_out(body, css);
+        let pixels = render_first_page(&result);
+        let reddish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > p[1] && p[0] > p[2])
+            .count();
+        let greenish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[1] > p[0] && p[1] > p[2])
+            .count();
+        assert_eq!((reddish, greenish), expected, "{css}");
+        // The public order lists the pseudo-element's content last when it
+        // paints over the later span.
+        let page = result.pages().next().expect("a page");
+        let generated: Vec<_> = page
+            .paint_order()
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::Text(_) => Some(false),
+                PaintEvent::GeneratedBox(_) => Some(true),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            generated,
+            [expected == (100, 200), expected == (200, 100)],
+            "{css}"
+        );
+    }
+}
+
 /// A `display: contents` element forms no stacking context, so the negative
 /// span inside it still paints below the paragraph's block in both orders.
 #[test]

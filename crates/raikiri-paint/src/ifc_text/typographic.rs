@@ -201,6 +201,12 @@ impl TypographicPaint {
                     paragraph.root_id,
                     piece.node,
                 )
+                || raikiri_dom::paint_rules::pseudo_stacking_group(
+                    paragraph.document,
+                    cascade,
+                    paragraph.root_id,
+                    piece.node,
+                )
             {
                 grouped.insert(key);
             }
