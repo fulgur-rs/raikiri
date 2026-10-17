@@ -16642,3 +16642,11 @@ fn an_empty_box_at_a_page_end_stays_on_that_page() {
     assert_eq!(pages.start_page(150.0, 0.0), 1);
     assert_eq!(pages.start_page(150.0, 10.0), 1);
 }
+
+#[test]
+fn an_empty_page_area_advances_by_the_paper_height() {
+    assert_eq!(fixed_page_step(600.0, 800.0), 600.0);
+    assert_eq!(fixed_page_step(0.0, 800.0), 800.0);
+    assert_eq!(fixed_page_step(f32::NAN, 800.0), 800.0);
+    assert_eq!(fixed_page_step(-5.0, 0.0), 1.0);
+}

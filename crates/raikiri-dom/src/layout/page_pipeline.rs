@@ -4061,6 +4061,19 @@ fn reset_inline_x_for_page_transition(
     }
 }
 
+/// The page advance used where no page has a scheduled height: the page
+/// area's `content_height`, or the `paper_height` (at least 1) when the page
+/// area is empty. A page with margins consuming the entire paper still needs
+/// a finite cursor for forced breaks. No valid page box reaches this case in
+/// normal CSS, but the fallback keeps the API panic-free for direct callers.
+fn fixed_page_step(content_height: f32, paper_height: f32) -> f32 {
+    if content_height.is_finite() && content_height > 0.0 {
+        content_height
+    } else {
+        paper_height.max(1.0)
+    }
+}
+
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
 /// page area, as for [`layout_pages_with_page_geometry_and_control`].
@@ -4084,14 +4097,7 @@ fn paginate_flow(
     let content_height = insets.page_area_height(margins, page_box);
     let unpaginated_overflow =
         unpaginated_content_overflow(document, cascade, body_id, content_height);
-    // A page with margins consuming the entire paper still needs a finite
-    // cursor for forced breaks.  No valid page box reaches this path in normal
-    // CSS, but the fallback keeps the API panic-free for direct callers.
-    let fixed_page_step = if content_height.is_finite() && content_height > 0.0 {
-        content_height
-    } else {
-        page_box.height.max(1.0)
-    };
+    let fixed_page_step = fixed_page_step(content_height, page_box.height);
     // A page-size/margin change can make the fragmentainer height vary by
     // page.  The default API supplies no schedule and therefore follows the
     // fixed first-page height used historically.
