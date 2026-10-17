@@ -8861,6 +8861,38 @@ fn apply_value_direct_flex_flow_shorthand_fall_through() {
 }
 
 #[test]
+fn apply_value_direct_grid_template_shorthand_fall_through() {
+    // Sibling of `apply_value_direct_gap_shorthand_fall_through` below:
+    // `expand_shorthand_into` expands `grid-template` into its three
+    // longhands before `apply_value` sees it — not a safety net, a canary.
+    let parsed = |name: &str, source: &str| {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        crate::property::parse_value(name, &mut parser).expect("valid value")
+    };
+    let mut shorthand = SpecifiedValues::initial();
+    shorthand.grid_auto_flow = GridAutoFlowValue::Column;
+    let mut longhands = shorthand.clone();
+    apply_value(parsed("grid-template", r#""a" 10px / 1fr"#), &mut shorthand);
+    for (name, source) in [
+        ("grid-template-rows", "10px"),
+        ("grid-template-columns", "1fr"),
+        ("grid-template-areas", r#""a""#),
+    ] {
+        apply_value(parsed(name, source), &mut longhands);
+    }
+    assert_eq!(shorthand.grid_template_rows, longhands.grid_template_rows);
+    assert_eq!(
+        shorthand.grid_template_columns,
+        longhands.grid_template_columns
+    );
+    assert_eq!(shorthand.grid_template_areas, longhands.grid_template_areas);
+    let cv = shorthand;
+    // Unlike `grid`, `grid-template` leaves the implicit grid alone.
+    assert_eq!(cv.grid_auto_flow, GridAutoFlowValue::Column);
+}
+
+#[test]
 fn apply_value_direct_gap_shorthand_fall_through() {
     // Sibling of `apply_value_direct_margin_shorthand_fall_through`
     // above: `apply_value`'s `PropertyValue::Gap(g)` arm is
