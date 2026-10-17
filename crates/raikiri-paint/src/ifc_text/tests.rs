@@ -3186,6 +3186,33 @@ fn vertical_emphasis_marks_sit_beside_each_cluster_but_not_punctuation() {
 }
 
 #[test]
+fn vertical_emphasis_marks_take_one_mark_per_combined_square() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;line-height:40px;text-emphasis:dot;\
+         text-emphasis-color:rgb(255,0,0)",
+        |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "12");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let red = solid(255, 0, 0);
+    let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+    assert_eq!(text.len(), 2, "both digits are drawn");
+    assert_eq!(marks.len(), 1, "the square takes one mark: {marks:?}");
+    assert!(
+        text.iter().all(|digit| marks[0].1 > digit.1),
+        "the mark goes on the right: {marks:?} {text:?}"
+    );
+}
+
+#[test]
 fn ellipsis_is_painted_in_the_root_style() {
     let css =
         "width:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgb(0,0,255)";

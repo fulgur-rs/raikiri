@@ -1581,6 +1581,7 @@ css/css-text-decor/text-emphasis-style-property-003.html
 css/css-text-decor/text-emphasis-style-property-004.html
 css/css-text-decor/text-emphasis-style-property-005.html
 css/css-text-decor/text-emphasis-style-property-005a.html
+css/css-text-decor/text-combine-emphasis.html
 
 # --- css-lists list-style shorthand and inside marker text (exact, 800x600, bundled fonts) ---
 css/css-lists/content-property/marker-text-matches-decimal-leading-zero.html

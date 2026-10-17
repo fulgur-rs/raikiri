@@ -753,13 +753,12 @@ pub(crate) fn hold_ifc_lines<'a>(
                     crate::emphasis::draw_vertical_marks(
                         scene,
                         document,
-                        &draw.run,
+                        (line, &draw.run),
                         (writing_mode, &converter),
                         (
                             position.x + draw.offset.0,
                             position.y + position.shift_y + draw.offset.1,
                         ),
-                        line.block_offset() + draw.run.baseline(),
                         owner_style,
                         draw.color,
                     );

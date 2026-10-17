@@ -197,19 +197,18 @@ fn shape_upright_mark(
 
 /// Draw the emphasis marks of one glyph run of a vertical line.
 ///
-/// `converter` maps the logical coordinates of the line, laid out in
-/// `writing_mode`, to the ifc root's, whose page origin is `origin`;
-/// `baseline` is the run's baseline in the line's block axis, the line's
-/// block offset included. Each mark's em box is centered on its cluster's
-/// advance and starts the mark's offset from the baseline toward its side.
-#[allow(clippy::too_many_arguments)]
+/// `converter` maps the logical coordinates of `line`, laid out in
+/// `writing_mode`, to the ifc root's, whose page origin is `origin`. Each
+/// mark's em box is centered on its cluster's advance and starts the mark's
+/// offset from the run's baseline toward its side. A run of
+/// `text-combine-upright` text takes one mark per combined square, centered
+/// on the square, as its characters take none of their own.
 pub(crate) fn draw_vertical_marks(
     scene: &mut impl PaintScene,
     document: &Document,
-    run: &shodo::GlyphRunView<'_>,
+    (line, run): (&shodo::Line, &shodo::GlyphRunView<'_>),
     (writing_mode, converter): (WritingMode, &PhysicalConverter),
     origin: (f32, f32),
-    baseline: f32,
     style: &ComputedValues,
     text_color: Color,
 ) {
@@ -225,6 +224,38 @@ pub(crate) fn draw_vertical_marks(
     else {
         return; // cov:ignore: shaping one character fails only past the engine's limits.
     };
+    // Line-over is the block-start side, except in `vertical-lr`, whose
+    // lines stack left to right with their line-over side on the right.
+    let over = if writing_mode == WritingMode::VerticalLr {
+        1.0
+    } else {
+        -1.0
+    };
+    let side = if mark.line_over { over } else { -over };
+    let reach = side * (mark.offset + mark.font_size / 2.0);
+    let mut draw = |inline: f32, block: f32| {
+        let (x, y) = converter.point(inline, block);
+        crate::standalone_text::draw(
+            scene,
+            &shaped.text,
+            origin.0 + x - shaped.center.0,
+            origin.1 + y - shaped.center.1,
+            color,
+        );
+    };
+    if run.orientation() == shodo::GlyphOrientation::Combined {
+        let text = run.text_range();
+        for combination in line.text_combinations() {
+            if combination.text_range.start < text.end && text.start < combination.text_range.end {
+                let square = combination.square;
+                draw(
+                    square.inline_start + square.inline_size / 2.0,
+                    line.block_offset() + square.block_start + square.block_size / 2.0 + reach,
+                );
+            }
+        }
+        return;
+    }
     // Clusters follow the run's text, which bidi reordering can reverse;
     // lay their advances out in the order their glyphs are drawn.
     let glyphs: Vec<shodo::Glyph> = run.glyphs().collect();
@@ -240,29 +271,13 @@ pub(crate) fn draw_vertical_marks(
         })
         .collect();
     clusters.sort_by(|a, b| a.0.total_cmp(&b.0));
-    // Line-over is the block-start side, except in `vertical-lr`, whose
-    // lines stack left to right with their line-over side on the right.
-    let over = if writing_mode == WritingMode::VerticalLr {
-        1.0
-    } else {
-        -1.0
-    };
-    let side = if mark.line_over { over } else { -over };
-    let block = baseline + side * (mark.offset + mark.font_size / 2.0);
+    let block = line.block_offset() + run.baseline() + reach;
     let mut inline = run.inline_start();
     for (_, cluster) in clusters {
         let center = inline + cluster.advance / 2.0;
         inline += cluster.advance;
-        if cluster.flags.emphasis_excluded {
-            continue;
+        if !cluster.flags.emphasis_excluded {
+            draw(center, block);
         }
-        let (x, y) = converter.point(center, block);
-        crate::standalone_text::draw(
-            scene,
-            &shaped.text,
-            origin.0 + x - shaped.center.0,
-            origin.1 + y - shaped.center.1,
-            color,
-        );
     }
 }
