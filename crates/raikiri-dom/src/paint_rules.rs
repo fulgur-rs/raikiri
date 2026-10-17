@@ -192,6 +192,10 @@ pub fn replaced_content_clip(
     Some(OverflowClipGeometry::new(cv, border_box, border, padding, true).at(border_box))
 }
 
+/// The largest distance an overflow clip edge may lie from the border edge;
+/// far beyond any page, so clamping never changes what paints.
+const MAX_CLIP_MARGIN: f32 = 1.0e7;
+
 /// Position-independent clip geometry shared by every placement of a source.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OverflowClipGeometry {
@@ -241,7 +245,9 @@ impl OverflowClipGeometry {
                 VisualBox::ContentBox => border + padding,
                 _ => border,
             };
-            inset - margin.offset.px()
+            // Keep an extreme or infinite offset finite, so the clip
+            // rectangle built from these insets stays finite.
+            (inset - margin.offset.px()).clamp(-MAX_CLIP_MARGIN, MAX_CLIP_MARGIN)
         };
         // A `clip` axis uses the overflow clip edge as is. A scroll container
         // axis keeps it within the padding box: a `border-box` value is

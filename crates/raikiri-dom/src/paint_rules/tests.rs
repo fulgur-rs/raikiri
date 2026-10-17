@@ -791,3 +791,22 @@ fn an_audio_element_uses_its_hidden_overflow_as_clip() {
     let clip = overflow_clip(&doc, &cascade, audio, border_box, border).unwrap();
     assert_eq!(clip.rect, PaintRect::new(2.0, 12.0, 116.0, 66.0));
 }
+
+#[test]
+fn an_extreme_clip_margin_keeps_the_clip_finite() {
+    let mut doc = Document::new();
+    let node = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("display:block;overflow:clip;overflow-clip-margin:1e40px"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
+    let border = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
+    let clip = overflow_clip(&doc, &cascade, node, border_box, border).unwrap();
+    for value in [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height] {
+        assert!(value.is_finite(), "{:?}", clip.rect);
+    }
+}
