@@ -427,10 +427,6 @@ pub struct Document {
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
     pub(crate) fixed_page_area: Option<(f32, f32)>,
-    /// Whether the paginator is running on the transposed axes of a document
-    /// whose root element lays out its blocks on vertical axes. Pagination
-    /// then treats the boxes laid out on horizontal axes as monolithic.
-    pub(crate) pagination_on_transposed_axes: bool,
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -672,7 +668,6 @@ impl Document {
             normal_line_height: None,
             layout_cascade_generation: None,
             fixed_page_area: None,
-            pagination_on_transposed_axes: false,
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
@@ -2039,7 +2034,6 @@ impl Document {
             normal_line_height,
             layout_cascade_generation: _,
             fixed_page_area: _,
-            pagination_on_transposed_axes: _,
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,
