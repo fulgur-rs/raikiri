@@ -333,7 +333,16 @@ fn moving_a_sibling_does_not_shift_a_nested_footnote_float_extent() {
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
     let body = doc.parent_of(wrapper).unwrap();
     let grown = super::super::grown_auto_height(
-        &doc, &cascade, wrapper, moved, 40.0, 40.0, 0.0, false, body,
+        &doc,
+        &cascade,
+        wrapper,
+        moved,
+        40.0,
+        40.0,
+        0.0,
+        false,
+        body,
+        &super::super::IfcBoxShifts::default(),
     )
     .unwrap();
 
@@ -414,6 +423,133 @@ fn a_flow_root_grows_for_a_float_after_the_moved_block() {
         ),
         (60.0, 100.0, 180.0, 160.0, 240.0)
     );
+}
+
+#[test]
+fn an_ifc_float_already_followed_by_a_moved_block_counts_only_its_real_extent_growth() {
+    let mut outer = 0;
+    let mut paragraph = 0;
+    let mut earlier_float = 0;
+    let mut moved = 0;
+    let mut later_float = 0;
+    let (mut doc, _) = paged_body_with_ifc(|doc, body| {
+        outer = block(doc, body, "display:flow-root");
+        paragraph = block(
+            doc,
+            outer,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        earlier_float = block(doc, paragraph, "float:left;width:20px;height:100px");
+        doc.append_text(paragraph, "a");
+        moved = block(doc, paragraph, "display:block;height:10px");
+        doc.append_text(paragraph, "b");
+        later_float = block(doc, paragraph, "float:right;width:20px;height:80px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let body = doc.parent_of(outer).unwrap();
+
+    assert!(
+        doc.nodes[paragraph]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .lines
+            .as_ref()
+            .unwrap()
+            .block_line_starts
+            .iter()
+            .any(|&(block, _)| block == moved)
+    );
+
+    doc.nodes[earlier_float].unrounded_layout.location.y = 0.0;
+    doc.nodes[earlier_float].unrounded_layout.size.height = 100.0;
+    doc.nodes[moved].unrounded_layout.location.y = 40.0;
+    doc.nodes[moved].unrounded_layout.size.height = 10.0;
+    doc.nodes[later_float].unrounded_layout.location.y = 0.0;
+    doc.nodes[later_float].unrounded_layout.size.height = 80.0;
+    let followed = super::super::follow_ifc_block(&mut doc, paragraph, moved, 0.0, 10.0, 40.0);
+
+    assert!(followed.shifted.contains(&later_float));
+    assert_eq!(doc.nodes[later_float].unrounded_layout.location.y, 40.0);
+    let grown = super::super::grown_auto_height(
+        &doc, &cascade, paragraph, moved, 40.0, 40.0, 40.0, true, body, &followed,
+    )
+    .unwrap();
+
+    assert_eq!(grown.float_extent_delta, 20.0);
+}
+
+#[test]
+fn an_ifc_float_inside_a_followed_inline_wrapper_counts_only_its_real_extent_growth() {
+    let mut outer = 0;
+    let mut paragraph = 0;
+    let mut earlier_float = 0;
+    let mut moved = 0;
+    let mut wrapper = 0;
+    let mut stationary_nested_float = 0;
+    let mut later_float = 0;
+    let (mut doc, _) = paged_body_with_ifc(|doc, body| {
+        outer = block(doc, body, "display:flow-root");
+        paragraph = block(
+            doc,
+            outer,
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px",
+        );
+        earlier_float = block(doc, paragraph, "float:left;width:20px;height:100px");
+        doc.append_text(paragraph, "a");
+        moved = block(doc, paragraph, "display:block;height:10px");
+        doc.append_text(paragraph, "b");
+        wrapper = block(doc, paragraph, "display:inline");
+        stationary_nested_float = block(doc, wrapper, "float:left;width:20px;height:71px");
+        later_float = block(doc, wrapper, "float:right;width:20px;height:65px");
+    });
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let body = doc.parent_of(outer).unwrap();
+
+    assert!(
+        doc.nodes[paragraph]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .lines
+            .as_ref()
+            .unwrap()
+            .block_line_starts
+            .iter()
+            .any(|&(block, _)| block == moved)
+    );
+
+    doc.nodes[earlier_float].unrounded_layout.location.y = 0.0;
+    doc.nodes[earlier_float].unrounded_layout.size.height = 100.0;
+    doc.nodes[moved].unrounded_layout.location.y = 40.0;
+    doc.nodes[moved].unrounded_layout.size.height = 10.0;
+    doc.nodes[wrapper].unrounded_layout.location.y = 0.0;
+    doc.nodes[stationary_nested_float]
+        .unrounded_layout
+        .location
+        .y = -1.0;
+    doc.nodes[later_float].unrounded_layout.location.y = 0.0;
+    doc.nodes[later_float].unrounded_layout.size.height = 65.0;
+    let followed = super::super::follow_ifc_block(&mut doc, paragraph, moved, 0.0, 10.0, 40.0);
+
+    assert!(followed.shifted.contains(&later_float));
+    assert!(!followed.shifted.contains(&stationary_nested_float));
+    assert_eq!(
+        doc.nodes[stationary_nested_float]
+            .unrounded_layout
+            .location
+            .y,
+        -1.0
+    );
+    assert_eq!(doc.nodes[later_float].unrounded_layout.location.y, 40.0);
+    let grown = super::super::grown_auto_height(
+        &doc, &cascade, paragraph, moved, 40.0, 40.0, 40.0, true, body, &followed,
+    )
+    .unwrap();
+
+    assert_eq!(grown.float_extent_delta, 5.0);
 }
 
 #[test]
@@ -623,6 +759,7 @@ fn a_fixed_height_wrapper_reports_that_it_cannot_absorb_a_moved_child() {
         body,
         &mut shifts,
         0,
+        &super::super::IfcBoxShifts::default(),
     ));
 }
 

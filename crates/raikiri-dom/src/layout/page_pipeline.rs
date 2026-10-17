@@ -4134,7 +4134,7 @@ fn paginate_flow(
             if document.nodes[parent].ifc.is_some() {
                 sibling_shifts.apply(document, &mut fragment_edits, parent);
             }
-            follow_moved_ifc_block(document, child, delta);
+            let _ = follow_moved_ifc_block(document, child, delta);
             sibling_shifts.record(document, parent, child, delta, &mut column_work)?;
             if !document
                 .layout_node_with_style(parent)
@@ -4336,6 +4336,7 @@ fn paginate_flow(
                         body_id,
                         &mut subtree_shifts,
                         current_page,
+                        &IfcBoxShifts::default(),
                     );
                 }
                 // The box may now start on a later page than the flow.
@@ -4512,6 +4513,7 @@ fn paginate_flow(
                             body_id,
                             &mut subtree_shifts,
                             page_before_candidate,
+                            &IfcBoxShifts::default(),
                         );
                         if text_lines
                             .get(node_id)
@@ -4835,7 +4837,7 @@ fn paginate_flow(
                     forced_before && in_row_flex_container(document, cascade, node_id);
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
-                    follow_moved_ifc_block(document, node_id, node_delta);
+                    let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, node_delta);
                     // A nested avoiding block that moves to the next page
                     // lengthens the ancestors whose content box holds it, so
                     // their continuation (and any `overflow` clip) reaches the
@@ -4859,6 +4861,7 @@ fn paginate_flow(
                             body_id,
                             &mut subtree_shifts,
                             page_before_candidate,
+                            &followed_ifc_boxes,
                         );
                     } else if forced_transition
                         && nested_block
@@ -5550,9 +5553,9 @@ fn has_explicit_positioned_block_ancestor(document: &Document, node_id: usize) -
     false
 }
 
-fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) {
+fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) -> IfcBoxShifts {
     if !desired_y.is_finite() {
-        return; // cov:ignore: callers pass finite page positions.
+        return IfcBoxShifts::default(); // cov:ignore: callers pass finite page positions.
     }
     let actual_y = current_abs_y(document, node_id);
     let delta = desired_y - actual_y;
@@ -5563,9 +5566,10 @@ fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) {
             .location
             .y += delta;
         if document.is_source_node(node_id) {
-            follow_moved_ifc_block(document, node_id, delta);
+            return follow_moved_ifc_block(document, node_id, delta);
         }
     } // cov:ignore: only source boxes are materialized during pagination.
+    IfcBoxShifts::default()
 }
 
 /// The lines of the text `text` of the paragraph `root` start a later
@@ -5609,18 +5613,19 @@ fn follow_moved_ifc_text(
 /// boxes after it in source order move with it, as the content that
 /// follows a block follows it in the block's formatting context. Lines
 /// and boxes before it stay where they are. A later box that a negative
-/// margin pulls up beside the block still follows it.
-fn follow_moved_ifc_block(document: &mut Document, node_id: usize, delta: f32) {
+/// margin pulls up beside the block still follows it. Returns the IFC boxes
+/// considered and which of them it shifted.
+fn follow_moved_ifc_block(document: &mut Document, node_id: usize, delta: f32) -> IfcBoxShifts {
     if delta == 0.0 || !delta.is_finite() || document.nodes[node_id].in_ifc_subtree() {
-        return;
+        return IfcBoxShifts::default();
     }
     let Some(root) = document.layout_parent_of(node_id) else {
-        return; // cov:ignore: a block child of an inline-engine paragraph has a layout parent.
+        return IfcBoxShifts::default(); // cov:ignore: a block child of an inline-engine paragraph has a layout parent.
     };
     let layout = document.nodes[node_id].unrounded_layout;
     let old_top = layout.location.y - delta;
     let old_bottom = old_top + layout.size.height;
-    follow_ifc_block(document, root, node_id, old_top, old_bottom, delta);
+    follow_ifc_block(document, root, node_id, old_top, old_bottom, delta)
 }
 
 /// The content after `block`, a block child of the paragraph `root` that
@@ -5629,6 +5634,14 @@ fn follow_moved_ifc_block(document: &mut Document, node_id: usize, delta: f32) {
 /// it and the paragraph's boxes after it in source order. A box inside
 /// `block` that moves to a later page takes the rest of the paragraph
 /// along this way even though `block` itself stays.
+#[derive(Default)]
+struct IfcBoxShifts {
+    /// Every IFC box considered while following the moved block.
+    boxes: Vec<usize>,
+    /// IFC boxes whose positions were shifted by this pass.
+    shifted: Vec<usize>,
+}
+
 fn follow_ifc_block(
     document: &mut Document,
     root: usize,
@@ -5636,19 +5649,19 @@ fn follow_ifc_block(
     old_top: f32,
     old_bottom: f32,
     delta: f32,
-) {
+) -> IfcBoxShifts {
     let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
-        return;
+        return IfcBoxShifts::default();
     };
     let Some(lines) = ifc.lines.as_mut() else {
-        return; // cov:ignore: a paragraph whose block child moves carries its line records.
+        return IfcBoxShifts::default(); // cov:ignore: a paragraph whose block child moves carries its line records.
     };
     let Some(&(_, first_after)) = lines
         .block_line_starts
         .iter()
         .find(|(child, _)| *child == block)
     else {
-        return;
+        return IfcBoxShifts::default();
     };
     lines.shifts.push(first_after, delta);
     // The root's boxes are kept in source order. A later box in flow
@@ -5665,7 +5678,9 @@ fn follow_ifc_block(
             Some((b.node, b.kind, later))
         })
         .collect();
+    let mut shifts = IfcBoxShifts::default();
     for (b, kind, later) in boxes {
+        shifts.boxes.push(b);
         let location = &mut document.nodes[b].unrounded_layout.location;
         let follows = if kind == IfcBoxKind::OutOfFlow {
             location.y >= old_bottom - 0.01
@@ -5674,8 +5689,10 @@ fn follow_ifc_block(
         };
         if follows {
             location.y += delta;
+            shifts.shifted.push(b);
         }
     }
+    shifts
 }
 
 fn is_descendant_or_self(document: &Document, node_id: usize, ancestor_id: usize) -> bool {
@@ -6059,7 +6076,9 @@ struct GrownHeight {
 /// A box that holds its floats grows to their margin-box end; a box that
 /// shares its BFC with an ancestor passes the float-end change to that root.
 /// The flow after a non-BFC box follows only its in-flow content (CSS 2.1
-/// §10.6.3).
+/// §10.6.3). `ifc_boxes` records paragraph boxes moved by the IFC
+/// block-following pass and those that stayed in place, whose float ends
+/// must not be projected as ordinary later siblings.
 #[allow(clippy::too_many_arguments)]
 fn grown_auto_height(
     document: &super::context::LayoutSession<'_>,
@@ -6071,6 +6090,7 @@ fn grown_auto_height(
     float_delta: f32,
     lines_moved: bool,
     body_id: usize,
+    ifc_boxes: &IfcBoxShifts,
 ) -> Option<GrownHeight> {
     let node = &document.layout_node_with_style(parent).unwrap();
     let style = &node.style;
@@ -6127,7 +6147,7 @@ fn grown_auto_height(
         if child == moved {
             *shifted = true;
             (end - moved_by, end)
-        } else if *shifted && siblings_moved {
+        } else if *shifted && (ifc_boxes.shifted.contains(&child) || siblings_moved) {
             (end - flow_delta, end)
         } else if *shifted {
             (end, end + flow_delta)
@@ -6139,7 +6159,7 @@ fn grown_auto_height(
         if child == moved {
             *shifted = true;
             (end - moved_by, end)
-        } else if *shifted && siblings_moved {
+        } else if *shifted && (ifc_boxes.shifted.contains(&child) || siblings_moved) {
             (end - flow_delta, end)
         } else if *shifted {
             (end, end + flow_delta)
@@ -6196,16 +6216,31 @@ fn grown_auto_height(
             }
             continue;
         }
-        let descendant_float_end =
-            same_bfc_float_end_in_subtree(document, cascade, body_id, child, top);
-        if descendant_float_end.is_finite() {
-            let moved_by = if child == moved {
-                float_delta
+        let mut descendant_float_extent = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+        visit_same_bfc_floats_in_subtree(document, cascade, body_id, child, top, |float, end| {
+            let already_followed = ifc_boxes
+                .shifted
+                .iter()
+                .any(|&box_id| is_descendant_or_self(document, float, box_id));
+            let is_ifc_box = ifc_boxes
+                .boxes
+                .iter()
+                .any(|&box_id| is_descendant_or_self(document, float, box_id));
+            let ends = if child == moved {
+                (end - float_delta, end)
+            } else if float_shifted && (already_followed || siblings_moved) {
+                (end - flow_delta, end)
+            } else if float_shifted && is_ifc_box {
+                (end, end)
+            } else if float_shifted {
+                (end, end + flow_delta)
             } else {
-                flow_delta
+                (end, end)
             };
-            let ends = shift_float(child, descendant_float_end, moved_by, &mut float_shifted);
-            extend(&mut float_extent, ends);
+            extend(&mut descendant_float_extent, ends);
+        });
+        if descendant_float_extent.0.is_finite() {
+            extend(&mut float_extent, descendant_float_extent);
         }
         let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
         let size_end = top + child_layout.size.height - relative_offset;
@@ -6298,6 +6333,7 @@ fn grown_auto_height(
 /// The furthest left or right float end in `branch`, in `parent`'s flow
 /// coordinates. Traversal stops at an independent BFC so its floats stay
 /// represented by its border box.
+#[cfg(test)]
 fn same_bfc_float_end_in_subtree(
     document: &Document,
     cascade: &CascadeResult,
@@ -6305,6 +6341,29 @@ fn same_bfc_float_end_in_subtree(
     branch: usize,
     branch_top: f32,
 ) -> f32 {
+    let mut end = f32::NEG_INFINITY;
+    visit_same_bfc_floats_in_subtree(
+        document,
+        cascade,
+        body_id,
+        branch,
+        branch_top,
+        |_, float_end| end = end.max(float_end),
+    );
+    end
+}
+
+/// Visits each left or right float end in `branch`, in `parent`'s flow
+/// coordinates. Traversal stops at an independent BFC so its floats stay
+/// represented by its border box.
+fn visit_same_bfc_floats_in_subtree(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    branch: usize,
+    branch_top: f32,
+    mut visit: impl FnMut(usize, f32),
+) {
     if document.nodes[branch].kind() != NodeKind::Element
         || holds_floats(document, cascade, branch)
         || (matches!(cascade.computed[branch].float, FloatValue::Footnote)
@@ -6314,7 +6373,7 @@ fn same_bfc_float_end_in_subtree(
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
         )
     {
-        return f32::NEG_INFINITY;
+        return;
     }
     let branch_offset = branch_top
         - layout_relative_offset_y(document, cascade, body_id, branch)
@@ -6329,7 +6388,6 @@ fn same_bfc_float_end_in_subtree(
         .rev()
         .map(|&child| (child, branch_offset))
         .collect();
-    let mut end = f32::NEG_INFINITY;
     while let Some((child, offset)) = pending.pop() {
         let node = &document.nodes[child];
         if node.kind() != NodeKind::Element || !node.is_in_document() {
@@ -6370,7 +6428,7 @@ fn same_bfc_float_end_in_subtree(
         ) {
             let bottom = offset + layout.location.y + layout.size.height + layout.margin.bottom;
             if bottom.is_finite() {
-                end = end.max(bottom);
+                visit(child, bottom);
             }
             continue;
         }
@@ -6390,7 +6448,6 @@ fn same_bfc_float_end_in_subtree(
                 .map(|&descendant| (descendant, child_offset)),
         );
     }
-    end
 }
 
 /// The content-box height of `block` when it is definite: a length, or a
@@ -7389,8 +7446,17 @@ fn move_line_block(
             block_id
         };
         let moved_y = current_abs_y(document, moved) + delta;
-        materialize_y(document, moved, moved_y);
-        grow_ancestors_for_shift(document, cascade, moved, delta, body_id, shifts, flow_page);
+        let followed_ifc_boxes = materialize_y(document, moved, moved_y);
+        grow_ancestors_for_shift(
+            document,
+            cascade,
+            moved,
+            delta,
+            body_id,
+            shifts,
+            flow_page,
+            &followed_ifc_boxes,
+        );
     }
     delta
 }
@@ -7425,7 +7491,14 @@ fn grow_float_context_to_moved_float(
         if growth > 0.001 {
             document.nodes[context].unrounded_layout.size.height += growth;
             grow_ancestors_for_shift(
-                document, cascade, context, growth, body_id, shifts, flow_page,
+                document,
+                cascade,
+                context,
+                growth,
+                body_id,
+                shifts,
+                flow_page,
+                &IfcBoxShifts::default(),
             );
             shifts.growth.push((context, growth));
         }
@@ -7441,6 +7514,7 @@ fn grow_float_context_to_moved_float(
 /// is recorded in the growth of `shifts`, for the flow after it to follow.
 /// Returns whether an ancestor's height kept it from holding the moved
 /// content.
+#[allow(clippy::too_many_arguments)]
 fn grow_ancestors_for_shift(
     document: &mut super::context::LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -7449,6 +7523,7 @@ fn grow_ancestors_for_shift(
     body_id: usize,
     shifts: &mut SubtreeShifts,
     flow_page: u32,
+    ifc_boxes: &IfcBoxShifts,
 ) -> bool {
     let mut bounded = false;
     let mut child = node_id;
@@ -7480,6 +7555,7 @@ fn grow_ancestors_for_shift(
             float_delta,
             child == node_id,
             body_id,
+            ifc_boxes,
         );
         let Some(grown) = grown else {
             if flow_delta.abs() > 0.001 {
@@ -7540,8 +7616,15 @@ fn move_box_by_truncated_margin(
     flow_root: usize,
 ) {
     document.nodes[node_id].unrounded_layout.location.y += delta;
-    follow_moved_ifc_block(document, node_id, delta);
-    shrink_ancestors_after_margin_truncation(document, cascade, node_id, delta, flow_root);
+    let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, delta);
+    shrink_ancestors_after_margin_truncation(
+        document,
+        cascade,
+        node_id,
+        delta,
+        flow_root,
+        &followed_ifc_boxes,
+    );
 }
 
 /// A truncated margin shortens the auto-height boxes containing the flow.
@@ -7553,6 +7636,7 @@ fn shrink_ancestors_after_margin_truncation(
     node: usize,
     delta: f32,
     flow_root: usize,
+    ifc_boxes: &IfcBoxShifts,
 ) {
     if delta >= 0.0 || !delta.is_finite() {
         return;
@@ -7584,6 +7668,7 @@ fn shrink_ancestors_after_margin_truncation(
             float_delta,
             child == node,
             flow_root,
+            ifc_boxes,
         ) else {
             break;
         };
@@ -8441,7 +8526,7 @@ fn shift_block_flow_after(
         if paragraph && child != node_id {
             let layout = document.nodes[child].unrounded_layout;
             let top = layout.location.y;
-            follow_ifc_block(
+            let _ = follow_ifc_block(
                 document,
                 parent,
                 child,

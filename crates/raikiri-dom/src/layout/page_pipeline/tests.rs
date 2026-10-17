@@ -4435,9 +4435,8 @@ fn relayout_keeps_the_lines_of_a_paragraph_whose_float_is_below_them() {
 fn only_a_root_that_is_its_own_formatting_context_grows_around_its_floats() {
     // One 10px line and a 20px float. An in-flow root leaves the float
     // hanging below its line for the parent to collect; a floated root is a
-    // formatting context of its own and contains it. (A later pass grows
-    // auto-height ancestors of every float on both paths, so the node height
-    // is not what tells the two apart; the measured content height is.)
+    // formatting context of its own and includes the float in its measured
+    // content height.
     for (root_css, height) in [("", 10.0), ("float:left", 20.0)] {
         let (mut doc, cascade, _float, root) =
             ahem_paragraph_with_float("aa", "float:left;width:30px;height:20px", " bb", root_css);
