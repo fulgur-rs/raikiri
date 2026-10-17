@@ -868,10 +868,10 @@ impl LastNamedBox {
         height: f32,
     ) -> Self {
         Self {
-            raw_y: candidate.is_named.then_some(raw_y),
+            raw_y: candidate.context.is_named.then_some(raw_y),
             context: candidate.named_flex_context,
-            was_zero_height: candidate.is_named && height <= 0.001,
-            had_display_none_descendant: candidate.is_named
+            was_zero_height: candidate.context.is_named && height <= 0.001,
+            had_display_none_descendant: candidate.context.is_named
                 && has_display_none_descendant(document, node_id),
         }
     }
@@ -3858,11 +3858,11 @@ impl PageNames {
         cascade: &CascadeResult,
         page: u32,
     ) -> (bool, Option<String>) {
-        if !candidate.page_name_in_flow {
+        if !candidate.context.page_name_in_flow {
             return (false, self.current.clone());
         }
         match candidate.named_flex_context {
-            Some(context) if candidate.deferred_named_break_after => {
+            Some(context) if candidate.context.deferred_named_break_after => {
                 // Empty enclosing column boxes do not open an anonymous
                 // page before the row's established deferred boundary.
                 let seen = column_contexts.is_occupied(context, page, document, cascade)
@@ -3871,7 +3871,9 @@ impl PageNames {
                 (saw_child && seen, self.current.clone())
             }
             Some(context)
-                if candidate.is_named || candidate.is_text || candidate.is_rendered_leaf =>
+                if candidate.context.is_named
+                    || candidate.context.is_text
+                    || candidate.context.is_rendered_leaf =>
             {
                 // Nested column flows share the physical page opened by
                 // their preceding sibling, including an inner flow's end.
@@ -3882,12 +3884,12 @@ impl PageNames {
             }
             Some(_) => (false, candidate.page_name.clone()),
             None => {
-                let previous = if candidate.is_named {
+                let previous = if candidate.context.is_named {
                     self.current.clone()
                 } else {
                     self.outer.clone()
                 };
-                if !candidate.is_float_descendant {
+                if !candidate.context.is_float_descendant {
                     self.outer = candidate.page_name.clone();
                 }
                 (saw_child, previous)
@@ -4147,7 +4149,7 @@ fn paginate_flow(
     // boxes around the rows that moved follow them once every row is placed.
     let table_row_origins: Vec<(usize, f32)> = candidates
         .iter()
-        .filter(|candidate| candidate.is_table_row)
+        .filter(|candidate| candidate.context.is_table_row)
         .map(|candidate| {
             let row = candidate.node_id;
             (row, document.nodes[row].unrounded_layout.location.y)
@@ -4191,9 +4193,9 @@ fn paginate_flow(
         if table_headers.owner(node_id).is_some() {
             continue;
         }
-        let name_participates_in_flow = candidate.page_name_in_flow;
+        let name_participates_in_flow = candidate.context.page_name_in_flow;
         if name_participates_in_flow
-            && candidate.is_flex_item
+            && candidate.context.is_flex_item
             && let Some(context) = candidate.named_flex_context
             && preceding_flex_items.record(context, candidate.height, current_page)
         {
@@ -4231,7 +4233,7 @@ fn paginate_flow(
         let float_edges = float_shifts.edges_for(document, cascade, node_id, body_id);
         if let Some((float_context, float_edges)) = float_edges {
             let floating = is_floating_box_for_pagination(document, cascade, node_id);
-            let floor = if !floating && candidate.is_float_descendant {
+            let floor = if !floating && candidate.context.is_float_descendant {
                 None
             } else {
                 float_floor(
@@ -4277,7 +4279,7 @@ fn paginate_flow(
                         );
                     }
                 }
-                if !floating && !candidate.is_direct_body_element {
+                if !floating && !candidate.context.is_direct_body_element {
                     // The ancestors of a nested clearing box grow to hold it.
                     grow_ancestors_for_shift(
                         document,
@@ -4300,9 +4302,9 @@ fn paginate_flow(
             participates_in_margin_adjacency(document, cascade, &candidate);
         // Explicit positioned insets follow their containing box, not margin
         // changes in a parallel normal flow. Both-auto boxes keep static placement.
-        let uses_positioned_coordinates = candidate.is_out_of_flow_descendant
+        let uses_positioned_coordinates = candidate.context.is_out_of_flow_descendant
             && has_explicit_positioned_block_ancestor(document, node_id);
-        if candidate.is_text {
+        if candidate.context.is_text {
             // The inline layout root whose lines hold this text, if any.
             let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
             // In-flow text between two blocks separates them: the next block's
@@ -4317,7 +4319,9 @@ fn paginate_flow(
             // A footnote's descendants follow the moved footnote box. They are
             // deliberately not paginated independently, otherwise the stale
             // pre-pagination coordinates would move them back into normal flow.
-            if candidate.is_float_descendant && has_footnote_ancestor(cascade, node_id, document) {
+            if candidate.context.is_float_descendant
+                && has_footnote_ancestor(cascade, node_id, document)
+            {
                 continue;
             }
             // Text is not itself a class-A box, but non-empty text can be the
@@ -4566,7 +4570,7 @@ fn paginate_flow(
                 column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
             }
             let end_page = candidate_flow_end(effective_y, height).map(page_index_for_end);
-            let in_flow = !candidate.is_out_of_flow_descendant;
+            let in_flow = !candidate.context.is_out_of_flow_descendant;
             record_candidate_pages(
                 &mut reach,
                 &mut page_names,
@@ -4582,7 +4586,7 @@ fn paginate_flow(
                 document,
                 cascade,
                 node_id,
-                candidate.deferred_named_break_after,
+                candidate.context.deferred_named_break_after,
             );
             continue;
         }
@@ -4674,8 +4678,8 @@ fn paginate_flow(
         // break there would only leave the zero-height boxes alone on a page.
         // This matters for chains of empty named boxes with overflowing text,
         // including the first non-empty box that follows the chain.
-        let same_named_coordinate = candidate.is_named
-            && (candidate.is_direct_body_element || candidate.named_flex_context.is_some())
+        let same_named_coordinate = candidate.context.is_named
+            && (candidate.context.is_direct_body_element || candidate.named_flex_context.is_some())
             && last_named.shares_transition(candidate.named_flex_context, raw_y);
         let named_page_change = name_context_seen
             && candidate_page_name != comparison_page_name
@@ -4699,7 +4703,7 @@ fn paginate_flow(
         // copy on the next page; otherwise moving it gains nothing.
         let repeated_header_height = table_headers.repeated_height_before(node_id);
         let table_row_lead = table_row_leads.get(&node_id).copied().unwrap_or(0.0);
-        let table_row_overflow = candidate.is_table_row
+        let table_row_overflow = candidate.context.is_table_row
             && table_row_moves(
                 flow_y,
                 height,
@@ -4715,7 +4719,7 @@ fn paginate_flow(
         // continuation at the page edge. Earlier items still move intact when
         // they would cross a fragmentainer, preserving the existing column
         // flex pagination behavior.
-        let flex_item_is_last = candidate.is_flex_item
+        let flex_item_is_last = candidate.context.is_flex_item
             && trailing_flex_children.is_trailing(document, cascade, node_id);
         let item_overflow = || {
             item_moves_past_page_end(
@@ -4727,8 +4731,9 @@ fn paginate_flow(
                 page_step_at(current_page.saturating_add(1)),
             )
         };
-        let flex_item_overflow = candidate.is_flex_item && !flex_item_is_last && item_overflow();
-        let grid_item_overflow = candidate.is_grid_item && item_overflow();
+        let flex_item_overflow =
+            candidate.context.is_flex_item && !flex_item_is_last && item_overflow();
+        let grid_item_overflow = candidate.context.is_grid_item && item_overflow();
 
         let collapses_with_previous_block =
             collapses_with_previous_block(document, &candidate, participates_in_margin_adjacency);
@@ -4798,10 +4803,11 @@ fn paginate_flow(
                     // A float does not lengthen the block around it; its
                     // own shift ends with its subtree.
                     let mut moved_in_bounded_ancestor = false;
-                    let nested_block = !candidate.is_direct_body_element
+                    let nested_block = !candidate.context.is_direct_body_element
                         && node_delta > 0.0
                         && !is_floating_box_for_pagination(document, cascade, node_id);
-                    if (page_overflow || (forced_transition && candidate.is_direct_body_element))
+                    if (page_overflow
+                        || (forced_transition && candidate.context.is_direct_body_element))
                         && node_delta > 0.0
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
@@ -4816,9 +4822,9 @@ fn paginate_flow(
                         );
                     } else if forced_transition
                         && nested_block
-                        && !candidate.is_flex_item
-                        && !candidate.is_grid_item
-                        && !candidate.is_table_row
+                        && !candidate.context.is_flex_item
+                        && !candidate.context.is_grid_item
+                        && !candidate.context.is_table_row
                     {
                         // A forced break ends its ancestors' fragments on
                         // this page, which their continuations account for;
@@ -4886,7 +4892,7 @@ fn paginate_flow(
                             &mut subtree_shifts,
                             page_before_candidate,
                         );
-                    } else if !candidate.is_float_descendant
+                    } else if !candidate.context.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
                         let flow_top = node_target_y - relative_offset;
@@ -4997,7 +5003,7 @@ fn paginate_flow(
                 document,
                 node_id,
                 page_transition,
-                candidate.is_direct_body_element,
+                candidate.context.is_direct_body_element,
             );
         } else {
             // A forced break before the first class-A box does not manufacture
@@ -5040,14 +5046,14 @@ fn paginate_flow(
         flow_shift += header_delta;
 
         if name_participates_in_flow
-            && (candidate.is_direct_body_element
-                || candidate.is_named
-                || candidate.is_rendered_leaf
-                || candidate.deferred_named_break_after)
+            && (candidate.context.is_direct_body_element
+                || candidate.context.is_named
+                || candidate.context.is_rendered_leaf
+                || candidate.context.deferred_named_break_after)
             && (!keep_local_page_type || page_transition || current_page > page_before_candidate)
         {
             page_names.current = candidate_page_name;
-            if candidate.is_direct_body_element || candidate.named_flex_context.is_some() {
+            if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
                 last_named = LastNamedBox::new(document, &candidate, node_id, raw_y, height);
             }
         }
@@ -5055,7 +5061,7 @@ fn paginate_flow(
         // A fixed-height direct block that fits on the physical paper is
         // monolithic in this minimal paginator.
         let monolithic_paper_fit = || {
-            candidate.is_direct_body_element
+            candidate.context.is_direct_body_element
                 && fits_decorated_paper(
                     document,
                     node_id,
@@ -5069,7 +5075,7 @@ fn paginate_flow(
         let end_page = candidate_flow_end(effective_y, height)
             .filter(|_| !monolithic_paper_fit())
             .map(page_index_for_end);
-        let in_flow = !candidate.is_out_of_flow_descendant;
+        let in_flow = !candidate.context.is_out_of_flow_descendant;
         record_candidate_pages(
             &mut reach,
             &mut page_names,
@@ -5080,11 +5086,11 @@ fn paginate_flow(
         )?;
 
         if name_participates_in_flow
-            && (candidate.is_named || (candidate.is_rendered_leaf && height > 0.0))
+            && (candidate.context.is_named || (candidate.context.is_rendered_leaf && height > 0.0))
         {
             column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
         }
-        if candidate.is_flex_item
+        if candidate.context.is_flex_item
             && let Some(context) = candidate.named_flex_context
         {
             preceding_flex_items.record(context, height, current_page);
@@ -5093,7 +5099,7 @@ fn paginate_flow(
             document,
             cascade,
             node_id,
-            candidate.deferred_named_break_after,
+            candidate.context.deferred_named_break_after,
         );
     }
 
@@ -5175,7 +5181,10 @@ fn table_row_leads(
     root_flow_offset: f32,
 ) -> HashMap<usize, f32> {
     let mut table_row_leads = HashMap::<usize, f32>::new();
-    if candidates.iter().any(|candidate| candidate.is_table_row) {
+    if candidates
+        .iter()
+        .any(|candidate| candidate.context.is_table_row)
+    {
         let candidate_y: HashMap<usize, f32> = candidates
             .iter()
             .map(|candidate| (candidate.node_id, candidate.raw_y))
@@ -5195,7 +5204,10 @@ fn table_row_leads(
         // Each table's first row in visual order: the table layout places a
         // footer group after the body groups wherever it is in the source.
         let mut table_first_rows = HashMap::<usize, (usize, f32)>::new();
-        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
+        for candidate in candidates
+            .iter()
+            .filter(|candidate| candidate.context.is_table_row)
+        {
             if let Some(table) = table_of(candidate.node_id) {
                 let first = table_first_rows
                     .entry(table)
@@ -5257,7 +5269,7 @@ fn avoided_row_groups(
             && avoids_page_break_inside(cascade.computed[group].break_inside)
     };
     if candidates.iter().any(|candidate| {
-        candidate.is_table_row
+        candidate.context.is_table_row
             && document
                 .parent_of(candidate.node_id)
                 .is_some_and(avoiding_row_group)
@@ -5266,7 +5278,10 @@ fn avoided_row_groups(
         // The last row seen in each row group: rows of a nested table are
         // visited between two rows of the outer group.
         let mut previous_rows = HashMap::<Option<usize>, usize>::new();
-        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
+        for candidate in candidates
+            .iter()
+            .filter(|candidate| candidate.context.is_table_row)
+        {
             let row = candidate.node_id;
             let forced_before =
                 page_break_is_forced(document, row, cascade.computed[row].break_before)
@@ -5328,7 +5343,7 @@ fn avoided_run_ends(
     let mut previous: Option<&PageCandidate> = None;
     let mut run_start: Option<usize> = None;
     for candidate in candidates {
-        if !(candidate.is_direct_body_element
+        if !(candidate.context.is_direct_body_element
             || document.nodes[candidate.node_id].kind() == NodeKind::Text
                 && BoxTree::for_layout(document)
                     .parent(candidate.node_id, BoxParentScope::Document)
@@ -5347,7 +5362,7 @@ fn avoided_run_ends(
         {
             continue;
         }
-        let eligible = candidate.is_direct_body_element
+        let eligible = candidate.context.is_direct_body_element
             && (document.nodes[candidate.node_id]
                 .display()
                 .is_block_flex_or_grid_container()
@@ -6736,8 +6751,8 @@ fn line_block_parent(
             if document.layout_parent_of(parent_id)? == roots.contents_box {
                 Some((parent_id, false))
             } else {
-                (!candidate.is_float_descendant
-                    && !candidate.is_out_of_flow_descendant
+                (!candidate.context.is_float_descendant
+                    && !candidate.context.is_out_of_flow_descendant
                     && is_block_flow_paragraph(document, cascade, parent_id, roots.element))
                 .then_some((parent_id, true))
             }
@@ -6775,8 +6790,8 @@ fn flex_line_paragraph(
     paragraph_root
         .filter(|_| {
             !uses_positioned_coordinates
-                && !candidate.is_float_descendant
-                && !candidate.is_out_of_flow_descendant
+                && !candidate.context.is_float_descendant
+                && !candidate.context.is_out_of_flow_descendant
         })
         .and_then(|root| {
             flex_container_of_item_alone_on_its_line(document, cascade, root, body_id)
@@ -8139,8 +8154,8 @@ fn participates_in_margin_adjacency(
     cascade: &CascadeResult,
     candidate: &PageCandidate,
 ) -> bool {
-    !candidate.is_float_descendant
-        && !candidate.is_out_of_flow_descendant
+    !candidate.context.is_float_descendant
+        && !candidate.context.is_out_of_flow_descendant
         && !is_floating_box_for_pagination(document, cascade, candidate.node_id)
 }
 
@@ -8158,10 +8173,10 @@ fn collapses_with_previous_block(
     let node = &document.nodes[candidate.node_id];
     is_block_level_flow_box(node.display())
         && matches!(node.position(), PositionValue::Static)
-        && !candidate.is_text
-        && !candidate.is_table_row
-        && !candidate.is_flex_item
-        && !candidate.is_grid_item
+        && !candidate.context.is_text
+        && !candidate.context.is_table_row
+        && !candidate.context.is_flex_item
+        && !candidate.context.is_grid_item
         && participates_in_margin_adjacency
 }
 

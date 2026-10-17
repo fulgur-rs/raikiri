@@ -11,11 +11,8 @@ use super::{
     positioned_owned_text_line_bounds, propagated_start_page_name, selected_page_name,
 };
 
-#[derive(Clone)]
-pub(super) struct PageCandidate {
-    pub(super) node_id: usize,
-    pub(super) raw_y: f32,
-    pub(super) height: f32,
+#[derive(Clone, Copy, Default)]
+pub(super) struct BoxContext {
     pub(super) is_text: bool,
     pub(super) is_rendered_leaf: bool,
     pub(super) is_direct_body_element: bool,
@@ -25,11 +22,6 @@ pub(super) struct PageCandidate {
     pub(super) is_named: bool,
     pub(super) is_float_descendant: bool,
     pub(super) is_out_of_flow_descendant: bool,
-    /// Page type inherited from the nearest containing class-A box.
-    /// `None` is the anonymous page type, not an unknown value.
-    pub(super) page_name: Option<String>,
-    /// Column-flex descendants compare names within their containing flow.
-    pub(super) named_flex_context: Option<usize>,
     /// Whether the candidate takes part in page-name transitions. Floats
     /// and out-of-flow subtrees are parallel flows whose names are
     /// ignored, except for a named box inside an absolutely positioned
@@ -37,6 +29,19 @@ pub(super) struct PageCandidate {
     /// flow.
     pub(super) page_name_in_flow: bool,
     pub(super) deferred_named_break_after: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct PageCandidate {
+    pub(super) node_id: usize,
+    pub(super) raw_y: f32,
+    pub(super) height: f32,
+    pub(super) context: BoxContext,
+    /// Page type inherited from the nearest containing class-A box.
+    /// `None` is the anonymous page type, not an unknown value.
+    pub(super) page_name: Option<String>,
+    /// Column-flex descendants compare names within their containing flow.
+    pub(super) named_flex_context: Option<usize>,
     /// For a text node of an ifc paragraph: the paragraph root and the
     /// text's offset below the root's border-box top. The root's lines
     /// are painted from the root, so the text moves by moving the root.
@@ -355,19 +360,21 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         node_id,
                         raw_y,
                         height,
-                        is_text: true,
-                        is_rendered_leaf: false,
-                        is_direct_body_element: false,
-                        is_table_row: false,
-                        is_flex_item: false,
-                        is_grid_item: false,
-                        is_named: false,
-                        is_float_descendant: inside_float,
-                        is_out_of_flow_descendant: inside_out_of_flow,
+                        context: BoxContext {
+                            is_text: true,
+                            is_rendered_leaf: false,
+                            is_direct_body_element: false,
+                            is_table_row: false,
+                            is_flex_item: false,
+                            is_grid_item: false,
+                            is_named: false,
+                            is_float_descendant: inside_float,
+                            is_out_of_flow_descendant: inside_out_of_flow,
+                            page_name_in_flow: !inside_float && !inside_out_of_flow,
+                            deferred_named_break_after: false,
+                        },
                         page_name: frame.inherited_page_name,
                         named_flex_context,
-                        page_name_in_flow: !inside_float && !inside_out_of_flow,
-                        deferred_named_break_after: false,
                         ifc_root,
                     });
                 }
@@ -605,20 +612,22 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         node_id,
                         raw_y: candidate_raw_y,
                         height: candidate_height,
-                        is_text: false,
-                        is_rendered_leaf,
-                        is_direct_body_element: direct_body_child,
-                        is_table_row: table_row_candidate,
-                        is_flex_item: flex_item_candidate,
-                        is_grid_item: grid_item_candidate,
-                        is_named: own_page_name.is_some(),
-                        is_float_descendant: inside_float,
-                        is_out_of_flow_descendant: out_of_flow_subtree,
+                        context: BoxContext {
+                            is_text: false,
+                            is_rendered_leaf,
+                            is_direct_body_element: direct_body_child,
+                            is_table_row: table_row_candidate,
+                            is_flex_item: flex_item_candidate,
+                            is_grid_item: grid_item_candidate,
+                            is_named: own_page_name.is_some(),
+                            is_float_descendant: inside_float,
+                            is_out_of_flow_descendant: out_of_flow_subtree,
+                            page_name_in_flow: !inside_float
+                                && (!out_of_flow_subtree || own_page_name.is_some()),
+                            deferred_named_break_after,
+                        },
                         page_name: page_name.clone(),
                         named_flex_context,
-                        page_name_in_flow: !inside_float
-                            && (!out_of_flow_subtree || own_page_name.is_some()),
-                        deferred_named_break_after,
                         ifc_root: None,
                     });
                 }
