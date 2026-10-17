@@ -53,7 +53,7 @@ use crate::property::{
     TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
+    TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge, TextGroupAlign,
     TextIndentLength, TextJustify, TextOrientation, TextOverflowValue, TextShadowItem,
     TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition, TextWrapMode,
     TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility, VisualBox,
@@ -730,6 +730,8 @@ pub struct SpecifiedValues {
     pub column_count: ColumnCountValue,
     /// `column-fill` specified value; non-inherited, initial `balance`.
     pub column_fill: ColumnFillValue,
+    /// `text-group-align` specified value; non-inherited, initial `none`.
+    pub text_group_align: TextGroupAlign,
     /// Non-inherited `column-span`, initially `none`.
     pub column_span: ColumnSpanValue,
     /// `column-width` specified value; non-inherited.
@@ -1090,6 +1092,7 @@ impl SpecifiedValues {
             empty_cells: EmptyCellsValue::Show,
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            text_group_align: TextGroupAlign::None,
             column_span: ColumnSpanValue::None,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
@@ -1252,6 +1255,7 @@ impl SpecifiedValues {
             // CSS Multi-column Layout 1: all three multicol properties are non-inherited.
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            text_group_align: TextGroupAlign::None,
             column_span: ColumnSpanValue::None,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
@@ -2691,6 +2695,7 @@ impl SpecifiedValues {
             // width is absolutized against the element's own font metrics.
             column_count: self.column_count,
             column_fill: self.column_fill,
+            text_group_align: self.text_group_align,
             column_span: self.column_span,
             column_rule: {
                 let mut rule = resolve_border_with_width_provenance(

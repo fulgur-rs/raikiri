@@ -71,6 +71,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         TextOverflowValue,
         TextDecorationSkipInk,
         TextDecorationStyle,
+        TextGroupAlign,
         TextJustify,
         TextOrientation,
         TextSpacingTrim,

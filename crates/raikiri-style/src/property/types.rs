@@ -7171,6 +7171,29 @@ css_keywords!(TextJustify {
     Distribute => "distribute",
 });
 
+/// The value of the `text-group-align` property (CSS Text 4): the side the
+/// line boxes of a block container are aligned to as a group, while each
+/// line keeps its own `text-align`. Non-inherited, initial `none`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextGroupAlign {
+    None,
+    Start,
+    End,
+    Left,
+    Right,
+    Center,
+}
+
+css_keywords!(TextGroupAlign {
+    None => "none",
+    Start => "start",
+    End => "end",
+    Left => "left",
+    Right => "right",
+    Center => "center",
+});
+
 /// CSS Text 4 `word-space-transform` computed value.
 ///
 /// The inline text layout consumes `space` and `ideographic-space` for
@@ -7769,6 +7792,7 @@ impl DeferredValue {
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
                 | PropertyKey::ColumnSpan
+                | PropertyKey::TextGroupAlign
                 | PropertyKey::BorderImage
                 | PropertyKey::BorderImageSource
                 | PropertyKey::BorderImageSlice
@@ -11423,6 +11447,9 @@ pub enum PropertyValue {
     /// cascade. Boxed so that it does not set the size of every
     /// `PropertyValue`.
     BorderImage(Box<BorderImageShorthand>),
+    /// `text-group-align: none | start | end | left | right | center` —
+    /// non-inherited, initial `none` (CSS Text 4).
+    TextGroupAlign(TextGroupAlign),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12031,6 +12058,8 @@ pub enum PropertyKey {
     BorderImageOutset,
     BorderImageRepeat,
     BorderImage,
+    // CSS Text 4 text-group-align; appended to preserve existing key slots.
+    TextGroupAlign,
 }
 
 impl PropertyValue {
@@ -12209,6 +12238,7 @@ impl PropertyValue {
             PropertyValue::TabSize(_) => PropertyKey::TabSize,
             PropertyValue::LineBreak(_) => PropertyKey::LineBreak,
             PropertyValue::TextJustify(_) => PropertyKey::TextJustify,
+            PropertyValue::TextGroupAlign(_) => PropertyKey::TextGroupAlign,
             PropertyValue::TextAlignAll(_) => PropertyKey::TextAlignAll,
             PropertyValue::TextAlignLast(_) => PropertyKey::TextAlignLast,
             PropertyValue::TextCombineUpright(_) => PropertyKey::TextCombineUpright,
@@ -13291,6 +13321,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "tab-size" => PropertyKey::TabSize,
         "line-break" => PropertyKey::LineBreak,
         "text-justify" => PropertyKey::TextJustify,
+        "text-group-align" => PropertyKey::TextGroupAlign,
         "text-align-all" => PropertyKey::TextAlignAll,
         "text-align-last" => PropertyKey::TextAlignLast,
         "text-combine-upright" => PropertyKey::TextCombineUpright,

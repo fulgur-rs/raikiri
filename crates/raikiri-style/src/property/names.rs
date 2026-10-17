@@ -232,6 +232,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "text-emphasis-color",
         "text-emphasis-position",
         "text-emphasis-style",
+        "text-group-align",
         "text-indent",
         "text-justify",
         "text-orientation",

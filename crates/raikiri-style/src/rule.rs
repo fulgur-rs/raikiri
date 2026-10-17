@@ -523,6 +523,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | FontVariantEastAsian
         | FontVariationSettings
         | ColumnFill
+        | TextGroupAlign
         | ColumnSpan
         | ColumnRuleWidth
         | ColumnRuleStyle
@@ -1025,6 +1026,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
         | PropertyValue::ColumnFill(_)
+        | PropertyValue::TextGroupAlign(_)
         | PropertyValue::ColumnSpan(_)
         | PropertyValue::ColumnRuleWidth(_)
         | PropertyValue::ColumnRuleStyle(_)

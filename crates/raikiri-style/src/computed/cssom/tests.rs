@@ -334,3 +334,13 @@ fn overflow_axes_serialize_separately() {
     assert_eq!(serialize("overflow-x").as_deref(), Some("hidden"));
     assert_eq!(serialize("overflow-y").as_deref(), Some("scroll"));
 }
+
+#[test]
+fn text_group_align_serializes_its_computed_keyword() {
+    let mut computed = ComputedValues::initial();
+    let property =
+        ComputedProperty::from_name("text-group-align").expect("text-group-align is computed");
+    assert_eq!(property.serialize(&computed), Some("none".to_owned()));
+    computed.text_group_align = crate::property::TextGroupAlign::Right;
+    assert_eq!(property.serialize(&computed), Some("right".to_owned()));
+}

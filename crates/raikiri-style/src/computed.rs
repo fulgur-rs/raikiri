@@ -30,12 +30,12 @@ use crate::property::{
     TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
     TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
-    TextEmphasisVEdge, TextJustify, TextOrientation, TextOverflowValue, TextSpacingTrim,
-    TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign,
-    Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak,
-    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_counter_reset_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
-    initial_font_family,
+    TextEmphasisVEdge, TextGroupAlign, TextJustify, TextOrientation, TextOverflowValue,
+    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
+    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange,
+    WordBreak, WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list,
+    empty_counter_entries, empty_counter_reset_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -1954,6 +1954,8 @@ pub struct ComputedValues {
     /// Layout Module Level 1 §7.1
     /// <https://www.w3.org/TR/css-multicol-1/#propdef-column-fill>).
     pub column_fill: ColumnFillValue,
+    /// `text-group-align` — non-inherited, initial `none` (CSS Text 4).
+    pub text_group_align: TextGroupAlign,
     /// Non-inherited `column-span`, initially `none`.
     pub column_span: ColumnSpanValue,
     /// Computed `column-width` — non-inherited multicol container setting.
@@ -2382,6 +2384,7 @@ impl ComputedValues {
             // column-fill is `balance`.
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            text_group_align: TextGroupAlign::None,
             column_span: ColumnSpanValue::None,
             column_rule: ComputedBorder {
                 width: ComputedLength::ZERO,
