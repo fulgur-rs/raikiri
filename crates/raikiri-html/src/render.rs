@@ -31,10 +31,9 @@ use crate::resources::{
 pub(crate) mod continuation;
 pub(crate) use continuation::Continuation;
 
+mod execute;
 mod first_page;
-use first_page::FirstPage;
 mod page_layout;
-use page_layout::{LaidOut, PageLayout};
 mod stop;
 
 /// What every stage of one layout run reads.
@@ -44,7 +43,7 @@ struct Run<'r, 'a> {
     doc: &'r HtmlDocument,
     resources: &'r RenderResources<'a>,
     warnings: &'r SharedRenderWarnings,
-    resolver: &'r dyn ReplacedResolver,
+    resolver: &'r FallbackRecordingResolver<'r>,
     font_loader: &'r dyn FontFaceLoader,
     /// The `@font-face` rules of the run's environment.
     font_faces: &'r FontFaceRegistry,
@@ -106,6 +105,17 @@ impl ReplacedOutcomes {
 }
 
 impl FallbackRecordingResolver<'_> {
+    /// The replaced resources resolved so far, which a later call leaves out.
+    fn take_outcomes(&self) -> Vec<(url::Url, Vec<RenderWarning>)> {
+        std::mem::take(
+            &mut *self
+                .outcomes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+        .resources
+    }
+
     /// Report `warning` and note it among the outcomes of resolving `url`.
     fn report(&self, url: &url::Url, warning: RenderWarning) {
         self.outcomes
@@ -629,40 +639,6 @@ fn resolve_page_geometries(
     (geometries, styles)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn preload_page_background_images(
-    cascader: &PageCascader<'_>,
-    slices: &[PageSlice],
-    resources: &RenderResources<'_>,
-    base_url: Option<&url::Url>,
-    warnings: &SharedRenderWarnings,
-    signal: Option<&raikiri_traits::AbortSignal>,
-    seen: &mut HashSet<url::Url>,
-    attempts: &mut usize,
-) {
-    // Element backgrounds are page-independent: scan them once, before the
-    // page-context backgrounds of the first page. A per-slice rescan would
-    // only revisit URLs already recorded in `seen`, or ones skipped before
-    // reaching it, so attempt order, deduplication, and limits are unchanged.
-    if slices.is_empty() {
-        return; // cov:ignore: a successful document with a body always emits a page slice.
-    }
-    resources.preload_element_background_images(
-        cascader.base,
-        base_url,
-        warnings,
-        seen,
-        attempts,
-        signal,
-    );
-    for slice in slices {
-        let page = cascader.page(&page_query_for_slice(slice));
-        resources.preload_page_context_background_images(
-            &page, base_url, warnings, seen, attempts, signal,
-        );
-    }
-}
-
 /// The size of the page area of a page with the context `page`: the initial
 /// containing block when `page` is the first page.
 ///
@@ -786,8 +762,6 @@ pub(crate) fn run_pipeline(
     config: &LayoutConfig,
     inputs: PipelineInputs<'_, '_>,
 ) -> Result<PipelineRun, RenderError> {
-    let consumer_properties = inputs.consumer_properties;
-    let property_observer = inputs.property_observer;
     let media_context = &config.media_context;
     let default_resources;
     let resources = match inputs.resources {
@@ -845,7 +819,7 @@ pub(crate) fn run_pipeline(
     // consumer registrations, and media context, so the rule tree is built once.
     let tree = build_rule_tree_with_limits(
         &doc.uncascaded,
-        consumer_properties,
+        inputs.consumer_properties,
         &config.limits.rule_tree_limits(),
     )?;
 
@@ -873,99 +847,10 @@ pub(crate) fn run_pipeline(
         page_control: &page_control,
         discovery_control: &discovery_control,
     };
-    let FirstPage {
-        dom,
-        cascade_options,
-        first_cascade,
-        page_box,
-        preloads:
-            ImagePreloads {
-                seen: mut marker_image_seen,
-                attempts: mut marker_image_attempts,
-            },
-    } = run.first_page(inputs.resume)?;
-    // Only `page` in a cascade result depends on the page query, so the
-    // first-page cascade serves as the element cascade of every later page.
-    let page_cascader = PageCascader::new(&tree, &first_cascade, media_context);
-
-    let layout = PageLayout {
-        run: &run,
-        first_cascade: &first_cascade,
-        page_box,
-        page_cascader: &page_cascader,
-        cascade_options: &cascade_options,
-    };
-    let LaidOut {
-        document,
-        slices,
-        geometries: page_geometries,
-        page_styles,
-        continuations,
-    } = match layout.lay_out(dom, inputs.resume) {
-        Ok(laid_out) => laid_out,
-        Err(stop) => return stop.into_run(),
-    };
-
-    // Fetch CSS background sources only after the final page schedule is known.
-    // Paint remains read-only and consumes the cache through ImagePixelSource.
-    if inputs.preload_background_images {
-        preload_page_background_images(
-            &page_cascader,
-            &slices,
-            resources,
-            base_url,
-            &warnings,
-            signal.as_ref(),
-            &mut marker_image_seen,
-            &mut marker_image_attempts,
-        );
-        // A fetch above may have observed cancellation; do not hand out
-        // pages whose backgrounds were left unloaded.
-        if is_aborted() {
-            return Ok(PipelineRun::Aborted);
-        }
+    match run.execute(inputs) {
+        Ok(output) => Ok(PipelineRun::Completed(Box::new(output))),
+        Err(stop) => stop.into_run(),
     }
-
-    if let Some(property_observer) = property_observer {
-        if is_aborted() {
-            return Ok(PipelineRun::Aborted); // cov:ignore: cancellation can race after layout and before observer delivery
-        }
-        for event in
-            resolved_consumer_property_events(&document, &first_cascade, consumer_properties)
-        {
-            property_observer
-                .observe_event(event)
-                .map_err(RenderError::Observer)?;
-        }
-    }
-
-    let warnings = {
-        let mut all = doc.uncascaded.warnings.clone();
-        all.extend(
-            warnings
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .iter()
-                .cloned(),
-        );
-        all
-    };
-    let replaced_resources = resolver
-        .outcomes
-        .into_inner()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .resources;
-    Ok(PipelineRun::Completed(Box::new(PipelineOutput {
-        document,
-        cascade: first_cascade,
-        continuations,
-        slices,
-        geometries: page_geometries,
-        page_styles,
-        warnings,
-        replaced_resources,
-        base_url: effective_base_url,
-    })))
 }
 
 impl PipelineOutput {
