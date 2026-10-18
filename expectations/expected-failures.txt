@@ -89,7 +89,6 @@ css/css-backgrounds/background-position-negative-percentage-comparison-002.html 
 css/css-backgrounds/background-position-negative-percentage-comparison.html | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14
 css/css-backgrounds/background-position/subpixel-position-center.tentative.html | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14
 css/css-backgrounds/border-image-image-type-001.htm | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14
-css/css-backgrounds/border-radius-clip-002.htm | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14
 css/css-backgrounds/subpixel-repeat-no-repeat-mix.html | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14
 css/css-backgrounds/table-cell-background-local-002.html | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14
 css/css-backgrounds/table-cell-background-local-003.html | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14

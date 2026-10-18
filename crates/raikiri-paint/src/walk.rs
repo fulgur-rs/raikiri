@@ -5707,60 +5707,59 @@ fn paint_element_background_slice(
         );
         return;
     }
-    if effective.a != 0 {
-        fill_rounded_background(
-            scene,
-            color,
-            painting.x0,
-            painting.y0,
-            painting.x1,
-            painting.y1,
-            border_radius,
-            radius_inset,
-            radius_reference,
-        );
+    let rounded = rounded_background_path(
+        painting.x0,
+        painting.y0,
+        painting.x1,
+        painting.y1,
+        border_radius,
+        radius_inset,
+        radius_reference,
+    );
+    let image = background_url.as_ref().zip(pixel_source);
+    // A rounded box clips its color and its image to the curve together
+    // (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve). Clipped
+    // one by one, the antialiased edge would cover the color twice, once for
+    // the color and once more for the image over it, and show more of it past
+    // the curve. Square painting areas and color-only boxes skip the layer.
+    let grouped = rounded.as_ref().filter(|_| image.is_some());
+    if let Some(curve) = grouped {
+        scene.push_clip_layer(Affine::IDENTITY, curve);
     }
-    if let (Some(url), Some(source)) = (background_url.as_ref(), pixel_source) {
-        // Clip URL images to the same rounded curve as the color fill
-        // (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
-        // Square painting areas skip the extra layer.
-        if let Some(rounded) = rounded_background_path(
-            painting.x0,
-            painting.y0,
-            painting.x1,
-            painting.y1,
-            border_radius,
-            radius_inset,
-            radius_reference,
-        ) {
-            scene.push_clip_layer(Affine::IDENTITY, &rounded);
-            paint_background_from_source(
-                image_cache,
-                scene,
-                url,
-                positioning,
-                image_slice.map_or(painting, |slice| painting.intersect(slice)),
-                background_size,
-                background_position,
-                background_repeat,
-                source,
-                warnings,
-            );
-            scene.pop_layer();
+    if effective.a != 0 {
+        if grouped.is_some() {
+            // The layer clips this fill to the curve.
+            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
         } else {
-            paint_background_from_source(
-                image_cache,
+            fill_rounded_background(
                 scene,
-                url,
-                positioning,
-                image_slice.map_or(painting, |slice| painting.intersect(slice)),
-                background_size,
-                background_position,
-                background_repeat,
-                source,
-                warnings,
+                color,
+                painting.x0,
+                painting.y0,
+                painting.x1,
+                painting.y1,
+                border_radius,
+                radius_inset,
+                radius_reference,
             );
         }
+    }
+    if let Some((url, source)) = image {
+        paint_background_from_source(
+            image_cache,
+            scene,
+            url,
+            positioning,
+            image_slice.map_or(painting, |slice| painting.intersect(slice)),
+            background_size,
+            background_position,
+            background_repeat,
+            source,
+            warnings,
+        );
+    }
+    if grouped.is_some() {
+        scene.pop_layer();
     }
 }
 

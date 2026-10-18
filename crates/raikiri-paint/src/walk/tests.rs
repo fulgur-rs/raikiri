@@ -3040,6 +3040,97 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
 }
 
 #[test]
+fn background_rounded_color_and_image_are_clipped_to_the_curve_together() {
+    struct BluePixels;
+    impl raikiri_traits::ImagePixelSource for BluePixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: [0, 0, 255, 255].repeat(4),
+            }))
+        }
+    }
+    let border = resolve_border(
+        Border::new(),
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let sides = raikiri_style::property::Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    };
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let render = |color: CssColor| {
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &kurbo::Rect::new(0.0, 0.0, 20.0, 20.0),
+        );
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/blue.png".into());
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            color,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(8.0)),
+            &sides,
+            &padding,
+            Some(&BluePixels),
+            &mut Vec::new(),
+        );
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
+            20,
+            20,
+        )
+    };
+    // The opaque blue image covers the red color, so the box looks the same
+    // with or without the color. Each clipped on its own, the antialiased
+    // edge would take the color and then the image over it, and show a red
+    // rim.
+    let image_only = render(CssColor::TRANSPARENT);
+    let with_color = render(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    assert!(
+        image_only
+            .chunks_exact(4)
+            .any(|pixel| pixel[0] > 0 && pixel[0] < 255),
+        "the curve antialiases some pixel"
+    );
+    for (index, (plain, colored)) in image_only.iter().zip(&with_color).enumerate() {
+        assert!(
+            plain.abs_diff(*colored) <= 1,
+            "byte {index}: {plain} vs {colored}"
+        );
+    }
+}
+
+#[test]
 fn background_element_origins_clips_and_rounded_images() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
