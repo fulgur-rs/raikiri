@@ -1760,6 +1760,18 @@ css/css-break/break-inside-avoid-min-block-size-1.html
 # KEEP in two audit-vacuous-passes runs.
 css/css-pseudo/first-line-opacity-001.html
 
+# --- ::first-line text and inline box styles (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-18) ---
+# KEEP in two audit-vacuous-passes runs.
+css/css-pseudo/first-line-below-float.html
+css/css-pseudo/first-line-change-inline-color-nested.html
+css/css-pseudo/first-line-change-inline-color.html
+css/css-pseudo/first-line-nested-gcs.html
+css/css-pseudo/first-line-on-ancestor-block.html
+css/css-pseudo/first-line-with-inline-block.html
+css/css-pseudo/first-line-with-out-of-flow-and-nested-div.html
+css/css-pseudo/first-line-with-out-of-flow-and-nested-span.html
+css/css-pseudo/first-line-with-out-of-flow.html
+
 # --- vacuity-audited sweep promotion (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-12) ---
 # Every id passed and was KEEP in two audit-vacuous-passes runs (see README.md).
 css/CSS2/abspos/between-float-and-text.html
