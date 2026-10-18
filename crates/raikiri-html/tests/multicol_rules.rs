@@ -610,3 +610,38 @@ fn a_wrapper_with_a_width_in_a_right_to_left_container_reports_its_text_at_the_c
     assert_eq!(control.len(), 4);
     assert_eq!(placed, control);
 }
+
+#[test]
+fn an_atomic_inline_in_a_column_reports_its_box_and_text_in_that_column() {
+    let document = lay_out(
+        "<div class=mc style='height:40px'><p>A<br>B<br><span style='display:inline-block;vertical-align:top;width:15px;height:20px'>X</span>C<br>D</p></div>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let dom = page.dom();
+    let boxes: Vec<_> = page
+        .fragments()
+        .filter(|fragment| {
+            fragment.kind() == raikiri_html::FragmentKind::Box
+                && dom.local_name(fragment.node()) == Some("span")
+        })
+        .map(|fragment| {
+            let rect = fragment.rect();
+            (rect.x, rect.y, rect.width, rect.height)
+        })
+        .collect();
+    assert_eq!(boxes, [(60.0, 0.0, 15.0, 20.0)]);
+    assert_eq!(
+        page.text_runs()
+            .iter()
+            .map(|run| (run.text, run.origin))
+            .collect::<Vec<_>>(),
+        [
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (75.0, 16.0)),
+            ("D", (60.0, 36.0)),
+            ("X", (60.0, 16.0)),
+        ]
+    );
+}

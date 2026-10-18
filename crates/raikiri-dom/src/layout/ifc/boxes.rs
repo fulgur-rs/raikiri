@@ -2501,6 +2501,29 @@ pub(crate) fn move_atomics_to_columns(
     }
 }
 
+/// The atomic inlines of the root's `boxes` with the range of `fragments`
+/// that holds the line each one sits on, in the order of the ranges. An atomic
+/// in a ruby annotation sits on the line of its ruby.
+pub(crate) fn atomic_fragments(
+    boxes: &[IfcBox],
+    lines: &[shodo::Line],
+    fragments: &[crate::node::MulticolTextFragment],
+) -> Vec<(usize, crate::node::MulticolTextFragment)> {
+    let box_nodes: HashSet<usize> = boxes.iter().map(|box_| box_.node).collect();
+    let mut placed = Vec::new();
+    for fragment in fragments {
+        let end = fragment.line_end.min(lines.len());
+        let start = fragment.line_start.min(end);
+        for_each_atomic(&lines[start..end], |atomic, _, _| {
+            let node = atomic.node.0 as usize;
+            if box_nodes.contains(&node) {
+                placed.push((node, *fragment));
+            }
+        });
+    }
+    placed
+}
+
 /// The root's content height as the basis of a percentage `top` or
 /// `bottom`, when it is definite.
 fn relative_height(geometry: &FlowGeometry) -> Option<f32> {
