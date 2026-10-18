@@ -2089,14 +2089,13 @@ fn flow_page_overlap(top: f32, height: f32, page_start: f32, page_end: f32) -> O
     ))
 }
 
-pub(crate) fn project_slices_with_control(
+fn build_page_fragments(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
     slices: &[PageSlice],
     page_geometries: &[PageFragmentPageGeometry],
-    control: &PageLayoutControl<'_>,
-) -> Result<ProjectedSlices, LayoutError> {
+) -> (Vec<PageFragment>, FlowAxis) {
     let fallback_geometry = resolve_page_fragment_geometry(cascade, page_box, 0);
     let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
     ordered_slices.sort_by(|left, right| {
@@ -2159,6 +2158,20 @@ pub(crate) fn project_slices_with_control(
         page.flow_range = (page_start.is_finite() && page_end.is_finite() && page_end > page_start)
             .then_some((page_start, page_end));
     }
+
+    (pages, flow_axis)
+}
+
+pub(crate) fn project_slices_with_control(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+    page_geometries: &[PageFragmentPageGeometry],
+    control: &PageLayoutControl<'_>,
+) -> Result<ProjectedSlices, LayoutError> {
+    let (mut pages, flow_axis) =
+        build_page_fragments(document, cascade, page_box, slices, page_geometries);
 
     let mut work = ProjectionWork::new(
         control,
