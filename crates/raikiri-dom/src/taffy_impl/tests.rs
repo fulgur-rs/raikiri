@@ -413,6 +413,116 @@ fn a_flex_box_that_does_not_scroll_aligns_by_its_content_baseline() {
     assert_eq!(sibling - scroller, 60.0);
 }
 
+/// Height of a line holding an inline-block that `fill` populates, in Ahem at
+/// 10px with a 10px line height.
+fn line_height_around_inline_block(fill: impl FnOnce(&mut crate::Document, usize)) -> f32 {
+    use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600};
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let line = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let inline_block = doc.append_element(
+        Some(line),
+        "span",
+        taffy::Style::default(),
+        Some("display:inline-block"),
+    );
+    fill(&mut doc, inline_block);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    absolute_rect(&doc, line).3
+}
+
+/// A block of `css` under `parent`, 40px wide so that its text breaks into
+/// two 10px lines.
+fn two_lines_in(doc: &mut crate::Document, parent: usize, css: &str) -> usize {
+    let boxed = doc.append_element(
+        Some(parent),
+        "div",
+        taffy::Style::default(),
+        Some(format!("display:block;width:40px;{css}")),
+    );
+    doc.append_text(boxed, "aaaa bbbb");
+    boxed
+}
+
+#[test]
+fn an_inline_block_takes_the_clamped_baseline_of_a_scroll_container_inside_it() {
+    // The second line lies below the 10px box, so the baseline the box
+    // exports is its bottom edge. The inline-block sits on it, above the
+    // 2px the strut reaches below the baseline.
+    let height = line_height_around_inline_block(|doc, inline_block| {
+        two_lines_in(doc, inline_block, "height:10px;overflow:hidden");
+    });
+    assert_eq!(height, 12.0);
+}
+
+#[test]
+fn an_inline_block_takes_the_last_line_baseline_of_a_box_that_does_not_scroll() {
+    // Without overflow the last line's baseline, 18px down, is the
+    // inline-block's, so the line grows to hold it.
+    let height = line_height_around_inline_block(|doc, inline_block| {
+        two_lines_in(doc, inline_block, "height:10px");
+    });
+    assert_eq!(height, 20.0);
+}
+
+#[test]
+fn a_scroll_container_inside_another_is_clamped_to_both() {
+    // The inner box is 30px tall, so alone it would keep the 18px baseline;
+    // the outer one is 10px tall and clamps it further.
+    let height = line_height_around_inline_block(|doc, inline_block| {
+        let outer = doc.append_element(
+            Some(inline_block),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:10px;overflow:hidden"),
+        );
+        two_lines_in(doc, outer, "height:30px;overflow:hidden");
+    });
+    assert_eq!(height, 12.0);
+}
+
+#[test]
+fn a_scroll_container_scrolled_out_of_another_is_clamped_to_the_outer_edge() {
+    // The inner box lies entirely below the 10px outer one, so its own
+    // clamp keeps a baseline the outer box then pulls up to its bottom edge.
+    let height = line_height_around_inline_block(|doc, inline_block| {
+        let outer = doc.append_element(
+            Some(inline_block),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:10px;overflow:hidden"),
+        );
+        doc.append_element(
+            Some(outer),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:20px"),
+        );
+        two_lines_in(doc, outer, "height:10px;overflow:hidden");
+    });
+    assert_eq!(height, 12.0);
+}
+
 #[test]
 fn a_grid_scroll_container_aligns_by_its_clamped_baseline() {
     let (scroller, sibling) = baseline_aligned_tops(
