@@ -747,6 +747,7 @@ fn margin_box_text_is_debuggable_and_borders_clamp_to_the_box() {
     assert!(debug.contains("lines: 1"), "{debug}");
 }
 
+mod fixed_dimension_tests;
 mod layout_tests;
 
 #[test]

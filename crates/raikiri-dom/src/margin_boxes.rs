@@ -458,7 +458,9 @@ struct MarginBoxSpec {
     border: [Option<(f32, CssColor)>; 4],
     margin_auto: [bool; 4],
     /// Used numeric margins in top/right/bottom/left order. Auto margins are
-    /// represented by zero here and are distributed by the edge layout.
+    /// represented by zero here: they stay zero along the dimension an edge
+    /// lays its boxes out in, and `fixed_extent` solves them along the
+    /// dimension the page margin fixes.
     margin: [f32; 4],
     /// Used padding in top/right/bottom/left order.
     padding: [f32; 4],
@@ -506,10 +508,37 @@ impl Frame {
     fn outer(self, content: f32) -> f32 {
         content + self.border + self.padding + self.margin
     }
+}
 
-    /// The content size of a box whose outer size is `outer`.
-    fn content(self, outer: f32) -> f32 {
-        outer - self.margin - self.border - self.padding
+/// Which margin of a margin box along its fixed dimension is dropped when the
+/// box's size and margins over-determine the page margin it sits in.
+///
+/// It is the margin on the side of the page edge, so the box ends up against
+/// the page area: the top margin of a top box, the bottom margin of a bottom
+/// box, and likewise on the left and right.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DroppedMargin {
+    /// The margin at the start of the axis: top, or left.
+    Start,
+    /// The margin at the end of the axis: bottom, or right.
+    End,
+}
+
+/// A margin box along its fixed dimension.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FixedExtent {
+    /// Distance from the start of the page margin to the border box.
+    start: f32,
+    /// Size of the content box.
+    content: f32,
+    /// Border and padding on both sides.
+    frame: f32,
+}
+
+impl FixedExtent {
+    /// Size of the border box.
+    fn size(self) -> f32 {
+        self.content + self.frame
     }
 }
 
@@ -517,6 +546,56 @@ impl MarginBoxSpec {
     /// Used border widths in top/right/bottom/left order.
     fn border_widths(&self) -> [f32; 4] {
         self.border.map(|side| side.map_or(0.0, |(width, _)| width))
+    }
+
+    /// The used extent along `axis` of a box in a page margin `region` long,
+    /// which is the fixed dimension of the box.
+    ///
+    /// CSS Page 3 §5.3.3 asks for the margins, border, padding and size to add
+    /// up to the page margin. `auto` margins become zero where the rest of
+    /// the box already overflows the page margin. If the size and both
+    /// margins are then specified, the `dropped` margin gives way and is
+    /// solved for like an `auto` one, so that it may come out negative. A
+    /// single `auto` value follows from the equality, and two `auto` margins
+    /// are equal. An `auto` size takes what the margins leave, none of which
+    /// the `auto` margins claim, and is never negative.
+    fn fixed_extent(&self, axis: Axis, region: f32, dropped: DroppedMargin) -> FixedExtent {
+        let [first, last] = axis.edges();
+        let border = self.border_widths();
+        let frame = border[first] + border[last] + self.padding[first] + self.padding[last];
+        let size = self.size(axis);
+        let mut margins =
+            [first, last].map(|edge| (!self.margin_auto[edge]).then_some(self.margin[edge]));
+        let specified = frame + size.unwrap_or(0.0) + margins.iter().flatten().sum::<f32>();
+        if specified > region {
+            margins = margins.map(|margin| margin.or(Some(0.0)));
+        }
+        let rest = region - frame;
+        let (start, content) = match (size, margins) {
+            (Some(size), [Some(start), Some(end)]) => match dropped {
+                DroppedMargin::Start => (rest - size - end, size),
+                DroppedMargin::End => (start, size),
+            },
+            (Some(size), [Some(start), None]) => (start, size),
+            (Some(size), [None, Some(end)]) => (rest - size - end, size),
+            (Some(size), [None, None]) => ((rest - size) / 2.0, size),
+            (None, [start, end]) => {
+                let (start, end) = (start.unwrap_or(0.0), end.unwrap_or(0.0));
+                (start, (rest - start - end).max(0.0))
+            }
+        };
+        FixedExtent {
+            start,
+            content,
+            frame,
+        }
+    }
+
+    /// The used content size along the fixed `axis` of a page margin `region`
+    /// long. It does not depend on which margin gives way.
+    fn fixed_content_size(&self, axis: Axis, region: f32) -> f32 {
+        self.fixed_extent(axis, region, DroppedMargin::Start)
+            .content
     }
 
     /// The specified content size along `axis`, if not `auto`.
@@ -1375,11 +1454,7 @@ fn margin_box_intrinsic_width(
     // Match the actual content height used by the horizontal margin strip.
     // Vertical text may need multiple columns within that inline constraint.
     let content_height = spec
-        .frame(Axis::Vertical)
-        .content(
-            spec.outer_size(Axis::Vertical, available_height)
-                .min(available_height),
-        )
+        .fixed_content_size(Axis::Vertical, available_height)
         .max(0.0);
     spec.frame(Axis::Horizontal)
         .outer(margin_box_text_width(document, spec, Some(content_height)))
@@ -1410,9 +1485,7 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
             .max(1) as f32;
         // Text wraps where the box is as wide as the column; a box with no
         // width to wrap in keeps the lines its text breaks into by itself.
-        let column_width = spec
-            .frame(Axis::Horizontal)
-            .content(spec.outer_size(Axis::Horizontal, cross_size));
+        let column_width = spec.fixed_content_size(Axis::Horizontal, cross_size);
         let line_count = document
             .shape_standalone_text_shared(
                 &spec.content,
@@ -1703,32 +1776,24 @@ fn layout_horizontal_margin_boxes(
     let available = (page_width - margins.left - margins.right).max(0.0);
     let tracks = edge_track_sizes(document, specs, edge, available, row_height);
     let offsets = edge_offsets(edge, &tracks, available);
+    // A top box that is too tall for the strip is pushed against the page
+    // area by dropping its top margin, and a bottom box by dropping its
+    // bottom margin.
+    let dropped = if top {
+        DroppedMargin::Start
+    } else {
+        DroppedMargin::End
+    };
     for (&(spec, outer_width), offset) in tracks.iter().zip(offsets) {
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
         let width = (outer_width - margin_left - margin_right).max(0.0);
         let paint_x = margins.left + offset + margin_left;
-        let outer_height = if spec.height.is_some() {
-            spec.outer_size(Axis::Vertical, 0.0)
-                .min(row_height)
-                .max(0.0)
-        } else {
-            row_height
-        };
-        let height = (outer_height - spec.margin[0] - spec.margin[2]).max(0.0);
-        // Fixed-height top boxes sit against the page area; an auto-height
-        // box fills the strip. Numeric margins remain outside the painted box.
-        let y = if spec.height.is_some() && spec.margin_auto[0] && spec.margin_auto[2] {
-            row_y + (row_height - outer_height).max(0.0) / 2.0 + spec.margin[0]
-        } else if top && spec.height.is_some() {
-            row_y + row_height - outer_height + spec.margin[0]
-        } else {
-            row_y + spec.margin[0]
-        };
+        let vertical = spec.fixed_extent(Axis::Vertical, row_height, dropped);
         out.extend(place_margin_box(
             document,
             spec,
-            PaintRect::new(paint_x, y, width, height),
+            PaintRect::new(paint_x, row_y + vertical.start, width, vertical.size()),
         ));
     }
 }
@@ -1752,46 +1817,30 @@ fn layout_vertical_margin_boxes(
     }
     let available = (page_height - margins.top - margins.bottom).max(0.0);
     let tracks = edge_track_sizes(document, specs, edge, available, column_width);
-    let all_fixed_heights =
-        tracks.len() == 3 && tracks.iter().all(|(spec, _)| spec.height.is_some());
-    let segment_height = available / 3.0;
     let offsets = edge_offsets(edge, &tracks, available);
+    // A left box that is too wide for the column is pushed against the page
+    // area by dropping its left margin, and a right box by dropping its right
+    // margin.
+    let dropped = if left {
+        DroppedMargin::Start
+    } else {
+        DroppedMargin::End
+    };
     for (&(spec, outer_height), offset) in tracks.iter().zip(offsets) {
         let margin_top = spec.margin[0];
         let margin_bottom = spec.margin[2];
         let height = (outer_height - margin_top - margin_bottom).max(0.0);
-        let paint_y = if all_fixed_heights {
-            let slot_index = match spec.slot {
-                PageMarginBoxSlot::LeftTop | PageMarginBoxSlot::RightTop => 0.0,
-                PageMarginBoxSlot::LeftMiddle | PageMarginBoxSlot::RightMiddle => 1.0,
-                _ => 2.0,
-            };
-            margins.top
-                + slot_index * segment_height
-                + (segment_height - outer_height).max(0.0) / 2.0
-                + margin_top
-        } else {
-            margins.top + offset + margin_top
-        };
-        let margin_left = spec.margin[3];
-        let margin_right = spec.margin[1];
-        let outer_width = if spec.width.is_some() {
-            spec.outer_size(Axis::Horizontal, 0.0)
-        } else {
-            column_width
-        };
-        let width = (outer_width - margin_left - margin_right).max(0.0);
-        let paint_x = if spec.width.is_some() && spec.margin_auto[1] && spec.margin_auto[3] {
-            column_x + (column_width - width).max(0.0) / 2.0
-        } else if spec.width.is_some() && left {
-            column_x + (column_width - margin_right - width).max(0.0)
-        } else {
-            column_x + margin_left
-        };
+        let paint_y = margins.top + offset + margin_top;
+        let horizontal = spec.fixed_extent(Axis::Horizontal, column_width, dropped);
         out.extend(place_margin_box(
             document,
             spec,
-            PaintRect::new(paint_x, paint_y, width, height),
+            PaintRect::new(
+                column_x + horizontal.start,
+                paint_y,
+                horizontal.size(),
+                height,
+            ),
         ));
     }
 }
@@ -1947,32 +1996,24 @@ pub fn page_margin_boxes_with_values(
             ),
             _ => continue,
         };
-        let width = spec.outer_size(Axis::Horizontal, cell_w).min(cell_w);
-        let height = spec.outer_size(Axis::Vertical, cell_h).min(cell_h);
-        let x = if spec.margin_auto[1] && spec.margin_auto[3] {
-            x + (cell_w - width).max(0.0) / 2.0
-        } else {
-            match spec.slot {
-                PageMarginBoxSlot::TopLeftCorner | PageMarginBoxSlot::BottomLeftCorner
-                    if spec.width.is_some() =>
-                {
-                    x + cell_w - width
-                }
-                _ => x,
-            }
+        // As for the edges, a corner of a page margin with no size has no box.
+        if cell_w <= 0.0 || cell_h <= 0.0 {
+            continue;
+        }
+        let (horizontal_dropped, vertical_dropped) = match spec.slot {
+            PageMarginBoxSlot::TopLeftCorner => (DroppedMargin::Start, DroppedMargin::Start),
+            PageMarginBoxSlot::TopRightCorner => (DroppedMargin::End, DroppedMargin::Start),
+            PageMarginBoxSlot::BottomLeftCorner => (DroppedMargin::Start, DroppedMargin::End),
+            _ => (DroppedMargin::End, DroppedMargin::End),
         };
-        let y = if spec.margin_auto[0] && spec.margin_auto[2] {
-            y + (cell_h - height).max(0.0) / 2.0
-        } else {
-            match spec.slot {
-                PageMarginBoxSlot::TopLeftCorner | PageMarginBoxSlot::TopRightCorner
-                    if spec.height.is_some() =>
-                {
-                    y + cell_h - height
-                }
-                _ => y,
-            }
-        };
+        let horizontal = spec.fixed_extent(Axis::Horizontal, cell_w, horizontal_dropped);
+        let vertical = spec.fixed_extent(Axis::Vertical, cell_h, vertical_dropped);
+        let (x, y, width, height) = (
+            x + horizontal.start,
+            y + vertical.start,
+            horizontal.size(),
+            vertical.size(),
+        );
         out.extend(place_margin_box(
             document,
             spec,
