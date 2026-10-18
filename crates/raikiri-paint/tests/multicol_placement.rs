@@ -999,3 +999,53 @@ fn relative_paragraphs_with_each_inline_inset_are_painted_shifted_once_in_a_defi
         );
     }
 }
+
+#[test]
+fn display_contents_children_of_a_definite_height_container_are_painted() {
+    // An element with `display: contents` has no box, so it paints no
+    // background, and the blocks inside it are painted where the columns put
+    // them.
+    compare(
+        "<div class=mc style='height:60px'><div style='display:contents;background:blue'><p>A</p></div><div style='display:contents'><div style='display:contents'><p>B</p></div></div></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A</div><div style='position:absolute;left:0;top:20px'>B</div>",
+    );
+}
+
+#[test]
+fn display_contents_children_of_a_balanced_container_are_painted() {
+    compare(
+        "<div class=mc><div style='display:contents'><p>A</p><p>B</p></div><div style='display:contents'><p>C</p><p>D</p></div></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+    );
+}
+
+fn compare_bodies(body: &str, plain: &str, css: &str) {
+    assert_eq!(raster(body, css), raster(plain, css));
+}
+
+#[test]
+fn a_display_contents_wrapper_keeps_the_column_clip_of_its_children() {
+    // The blocks that columns clip to their height are clipped the same way
+    // when an element without a box wraps them.
+    let css = ".mc{height:40px;column-fill:auto}";
+    for inner in [
+        "<div style='display:grid;height:80px;background:blue'></div>",
+        "<div style='display:table;background:blue'><div style='display:table-row'><div style='display:table-cell;width:20px;height:80px'></div></div></div>",
+        "<div style='height:0'><div style='height:80px;background:blue'></div></div>",
+    ] {
+        compare_bodies(
+            &format!("<div class=mc><div style='display:contents'>{inner}</div></div><p>X</p>"),
+            &format!("<div class=mc>{inner}</div><p>X</p>"),
+            css,
+        );
+        compare_bodies(
+            &format!(
+                "<div class=mc><div style='display:contents'><div style='display:contents'>{inner}</div></div></div><p>X</p>"
+            ),
+            &format!("<div class=mc>{inner}</div><p>X</p>"),
+            css,
+        );
+    }
+}

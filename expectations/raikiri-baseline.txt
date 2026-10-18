@@ -1394,7 +1394,10 @@ css/css-display/display-contents-block-001.html
 css/css-display/display-contents-block-002.html
 css/css-display/display-contents-dynamic-flex-001-inline.html
 css/css-display/display-contents-dynamic-flex-001-none.html
+css/css-display/display-contents-dynamic-multicol-001-inline.html
+css/css-display/display-contents-dynamic-multicol-001-none.html
 css/css-display/display-contents-flex-001.html
+css/css-display/display-contents-multicol-001.html
 css/css-display/display-contents-text-only-001.html
 css/css-display/display-contents-suppression-dynamic-001.html
 css/css-display/display-contents-svg-elements.html
