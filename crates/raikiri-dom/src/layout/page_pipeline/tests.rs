@@ -19293,3 +19293,236 @@ fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_ope
     let (stepped, _) = step(&mut state, &discovery, &candidate("a"), &entry("a"), 150.0);
     assert!(matches!(stepped, Err(pagination_state::Halt::PageLimit)));
 }
+
+/// `html > body > (first, second)`, laid out on one page and not paginated:
+/// blocks of height `first_height` and 20, the second with `second_margin_top`
+/// above it. Returns the document, its cascade and the ids of the body and the
+/// two blocks.
+fn unpaginated_blocks(
+    first_height: f32,
+    second_margin_top: f32,
+) -> (Document, CascadeResult, usize, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let first_css = format!("display:block;height:{first_height}px");
+    let first = doc.append_element(Some(body), "div", Style::default(), Some(&first_css));
+    let second_css = format!("display:block;height:20px;margin-top:{second_margin_top}px");
+    let second = doc.append_element(Some(body), "div", Style::default(), Some(&second_css));
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    (doc, cascade, body, first, second)
+}
+
+/// The break a box with no overflow meets, `forced` before it or not.
+fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
+    pagination_state::BoxBreak {
+        margin_top,
+        relative_offset: 0.0,
+        overflow: BoxOverflow {
+            page: !forced,
+            avoided_run: false,
+            table_row: false,
+            table_row_lead: 0.0,
+            row_group_lead: None,
+            flex_item: false,
+            grid_item: false,
+        },
+        forced_before: forced,
+        forced_transition: forced,
+        named_page_change: false,
+        margins_collapse_through: true,
+        collapses_with_previous_block: true,
+        pending_break_applies: forced,
+    }
+}
+
+#[test]
+fn a_box_meeting_a_page_transition_moves_to_the_top_of_the_next_page() {
+    let (mut doc, cascade, body, first, second) = unpaginated_blocks(60.0, 0.0);
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let node_count = doc.nodes.len();
+    let candidate = PageCandidate {
+        node_id: second,
+        raw_y: 60.0,
+        height: 20.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut open = |state: &mut PaginationState,
+                    control: &PageLayoutControl<'_>,
+                    page_break: &pagination_state::BoxBreak,
+                    effective_y: f32| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(&doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut position = pagination_state::BoxPosition {
+            effective_y,
+            starts_after_forced_break: false,
+        };
+        let opened = state.open_page_for_box(
+            &mut session,
+            &env,
+            &candidate,
+            &entry,
+            page_break,
+            &mut position,
+        );
+        (opened, position)
+    };
+    let unlimited = PageLayoutControl::new(None);
+
+    // Pagination halts instead of opening a page past the page limit.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (opened, position) = open(&mut state, &discovery, &box_break(true, 0.0), 60.0);
+    assert!(matches!(opened, Err(pagination_state::Halt::PageLimit)));
+    assert_eq!((state.flow_shift, position.effective_y), (0.0, 60.0));
+
+    // A forced break moves the box, and the flow after it, to the top of the
+    // next page; the box owns the margins after the break, and the break that
+    // was pending is consumed.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.pending_break.source = Some(first);
+    let (opened, position) = open(&mut state, &unlimited, &box_break(true, 0.0), 60.0);
+    opened.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (40.0, 1, 100.0)
+    );
+    assert!(position.starts_after_forced_break);
+    assert_eq!(state.sibling_margins.forced_break_box, Some(second));
+    assert!(state.pending_break.source.is_none());
+
+    // A box that avoids a break inside it moves the same way, but owns
+    // nothing after the break and leaves a pending break alone.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.pending_break.source = Some(first);
+    let (opened, position) = open(&mut state, &unlimited, &box_break(false, 0.0), 100.0);
+    opened.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (0.0, 1, 100.0)
+    );
+    assert!(!position.starts_after_forced_break);
+    assert_eq!(state.sibling_margins.forced_break_box, None);
+    assert_eq!(state.pending_break.source, Some(first));
+
+    // A box with no position to move from only opens the page.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (opened, position) = open(&mut state, &unlimited, &box_break(true, 0.0), f32::INFINITY);
+    opened.unwrap();
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
+    assert_eq!(position.effective_y, f32::INFINITY);
+}
+
+#[test]
+fn a_box_meeting_no_page_transition_starts_on_the_page_its_position_falls_on() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    // The first block ends at 90 and the second starts at 120: the page edge
+    // at 100 falls in the 30px margin between them.
+    let (mut doc, cascade, body, first, second) = unpaginated_blocks(90.0, 30.0);
+    let node_count = doc.nodes.len();
+    let candidate = PageCandidate {
+        node_id: second,
+        raw_y: 120.0,
+        height: 20.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let mut start = |state: &mut PaginationState,
+                     control: &PageLayoutControl<'_>,
+                     page_break: &pagination_state::BoxBreak| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(&doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut position = pagination_state::BoxPosition {
+            effective_y: 120.0,
+            starts_after_forced_break: false,
+        };
+        let started = state.start_box_on_natural_page(
+            &mut session,
+            &env,
+            &candidate,
+            page_break,
+            &mut position,
+        );
+        (started, position)
+    };
+    let unlimited = PageLayoutControl::new(None);
+    let after_first = || {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.sibling_margins.record_bottom(body, first, true, 90.0);
+        state
+    };
+
+    // Pagination halts instead of starting the box on a page past the limit.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+    let (started, position) = start(&mut after_first(), &discovery, &box_break(false, 30.0));
+    assert!(matches!(started, Err(pagination_state::Halt::PageLimit)));
+    assert!(discovery.page_limit_reached());
+    assert!(!position.starts_after_forced_break);
+
+    // The page edge truncates the margin: the box moves up to the top of the
+    // page it falls on.
+    let mut state = after_first();
+    let (started, position) = start(&mut state, &unlimited, &box_break(false, 30.0));
+    started.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (-20.0, 1, 100.0)
+    );
+    assert!(state.sibling_margins.moved_boxes);
+    assert!(!position.starts_after_forced_break);
+
+    // With no margin to truncate the box stays where it is, and a forced break
+    // at the page edge makes it the owner of the margins after the break.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (started, position) = start(&mut state, &unlimited, &box_break(true, 30.0));
+    started.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (0.0, 1, 120.0)
+    );
+    assert!(!state.sibling_margins.moved_boxes);
+    assert!(position.starts_after_forced_break);
+    assert_eq!(state.sibling_margins.forced_break_box, Some(second));
+}

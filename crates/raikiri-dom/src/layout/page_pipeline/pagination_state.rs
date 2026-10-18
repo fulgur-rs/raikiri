@@ -2,7 +2,7 @@
 
 use super::candidates::FlowRoots;
 use super::{
-    AvoidedBreaks, BoxFit, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
+    AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
     ColumnContexts, DeferredShifts, EnteredParagraphs, FloatShifts, FloatTransition, FloatValue,
     FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError, LineBreakFix, LineMove,
     MarginBreak, MarginTruncation, PageBox, PageCandidate, PageContentInsets, PageLayoutControl,
@@ -108,6 +108,41 @@ pub(super) struct TextPosition {
     pub(super) effective_y: f32,
     /// How tall the text is.
     pub(super) height: f32,
+}
+
+/// What a box meets at the start of its placement: the break it starts
+/// after or on, and the margins around it.
+pub(super) struct BoxBreak {
+    /// The box's block-start margin as a page break sees it.
+    pub(super) margin_top: f32,
+    /// How far relative positioning offsets the box and its ancestors.
+    pub(super) relative_offset: f32,
+    /// How the box would cross the page edge.
+    pub(super) overflow: BoxOverflow,
+    /// Whether the box has a forced break before it.
+    pub(super) forced_before: bool,
+    /// Whether a break pending after the previous box, a forced break before
+    /// the box that is not at a page edge, or a change of the page type opens
+    /// a page for the box.
+    pub(super) forced_transition: bool,
+    /// Whether the box names another page type than the flow it follows.
+    pub(super) named_page_change: bool,
+    /// Whether the margins of the box collapse through it.
+    pub(super) margins_collapse_through: bool,
+    /// Whether the margins of the box collapse with those of the previous
+    /// block.
+    pub(super) collapses_with_previous_block: bool,
+    /// Whether a break pending after the previous box applies to the box.
+    pub(super) pending_break_applies: bool,
+}
+
+/// Where a box is placed while the page it starts on is settled.
+pub(super) struct BoxPosition {
+    /// Where the box starts in the flow.
+    pub(super) effective_y: f32,
+    /// Set when a forced break starts this box's page, which makes the box the
+    /// owner of the margins after the break.
+    pub(super) starts_after_forced_break: bool,
 }
 
 /// Why the page of in-flow text was settled as it was.
@@ -442,7 +477,6 @@ impl PaginationState {
         let name_participates_in_flow = candidate.context.page_name_in_flow;
         let page_origin = |page_index: u32| page_origins.origin(page_index);
         let page_step_at = |page_index: u32| page_origins.step_at(page_index);
-        let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
 
         let computed = &cascade.computed[node_id];
         let candidate_page_name = candidate.page_name.clone();
@@ -476,16 +510,13 @@ impl PaginationState {
             self.flow_shift,
             page_origins,
         );
-        let mut effective_y = if uses_positioned_coordinates {
+        let effective_y = if uses_positioned_coordinates {
             current_abs_y(document, node_id)
         } else {
             raw_y + self.flow_shift
         };
         materialize_y(document, node_id, effective_y);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before);
-        // Set when a forced break starts this box's page, which makes the box
-        // the owner of the margins after the break.
-        let mut starts_after_forced_break = false;
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
         let margins_collapse_through = collapses_through(document, cascade, node_id, height);
@@ -551,142 +582,42 @@ impl PaginationState {
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
         let page_transition = self.saw_child && (forced_transition || overflow.moves_box());
+        let page_break = BoxBreak {
+            margin_top,
+            relative_offset,
+            overflow,
+            forced_before,
+            forced_transition,
+            named_page_change,
+            margins_collapse_through,
+            collapses_with_previous_block,
+            pending_break_applies,
+        };
+        let mut position = BoxPosition {
+            effective_y,
+            starts_after_forced_break: false,
+        };
         if self.saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
             // blank pages.
             if page_transition {
-                // Content kept on its page as monolithic (see
-                // `monolithic_paper_fit`) has not opened a later page.
-                let natural_page = page_origins.transition_natural_page(
-                    effective_y,
-                    margin_top,
-                    self.current_page,
-                    self.reach.flow_max,
-                    named_page_change,
-                );
-                let target_page = forced_target_page(self.current_page, natural_page);
-                reach_page(control, target_page)?;
-                // A negative block-start margin can pull a forced-break box
-                // back into the preceding page.  Keep the break boundary for
-                // following siblings (and for page count), but materialize
-                // this box at the underflowed coordinate.  This is the
-                // `underflow-from-next-page` case from CSS Break.
-                let landing = TransitionLanding::new(
-                    page_origin(target_page),
-                    effective_y,
-                    margin_top,
-                    relative_offset,
-                    forced_transition,
-                    &overflow,
-                );
-                let row_flex_break_before =
-                    forced_before && in_row_flex_container(document, cascade, node_id);
-                if landing.is_finite() {
-                    let moved_in_bounded_ancestor = move_box_for_transition(
-                        document,
-                        cascade,
-                        body_id,
-                        candidate,
-                        &TransitionMove {
-                            node_delta: landing.node_delta,
-                            shift_delta: landing.shift_delta,
-                            page_overflow: overflow.page,
-                            forced_transition,
-                        },
-                        &mut self.subtree_shifts,
-                        page_before_candidate,
-                    );
-                    // A forced break on one wrapped row-flex item belongs to
-                    // its whole flex line. Move same-line siblings together;
-                    // other lines keep their existing flow coordinates.
-                    if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
-                        move_flex_line_siblings(
-                            document,
-                            parent_id,
-                            node_id,
-                            raw_y,
-                            landing.shift_delta,
-                        );
-                    }
-                    // A kept margin moves the box's descendants and its
-                    // later siblings along with the box.
-                    self.flow_shift += landing.node_delta;
-                    if let Some(correction) = landing.underflow_correction() {
-                        self.deferred_shifts.underflow = Some((node_id, correction));
-                    }
-                    self.float_shifts.settle_transition(
-                        document,
-                        cascade,
-                        body_id,
-                        candidate,
-                        &FloatTransition {
-                            page_overflow: overflow.page,
-                            forced_transition,
-                            delta: landing.node_delta,
-                            target_y: landing.target_y,
-                            relative_offset,
-                            flow_page: page_before_candidate,
-                            height,
-                            margin_top,
-                            moved_in_bounded_ancestor,
-                        },
-                        &mut self.subtree_shifts,
-                    );
-                    effective_y += landing.node_delta;
-                }
-                self.current_page = target_page;
-                if forced_transition {
-                    self.sibling_margins.forced_break_box =
-                        margins_collapse_through.then_some(node_id);
-                    starts_after_forced_break = true;
-                }
-                if pending_break_applies {
-                    self.pending_break.clear();
-                }
-            } else if effective_y.is_finite() && effective_y >= 0.0 {
-                let mut natural_page = page_origins.start_page(effective_y, height);
-                // A forced break that coincides with a page edge also starts
-                // that page.
-                if forced_before {
-                    self.sibling_margins.forced_break_box =
-                        margins_collapse_through.then_some(node_id);
-                    starts_after_forced_break = true;
-                }
-                // An unforced break that falls inside the collapsed margin
-                // between this box and its preceding sibling truncates that
-                // margin (CSS Fragmentation 3 §5.2): the box starts at the
-                // top of the page instead of keeping the part of the margin
-                // that crossed the page edge.
-                let truncation = self.sibling_margins.truncation_at_break(
+                self.open_page_for_box(
                     document,
-                    cascade,
-                    page_origins,
-                    &MarginBreak {
-                        node_id,
-                        raw_y,
-                        effective_y,
-                        natural_page,
-                        forced_before,
-                        margin_top,
-                        collapses_with_previous_block,
-                    },
-                );
-                if let Some(MarginTruncation { delta, underflow }) = truncation {
-                    self.sibling_margins.moved_boxes |= delta != 0.0;
-                    move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
-                    self.flow_shift += delta;
-                    effective_y += delta;
-                    if let Some(underflow) = underflow {
-                        // Descendants follow the negative margin; later
-                        // siblings still follow the forced break boundary.
-                        self.deferred_shifts.underflow = Some((node_id, underflow));
-                    } else {
-                        natural_page = page_index_for_y(effective_y);
-                    }
-                }
-                reach_page(control, natural_page)?;
-                self.current_page = self.current_page.max(natural_page);
+                    env,
+                    candidate,
+                    entry,
+                    &page_break,
+                    &mut position,
+                )?;
+            } else if position.effective_y.is_finite() && position.effective_y >= 0.0 {
+                self.start_box_on_natural_page(
+                    document,
+                    env,
+                    candidate,
+                    &page_break,
+                    &mut position,
+                )?;
             }
             reset_inline_x_for_page_transition(
                 document,
@@ -700,6 +631,10 @@ impl PaginationState {
             self.saw_child = true;
             self.current_page = 0;
         }
+        let BoxPosition {
+            mut effective_y,
+            starts_after_forced_break,
+        } = position;
         // Parallel flows do not interrupt adjoining normal-flow siblings.
         if participates_in_margin_adjacency
             && let Some(parent_id) =
@@ -786,6 +721,201 @@ impl PaginationState {
             candidate.context.deferred_named_break_after,
         );
 
+        Ok(())
+    }
+
+    /// Opens the page a box starts on when it meets a page transition: a
+    /// forced break, a change of the page type it names, or a break inside it
+    /// that it avoids. The box moves to the top of that page, and the flow
+    /// after it, its floats and the siblings of a wrapped flex line move with
+    /// it.
+    pub(super) fn open_page_for_box(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        page_break: &BoxBreak,
+        position: &mut BoxPosition,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            ..
+        } = *env;
+        let BoxBreak {
+            margin_top,
+            relative_offset,
+            ref overflow,
+            forced_before,
+            forced_transition,
+            named_page_change,
+            margins_collapse_through,
+            pending_break_applies,
+            ..
+        } = *page_break;
+        let node_id = candidate.node_id;
+        // Content kept on its page as monolithic (see `monolithic_paper_fit`)
+        // has not opened a later page.
+        let natural_page = page_origins.transition_natural_page(
+            position.effective_y,
+            margin_top,
+            self.current_page,
+            self.reach.flow_max,
+            named_page_change,
+        );
+        let target_page = forced_target_page(self.current_page, natural_page);
+        reach_page(control, target_page)?;
+        // A negative block-start margin can pull a forced-break box
+        // back into the preceding page.  Keep the break boundary for
+        // following siblings (and for page count), but materialize
+        // this box at the underflowed coordinate.  This is the
+        // `underflow-from-next-page` case from CSS Break.
+        let landing = TransitionLanding::new(
+            page_origins.origin(target_page),
+            position.effective_y,
+            margin_top,
+            relative_offset,
+            forced_transition,
+            overflow,
+        );
+        let row_flex_break_before =
+            forced_before && in_row_flex_container(document, cascade, node_id);
+        if landing.is_finite() {
+            let moved_in_bounded_ancestor = move_box_for_transition(
+                document,
+                cascade,
+                body_id,
+                candidate,
+                &TransitionMove {
+                    node_delta: landing.node_delta,
+                    shift_delta: landing.shift_delta,
+                    page_overflow: overflow.page,
+                    forced_transition,
+                },
+                &mut self.subtree_shifts,
+                entry.page_before_candidate,
+            );
+            // A forced break on one wrapped row-flex item belongs to
+            // its whole flex line. Move same-line siblings together;
+            // other lines keep their existing flow coordinates.
+            if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
+                move_flex_line_siblings(
+                    document,
+                    parent_id,
+                    node_id,
+                    candidate.raw_y,
+                    landing.shift_delta,
+                );
+            }
+            // A kept margin moves the box's descendants and its
+            // later siblings along with the box.
+            self.flow_shift += landing.node_delta;
+            if let Some(correction) = landing.underflow_correction() {
+                self.deferred_shifts.underflow = Some((node_id, correction));
+            }
+            self.float_shifts.settle_transition(
+                document,
+                cascade,
+                body_id,
+                candidate,
+                &FloatTransition {
+                    page_overflow: overflow.page,
+                    forced_transition,
+                    delta: landing.node_delta,
+                    target_y: landing.target_y,
+                    relative_offset,
+                    flow_page: entry.page_before_candidate,
+                    height: candidate.height,
+                    margin_top,
+                    moved_in_bounded_ancestor,
+                },
+                &mut self.subtree_shifts,
+            );
+            position.effective_y += landing.node_delta;
+        }
+        self.current_page = target_page;
+        if forced_transition {
+            self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
+            position.starts_after_forced_break = true;
+        }
+        if pending_break_applies {
+            self.pending_break.clear();
+        }
+        Ok(())
+    }
+
+    /// Starts a box that meets no page transition on the page its position
+    /// falls on. A forced break that coincides with a page edge also starts
+    /// that page, and an unforced break that falls inside the collapsed
+    /// margin between the box and its preceding sibling truncates that
+    /// margin.
+    pub(super) fn start_box_on_natural_page(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        page_break: &BoxBreak,
+        position: &mut BoxPosition,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            ..
+        } = *env;
+        let BoxBreak {
+            margin_top,
+            forced_before,
+            margins_collapse_through,
+            collapses_with_previous_block,
+            ..
+        } = *page_break;
+        let node_id = candidate.node_id;
+        let mut natural_page = page_origins.start_page(position.effective_y, candidate.height);
+        // A forced break that coincides with a page edge also starts
+        // that page.
+        if forced_before {
+            self.sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
+            position.starts_after_forced_break = true;
+        }
+        // An unforced break that falls inside the collapsed margin
+        // between this box and its preceding sibling truncates that
+        // margin (CSS Fragmentation 3 §5.2): the box starts at the
+        // top of the page instead of keeping the part of the margin
+        // that crossed the page edge.
+        let truncation = self.sibling_margins.truncation_at_break(
+            document,
+            cascade,
+            page_origins,
+            &MarginBreak {
+                node_id,
+                raw_y: candidate.raw_y,
+                effective_y: position.effective_y,
+                natural_page,
+                forced_before,
+                margin_top,
+                collapses_with_previous_block,
+            },
+        );
+        if let Some(MarginTruncation { delta, underflow }) = truncation {
+            self.sibling_margins.moved_boxes |= delta != 0.0;
+            move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
+            self.flow_shift += delta;
+            position.effective_y += delta;
+            if let Some(underflow) = underflow {
+                // Descendants follow the negative margin; later
+                // siblings still follow the forced break boundary.
+                self.deferred_shifts.underflow = Some((node_id, underflow));
+            } else {
+                natural_page = page_origins.page_index_for_y(position.effective_y);
+            }
+        }
+        reach_page(control, natural_page)?;
+        self.current_page = self.current_page.max(natural_page);
         Ok(())
     }
 
