@@ -260,6 +260,49 @@ fn a_shrink_to_fit_box_takes_its_width_from_the_percentage_height_of_its_image()
 }
 
 #[test]
+fn a_shrink_to_fit_box_takes_its_width_from_the_percentage_height_of_its_block_image() {
+    // A block-level image reaches its parent through block flow, not through
+    // a paragraph, and is sized by the same content height.
+    for box_css in [
+        "position:absolute;height:100px",
+        "display:inline-block;height:100px",
+        "position:absolute;height:100px;padding:6px",
+        "position:absolute;height:112px;border:6px solid;box-sizing:border-box",
+    ] {
+        let (parent, image) = image_in_box(box_css, "display:block;height:100%");
+        assert_eq!(image, (50.0, 100.0), "{box_css}");
+        assert_eq!(parent.0 - (parent.1 - 100.0), 50.0, "{box_css}");
+    }
+}
+
+#[test]
+fn a_calc_percentage_height_of_a_block_image_sizes_its_shrink_to_fit_parent() {
+    let (parent, image) = image_in_box(
+        "position:absolute;height:100px",
+        "display:block;height:calc(100% - 20px)",
+    );
+    assert_eq!(image, (40.0, 80.0));
+    assert_eq!(parent, (40.0, 100.0));
+}
+
+#[test]
+fn a_percentage_height_of_a_block_image_against_an_auto_height_keeps_the_natural_width() {
+    let (parent, image) = image_in_box("display:inline-block", "display:block;height:100%");
+    assert_eq!(image, (25.0, 50.0));
+    assert_eq!(parent.0, 25.0);
+}
+
+#[test]
+fn a_length_height_of_a_block_image_does_not_follow_the_height_of_its_parent() {
+    let (parent, image) = image_in_box(
+        "position:absolute;height:100px",
+        "display:block;height:20px",
+    );
+    assert_eq!(image, (10.0, 20.0));
+    assert_eq!(parent, (10.0, 100.0));
+}
+
+#[test]
 fn a_calc_percentage_height_of_an_image_sizes_its_shrink_to_fit_parent() {
     let (parent, image) =
         image_in_box("position:absolute;height:100px", "height:calc(100% - 20px)");
@@ -374,6 +417,59 @@ fn the_width_of_a_percentage_height_container_follows_the_height_it_is_measured_
                     &intrinsics.engine,
                 )
                 .max_content
+        })
+        .collect();
+    assert_eq!(widths, [50.0, 25.0, 30.0, 50.0]);
+}
+
+#[test]
+fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured_in() {
+    // The same box is measured at a series of heights, and at none: the width
+    // measured for one never answers another.
+    let mut parent = 0;
+    let mut doc = laid_out(|doc, body| {
+        parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:inline-block"),
+        );
+        doc.append_element(
+            Some(parent),
+            "img",
+            Style::default(),
+            Some("display:block;height:100%"),
+        );
+    });
+    let widths: Vec<f32> = [Some(100.0), None, Some(60.0), Some(100.0)]
+        .into_iter()
+        .map(|height| {
+            let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+            let inputs = taffy::LayoutInput {
+                run_mode: taffy::RunMode::ComputeSize,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Both,
+                known_dimensions: Size {
+                    width: None,
+                    height,
+                },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                parent_size: Size {
+                    width: Some(100.0),
+                    height: None,
+                },
+                available_space: Size {
+                    width: taffy::AvailableSpace::MaxContent,
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            crate::taffy_impl::block_layout(&mut session, taffy::NodeId::from(parent), inputs, None)
+                .size
+                .width
         })
         .collect();
     assert_eq!(widths, [50.0, 25.0, 30.0, 50.0]);

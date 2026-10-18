@@ -9,7 +9,7 @@ use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
-use crate::taffy_impl::{calc_has_percentage, resolve_calc};
+use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::TextGroupAlign;
@@ -20,8 +20,8 @@ use shodo::{
 use std::collections::{HashMap, HashSet};
 use taffy::util::ResolveOrZero;
 use taffy::{
-    AvailableSpace, Cache, Clear, CollapsibleMarginSet, ExpandedDimension, FloatDirection,
-    LayoutInput, LayoutPartialTree, Line, RequestedAxis, RunMode, Size, SizingMode,
+    AvailableSpace, Clear, CollapsibleMarginSet, FloatDirection, LayoutInput, LayoutPartialTree,
+    Line, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -3066,37 +3066,12 @@ fn content_sizes_on_axis(
             output.size.width + margins
         }
     };
-    // Taffy's cache does not key on the parent size, so a size measured
-    // against a containing height would answer a measurement against another.
-    // A box whose height follows the containing height is measured on an empty
-    // cache, which then gives way to the entries it had before.
-    let basis_dependent =
-        parent_size.height.is_some() && !vertical && height_follows_containing_block(tree, node);
-    let saved =
-        basis_dependent.then(|| std::mem::replace(&mut tree.nodes[node].cache, Cache::new()));
-    let sizes = (
-        measure(tree, AvailableSpace::MinContent),
-        measure(tree, AvailableSpace::MaxContent),
-    );
-    if let Some(saved) = saved {
-        tree.nodes[node].cache = saved;
-    }
-    sizes
-}
-
-/// Whether the `height` or `min-height` of `node` is a percentage, or a
-/// `calc()` with one, of the height of its containing block. A box with an
-/// aspect ratio carries each of them over to its width.
-fn height_follows_containing_block(tree: &LayoutSession<'_>, node: usize) -> bool {
-    tree.layout_node_with_style(node).is_some_and(|node| {
-        let style = &node.style;
-        [style.size.height, style.min_size.height.into()]
-            .into_iter()
-            .any(|height| match height.expand() {
-                ExpandedDimension::Percent(_) => true,
-                ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
-                _ => false,
-            })
+    let parent_height = parent_size.height.filter(|_| !vertical);
+    measure_against_parent_height(tree, node, parent_height, |tree| {
+        (
+            measure(tree, AvailableSpace::MinContent),
+            measure(tree, AvailableSpace::MaxContent),
+        )
     })
 }
 
