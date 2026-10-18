@@ -396,10 +396,11 @@ fn apply_computed_to_style_in_session_inner(
         bridge_alignment(&mut style, cv);
         // The container an `auto` self-alignment borrows from is the nearest
         // ancestor that makes a box: `display: contents` ones are flattened
-        // away.
+        // away, except the document element, which is blockified.
+        let boxes = super::box_tree::BoxTree::for_cascade(doc, cascade);
         let mut container = doc.nodes[idx].parent;
         while let Some(ancestor) = container
-            && cascade.computed[ancestor].display == DisplayValue::Contents
+            && boxes.display(ancestor) == Some(DisplayValue::Contents)
         {
             container = doc.nodes[ancestor].parent;
         }
