@@ -8420,6 +8420,80 @@ fn block_after_float(float_css: &str, css: &str) -> (f32, f32, f32, f32) {
     )
 }
 
+/// `root > [div(float:left;float_css)..., "aa", div(css) > "bb"]`: the block
+/// child's border box from the root. Each float after the first clears the
+/// one before it, so they stack in bands one below the other.
+fn block_among_floats(floats: &[&str], css: &str) -> (f32, f32, f32, f32) {
+    let mut block = 0;
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        for (index, float_css) in floats.iter().enumerate() {
+            let clear = if index > 0 { "clear:left;" } else { "" };
+            doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;float:left;{clear}{float_css}")),
+            );
+        }
+        doc.append_text(root, "aa");
+        block = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        );
+        doc.append_text(block, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{css}");
+    let layout = doc.nodes[block].unrounded_layout;
+    (
+        layout.location.x,
+        layout.location.y,
+        layout.size.width,
+        layout.size.height,
+    )
+}
+
+#[test]
+fn a_block_child_taller_than_its_gap_beside_floats_keeps_clear_of_the_next_float() {
+    // The first float ends at y = 20, the second fills y = 20..40 up to
+    // x = 120. The 100px box starts at y = 10 beside the first float, where
+    // 150px are free, but it is 20px tall and would reach the second.
+    let floats = ["width:50px;height:20px", "width:120px;height:20px"];
+    // Hand-computed: 80px are free beside the second float, so the box goes
+    // below both.
+    assert_eq!(
+        block_among_floats(&floats, "overflow:hidden;width:100px;height:20px"),
+        (0.0, 40.0, 100.0, 20.0)
+    );
+    // Short enough for its gap, it stays beside the first float.
+    assert_eq!(
+        block_among_floats(&floats, "overflow:hidden;width:100px;height:10px"),
+        (50.0, 10.0, 100.0, 10.0)
+    );
+    // A box that fits the room beside the second float slides to it.
+    assert_eq!(
+        block_among_floats(&floats, "overflow:hidden;width:70px;height:20px"),
+        (120.0, 10.0, 70.0, 20.0)
+    );
+}
+
+#[test]
+fn an_auto_width_block_child_beside_floats_narrows_to_what_every_float_leaves() {
+    let floats = ["width:50px;height:20px", "width:120px;height:20px"];
+    // Hand-computed: the box is 20px tall at y = 10 and so lies beside both
+    // floats, which leave 80px from x = 120.
+    assert_eq!(
+        block_among_floats(&floats, "overflow:hidden;height:20px"),
+        (120.0, 10.0, 80.0, 20.0)
+    );
+    assert_eq!(
+        block_among_floats(&floats, "overflow:hidden;height:10px"),
+        (50.0, 10.0, 150.0, 10.0)
+    );
+}
+
 #[test]
 fn a_cleared_block_child_moves_below_the_float() {
     let float = "width:20px;height:20px";
