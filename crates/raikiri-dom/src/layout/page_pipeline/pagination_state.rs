@@ -2,11 +2,45 @@
 
 use super::{
     CascadeResult, CheckedParagraphs, ColumnContexts, DeferredShifts, EnteredParagraphs,
-    FloatShifts, FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, PageCandidate,
-    PageNames, PageOrigins, PageReach, PendingBreak, PrecedingFlexItems, SiblingMargins,
-    SubtreeShifts, TextLineIndex, TrailingFlexChildren, grow_ancestors_for_shift,
+    FloatShifts, FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError,
+    PageCandidate, PageNames, PageOrigins, PageReach, PendingBreak, PrecedingFlexItems,
+    SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, grow_ancestors_for_shift,
+    has_explicit_positioned_block_ancestor, participates_in_margin_adjacency,
 };
 use crate::layout::context::LayoutSession;
+
+/// What is the same for every candidate of the flow.
+pub(super) struct FlowEnv<'a> {
+    pub(super) cascade: &'a CascadeResult,
+    pub(super) body_id: usize,
+    pub(super) page_origins: &'a PageOrigins,
+    pub(super) text_lines: &'a TextLineIndex,
+}
+
+/// What the start of a candidate settled for its placement.
+pub(super) struct CandidateEntry {
+    /// Whether content already placed in the candidate's flow lets a named
+    /// page change open a new page.
+    pub(super) name_context_seen: bool,
+    /// The page type the candidate compares its own against to detect that
+    /// change.
+    pub(super) comparison_page_name: Option<String>,
+    /// Whether leaving a flex item's internal named flow keeps the last
+    /// opened physical page until an outer boundary or natural overflow opens
+    /// one.
+    pub(super) keep_local_page_type: bool,
+    /// The page the flow was on before the candidate.
+    pub(super) page_before_candidate: u32,
+    /// The root of the candidate's paragraph and its offset, when the
+    /// candidate is the first inside all the paragraphs around it and so
+    /// moves the root.
+    pub(super) ifc_root: Option<(usize, f32)>,
+    /// Whether the margins of the candidate adjoin those of its siblings.
+    pub(super) participates_in_margin_adjacency: bool,
+    /// Whether the candidate follows its containing box through explicit
+    /// positioned insets, rather than the normal flow.
+    pub(super) uses_positioned_coordinates: bool,
+}
 
 /// Where pagination stands while the candidates of the flow are placed in
 /// source order, and what it has to remember from the ones placed so far.
@@ -69,19 +103,89 @@ impl PaginationState {
         }
     }
 
+    /// Starts the placement of `candidate`: skips the lines of a repeated
+    /// table header and candidates that are not source nodes, settles the
+    /// shifts that end or begin at it, and decides the page type it compares
+    /// against and the paragraph it moves. `None` when the candidate is not
+    /// placed.
+    pub(super) fn begin_candidate(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+    ) -> Result<Option<CandidateEntry>, LayoutError> {
+        let node_id = candidate.node_id;
+        // Header lines stay together and are placed from the table's rows,
+        // rather than acquiring independent text-page shifts.
+        if self.table_headers.owner(node_id).is_some() {
+            return Ok(None);
+        }
+        let name_participates_in_flow = candidate.context.page_name_in_flow;
+        if name_participates_in_flow
+            && candidate.context.is_flex_item
+            && let Some(context) = candidate.named_flex_context
+            && self
+                .preceding_flex_items
+                .record(context, candidate.height, self.current_page)
+        {
+            self.column_contexts
+                .occupy(Some(context), self.current_page, document, env.cascade);
+        }
+        let (name_context_seen, comparison_page_name) = self.page_names.comparison(
+            candidate,
+            self.saw_child,
+            &mut self.column_contexts,
+            document,
+            env.cascade,
+            self.current_page,
+        );
+        // Leaving a flex item's internal named flow keeps the last opened
+        // physical page until an outer boundary or natural overflow opens one.
+        let keep_local_page_type = candidate.named_flex_context.is_none()
+            && self.page_names.current != comparison_page_name;
+        let page_before_candidate = self.current_page;
+        let moves_ifc_root = self
+            .entered_paragraphs
+            .enter(document, candidate.ifc_root, node_id);
+        let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
+        self.settle_shifts(document, env, candidate);
+        if !document.is_source_node(node_id) {
+            return Ok(None);
+        }
+        let participates_in_margin_adjacency =
+            participates_in_margin_adjacency(document, env.cascade, candidate);
+        // Explicit positioned insets follow their containing box, not margin
+        // changes in a parallel normal flow. Both-auto boxes keep static placement.
+        let uses_positioned_coordinates = candidate.context.is_out_of_flow_descendant
+            && has_explicit_positioned_block_ancestor(document, node_id);
+        Ok(Some(CandidateEntry {
+            name_context_seen,
+            comparison_page_name,
+            keep_local_page_type,
+            page_before_candidate,
+            ifc_root,
+            participates_in_margin_adjacency,
+            uses_positioned_coordinates,
+        }))
+    }
+
     /// Settles the shifts that end or begin at `candidate`, before it is
     /// placed: those it has reached, those of the subtrees and the moved
     /// float it is outside of, and the clearance below the moved floats of
     /// its formatting context.
-    pub(super) fn settle_shifts(
+    fn settle_shifts(
         &mut self,
         document: &mut LayoutSession<'_>,
-        cascade: &CascadeResult,
-        body_id: usize,
+        env: &FlowEnv<'_>,
         candidate: &PageCandidate,
-        text_lines: &TextLineIndex,
-        page_origins: &PageOrigins,
     ) {
+        let FlowEnv {
+            cascade,
+            body_id,
+            page_origins,
+            text_lines,
+            ..
+        } = *env;
         let node_id = candidate.node_id;
         self.deferred_shifts.apply_reached(
             document,
