@@ -1728,18 +1728,59 @@ fn background_repeat_fixture(
     )
 }
 
+/// Origins of the image tiles the recorded background fills cover. A fill that
+/// carries its own origin (a `space` or `no-repeat` tile) reports it. A pattern
+/// fill repeats the tile along each axis whose sampler repeats, and reports
+/// every origin whose tile reaches into the filled shape.
 fn background_fill_origins(scene: &Scene) -> Vec<(f64, f64)> {
-    scene
-        .commands
-        .iter()
-        .filter_map(|command| match command {
-            RenderCommand::Fill(fill) => {
-                let coeffs = fill.transform.as_coeffs();
-                Some((coeffs[4], coeffs[5]))
+    let mut origins = Vec::new();
+    for command in &scene.commands {
+        let RenderCommand::Fill(fill) = command else {
+            continue;
+        };
+        let (anyrender::Paint::Image(brush), Some(brush_transform)) =
+            (&fill.brush, fill.brush_transform)
+        else {
+            let coeffs = fill.transform.as_coeffs();
+            origins.push((coeffs[4], coeffs[5]));
+            continue;
+        };
+        let coeffs = brush_transform.as_coeffs();
+        let bounds = kurbo::Shape::bounding_box(&fill.shape);
+        // Origins along one axis: the first tile, then the repeats on either
+        // side of it that still reach into `low..high`.
+        let along = |origin: f64, size: f64, low: f64, high: f64, repeats: bool| {
+            if !repeats {
+                return vec![origin];
             }
-            _ => None,
-        })
-        .collect()
+            let first = ((low - origin) / size).floor() as i64;
+            let last = ((high - origin) / size).ceil() as i64;
+            (first..last)
+                .map(|index| origin + index as f64 * size)
+                .filter(|start| start + size > low && *start < high)
+                .collect::<Vec<_>>()
+        };
+        let xs = along(
+            coeffs[4],
+            coeffs[0] * brush.image.width as f64,
+            bounds.x0,
+            bounds.x1,
+            brush.sampler.x_extend == peniko::Extend::Repeat,
+        );
+        let ys = along(
+            coeffs[5],
+            coeffs[3] * brush.image.height as f64,
+            bounds.y0,
+            bounds.y1,
+            brush.sampler.y_extend == peniko::Extend::Repeat,
+        );
+        for y in &ys {
+            for x in &xs {
+                origins.push((*x, *y));
+            }
+        }
+    }
+    origins
 }
 
 fn background_fill_count(scene: &Scene) -> usize {
@@ -1770,8 +1811,10 @@ fn background_repeat_tiles_cover_area_with_clipping() {
         &position,
         &repeat,
     );
-    // 100 / 20 by 50 / 10 tiles, edge tiles fit exactly here.
-    assert_eq!(background_fill_count(&scene), 25);
+    // 100 / 20 by 50 / 10 tiles, edge tiles fit exactly here, painted as one
+    // repeating pattern.
+    assert_eq!(background_fill_count(&scene), 1);
+    assert_eq!(background_fill_origins(&scene).len(), 25);
     let origins = background_fill_origins(&scene);
     assert!(origins.contains(&(0.0, 0.0)));
     assert!(origins.contains(&(80.0, 40.0)));
@@ -1802,7 +1845,7 @@ fn background_repeat_tiles_cover_area_with_clipping() {
         &position,
         &repeat,
     );
-    assert_eq!(background_fill_count(&clipped), 4);
+    assert_eq!(background_fill_origins(&clipped).len(), 4);
     let origins = background_fill_origins(&clipped);
     assert!(origins.contains(&(20.0, 10.0)));
 }
@@ -1868,7 +1911,9 @@ fn background_repeat_x_and_y_tile_single_axis() {
         &repeat_x_position,
         &repeat_x,
     );
-    assert_eq!(background_fill_count(&scene), 5);
+    // One fill repeats the tile along the row.
+    assert_eq!(background_fill_count(&scene), 1);
+    assert_eq!(background_fill_origins(&scene).len(), 5);
     for (_, y) in background_fill_origins(&scene) {
         assert_eq!(y, 0.0);
     }
@@ -1886,7 +1931,8 @@ fn background_repeat_x_and_y_tile_single_axis() {
         &repeat_y_position,
         &repeat_y,
     );
-    assert_eq!(background_fill_count(&scene), 5);
+    assert_eq!(background_fill_count(&scene), 1);
+    assert_eq!(background_fill_origins(&scene).len(), 5);
     for (x, _) in background_fill_origins(&scene) {
         assert_eq!(x, 0.0);
     }
@@ -2005,7 +2051,7 @@ fn background_round_rescales_to_whole_tiles() {
         &position,
         &repeat,
     );
-    assert_eq!(background_fill_count(&exact), 25);
+    assert_eq!(background_fill_origins(&exact).len(), 25);
 
     // 100px positioning with 30px tiles rounds to 3 tiles of 33.333px.
     let mut rescaled = Scene::new();
@@ -2020,7 +2066,6 @@ fn background_round_rescales_to_whole_tiles() {
         &position,
         &repeat,
     );
-    assert_eq!(background_fill_count(&rescaled), 3);
     let origins = background_fill_origins(&rescaled);
     assert_eq!(origins.len(), 3);
     assert!((origins[1].0 - 100.0 / 3.0).abs() < 0.001);
@@ -2041,7 +2086,7 @@ fn background_round_rescales_to_whole_tiles() {
             &mixed,
         );
         assert_eq!(
-            background_fill_count(&mixed_scene),
+            background_fill_origins(&mixed_scene).len(),
             expected,
             "{style} must tile both axes"
         );
@@ -3403,7 +3448,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         &round_position,
         &round,
     );
-    assert_eq!(background_fill_count(&zero_round), 25);
+    assert_eq!(background_fill_origins(&zero_round).len(), 25);
     // Space with zero positioning width falls back to a single tile on that axis.
     let (zero_space_position, zero_space) = background_repeat_fixture("space", "0px 0px");
     let mut zero_space_scene = Scene::new();

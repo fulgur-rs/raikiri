@@ -1,4 +1,5 @@
-//! `background-repeat: round` on one axis, with the other axis `auto`.
+//! How a background image is tiled: `background-repeat: round` on one axis
+//! with the other axis `auto`, and along axes that repeat or do not.
 
 use anyrender::Scene;
 use raikiri_dom::{Document, layout_single_page};
@@ -7,24 +8,38 @@ use raikiri_traits::{DecodedImage, ImagePixelSource, ImageRasterSize, PageBox};
 use std::sync::{Arc, Mutex};
 use taffy::Style;
 
-/// A 10×10 image in four quadrants: red and blue on top, green and black
-/// below.
+const RED: [u8; 3] = [255, 0, 0];
+const BLUE: [u8; 3] = [0, 0, 255];
+const GREEN: [u8; 3] = [0, 255, 0];
+const BLACK: [u8; 3] = [0, 0, 0];
+const WHITE: [u8; 3] = [255, 255, 255];
+
+/// Serves two 10×10 images: `file:///quadrants.png`, in four quadrants (red
+/// and blue on top, green and black below), and `file:///green.png`, solid
+/// green.
 struct Quadrants;
 impl ImagePixelSource for Quadrants {
     fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
-        if url.as_str() != "file:///quadrants.png" {
-            return None;
-        }
         let mut rgba = Vec::with_capacity(10 * 10 * 4);
-        for y in 0..10 {
-            for x in 0..10 {
-                rgba.extend_from_slice(match (y < 5, x < 5) {
-                    (true, true) => &[255, 0, 0, 255],
-                    (true, false) => &[0, 0, 255, 255],
-                    (false, true) => &[0, 255, 0, 255],
-                    (false, false) => &[0, 0, 0, 255],
-                });
+        match url.as_str() {
+            "file:///quadrants.png" => {
+                for y in 0..10 {
+                    for x in 0..10 {
+                        rgba.extend_from_slice(match (y < 5, x < 5) {
+                            (true, true) => &[255, 0, 0, 255],
+                            (true, false) => &[0, 0, 255, 255],
+                            (false, true) => &[0, 255, 0, 255],
+                            (false, false) => &[0, 0, 0, 255],
+                        });
+                    }
+                }
             }
+            "file:///green.png" => {
+                for _ in 0..10 * 10 {
+                    rgba.extend_from_slice(&[0, 255, 0, 255]);
+                }
+            }
+            _ => return None,
         }
         Some(Arc::new(DecodedImage {
             width: 10,
@@ -93,12 +108,6 @@ fn pixel(pixels: &[u8], x: usize, y: usize) -> [u8; 3] {
     [pixels[at], pixels[at + 1], pixels[at + 2]]
 }
 
-const RED: [u8; 3] = [255, 0, 0];
-const BLUE: [u8; 3] = [0, 0, 255];
-const GREEN: [u8; 3] = [0, 255, 0];
-const BLACK: [u8; 3] = [0, 0, 0];
-const WHITE: [u8; 3] = [255, 255, 255];
-
 #[test]
 fn a_round_width_keeps_the_auto_height_in_proportion() {
     // 24px holds 2.4 tiles, so two tiles of 12px fill it, and the auto height
@@ -165,4 +174,97 @@ fn the_image_is_rasterized_at_the_final_rounded_tile_size() {
     );
     // Both axes round: 40px holds four 10px tiles, so only the width moves.
     assert_eq!(*source.0.lock().unwrap(), [(12.0, 10.0)]);
+}
+
+#[test]
+fn a_tile_far_smaller_than_a_pixel_leaves_no_seams() {
+    // Each tile of this solid image covers a fifth of a pixel. Painted tile by
+    // tile, the antialiased edges of neighboring tiles would let the white
+    // page show through; the repeated image fills every pixel.
+    let pixels = paint(
+        "width:50px;height:40px;background-image:url(file:///green.png);\
+         background-size:0.2px 0.2px",
+    );
+    for y in 0..40 {
+        for x in 0..50 {
+            assert_eq!(pixel(&pixels, x, y), GREEN, "at ({x}, {y})");
+        }
+    }
+    assert_eq!(pixel(&pixels, 50, 0), WHITE, "right of the box");
+    assert_eq!(pixel(&pixels, 0, 40), WHITE, "below the box");
+}
+
+#[test]
+fn repeat_x_tiles_a_single_row() {
+    let pixels = paint(
+        "width:40px;height:30px;background-image:url(file:///quadrants.png);\
+         background-repeat:repeat-x",
+    );
+    assert_eq!(pixel(&pixels, 2, 2), RED);
+    assert_eq!(pixel(&pixels, 7, 2), BLUE);
+    assert_eq!(pixel(&pixels, 12, 2), RED, "the second tile");
+    assert_eq!(pixel(&pixels, 37, 7), BLACK, "the last tile fills the box");
+    assert_eq!(pixel(&pixels, 2, 7), GREEN);
+    assert_eq!(pixel(&pixels, 2, 12), WHITE, "below the single row");
+}
+
+#[test]
+fn repeat_y_tiles_a_single_column() {
+    let pixels = paint(
+        "width:30px;height:40px;background-image:url(file:///quadrants.png);\
+         background-repeat:repeat-y",
+    );
+    assert_eq!(pixel(&pixels, 2, 2), RED);
+    assert_eq!(pixel(&pixels, 2, 7), GREEN);
+    assert_eq!(pixel(&pixels, 2, 12), RED, "the second tile");
+    assert_eq!(pixel(&pixels, 7, 37), BLACK, "the last tile fills the box");
+    assert_eq!(pixel(&pixels, 12, 2), WHITE, "right of the single column");
+}
+
+#[test]
+fn repeat_on_both_axes_fills_the_box() {
+    let pixels = paint(
+        "width:30px;height:30px;background-image:url(file:///quadrants.png);\
+         background-repeat:repeat",
+    );
+    assert_eq!(pixel(&pixels, 12, 12), RED);
+    assert_eq!(pixel(&pixels, 27, 12), BLUE);
+    assert_eq!(pixel(&pixels, 22, 27), GREEN);
+    assert_eq!(pixel(&pixels, 30, 0), WHITE, "right of the box");
+}
+
+#[test]
+fn a_repeating_axis_beside_a_spaced_one_keeps_the_gaps() {
+    // 35px holds three 10px tiles, with the remaining 5px shared between two
+    // gaps, so the rows start at 0, 12.5 and 25.
+    let pixels = paint(
+        "width:40px;height:35px;background-image:url(file:///quadrants.png);\
+         background-repeat:repeat space",
+    );
+    assert_eq!(pixel(&pixels, 2, 2), RED);
+    assert_eq!(pixel(&pixels, 12, 2), RED, "repeats along x");
+    assert_eq!(
+        pixel(&pixels, 2, 11),
+        WHITE,
+        "the gap between the first rows"
+    );
+    assert_eq!(pixel(&pixels, 2, 16), RED, "the second row");
+    assert_eq!(pixel(&pixels, 2, 27), RED, "the third row");
+}
+
+#[test]
+fn a_repeating_axis_beside_a_spaced_one_keeps_the_gaps_across() {
+    let pixels = paint(
+        "width:35px;height:40px;background-image:url(file:///quadrants.png);\
+         background-repeat:space repeat",
+    );
+    assert_eq!(pixel(&pixels, 2, 2), RED);
+    assert_eq!(pixel(&pixels, 2, 12), RED, "repeats along y");
+    assert_eq!(
+        pixel(&pixels, 11, 2),
+        WHITE,
+        "the gap between the first columns"
+    );
+    assert_eq!(pixel(&pixels, 16, 2), RED, "the second column");
+    assert_eq!(pixel(&pixels, 27, 2), RED, "the third column");
 }
