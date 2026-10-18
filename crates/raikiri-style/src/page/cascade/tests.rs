@@ -1150,16 +1150,33 @@ fn root_with_font_size(px: f32) -> ComputedValues {
 /// The page context's `font-size` for `@page { <decls> }`, as the public declaration map and the
 /// margin-box inheritance carry it.
 fn page_font_size_with(decls: &str) -> f32 {
+    page_font_size_over(&ComputedValues::initial(), decls)
+}
+
+/// [`page_font_size_with`] for a page whose root element computed to `root`.
+fn page_font_size_over(root: &ComputedValues, decls: &str) -> f32 {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(&format!("@page {{ {decls} }}"), Origin::Author);
     let result = cascade_page(
         &tree,
         &PageContextQuery::default(),
-        PageInheritance::FromRoot(&ComputedValues::initial()),
+        PageInheritance::FromRoot(root),
     );
     match result.declarations().get(&PropertyKey::FontSize) {
         Some(PropertyValue::FontSize(Length::Px(v))) => *v,
         other => panic!("expected FontSize(Px(_)), got {other:?}"),
+    }
+}
+
+/// The root of `html { font-family: monospace }`: a keyword-derived `medium`
+/// size when `keyword` is set, otherwise an explicit `font-size: <px>`.
+fn monospace_root(px: f32, keyword: bool) -> ComputedValues {
+    ComputedValues {
+        font_family: Arc::new(vec![crate::property::FontFamilyName::generic("monospace")]),
+        font_size: ComputedLength(px),
+        font_size_keyword: keyword.then_some(crate::computed::FontSizeKeywordInfo::MEDIUM),
+        font_size_keyword_basis: ComputedLength(px),
+        ..ComputedValues::initial()
     }
 }
 
@@ -1196,6 +1213,66 @@ fn cascade_page_font_size_keyword_uses_the_monospace_medium() {
         8.0
     );
     assert_eq!(page_font_size_with("font-size: 0.5em"), 8.0);
+}
+
+#[test]
+fn cascade_page_font_size_keyword_follows_the_family_it_inherits() {
+    use crate::property::AbsoluteFontSize;
+    let small = AbsoluteFontSize::Small.px_for_medium(13.0);
+    // The page inherits `monospace` from the root and declares only the size:
+    // a keyword size is a multiple of the monospace `medium`, as on an element.
+    for root in [monospace_root(13.0, true), monospace_root(20.0, false)] {
+        assert_eq!(page_font_size_over(&root, "font-size: medium"), 13.0);
+        assert_eq!(page_font_size_over(&root, "font-size: small"), small);
+        assert_eq!(page_font_size_over(&root, "font-size: 12px"), 12.0);
+    }
+    // `em` and `%` scale the root's own size, keyword-derived or not.
+    assert_eq!(
+        page_font_size_over(&monospace_root(13.0, true), "font-size: 0.5em"),
+        6.5
+    );
+    assert_eq!(
+        page_font_size_over(&monospace_root(20.0, false), "font-size: 0.5em"),
+        10.0
+    );
+    // Changing to another family goes back to the 16px `medium`.
+    assert_eq!(
+        page_font_size_over(
+            &monospace_root(13.0, true),
+            "font-family: serif; font-size: medium"
+        ),
+        16.0
+    );
+    // A family that leaves the size as phase 2 computed it adds no declaration.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@page { font-family: monospace }", Origin::Author);
+    let result = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&monospace_root(20.0, false)),
+    );
+    assert_eq!(result.declarations().get(&PropertyKey::FontSize), None);
+}
+
+#[test]
+fn margin_box_inherits_the_monospace_keyword_page_font_size() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { font-family: monospace; font-size: 0.5em; \
+         @top-center { content: 'x'; padding-top: 2em } }",
+        Origin::Author,
+    );
+    let page = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&ComputedValues::initial()),
+    );
+    let rule = page
+        .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+        .expect("top-center margin box");
+    let style = page.margin_box_style(&rule, None);
+    assert_eq!(style.font_size.0, 6.5);
+    assert_eq!(style.padding.top.resolve(0.0), 13.0);
 }
 
 #[test]
