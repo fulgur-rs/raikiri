@@ -3795,13 +3795,20 @@ fn snapshot_borders(doc: &mut Document, grid: &TableGrid) -> BorderState {
     BorderState { cells, rows }
 }
 
-/// Give the cells and rows the borders `state` recorded.
+/// Give the cells and rows the borders `state` recorded, and drop the layouts
+/// the cells cached under other borders.
 fn apply_borders(doc: &mut Document, state: &BorderState) {
     for &(cell, border, painted) in &state.cells {
-        doc.layout_style_for_key_mut(cell)
-            .expect("table cell layout style")
-            .border = border;
-        doc.table_layout_node_mut(cell).collapsed_border = painted;
+        let style = doc
+            .layout_style_for_key_mut(cell)
+            .expect("table cell layout style");
+        let changed = style.border != border;
+        style.border = border;
+        let node = doc.table_layout_node_mut(cell);
+        node.collapsed_border = painted;
+        if changed {
+            node.cache.clear();
+        }
     }
     for &(row, painted) in &state.rows {
         doc.nodes[row].collapsed_border = painted;

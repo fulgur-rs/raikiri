@@ -471,7 +471,14 @@ fn laid_out_rows(
                     "display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px;{css}"
                 )),
             );
-            doc.append_text(cell, text);
+            // A text after `#` is set in a block box inside the cell.
+            if let Some(text) = text.strip_prefix('#') {
+                let block =
+                    doc.append_element(Some(cell), "div", Style::default(), Some("display:block"));
+                doc.append_text(block, text);
+            } else {
+                doc.append_text(cell, text);
+            }
             ids.push(cell);
         }
         by_row.push(ids);
@@ -591,6 +598,40 @@ fn an_automatic_table_sizes_the_columns_in_place_with_the_borders_they_had() {
     let measured = height(&[COL, COLLAPSED_COL, COL]);
     assert_eq!(measured, height(&[COL, COL, COL]));
     assert_eq!(measured, 10.0);
+}
+
+#[test]
+fn a_block_cell_beside_a_collapsed_column_is_sized_with_the_borders_it_keeps() {
+    // A cell holding a block box keeps the intrinsic widths it was measured
+    // with, which must not be the ones measured with the borders it had while
+    // the column was in place: the table is as wide as one without the column.
+    let with: [Row; 1] = [(
+        "",
+        &[
+            ("", "#X X"),
+            ("border-right:20px solid black", "#X"),
+            ("", "#X X X X X X"),
+        ],
+    )];
+    let without: [Row; 1] = [("", &[("", "#X X"), ("", "#X X X X X X")])];
+    let (collapsed, table, cells) =
+        laid_out_rows("table-layout:auto", 100, &[COL, COLLAPSED_COL, COL], &with);
+    let (reference, ref_table, ref_cells) =
+        laid_out_rows("table-layout:auto", 100, &[COL, COL], &without);
+    let widths = |doc: &Document, cells: &[usize]| -> Vec<f32> {
+        cells
+            .iter()
+            .map(|&cell| doc.nodes[cell].unrounded_layout.size.width)
+            .collect()
+    };
+    assert_eq!(
+        widths(&collapsed, &[cells[0][0], cells[0][2]]),
+        widths(&reference, &ref_cells[0]),
+    );
+    assert_eq!(
+        collapsed.nodes[table].unrounded_layout.size.width,
+        reference.nodes[ref_table].unrounded_layout.size.width,
+    );
 }
 
 #[test]
