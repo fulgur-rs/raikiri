@@ -6627,16 +6627,30 @@ fn a_gradient_border_image_fills_each_part_with_its_first_color() {
 /// The image brushes of the fills that painting the root element's border
 /// with `style` records over a 3×3 image.
 fn root_border_brush_sizes(style: &str) -> Vec<(u32, u32)> {
+    border_brush_sizes(
+        style,
+        &crate::walk::ImageBrushCache::default(),
+        &BorderImagePixels::opaque(),
+    )
+}
+
+/// The image brushes of the fills that painting the root element's border
+/// with `style` records, through `cache` over `pixels`.
+fn border_brush_sizes(
+    style: &str,
+    cache: &crate::walk::ImageBrushCache,
+    pixels: &BorderImagePixels,
+) -> Vec<(u32, u32)> {
     let mut document = root_border_document(style);
     let cascade = cascade(&document, &build_rule_tree(&document)).expect("cascade Ok");
     let mut scene = Scene::new();
     paint_laid_out_document_decorations(
-        &crate::walk::ImageBrushCache::default(),
+        cache,
         &mut scene,
         &mut document,
         &cascade,
         PageBox::A4,
-        Some(&BorderImagePixels::opaque()),
+        Some(pixels),
         &mut Vec::new(),
     );
     scene
@@ -6667,6 +6681,122 @@ fn overlapping_slices_share_the_whole_image() {
         "border: 5px solid red; border-image: url(https://images.test/border.png) 2",
     );
     assert_eq!(sizes, [(3, 3); 4]);
+}
+
+/// An opaque 30×30 image with natural size 30×30.
+fn large_border_image_pixels() -> BorderImagePixels {
+    BorderImagePixels {
+        natural: Some(raikiri_traits::ImageIntrinsicSize {
+            width: Some(30.0),
+            height: Some(30.0),
+            aspect_ratio: Some(1.0),
+        }),
+        decoded: Some(raikiri_traits::DecodedImage {
+            width: 30,
+            height: 30,
+            rgba: [0, 255, 0, 255].repeat(900),
+        }),
+    }
+}
+
+#[test]
+fn border_image_parts_that_shrink_are_averaged_to_device_pixels() {
+    let style = |border: u32| {
+        format!(
+            "border: {border}px solid red; border-image: url(https://images.test/border.png) 10"
+        )
+    };
+    let raster = crate::walk::ImageBrushCache::default().with_device_scale(Some(1.0));
+    // 10-unit slices drawn into 5px borders: the corners shrink on both axes
+    // and the edges, which stretch along their length, on the thin one.
+    assert_eq!(
+        border_brush_sizes(&style(5), &raster, &large_border_image_pixels()),
+        [
+            (5, 5),
+            (10, 5),
+            (5, 5),
+            (5, 10),
+            (5, 10),
+            (5, 5),
+            (10, 5),
+            (5, 5)
+        ]
+    );
+    // A part that shrinks by less than one and a half keeps its pixels.
+    assert_eq!(
+        border_brush_sizes(&style(8), &raster, &large_border_image_pixels()),
+        [(10, 10); 8]
+    );
+    // So does a vector output, which has no device pixels to average to.
+    assert_eq!(
+        border_brush_sizes(
+            &style(5),
+            &crate::walk::ImageBrushCache::default(),
+            &large_border_image_pixels()
+        ),
+        [(10, 10); 8]
+    );
+    // The size follows the device pixels of a scaled output.
+    let doubled = crate::walk::ImageBrushCache::default().with_device_scale(Some(2.0));
+    assert_eq!(
+        border_brush_sizes(&style(5), &doubled, &large_border_image_pixels()),
+        [(10, 10); 8]
+    );
+}
+
+#[test]
+fn an_averaged_part_keeps_whole_pixels_along_an_axis_that_does_not_shrink() {
+    // 21 rows, each a red of its own.
+    let decoded = std::sync::Arc::new(raikiri_traits::DecodedImage {
+        width: 40,
+        height: 21,
+        rgba: (0..21u8)
+            .flat_map(|row| [row * 10, 0, 0, 255].repeat(40))
+            .collect(),
+    });
+    let part = raikiri_dom::image_geometry::BorderImagePart {
+        source: (0.0, 0.0, 40.0, 10.5),
+        area: (0.0, 0.0, 10.0, 10.5),
+        tile_width: 10.0,
+        tile_height: 10.5,
+        x: vec![0.0],
+        y: vec![0.0],
+    };
+    let crop = pixel_crop(&decoded, (0.0, 0.0), (40.0, 10.5)).unwrap();
+    // A mirrored output counts its device pixels the same.
+    let mirrored = DeviceGrid {
+        scale_x: -1.0,
+        offset_x: 10.0,
+        scale_y: 1.0,
+        offset_y: 0.0,
+    };
+    let cache = crate::walk::ImageBrushCache::default();
+    let averaged =
+        |part: &_, grid| averaged_part_brush(&cache, &decoded, part, crop, (1.0, 1.0), grid);
+    let (brush, to_image) = averaged(&part, Some(mirrored)).unwrap();
+    // The width shrinks to the 10 device pixels; the height of 10.5 pixels
+    // is no more than one and a half times the device pixels, so it keeps
+    // the 11 whole rows the part rounds to.
+    assert_eq!((brush.image.width, brush.image.height), (10, 11));
+    for (row, pixels) in brush.image.data.data().chunks(10 * 4).enumerate() {
+        assert!(
+            pixels
+                .chunks(4)
+                .all(|pixel| pixel == [row as u8 * 10, 0, 0, 255]),
+            "row {row}"
+        );
+    }
+    assert_eq!(
+        to_image.as_coeffs(),
+        (Affine::scale_non_uniform(4.0, 10.5 / 11.0)).as_coeffs()
+    );
+    // Nothing to average on a vector output, or when no axis shrinks enough.
+    assert!(averaged(&part, None).is_none());
+    let wide = raikiri_dom::image_geometry::BorderImagePart {
+        tile_width: 30.0,
+        ..part
+    };
+    assert!(averaged(&wide, Some(mirrored)).is_none());
 }
 
 #[test]

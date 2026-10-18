@@ -2396,6 +2396,41 @@ fn place_atomics(
     }
 }
 
+/// Move the atomic inlines of lines that were split into columns to the
+/// column of their line. [`place_atomics`] puts every atomic where the lines
+/// stand in one tall column; each range of `fragments` starts its first line
+/// at the top of its column, at the column's inline offset, the way the text
+/// lines of the range are drawn. Only the `boxes` of the root are moved: the
+/// other atomics of its lines are drawn with the lines.
+pub(crate) fn move_atomics_to_columns(
+    tree: &mut LayoutSession<'_>,
+    boxes: &[IfcBox],
+    lines: &[shodo::Line],
+    fragments: &[crate::node::MulticolTextFragment],
+) {
+    let box_nodes: HashSet<usize> = boxes.iter().map(|box_| box_.node).collect();
+    for fragment in fragments {
+        let dx = fragment.x;
+        let dy = fragment.y - lines[fragment.line_start].block_offset();
+        for line in &lines[fragment.line_start..fragment.line_end] {
+            let moved = line.fragments().filter_map(|piece| match piece {
+                shodo::Fragment::Atomic(atomic)
+                    if box_nodes.contains(&(atomic.node.0 as usize)) =>
+                {
+                    Some(atomic.node.0 as usize)
+                }
+                _ => None,
+            });
+            for node in moved {
+                let mut layout = tree.nodes[node].unrounded_layout;
+                layout.location.x += dx;
+                layout.location.y += dy;
+                tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
+            }
+        }
+    }
+}
+
 /// The root's content height as the basis of a percentage `top` or
 /// `bottom`, when it is definite.
 fn relative_height(geometry: &FlowGeometry) -> Option<f32> {

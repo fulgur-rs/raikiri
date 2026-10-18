@@ -202,3 +202,84 @@ fn column_properties_on_flex_grid_and_table_boxes_change_nothing() {
         assert_eq!(differing_pixels(&actual, &expected), 0, "{outer} > {inner}");
     }
 }
+
+const ATOMIC: &str =
+    "display:inline-block;vertical-align:top;width:25px;height:20px;background:green";
+
+/// `lines` atomic inlines, one on each line of a paragraph of 20px lines.
+fn atomic_lines(lines: usize, extra_style: &str) -> String {
+    (0..lines)
+        .map(|_| format!("<span style='{ATOMIC};{extra_style}'></span><br>"))
+        .collect()
+}
+
+/// The 25px by 20px green boxes at the given offsets, drawn without columns.
+fn boxes_at(offsets: &[(u32, u32)]) -> Vec<u8> {
+    raster(
+        &offsets
+            .iter()
+            .map(|(x, y)| {
+                format!(
+                    "<div style='position:absolute;left:{x}px;top:{y}px;width:25px;height:20px;background:green'></div>"
+                )
+            })
+            .collect::<String>(),
+    )
+}
+
+const ATOMIC_COLUMNS: &str =
+    "width:110px;column-gap:10px;font:10px/20px monospace;orphans:1;widows:1";
+
+#[test]
+fn atomic_inlines_on_separate_lines_balance_over_the_columns() {
+    // The 50px columns hold two lines each.
+    let actual = raster(&format!(
+        "<div style='{ATOMIC_COLUMNS};column-count:2'>{}</div>",
+        atomic_lines(4, "")
+    ));
+    assert_eq!(
+        differing_pixels(&actual, &boxes_at(&[(0, 0), (0, 20), (60, 0), (60, 20)])),
+        0
+    );
+}
+
+#[test]
+fn atomic_inlines_fill_the_columns_in_order_when_the_height_is_definite() {
+    // The 30px columns hold two 20px lines in 50px.
+    let actual = raster(&format!(
+        "<div style='{ATOMIC_COLUMNS};height:50px;column-count:3;column-fill:auto'>{}</div>",
+        atomic_lines(5, "")
+    ));
+    assert_eq!(
+        differing_pixels(
+            &actual,
+            &boxes_at(&[(0, 0), (0, 20), (40, 0), (40, 20), (80, 0)])
+        ),
+        0
+    );
+}
+
+#[test]
+fn atomic_inlines_follow_the_padding_and_border_of_their_columns() {
+    // The content starts 6px in from the border box and has two 44px columns.
+    let actual = raster(&format!(
+        "<div style='{ATOMIC_COLUMNS};column-count:2;box-sizing:border-box;padding:4px;border:2px solid transparent'>{}</div>",
+        atomic_lines(4, "")
+    ));
+    assert_eq!(
+        differing_pixels(&actual, &boxes_at(&[(6, 6), (6, 26), (60, 6), (60, 26)])),
+        0
+    );
+}
+
+#[test]
+fn a_relatively_positioned_atomic_inline_keeps_its_offset_in_its_column() {
+    let actual = raster(&format!(
+        "<div style='{ATOMIC_COLUMNS};column-count:2'>{}</div>",
+        atomic_lines(4, "position:relative;left:3px;top:2px")
+    ));
+    assert_eq!(
+        differing_pixels(&actual, &boxes_at(&[(3, 2), (3, 22), (63, 2), (63, 22)])),
+        0
+    );
+}

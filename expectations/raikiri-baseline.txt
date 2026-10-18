@@ -303,6 +303,7 @@ css/css-backgrounds/border-image-011.html
 css/css-backgrounds/border-image-012.html
 css/css-backgrounds/border-image-021.html
 css/css-backgrounds/border-image-calc.html
+css/css-backgrounds/border-image-image-type-001.htm
 css/css-backgrounds/border-image-image-type-002.htm
 css/css-backgrounds/border-image-image-type-004.htm
 css/css-backgrounds/border-image-image-type-005.htm
@@ -4874,3 +4875,9 @@ css/css-overflow/overflow-img-object-position.html
 css/css-overflow/overflow-img-scroll-replaced.html
 css/css-overflow/overflow-img-svg.html
 css/css-overflow/overflow-img.html
+
+# --- css-grid abspos pin 2026-10-18 (last baseline falls back to safe end) ---
+css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-001.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-002.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-001.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-002.html
