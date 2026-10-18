@@ -378,12 +378,22 @@ pub(super) struct Rows {
     pub(super) heights: Vec<f32>,
 }
 
+/// Why [`fill_rows`] made no rows.
+#[derive(Debug, PartialEq)]
+pub(super) enum RowsStop {
+    /// The entries are not plain paragraphs or do not fit.
+    Unsupported,
+    /// The content needs more rows than were allowed.
+    Exhausted,
+}
+
 /// Fill the paragraphs of a nested column container into rows of its
 /// columns: the first row holds `first` of block size, every later row
 /// `later`, and at most `rows` rows exist. The last row is balanced unless
 /// the container fills its columns sequentially, and every row with
-/// `column-fill: balance-all`. `None` when the entries are
-/// not plain paragraphs or do not fit.
+/// `column-fill: balance-all`. Fails when the entries are not plain
+/// paragraphs or do not fit, and when the content needs more than `rows`
+/// rows, which stops the planning there.
 pub(super) fn fill_rows(
     tree: &Document,
     parent: usize,
@@ -392,10 +402,10 @@ pub(super) fn fill_rows(
     first: f32,
     later: f32,
     rows: usize,
-) -> Option<Rows> {
-    let (paragraphs, count, _, _) = collect(tree, parent, entries)?;
+) -> Result<Rows, RowsStop> {
+    let (paragraphs, count, _, _) = collect(tree, parent, entries).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
-        return None;
+        return Err(RowsStop::Unsupported);
     }
     let mut result = Rows {
         fragments: Vec::new(),
@@ -405,9 +415,10 @@ pub(super) fn fill_rows(
     for row in 0..rows {
         let capacity = if row == 0 { first } else { later };
         if !capacity.is_finite() || capacity <= 0.0 {
-            return None;
+            return Err(RowsStop::Unsupported);
         }
-        let mut chunk = fill_chunk(&paragraphs, context, capacity, resume)?;
+        let mut chunk =
+            fill_chunk(&paragraphs, context, capacity, resume).ok_or(RowsStop::Unsupported)?;
         // `balance` balances the last row only, `balance-all` every row; a
         // balanced row keeps the content the full row would hold.
         let balance = context.column_fill == ColumnFillValue::BalanceAll
@@ -462,12 +473,12 @@ pub(super) fn fill_rows(
         }
         result.heights.push(height);
         match chunk.next {
-            None => return Some(result),
+            None => return Ok(result),
             Some(next) if next != resume => resume = next,
-            Some(_) => return None, // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
+            Some(_) => return Err(RowsStop::Unsupported), // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
         }
     }
-    None
+    Err(RowsStop::Exhausted)
 }
 
 pub(super) struct PagedFragment {

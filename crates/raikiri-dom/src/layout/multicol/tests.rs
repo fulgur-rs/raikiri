@@ -2274,25 +2274,38 @@ fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() 
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
 }
 
+/// Lay out [`nested_paragraph_document`] under a fragment budget of `limit`.
+fn nested_paragraph_with_limit(
+    columns: usize,
+    lines: usize,
+    limit: usize,
+) -> (Document, usize, Result<(), raikiri_traits::LayoutError>) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let (mut doc, inner, _) = nested_paragraph_document(columns, "", lines);
+    doc.fragment_tree.limit = limit;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    let result = layout_single_page(&mut doc, &cascade, page).map(|_| ());
+    (doc, inner, result)
+}
+
 #[test]
 fn paragraph_rows_the_fragment_budget_cannot_hold_report_exhaustion() {
-    use raikiri_style::{build_rule_tree, cascade};
-    use raikiri_traits::{LayoutError, PageBox};
+    use raikiri_traits::LayoutError;
 
     // Whatever the budget, the layout either holds the three rows or reports
     // that it ran out; it never drops the rows and lays the lines out in one
     // column.
     let mut exhausted = false;
     for limit in 1..40 {
-        let (mut doc, inner, _) = nested_paragraph_document(3, "", 25);
-        doc.fragment_tree.limit = limit;
-        let rules = build_rule_tree(&doc);
-        let cascade = cascade(&doc, &rules).expect("cascade Ok");
-        let mut page = PageBox::new();
-        page.width = 800.0;
-        page.height = 600.0;
-        match layout_single_page(&mut doc, &cascade, page) {
-            Ok(_) => assert_eq!(
+        let (doc, inner, result) = nested_paragraph_with_limit(3, 25, limit);
+        match result {
+            Ok(()) => assert_eq!(
                 doc.nodes[inner].multicol_rows.len(),
                 3,
                 "limit {limit} dropped the rows"
@@ -2302,6 +2315,20 @@ fn paragraph_rows_the_fragment_budget_cannot_hold_report_exhaustion() {
         }
     }
     assert!(exhausted);
+}
+
+#[test]
+fn paragraph_rows_planning_stops_at_the_fragment_budget() {
+    use raikiri_traits::LayoutError;
+
+    // Content that needs far more rows than the budget has records for is
+    // reported as exhausted without the rows being made.
+    let (doc, inner, result) = nested_paragraph_with_limit(2, 3000, 20);
+    assert!(matches!(
+        result,
+        Err(LayoutError::FragmentLimitExceeded { .. })
+    ));
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
 }
 
 #[test]

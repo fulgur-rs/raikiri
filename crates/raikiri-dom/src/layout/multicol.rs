@@ -1056,6 +1056,9 @@ fn layout_column_group(
                 cursor = 0.0;
                 continuation = Some(plan);
             }
+            if tree.fragment_tree.limit_exceeded {
+                return fallback_height;
+            }
         }
         if let Some(plan) = &continuation {
             child_output.size.height = plan.first_height;
@@ -1325,7 +1328,7 @@ impl NestedContinuation {
 /// plain paragraphs nor children without lines.
 #[allow(clippy::too_many_arguments)]
 fn plan_nested_continuation(
-    tree: &Document,
+    tree: &mut LayoutSession<'_>,
     child: usize,
     outer: FragmentationContext,
     cursor: f32,
@@ -1390,11 +1393,11 @@ fn plan_nested_continuation(
     let context = FragmentationContext::resolve(content_width, None, style)?;
     let row_top = -(cursor + margin_top);
     let row_step = outer.column_offset_x(1);
+    let max_pieces = tree
+        .fragment_tree
+        .limit
+        .saturating_sub(tree.fragment_tree.fragments.len());
     if let Some(children) = lineless_children {
-        let max_pieces = tree
-            .fragment_tree
-            .limit
-            .saturating_sub(tree.fragment_tree.fragments.len());
         let rows = lineless::fill_rows(
             tree,
             &children,
@@ -1462,11 +1465,26 @@ fn plan_nested_continuation(
         })
         .collect();
     // The outer container has a definite height here, so the rows may also
-    // fill overflow columns past its last one. Every row holds a line, so
-    // they end with the content; the fragment budget is enforced when their
-    // records are made, which reports exhaustion.
-    let rows =
-        paragraph_group::fill_rows(tree, child, &entries, context, first, later, usize::MAX)?;
+    // fill overflow columns past its last one. Every row holds a line and
+    // every row after the first has a box record of its own, so more rows
+    // than the fragment budget has records left cannot be made: planning
+    // stops one row past that and reports the exhaustion.
+    let rows = match paragraph_group::fill_rows(
+        tree,
+        child,
+        &entries,
+        context,
+        first,
+        later,
+        max_pieces.saturating_add(1),
+    ) {
+        Ok(rows) => rows,
+        Err(paragraph_group::RowsStop::Unsupported) => return None,
+        Err(paragraph_group::RowsStop::Exhausted) => {
+            tree.fragment_tree.limit_exceeded = true;
+            return None;
+        }
+    };
     let columns = rows.heights.len().checked_sub(1).filter(|&n| n > 0)?;
     // The block-end padding and border must fit in the last outer column too.
     let end = continued_origin_y + rows.heights[columns] + block_end_inset;
