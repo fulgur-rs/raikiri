@@ -1389,16 +1389,12 @@ fn margin_box_intrinsic_width(
         .max(0.0)
 }
 
-fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec) -> f32 {
+/// The outer height of `spec` with its text on as many lines as it takes at
+/// the width the box has in a column of `cross_size`.
+fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_size: f32) -> f32 {
     if spec.content.is_empty() {
         return spec.frame(Axis::Vertical).outer(0.0).max(0.0);
     }
-    let line_count = spec
-        .content
-        .trim_end_matches('\n')
-        .split('\n')
-        .count()
-        .max(1) as f32;
     let text_height = if spec.text_style.writing_mode.is_vertical() {
         document
             .shape_standalone_text(
@@ -1409,6 +1405,25 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec) -> f32
             )
             .map_or(0.0, |text| text.height())
     } else {
+        let explicit_lines = spec
+            .content
+            .trim_end_matches('\n')
+            .split('\n')
+            .count()
+            .max(1) as f32;
+        // Text wraps where the box is as wide as the column; a box with no
+        // width to wrap in keeps the lines its text breaks into by itself.
+        let column_width = spec
+            .frame(Axis::Horizontal)
+            .content(spec.outer_size(Axis::Horizontal, cross_size));
+        let line_count = document
+            .shape_standalone_text(
+                &spec.content,
+                &spec.text_style,
+                (column_width > 0.0).then_some(column_width),
+                StandaloneAlign::Start,
+            )
+            .map_or(explicit_lines, |text| text.lines().len().max(1) as f32);
         let font_size = spec.text_style.font_size.max(0.0);
         // Unitless numbers were already resolved against the box's own font
         // size when the spec was built.
@@ -1495,7 +1510,7 @@ fn edge_max_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, cross_si
     }
     match axis {
         Axis::Horizontal => margin_box_intrinsic_width(document, spec, cross_size),
-        Axis::Vertical => margin_box_intrinsic_height(document, spec),
+        Axis::Vertical => margin_box_intrinsic_height(document, spec, cross_size),
     }
 }
 
