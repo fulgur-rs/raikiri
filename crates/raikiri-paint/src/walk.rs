@@ -1500,7 +1500,9 @@ fn paint_list_marker_with_snapshots(
     else {
         return;
     };
-    if width <= 0.0 || height <= 0.0 {
+    // The marker is visible by its own `visibility`, which it inherits from
+    // its item unless `::marker` sets it; `collapse` hides it like `hidden`.
+    if width <= 0.0 || height <= 0.0 || raikiri_dom::paint_rules::hides_own_box(computed) {
         return;
     }
     let explicit_content = cascade

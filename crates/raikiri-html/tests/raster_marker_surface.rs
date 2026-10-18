@@ -239,7 +239,9 @@ fn suppressed_and_hidden_markers_have_no_image_event() {
     let pixels = Pixels::new();
     for css in [
         "li{visibility:hidden}",
+        "li{visibility:collapse}",
         "li::marker{visibility:hidden}",
+        "li::marker{visibility:collapse}",
         "li::marker{content:none}",
         "li{display:none}",
         "li{width:0;height:0}",

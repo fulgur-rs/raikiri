@@ -197,6 +197,8 @@ fn suppressed_markers_have_no_runs_or_events() {
         "li{list-style-type:none}",
         "li::marker{content:''}",
         "li{visibility:hidden}",
+        "li{visibility:collapse}",
+        "li::marker{visibility:collapse}",
         "li::marker{content:' '}",
         "li{width:0;height:0}",
     ] {

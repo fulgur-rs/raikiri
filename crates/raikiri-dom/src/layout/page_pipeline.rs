@@ -3,6 +3,7 @@ use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
 mod footnotes;
+mod fragment_sources;
 mod leading_margins;
 mod link_events;
 mod pagination_state;
@@ -11,6 +12,10 @@ mod transposed_flow;
 use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant};
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use footnotes::FootnoteAreas;
+use fragment_sources::{
+    PageFragmentSource, drop_uncrossed_body, number_fragments, overflow_clip_sources,
+    place_sources, restore_crossing_tops,
+};
 pub(crate) use link_events::page_fragment_events_from_pages;
 use pagination_state::{FlowEnv, PaginationState};
 
@@ -2162,56 +2167,12 @@ fn build_page_fragments(
     (pages, flow_axis)
 }
 
-#[derive(Clone)]
-struct PageFragmentSource {
-    node_id: NodeId,
-    node_kind: NodeKind,
-    is_img: bool,
-    abs_x: f32,
-    abs_y: f32,
-    width: f32,
-    height: f32,
-    content_insets: Option<PageFragmentInsets>,
-    line_metrics: Option<Vec<(f32, f32)>>,
-    /// The lines of `line_metrics` stack along x, from the block-start
-    /// edge of their paragraph.
-    lines_along_x: bool,
-    line_start_offset: u32,
-    is_repeat: bool,
-    fragmentainer: u32,
-    fragment_clip: Option<PaintRect>,
-    overflow_chain: Option<usize>,
-    own_overflow_source: Option<usize>,
-}
-
-impl PageFragmentSource {
-    /// This source with its geometry in the flow space of `axis`.
-    fn in_flow_space(&self, axis: FlowAxis) -> Self {
-        let (abs_x, abs_y, width, height) =
-            axis.to_flow((self.abs_x, self.abs_y, self.width, self.height));
-        let along_flow = self.lines_along_x == matches!(axis, FlowAxis::X { .. });
-        Self {
-            abs_x,
-            abs_y,
-            width,
-            height,
-            content_insets: self.content_insets.map(|insets| axis.sides_to_flow(insets)),
-            // Lines that stack across the flow all share the source's
-            // extent along it.
-            line_metrics: self.line_metrics.as_ref().map(|metrics| {
-                if along_flow {
-                    metrics.clone()
-                } else {
-                    vec![(0.0, height); metrics.len()]
-                }
-            }),
-            fragment_clip: self.fragment_clip.map(|clip| {
-                let (x, y, width, height) = axis.to_flow((clip.x, clip.y, clip.width, clip.height));
-                PaintRect::new(x, y, width, height)
-            }),
-            ..self.clone()
-        }
-    }
+struct CollectedPageFragmentSources {
+    nodes: Vec<PageFragmentSource>,
+    text_roots: Vec<ProjectedTextRoot>,
+    placement_overflow_clips: Vec<PlacementOverflowClipSource>,
+    repeated_placement_nodes: HashSet<usize>,
+    paragraph_cache: ParagraphCache,
 }
 
 struct ProjectionVisit {
@@ -2226,25 +2187,17 @@ struct ProjectionVisit {
     paragraph_column: Option<(usize, usize)>,
 }
 
-struct CollectedPageFragmentSources {
-    nodes: Vec<PageFragmentSource>,
-    text_roots: Vec<ProjectedTextRoot>,
-    placement_overflow_clips: Vec<PlacementOverflowClipSource>,
-    repeated_placement_nodes: HashSet<usize>,
-    paragraph_cache: ParagraphCache,
-}
-
 fn collect_page_fragment_sources(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     work: &mut ProjectionWork<'_, '_>,
 ) -> Result<CollectedPageFragmentSources, LayoutError> {
+    let mut text_roots = Vec::new();
     // Collect absolute post-pagination coordinates.  The arena index is the
     // stable NodeId projection used by `raikiri_traits::Dom`; sorting by it
     // reproduces fulgur's deterministic BTreeMap iteration order regardless of
     // traversal implementation details.
-    let mut text_roots = Vec::new();
     let mut nodes = Vec::new();
     let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
     // The content width of each paragraph whose lines stack along x, and
@@ -2756,265 +2709,14 @@ pub(crate) fn project_slices_with_control(
     let placement_overflow_clips = collected.placement_overflow_clips;
     let repeated_placement_nodes = collected.repeated_placement_nodes;
     let paragraph_cache = collected.paragraph_cache;
-    // A relayout resumed at a page start lays the content before it out
-    // without the elements wholly before it, so a box crossing the start
-    // begins lower than in the earlier layout. It keeps the top the earlier
-    // layout gave it; its end, after the start, is the same in both. A box
-    // with no border or padding above the start begins at the start itself.
-    if let Some(earlier) = &document.earlier_fragments
-        && let Some((page_start, _)) = pages.first().and_then(|page| page.flow_range)
-    {
-        for source in &mut nodes {
-            if let Some(crossing) = earlier.get(&source.node_id)
-                && !source.is_repeat
-                && source.abs_y <= page_start + 0.01
-            {
-                let bottom = source.abs_y + source.height;
-                source.abs_y = page_start + crossing.top;
-                source.height = (bottom - source.abs_y).max(0.0);
-            }
-        }
-    }
+    restore_crossing_tops(document, &mut nodes, &pages);
 
-    // The pages with a flow range, in page order, and whether both ends of
-    // their ranges never decrease, so that a source's pages can be found by
-    // binary search instead of testing every page.
-    let flow_slots: Vec<(usize, f32, f32)> = pages
-        .iter()
-        .enumerate()
-        .filter_map(|(page_slot, page)| page.flow_range.map(|(start, end)| (page_slot, start, end)))
-        .collect();
-    let flow_slots_ordered = flow_slots
-        .windows(2)
-        .all(|pair| pair[0].1 <= pair[1].1 && pair[0].2 <= pair[1].2);
-    for source in &nodes {
-        work.check()?;
-        let source = &source.in_flow_space(flow_axis);
-        let header_placements = document
-            .table_objects
-            .headers
-            .placements_of(source.node_id.0 as usize);
-        let is_table_header = header_placements.is_some();
-        let kind = match source.node_kind {
-            NodeKind::Text => PageFragmentKind::Text,
-            NodeKind::Element if source.is_img => PageFragmentKind::Replaced,
-            _ => PageFragmentKind::Box,
-        };
-        let mut placements = Vec::new();
-        let repeat_line_range = source.line_metrics.as_deref().and_then(|metrics| {
-            (!metrics.is_empty()).then(|| {
-                PageFragmentLineRange::new(0, u32::try_from(metrics.len()).unwrap_or(u32::MAX))
-            })
-        });
-        if let Some(header_placements) = header_placements {
-            // Repeated header boxes visit only their own pages, and every copy
-            // is charged so header size times page count stays bounded.
-            for (page_index, origin, shift) in header_placements {
-                let start = pages.partition_point(|page| page.page_index < page_index);
-                for (page_slot, page) in pages.iter().enumerate().skip(start) {
-                    if page.page_index != page_index {
-                        break;
-                    }
-                    let Some((page_start, _)) = page
-                        .flow_range
-                        .filter(|&(page_start, _)| (page_start - origin).abs() <= 0.001)
-                    else {
-                        continue; // cov:ignore: layout schedules placements at the slices' own finite page origins.
-                    };
-                    work.charge(1)?;
-                    let y = source.abs_y + shift - page_start;
-                    placements.push((page_slot, y, source.height, repeat_line_range, y));
-                }
-            }
-        }
-        // A repeated source lands on every page. Any other source only
-        // intersects the pages whose flow range overlaps it, which form one
-        // run of `flow_slots` when the ranges are ordered.
-        let candidates = if is_table_header {
-            &flow_slots[..0]
-        } else if source.is_repeat || !flow_slots_ordered {
-            &flow_slots[..]
-        } else if source.height > 0.0 {
-            let bottom = source.abs_y + source.height;
-            let first = flow_slots.partition_point(|&(_, _, end)| end <= source.abs_y);
-            let last = first + flow_slots[first..].partition_point(|&(_, start, _)| start < bottom);
-            &flow_slots[first..last]
-        } else {
-            let first = flow_slots.partition_point(|&(_, _, end)| end < source.abs_y);
-            let last =
-                first + flow_slots[first..].partition_point(|&(_, start, _)| start <= source.abs_y);
-            &flow_slots[first..last]
-        };
-        for &(page_slot, page_start, page_end) in candidates {
-            if source.is_repeat {
-                placements.push((
-                    page_slot,
-                    source.abs_y,
-                    source.height,
-                    repeat_line_range,
-                    source.abs_y,
-                ));
-                continue;
-            }
-            let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
-                match flow_page_overlap(source.abs_y, source.height, page_start, page_end) {
-                    Some((y, height)) => (true, y, height),
-                    None => (false, 0.0, 0.0),
-                }
-            } else {
-                (
-                    source.abs_y >= page_start && source.abs_y <= page_end,
-                    (source.abs_y - page_start).max(0.0),
-                    0.0,
-                )
-            };
-            if intersects {
-                let line_range = source.line_metrics.as_deref().and_then(|metrics| {
-                    line_range_for_page(metrics, source.abs_y, page_start, page_end)
-                });
-                placements.push((
-                    page_slot,
-                    fragment_y,
-                    fragment_height,
-                    line_range,
-                    source.abs_y - page_start,
-                ));
-            }
-        }
-        let fragment_count = placements.len() as u32;
-        for (fragment_index, (page_slot, y, fragment_height, line_range, box_y)) in
-            placements.into_iter().enumerate()
-        {
-            let Some(page) = pages.get_mut(page_slot) else {
-                continue; // cov:ignore: placements are indexed from the same slices used to build pages.
-            };
-            let page_axis = page.flow_axis;
-            let to_page = |rect: (f32, f32, f32, f32)| {
-                let (x, y, width, height) = page_axis.to_layout(rect);
-                PageFragmentRect::new(x, y, width, height)
-            };
-            let rect = to_page((source.abs_x, y, source.width, fragment_height));
-            // A page cuts boxes only along the flow; across it, the whole box
-            // is the placed one.
-            let (item_box_y, item_box_height) = match flow_axis {
-                FlowAxis::Y => (box_y, source.height),
-                FlowAxis::X { .. } => (rect.y, rect.height),
-            };
-            let mut item = PageFragmentItem::new(
-                source.node_id,
-                rect,
-                kind,
-                fragment_index as u32,
-                fragment_count,
-                source.is_repeat || is_table_header,
-            )
-            .with_page_index(page.page_index)
-            .with_box_extent(item_box_y, item_box_height)
-            .with_flow_box_y(box_y)
-            .with_content_rect(source.content_insets.map(|insets| {
-                to_page((
-                    source.abs_x + insets.left,
-                    box_y + insets.top,
-                    (source.width - insets.left - insets.right).max(0.0),
-                    (source.height - insets.top - insets.bottom).max(0.0),
-                ))
-            }));
-            item.is_table_header_repeat = is_table_header;
-            item.fragmentainer = source.fragmentainer;
-            item.overflow_chain = source.overflow_chain;
-            item.own_overflow_source = source.own_overflow_source;
-            item.fragment_clip = source.fragment_clip.map(|clip| {
-                to_page((
-                    clip.x,
-                    clip.y + box_y - source.abs_y,
-                    clip.width,
-                    clip.height,
-                ))
-            });
-            page.items.push(match line_range {
-                Some(range) => item.with_line_range(PageFragmentLineRange::new(
-                    range.start.saturating_add(source.line_start_offset),
-                    range.end.saturating_add(source.line_start_offset),
-                )),
-                None => item,
-            });
-        }
-    }
+    place_sources(document, &nodes, &mut pages, flow_axis, &mut work)?;
 
-    // A relayout resumed at a page start continues the fragments the boxes
-    // crossing that start had before it. The body begins on the relayout's
-    // first page, which the relayout drops; when it did not cross the start
-    // in the earlier layout, it has no fragment after it.
-    if let Some(earlier) = &document.earlier_fragments
-        && let Some(first) = pages.first_mut()
-    {
-        let body = NodeId::new(body_id as u64);
-        first.items.retain(|item| {
-            item.node_id != body || item.flow_box_y >= -0.01 || earlier.contains_key(&body)
-        });
-    }
-    let earlier = document.earlier_fragments.as_ref();
-    let before = |node: &NodeId| {
-        earlier
-            .and_then(|earlier| earlier.get(node))
-            .map(|crossing| crossing.earlier_fragments)
-    };
+    drop_uncrossed_body(document, &mut pages, body_id);
+    number_fragments(document, &mut pages);
 
-    // A source can have several column pieces on the same physical page.
-    // Count all committed pieces together so edge ownership remains stable.
-    let mut fragment_counts = HashMap::<NodeId, u32>::new();
-    for item in pages.iter().flat_map(|page| &page.items) {
-        *fragment_counts.entry(item.node_id).or_insert_with(|| {
-            before(&item.node_id).unwrap_or(0)
-                + document
-                    .later_fragments
-                    .get(&item.node_id)
-                    .copied()
-                    .unwrap_or(0)
-        }) += 1;
-    }
-    let mut fragment_indices = HashMap::<NodeId, u32>::new();
-    for item in pages.iter_mut().flat_map(|page| &mut page.items) {
-        let index = fragment_indices
-            .entry(item.node_id)
-            .or_insert_with(|| before(&item.node_id).unwrap_or(0));
-        item.fragment_index = *index;
-        item.fragment_count = fragment_counts[&item.node_id];
-        *index += 1;
-    }
-
-    // Retain each clipping source once. Page-local clips are resolved on access,
-    // so a deep open-axis chain cannot multiply storage by the page count.
-    let clip_sources = nodes
-        .iter()
-        .filter_map(|source| {
-            let id = source.node_id.0 as usize;
-            if repeated_placement_nodes.contains(&id) {
-                return None;
-            }
-            if !crate::paint_rules::clips_element_overflow(document, cascade, id) {
-                return None;
-            }
-            let border = document.nodes[id].unrounded_layout.border;
-            let padding = document.nodes[id].unrounded_layout.padding;
-            let border_box =
-                PaintRect::new(source.abs_x, source.abs_y, source.width, source.height);
-            Some((
-                source.node_id,
-                OverflowClipSource {
-                    border_box,
-                    geometry: crate::paint_rules::OverflowClipGeometry::new(
-                        &cascade.computed[id],
-                        border_box,
-                        PaintInsets::new(border.top, border.right, border.bottom, border.left),
-                        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
-                        crate::paint_rules::is_replaced_element(document, id),
-                    ),
-                    is_repeat: source.is_repeat,
-                },
-            ))
-        })
-        .collect();
+    let clip_sources = overflow_clip_sources(document, cascade, &nodes, &repeated_placement_nodes);
 
     Ok((
         pages,
