@@ -4281,6 +4281,81 @@ fn visible_margin_box_overflow_keeps_text_shadow_bounds() {
 }
 
 #[test]
+fn aligned_margin_box_text_shadows_include_positioned_glyphs() {
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        style,
+        "@page { margin: 20px; @top-center { content: 'a'; \
+           font-family: Ahem; font-size: 10px; width: 100px; height: 10px; \
+           text-align: right; text-shadow: 0 0 4px red } }",
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let page_box = PageBox::A4;
+    let margin_box = raikiri_dom::page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        page_box,
+        raikiri_dom::MarginBoxPageContext::new(0, 1, false),
+    )
+    .into_iter()
+    .find(|margin_box| margin_box.slot == raikiri_style::PageMarginBoxSlot::TopCenter)
+    .expect("the top-center margin box");
+    let text = margin_box.text.as_ref().expect("text");
+    assert!(text.shaped().container().width > text.shaped().width());
+
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_page_margin_boxes(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &doc,
+        &cascade,
+        page_box,
+        0,
+        1,
+        false,
+        None,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+
+    let glyph_x = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::GlyphRun(run)
+                if run.brush == anyrender::Paint::Solid(Color::from_rgba8(0, 0, 0, 255)) =>
+            {
+                run.glyphs
+                    .first()
+                    .map(|glyph| run.transform.translation().x + f64::from(glyph.x))
+            }
+            _ => None,
+        })
+        .expect("text glyph");
+    let shadow_layer = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::PushLayer(layer) if layer.filter.is_some() => {
+                Some(kurbo::Shape::bounding_box(&layer.clip))
+            }
+            _ => None,
+        })
+        .expect("the blurred text shadow layer");
+    let expected_right = glyph_x + f64::from(text.shaped().width()) + 12.0;
+    assert!(
+        shadow_layer.x1 >= expected_right,
+        "shadow layer must include right-aligned glyphs and blur: {shadow_layer:?}, expected right >= {expected_right}"
+    );
+}
+
+#[test]
 fn background_tiling_edge_cases_cover_defensive_branches() {
     let decoded = raikiri_traits::DecodedImage {
         width: 1,

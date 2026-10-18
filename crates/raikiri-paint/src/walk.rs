@@ -1776,11 +1776,12 @@ fn paint_margin_box(
     if let Some(text) = &margin_box.text {
         let (text_x, text_y) = text.origin();
         let shaped = text.shaped();
+        let container = shaped.container();
         let text_bounds = Rect::new(
             f64::from(text_x),
             f64::from(text_y),
-            f64::from(text_x + shaped.width()),
-            f64::from(text_y + shaped.height()),
+            f64::from(text_x + shaped.width().max(container.width)),
+            f64::from(text_y + shaped.height().max(container.height)),
         );
         crate::standalone_text::draw_shadows(
             scene,
