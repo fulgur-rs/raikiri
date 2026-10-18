@@ -98,7 +98,8 @@ pub(crate) fn compute_multicol_layout(
                         .size
                         .height
                         == Dimension::auto())
-                || multicol_has_direct_break_flow(tree, index))
+                || multicol_has_direct_break_flow(tree, index)
+                || multicol_ends_with_its_only_float(tree, index))
         || !tree.context.fragmentation_stack.is_empty())
         && (!multicol_has_min_constrained_child(tree, index)
             || multicol_has_direct_break_flow(tree, index))
@@ -683,6 +684,36 @@ fn multicol_has_direct_break_flow(tree: &Document, node_id: usize) -> bool {
                     .iter()
                     .any(|&grandchild| tree.nodes[grandchild].tag_name() == Some("br"))
         })
+}
+
+/// Whether the last rendered child of `node_id` is the only float among them
+/// and the container holds no inline content of its own. Nothing then wraps
+/// beside the float and no other float shares its line, so the column
+/// strategies can place it like a block of its own: shrunk to its content
+/// within the column, at the edge of its own side.
+fn multicol_ends_with_its_only_float(tree: &Document, node_id: usize) -> bool {
+    if tree.nodes[node_id].ifc.is_some() {
+        return false;
+    }
+    let is_float = |child: usize| {
+        tree.layout_node_with_style(child)
+            .unwrap()
+            .style
+            .float
+            .is_floated()
+    };
+    let rendered: Vec<usize> = tree
+        .children_through_contents(node_id)
+        .into_iter()
+        .filter(|&child| {
+            tree.nodes[child].is_in_document()
+                && tree.nodes[child].kind() == NodeKind::Element
+                && !tree.nodes[child].is_display_none()
+        })
+        .collect();
+    rendered.split_last().is_some_and(|(&last, before)| {
+        is_float(last) && !before.iter().any(|&child| is_float(child))
+    })
 }
 
 fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {

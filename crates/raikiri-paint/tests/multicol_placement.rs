@@ -1230,3 +1230,37 @@ fn display_contents_wrappers_leave_every_column_strategy_unchanged() {
         }
     }
 }
+
+#[test]
+fn a_floated_paragraph_without_a_line_break_wraps_at_the_column_width() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;width:40px;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_right_floated_box_without_a_line_break_sits_at_the_right_edge_of_its_column() {
+    for (css, left) in [
+        (".mc{height:40px;column-fill:auto}", 20),
+        (".mc{height:40px;column-fill:auto;direction:rtl}", 80),
+    ] {
+        compare(
+            "<div class=mc><div style='float:right'><div style='width:20px;height:20px;background:blue'></div></div></div>",
+            css,
+            &format!(
+                "<div style='position:absolute;left:{left}px;top:0;width:20px;height:20px;background:blue'></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_floated_box_that_does_not_fit_the_first_column_goes_to_the_next_one() {
+    compare(
+        "<div class=mc><p>A</p><div style='float:right;margin-right:5px'><div style='width:20px;height:20px;background:blue'></div></div></div>",
+        ".mc{height:20px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0'>A</p><div style='position:absolute;left:75px;top:0;width:20px;height:20px;background:blue'></div>",
+    );
+}
