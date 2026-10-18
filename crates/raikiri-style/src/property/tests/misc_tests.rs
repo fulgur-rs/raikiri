@@ -148,13 +148,43 @@ fn folded_math_dummy_keeps_the_folded_type_and_falls_back_to_a_length() {
     // with a value of that type, so an angle is no longer taken for a length.
     assert_eq!(folded_math_dummy("calc(10deg + 20deg)"), "1deg");
     assert_eq!(folded_math_dummy("calc(10% + 20%)"), "1%");
-    // A folded plain number, an unfoldable mixed-unit sum, and a value list
-    // keep the length probe.
+    // A folded plain number, an unfoldable mixed-unit sum, and a source that
+    // folds to more than one token keep the length probe.
     assert_eq!(folded_math_dummy("calc(1 + 2)"), "1px");
     assert_eq!(folded_math_dummy("calc(2em + 3ex)"), "1px");
     assert_eq!(folded_math_dummy("calc(1px) calc(2px)"), "1px");
     assert!(!deferred_dummy_is_valid_for_property("calc(20deg)", "left"));
     assert!(deferred_dummy_is_valid_for_property("calc(20px)", "left"));
+}
+
+#[test]
+fn math_dummy_types_each_function_of_a_value_list_by_its_own_result() {
+    // Each `calc()` of a multi-value shorthand is typed on its own: an
+    // angle-typed one makes the whole value invalid wherever it sits.
+    for source in [
+        "calc(20deg) 1px",
+        "1px calc(20deg)",
+        "calc(1px) calc(20deg) calc(2px)",
+    ] {
+        assert!(
+            !deferred_dummy_is_valid_for_property(source, "inset"),
+            "{source}"
+        );
+        assert!(
+            !deferred_dummy_is_valid_for_property(source, "margin"),
+            "{source}"
+        );
+    }
+    for source in [
+        "calc(10px) 1px",
+        "calc(10%) calc(2em)",
+        "1px calc(5px + 10%)",
+    ] {
+        assert!(
+            deferred_dummy_is_valid_for_property(source, "inset"),
+            "{source}"
+        );
+    }
 }
 
 #[test]

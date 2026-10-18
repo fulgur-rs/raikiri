@@ -17,6 +17,18 @@ fn evaluate_calc(input: &str) -> Option<MathValue> {
 }
 
 #[test]
+fn inset_with_an_angle_calc_among_several_values_is_dropped_at_parse_time() {
+    // `calc(20deg)` is not a length, so the whole shorthand is invalid and the
+    // earlier `top` survives instead of being reset at computed-value time.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("position: relative; top: 5px; inset: calc(20deg) 1px"),
+    );
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(5.0));
+}
+
+#[test]
 fn var_in_margin_shorthand_preserves_later_longhand_cascade() {
     let cv = cascade_doc(
         "",
