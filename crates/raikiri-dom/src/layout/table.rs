@@ -1410,7 +1410,7 @@ struct ColSizing {
 
 /// Authored `<col>` sizing in grid order, one entry per column.
 ///
-/// The columns come from `each_column_run`, so `span` (HTML §4.9.8, max
+/// The columns come from [`each_column_run`], so `span` (HTML §4.9.8, max
 /// 1000) expands to that many entries and `display: contents` wrappers are
 /// looked through.
 fn collect_col_widths(
