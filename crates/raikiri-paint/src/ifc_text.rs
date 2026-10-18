@@ -1182,8 +1182,8 @@ fn emphasis_origin(position: IfcPosition, block_offset: f32, draw: &RunDraw<'_>)
 /// on top, so callers draw the list in reverse. Each shadow is the run's glyphs
 /// and its decoration lines, in their paint order, filled with the shadow
 /// color. A blurred shadow is drawn inside a filter layer clipped to the
-/// lines grown by three times the blur radius, which isolates the blur from
-/// the rest of the page. The Gaussian's standard deviation is half the blur
+/// lines and the run's glyphs, grown by three times the blur radius, which
+/// isolates the blur from the rest of the page. The Gaussian's standard deviation is half the blur
 /// radius (CSS Backgrounds 3 §7.1).
 fn draw_shadow(
     scene: &mut impl PaintScene,
@@ -1212,14 +1212,22 @@ fn draw_shadow(
         let (x, y) = (f64::from(position.x), f64::from(position.y));
         // Text that overflows its paragraph (`nowrap`, a negative
         // `text-indent`) lies outside the paragraph's own width, and its
-        // shadow with it, so the clip also covers the run's glyphs.
+        // shadow with it, so the clip also covers the run's glyphs. A glyph's
+        // ink can stick out of its advance box (an italic or synthetic
+        // oblique overhang, a mark, a swash, tight letter spacing), so each
+        // glyph is padded by one em, which the ink of an ordinary glyph does
+        // not exceed.
+        let pad = f64::from(font_size);
         let (ink_left, ink_right) =
             run.draw
                 .glyphs
                 .iter()
                 .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
                     let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
-                    (left.min(start).min(end), right.max(start).max(end))
+                    (
+                        left.min(start.min(end) - pad),
+                        right.max(start.max(end) + pad),
+                    )
                 });
         let clip = Rect::new(
             x + ink_left + dx - extent,

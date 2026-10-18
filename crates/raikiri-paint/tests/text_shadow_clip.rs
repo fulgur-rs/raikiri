@@ -101,3 +101,16 @@ fn the_shadow_of_text_pulled_left_by_a_negative_indent_is_not_clipped() {
     let pixels = paint("margin-left: 30px; width: 40px; text-indent: -30px", "AAAA");
     assert!(is_shadow_red(&pixels, 5, 10));
 }
+
+#[test]
+fn the_shadow_of_ink_outside_its_advance_box_is_not_clipped() {
+    // A letter spacing of minus one em leaves every glyph with no advance,
+    // so all four sit at x = 0 and their ink reaches 10px past the end of
+    // the zero-width paragraph, farther than the three blur radii the clip
+    // grows by.
+    let pixels = paint(
+        "width: 0; white-space: nowrap; letter-spacing: -10px; text-shadow: 0 0 1px red",
+        "AAAA",
+    );
+    assert!(is_shadow_red(&pixels, 8, 10));
+}
