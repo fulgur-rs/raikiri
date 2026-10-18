@@ -101,6 +101,9 @@ ureq = "=3.4.2"
 # RGBA8 pixels. Keep the format set explicit so the dependency remains
 # deterministic and WASM-friendly.
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+# Converts a raster image's embedded ICC profile to sRGB. Already in the build
+# graph through `image`, so it adds no new crate.
+moxcms = "0.8"
 data-url = "0.3"
 png = "0.18"
 

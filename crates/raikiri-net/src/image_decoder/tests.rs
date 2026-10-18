@@ -125,3 +125,39 @@ fn turns_an_image_by_its_exif_orientation() {
         ((3, 2), vec![YELLOW, MAGENTA, CYAN, BLUE, GREEN, RED])
     );
 }
+
+/// A 1x1 PNG whose only pixel is stored as (0x99, 0, 0) and tagged with
+/// `profile` as its embedded ICC profile.
+fn icc_tagged_png(profile: Vec<u8>) -> Vec<u8> {
+    use image::ImageEncoder as _;
+    let mut encoded = Vec::new();
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut encoded);
+    encoder.set_icc_profile(profile).unwrap();
+    encoder
+        .write_image(&[0x99, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    encoded
+}
+
+/// An sRGB profile whose red and green primaries trade places.
+fn swapped_red_green_profile() -> Vec<u8> {
+    let mut profile = moxcms::ColorProfile::new_srgb();
+    std::mem::swap(&mut profile.red_colorant, &mut profile.green_colorant);
+    profile.encode().unwrap()
+}
+
+#[test]
+fn converts_a_tagged_image_to_srgb() {
+    let decoded = ImageDecoder
+        .decode(&icc_tagged_png(swapped_red_green_profile()), 1024)
+        .unwrap();
+    assert_eq!(decoded.rgba, [0, 0x99, 0, 255]);
+}
+
+#[test]
+fn keeps_an_image_whose_profile_cannot_be_used_as_stored() {
+    let decoded = ImageDecoder
+        .decode(&icc_tagged_png(b"not an icc profile".to_vec()), 1024)
+        .unwrap();
+    assert_eq!(decoded.rgba, [0x99, 0, 0, 255]);
+}

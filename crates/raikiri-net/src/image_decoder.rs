@@ -5,7 +5,7 @@ use std::io::Cursor;
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder as _, ImageReader, Limits};
 use raikiri_traits::DecodedImage;
-use raikiri_traits::image::png_with_repaired_crcs;
+use raikiri_traits::image::{convert_rgba8_to_srgb, png_with_repaired_crcs};
 
 /// Decodes supported raster bytes into the shared straight RGBA8 contract.
 ///
@@ -42,6 +42,9 @@ impl ImageDecoder {
         // sizes or paints it. A tag the decoder cannot read leaves the image
         // as stored.
         let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+        // A tagged image is in the color space of its embedded profile, which
+        // is converted to sRGB once the pixels are decoded.
+        let icc_profile = decoder.icc_profile().ok().flatten();
         let output_bytes = u64::from(width)
             .checked_mul(u64::from(height))
             .and_then(|pixels| pixels.checked_mul(4))
@@ -54,7 +57,10 @@ impl ImageDecoder {
         // A quarter turn swaps the sides.
         let width = image.width();
         let height = image.height();
-        let pixels = image.into_rgba8().into_raw();
+        let mut pixels = image.into_rgba8().into_raw();
+        if let Some(profile) = icc_profile {
+            convert_rgba8_to_srgb(&profile, &mut pixels);
+        }
         // Defensive invariant check: `DecodedImage::rgba`'s contract (see
         // raikiri-traits::image) is exactly `width * height * 4` bytes. Catches
         // any future decoder/transformation combination that slips past the
