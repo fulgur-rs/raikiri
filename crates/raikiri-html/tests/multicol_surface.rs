@@ -1597,3 +1597,24 @@ fn narrow_blocks_in_an_rtl_container_are_flush_with_the_right_edge_of_their_colu
         [(70.0, 0.0), (70.0, 20.0), (10.0, 0.0), (10.0, 20.0)]
     );
 }
+
+#[test]
+fn an_atomic_inline_in_a_ruby_annotation_moves_with_its_line_to_the_next_column() {
+    // Two lines fill the first column, so the ruby of the last line sits in the
+    // second one and its annotation's box has to follow it there.
+    let document = lay_out(
+        "<div class=mc>A<br>B<br><ruby>C<rt><i></i></ruby><br><ruby>D<rt><i></i></ruby></div>",
+        "i{display:inline-block;width:10px;height:5px;background:green}rt{font-size:10px;line-height:10px}",
+    );
+    let texts = text_origins(&document);
+    let origin = |text: &str| texts.iter().find(|(run, _)| run == text).unwrap().1;
+    let boxes = element_origins(&document, 0, "i");
+    assert_eq!(boxes.len(), 2);
+    // The base is 20px wide and the box 10px, so the box is centered at 5px.
+    for (text, (x, y)) in [("C", boxes[0]), ("D", boxes[1])] {
+        let base = origin(text);
+        assert_eq!(x, base.0 + 5.0, "{text}: box x against its base {base:?}");
+        assert!(y < base.1, "{text}: box y {y} over its base {base:?}");
+    }
+    assert!(origin("D").0 >= 60.0, "D starts the second column");
+}
