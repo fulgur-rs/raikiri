@@ -989,19 +989,17 @@ pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult,
 /// `align-items` (CSS Grid 2 §10.2).
 // spec: https://www.w3.org/TR/css-grid-2/#static-position
 fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &CascadeResult) {
-    fn align_offset(value: AlignSelfValue, parent: SelfAlignmentValue, free: f32) -> f32 {
-        let value = match value {
+    fn resolve(value: AlignSelfValue, parent: SelfAlignmentValue) -> SelfAlignmentValue {
+        match value {
             AlignSelfValue::Auto => parent,
             AlignSelfValue::Value(value) => value,
             _ => SelfAlignmentValue::Start,
-        };
+        }
+    }
+    fn align_offset(value: SelfAlignmentValue, free: f32) -> f32 {
         match value {
             SelfAlignmentValue::Center => free / 2.0,
             SelfAlignmentValue::End | SelfAlignmentValue::FlexEnd => free,
-            // An absolutely positioned box takes no part in baseline
-            // alignment; `last baseline` falls back to `safe end`, which
-            // keeps an overflowing box at the start edge.
-            SelfAlignmentValue::LastBaseline => free.max(0.0),
             _ => 0.0,
         }
     }
@@ -1072,22 +1070,35 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
             bottom: auto(&child.margin.bottom, child_layout.margin.bottom),
         };
         let free_width = content_width - child_layout.size.width - margin.left - margin.right;
-        let justify = align_offset(child.justify_self, parent.justify_items, free_width);
-        // The inline start of a right-to-left container is its right edge.
-        let justify = if parent.direction == Direction::Rtl {
-            free_width - justify
-        } else {
-            justify
+        let rtl_container = parent.direction == Direction::Rtl;
+        let justify = match resolve(child.justify_self, parent.justify_items) {
+            // An absolutely positioned box takes no part in baseline
+            // alignment; `last baseline` falls back to `safe self-end`: the
+            // end edge of the box's own inline direction, or the start edge
+            // of the container when the box overflows.
+            SelfAlignmentValue::LastBaseline => match (free_width < 0.0, rtl_container) {
+                (true, true) => free_width,
+                (true, false) => 0.0,
+                (false, _) if child.direction == Direction::Rtl => 0.0,
+                (false, _) => free_width,
+            },
+            value => {
+                let offset = align_offset(value, free_width);
+                // The inline start of a right-to-left container is its right edge.
+                if rtl_container {
+                    free_width - offset
+                } else {
+                    offset
+                }
+            }
         };
         let x = border_left + padding_left + margin.left + justify;
-        let y = border_top
-            + padding_top
-            + margin.top
-            + align_offset(
-                child.align_self,
-                parent.align_items,
-                content_height - child_layout.size.height - margin.top - margin.bottom,
-            );
+        let free_height = content_height - child_layout.size.height - margin.top - margin.bottom;
+        let align = match resolve(child.align_self, parent.align_items) {
+            SelfAlignmentValue::LastBaseline => free_height.max(0.0),
+            value => align_offset(value, free_height),
+        };
+        let y = border_top + padding_top + margin.top + align;
         let child_layout = &mut document.nodes[child_id].unrounded_layout;
         child_layout.location.x = x;
         child_layout.location.y = y;

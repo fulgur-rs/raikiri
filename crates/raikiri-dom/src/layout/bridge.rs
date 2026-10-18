@@ -1277,11 +1277,11 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     style.justify_items =
         self_alignment_to_taffy(cv.justify_items).unwrap_or(TaffyAlignItems::NORMAL);
     // An absolutely positioned box takes no part in baseline alignment, so
-    // `last baseline` falls back to `safe end` (CSS Box Alignment 3 §9.1).
+    // `last baseline` falls back to `safe self-end` (CSS Box Alignment 3 §9.1).
     let abspos = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
     let own = |value: AlignSelfValue| match value {
         AlignSelfValue::Value(SelfAlignmentValue::LastBaseline) if abspos => {
-            Some(TaffyAlignItems::SAFE_END)
+            Some(TaffyAlignItems::SAFE_SELF_END)
         }
         value => self_alignment_or_auto_to_taffy(value),
     };
@@ -1291,7 +1291,7 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
 
 /// An absolutely positioned box whose `align-self` / `justify-self` is `auto`
 /// takes the container's `align-items` / `justify-items`. When that is
-/// `last baseline`, the box falls back to `safe end` like an explicit
+/// `last baseline`, the box falls back to `safe self-end` like an explicit
 /// `last baseline` does (see [`bridge_alignment`]); taffy alone would
 /// inherit the container's plain baseline.
 fn bridge_inherited_last_baseline(
@@ -1305,12 +1305,12 @@ fn bridge_inherited_last_baseline(
     if matches!(cv.align_self, AlignSelfValue::Auto)
         && parent.align_items == SelfAlignmentValue::LastBaseline
     {
-        style.align_self = Some(TaffyAlignItems::SAFE_END);
+        style.align_self = Some(TaffyAlignItems::SAFE_SELF_END);
     }
     if matches!(cv.justify_self, AlignSelfValue::Auto)
         && parent.justify_items == SelfAlignmentValue::LastBaseline
     {
-        style.justify_self = Some(TaffyAlignItems::SAFE_END);
+        style.justify_self = Some(TaffyAlignItems::SAFE_SELF_END);
     }
 }
 

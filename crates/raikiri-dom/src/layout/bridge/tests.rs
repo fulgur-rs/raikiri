@@ -1350,11 +1350,11 @@ fn bridge_alignment_align_self_value_delegates_to_self_alignment_to_taffy() {
 #[test]
 fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
     // An absolutely positioned box takes no part in baseline alignment, so
-    // `last baseline` falls back to `safe end` on both axes. A box in the
+    // `last baseline` falls back to `safe self-end` on both axes. A box in the
     // flow keeps aligning to the baseline.
     for (position, expected) in [
-        (PositionValue::Absolute, TaffyAlignItems::SAFE_END),
-        (PositionValue::Fixed, TaffyAlignItems::SAFE_END),
+        (PositionValue::Absolute, TaffyAlignItems::SAFE_SELF_END),
+        (PositionValue::Fixed, TaffyAlignItems::SAFE_SELF_END),
         (PositionValue::Static, TaffyAlignItems::BASELINE),
     ] {
         let label = format!("{position:?}");
@@ -1375,8 +1375,11 @@ fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
     parent.align_items = SelfAlignmentValue::LastBaseline;
     parent.justify_items = SelfAlignmentValue::LastBaseline;
     for (position, expected) in [
-        (PositionValue::Absolute, Some(TaffyAlignItems::SAFE_END)),
-        (PositionValue::Fixed, Some(TaffyAlignItems::SAFE_END)),
+        (
+            PositionValue::Absolute,
+            Some(TaffyAlignItems::SAFE_SELF_END),
+        ),
+        (PositionValue::Fixed, Some(TaffyAlignItems::SAFE_SELF_END)),
         (PositionValue::Static, None),
     ] {
         let label = format!("{position:?}");

@@ -2275,6 +2275,101 @@ fn placed_grid_abspos_takes_last_baseline_from_the_container() {
 }
 
 #[test]
+fn placed_grid_abspos_last_baseline_falls_back_to_self_end() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;position:relative;grid:100px / 100px;width:100px;height:100px"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some(
+            "position:absolute;grid-area:1 / 1 / 2 / 2;width:20px;height:20px;\
+             direction:rtl;justify-self:last baseline",
+        ),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    // The end of a right-to-left box is its left edge.
+    assert!(layout.location.x.abs() < 0.01, "x: {}", layout.location.x);
+}
+
+#[test]
+fn grid_auto_abspos_last_baseline_in_an_rtl_box_falls_back_to_its_left_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px;"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px;direction:rtl;justify-self:last baseline"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    // The end of a right-to-left box is its left edge.
+    assert!(
+        (layout.location.x - 10.0).abs() < 0.01,
+        "x: {}",
+        layout.location.x
+    );
+}
+
+#[test]
+fn grid_auto_abspos_last_baseline_overflowing_an_rtl_container_keeps_its_right_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px;direction:rtl"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:120px;height:20px;justify-self:last baseline"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    // An oversized box stays at the inline start (right) edge and spills left.
+    assert!(
+        (layout.location.x - -10.0).abs() < 0.01,
+        "x: {}",
+        layout.location.x
+    );
+}
+
+#[test]
 fn grid_auto_abspos_takes_last_baseline_from_the_container() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
