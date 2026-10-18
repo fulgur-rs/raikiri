@@ -3084,15 +3084,20 @@ fn content_sizes_on_axis(
     sizes
 }
 
-/// Whether the `height` of `node` is a percentage, or a `calc()` with one, of
-/// the height of its containing block.
+/// Whether the `height` or `min-height` of `node` is a percentage, or a
+/// `calc()` with one, of the height of its containing block. A box with an
+/// aspect ratio carries each of them over to its width.
 fn height_follows_containing_block(tree: &LayoutSession<'_>, node: usize) -> bool {
-    tree.layout_node_with_style(node)
-        .is_some_and(|node| match node.style.size.height.expand() {
-            ExpandedDimension::Percent(_) => true,
-            ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
-            _ => false,
-        })
+    tree.layout_node_with_style(node).is_some_and(|node| {
+        let style = &node.style;
+        [style.size.height, style.min_size.height.into()]
+            .into_iter()
+            .any(|height| match height.expand() {
+                ExpandedDimension::Percent(_) => true,
+                ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
+                _ => false,
+            })
+    })
 }
 
 #[cfg(test)]

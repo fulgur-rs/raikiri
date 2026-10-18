@@ -289,6 +289,8 @@ fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_agai
     for (image_css, expected) in [
         ("height:100%", [50.0, 25.0, 30.0, 50.0]),
         ("height:calc(100% - 20px)", [40.0, 25.0, 20.0, 40.0]),
+        ("min-height:100%", [50.0, 25.0, 30.0, 50.0]),
+        ("min-height:calc(100% - 20px)", [40.0, 25.0, 25.0, 40.0]),
     ] {
         let mut parent = 0;
         let mut doc = laid_out(|doc, body| {
