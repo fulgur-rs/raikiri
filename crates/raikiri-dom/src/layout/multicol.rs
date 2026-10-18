@@ -1269,6 +1269,11 @@ struct NestedContinuation {
     context: FragmentationContext,
     /// Its content-box origin in its border box.
     content_origin: Point<f32>,
+    /// Whether `box-decoration-break: clone` gives every row's box its own
+    /// padding and border (CSS Fragmentation 3, 5.4).
+    cloned: bool,
+    /// Block size of its block-end padding and border.
+    block_end_inset: f32,
     /// Block offset of the outer column's top from the nested border box.
     row_top: f32,
     /// Inline distance between two outer columns.
@@ -1281,6 +1286,35 @@ struct NestedContinuation {
     /// Its border-box block end in the last outer column it reaches, from
     /// that column's top.
     end: f32,
+}
+
+impl NestedContinuation {
+    /// Block offset of the content box in the box of a row after the first:
+    /// the block-start padding and border of a box that clones them, else
+    /// zero because a continued box that slices has none.
+    fn continued_origin_y(&self) -> f32 {
+        if self.cloned {
+            self.content_origin.y
+        } else {
+            0.0
+        }
+    }
+
+    /// Block size of the block-end padding and border that a box that clones
+    /// them keeps below the content of every row but the last, else zero.
+    fn cloned_end_inset(&self) -> f32 {
+        if self.cloned {
+            self.block_end_inset
+        } else {
+            0.0
+        }
+    }
+
+    /// Border-box block size of the box of a row after the first and before
+    /// the last, whose columns are `content` high.
+    fn row_box_height(&self, content: f32) -> f32 {
+        self.continued_origin_y() + content + self.cloned_end_inset()
+    }
 }
 
 /// Plan how the nested column container `child`, laid out at `cursor` in
@@ -1339,7 +1373,21 @@ fn plan_nested_continuation(
         - content_origin.x
         - inset(css.padding.right)
         - inset(css.border.right);
-    let first = fragmentainer_height - cursor - margin_top - content_origin.y;
+    // A box that clones its decorations has the block-end padding and border
+    // in every fragment, and the block-start ones in every fragment but the
+    // first (CSS Fragmentation 3, 5.4). A continued box that slices has
+    // neither, so its rows hold content up to the end of the outer column.
+    // Padding and border that leave a row no room for content keep the box
+    // from continuing in rows.
+    let cloned = node.clones_box_decorations;
+    let (continued_origin_y, cloned_end_inset) = if cloned {
+        (content_origin.y, block_end_inset)
+    } else {
+        (0.0, 0.0)
+    };
+    let first = fragmentainer_height - cursor - margin_top - content_origin.y - cloned_end_inset;
+    let later = fragmentainer_height - continued_origin_y - cloned_end_inset;
+    let first_height = content_origin.y + first + cloned_end_inset;
     let content_height = border_box_size.height - content_origin.y - block_end_inset;
     if content_height <= first + 0.001 {
         return None;
@@ -1359,7 +1407,7 @@ fn plan_nested_continuation(
             context.column_fill,
             style.height_definite.then_some(content_height),
             first,
-            fragmentainer_height,
+            later,
             max_pieces,
         )?;
         // Cutting a box at the end of the outer column is a last resort
@@ -1371,7 +1419,7 @@ fn plan_nested_continuation(
         }
         let root = latest_root(tree, child)?;
         let columns = rows.heights.len() - 1;
-        let end = rows.heights[columns] + block_end_inset;
+        let end = continued_origin_y + rows.heights[columns] + block_end_inset;
         if end > fragmentainer_height + 0.001 {
             return None;
         }
@@ -1385,9 +1433,11 @@ fn plan_nested_continuation(
             lineless: rows.pieces,
             context,
             content_origin,
+            cloned,
+            block_end_inset,
             row_top,
             row_step,
-            first_height: content_origin.y + first,
+            first_height,
             columns,
             end,
         });
@@ -1416,18 +1466,10 @@ fn plan_nested_continuation(
             )
         })
         .collect();
-    let rows = paragraph_group::fill_rows(
-        tree,
-        child,
-        &entries,
-        context,
-        first,
-        fragmentainer_height,
-        rows,
-    )?;
+    let rows = paragraph_group::fill_rows(tree, child, &entries, context, first, later, rows)?;
     let columns = rows.heights.len().checked_sub(1).filter(|&n| n > 0)?;
     // The block-end padding and border must fit in the last outer column too.
-    let end = rows.heights[columns] + block_end_inset;
+    let end = continued_origin_y + rows.heights[columns] + block_end_inset;
     if end > fragmentainer_height + 0.001 {
         return None;
     }
@@ -1438,9 +1480,11 @@ fn plan_nested_continuation(
         lineless: Vec::new(),
         context,
         content_origin,
+        cloned,
+        block_end_inset,
         row_top,
         row_step,
-        first_height: content_origin.y + first,
+        first_height,
         columns,
         end,
     })
@@ -1507,7 +1551,11 @@ fn apply_nested_continuation(
                     x: root.rect.x + row as f32 * plan.row_step,
                     y: root.rect.y + plan.row_top,
                     width: root.rect.width,
-                    height: if row == last { plan.end } else { height },
+                    height: if row == last {
+                        plan.end
+                    } else {
+                        plan.row_box_height(height)
+                    },
                 },
                 fragmentainer_clip: None,
                 fragment_index: 0,
@@ -1515,12 +1563,13 @@ fn apply_nested_continuation(
                 line_start: None,
                 line_end: None,
             })?;
-        // A continued box has no block-start padding or border.
+        // A continued box has no block-start padding or border unless it
+        // clones them.
         row_boxes.push((
             index,
             Point {
                 x: plan.content_origin.x,
-                y: 0.0,
+                y: plan.continued_origin_y(),
             },
         ));
     }
@@ -1620,7 +1669,8 @@ fn apply_nested_continuation(
     }
     // Column rules are drawn in each row's box, which the row's group names
     // by its fragmentainer. The row's box shows the part of the whole box
-    // that its block range covers.
+    // that its block range covers, unless the box clones its decorations and
+    // so is no slice of a whole box.
     let mut box_start = 0.0;
     let mut rows: Vec<crate::fragment::MulticolGroup> = plan
         .rows
@@ -1631,7 +1681,7 @@ fn apply_nested_continuation(
             let box_height = match row {
                 0 => plan.first_height,
                 row if row == last => plan.end,
-                _ => height,
+                _ => plan.row_box_height(height),
             };
             let slice = (box_start, box_start + box_height);
             box_start = slice.1;
@@ -1645,7 +1695,7 @@ fn apply_nested_continuation(
                 },
                 height,
                 occupied: std::collections::BTreeSet::new(),
-                slice: Some(slice),
+                slice: (!plan.cloned).then_some(slice),
             }
         })
         .collect();
