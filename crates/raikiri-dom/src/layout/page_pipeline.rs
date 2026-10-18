@@ -1436,7 +1436,7 @@ impl PageOrigins {
         )
         .then(|| {
             let natural_page = self.page_index_for_y(text_y + text_height);
-            current_page.saturating_add(1).max(natural_page)
+            forced_target_page(current_page, natural_page)
         })
     }
 
@@ -4461,7 +4461,7 @@ fn paginate_flow(
             if saw_child {
                 if consumes_pending_break || named_page_change {
                     let natural_page = page_index_in_flow(effective_y).unwrap_or(current_page);
-                    let target_page = current_page.saturating_add(1).max(natural_page);
+                    let target_page = forced_target_page(current_page, natural_page);
                     check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
                     // The candidate was materialized to `effective_y` above,
@@ -4653,7 +4653,7 @@ fn paginate_flow(
                     reach.flow_max,
                     named_page_change,
                 );
-                let target_page = current_page.saturating_add(1).max(natural_page);
+                let target_page = forced_target_page(current_page, natural_page);
                 check_candidate_page!('candidate_loop, target_page);
                 // A negative block-start margin can pull a forced-break box
                 // back into the preceding page.  Keep the break boundary for
@@ -6591,6 +6591,13 @@ fn margin_box_starts_page(
         .unwrap_or(current_page);
     margin_box_page > current_page
         || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
+}
+
+/// The page that a box which has to start a new page lands on: the page after
+/// `current_page`, or `natural_page` when the box's position already falls on
+/// a later page.
+fn forced_target_page(current_page: u32, natural_page: u32) -> u32 {
+    current_page.saturating_add(1).max(natural_page)
 }
 
 /// Where a box that crosses a page transition is placed, given the
