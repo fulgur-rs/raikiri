@@ -2950,6 +2950,11 @@ fn with_element_style_overrides(
         "font-family",
         "font-weight",
         "font-style",
+        "fill",
+        "stroke",
+        "fill-opacity",
+        "stroke-opacity",
+        "stroke-width",
     ];
     budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)

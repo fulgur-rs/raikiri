@@ -86,6 +86,17 @@ pub fn svg_font_family(style: &ComputedValues) -> String {
         .join(",")
 }
 
+/// The CSS name of an SVG presentation property.
+fn svg_presentation_name(key: PropertyKey) -> &'static str {
+    match key {
+        PropertyKey::Fill => "fill",
+        PropertyKey::Stroke => "stroke",
+        PropertyKey::FillOpacity => "fill-opacity",
+        PropertyKey::StrokeOpacity => "stroke-opacity",
+        _ => "stroke-width",
+    }
+}
+
 fn node_declarations(
     style: &ComputedValues,
     properties: &[SvgStyleProperty],
@@ -119,6 +130,11 @@ fn node_declarations(
                 PropertyKey::FontFamily => "font-family",
                 PropertyKey::FontStyle => "font-style",
                 PropertyKey::FontWeight => "font-weight",
+                key @ (PropertyKey::Fill
+                | PropertyKey::Stroke
+                | PropertyKey::FillOpacity
+                | PropertyKey::StrokeOpacity
+                | PropertyKey::StrokeWidth) => svg_presentation_name(key),
                 _ => continue,
             };
             // SVG renderers such as usvg copy an ancestor's raw `font-size`
@@ -152,6 +168,17 @@ fn node_declarations(
                 PropertyKey::FontFamily => ("font-family", svg_font_family(style)),
                 PropertyKey::FontStyle => ("font-style", style.font_style.as_css_str().to_owned()),
                 PropertyKey::FontWeight => ("font-weight", style.font_weight.to_string()),
+                // Held by the declaration alone: no computed field carries them.
+                key @ (PropertyKey::Fill
+                | PropertyKey::Stroke
+                | PropertyKey::FillOpacity
+                | PropertyKey::StrokeOpacity
+                | PropertyKey::StrokeWidth) => {
+                    let Some(value) = &property.expression else {
+                        continue;
+                    };
+                    (svg_presentation_name(key), value.clone())
+                }
                 _ => continue,
             }
         };

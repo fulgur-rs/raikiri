@@ -2634,6 +2634,44 @@ fn descendant_overrides_replace_inline_and_presentation_properties_only() {
 }
 
 #[test]
+fn descendant_overrides_accept_the_painting_properties() {
+    let prepared = source_with_descendant_styles(
+        br##"<svg xmlns="http://www.w3.org/2000/svg"><rect fill="blue" stroke="green" stroke-width="9" fill-opacity=".1" stroke-opacity=".2" style="fill:lime!important;stroke-width:7" width="20" height="10"/></svg>"##,
+        &[super::SvgElementStyle {
+            element_index: 1,
+            declarations: "fill:rgba(255,0,0,1)!important;stroke:none!important;fill-opacity:.5!important;stroke-opacity:.25!important;stroke-width:3px!important",
+        }],
+    )
+    .unwrap();
+    let xml = roxmltree::Document::parse(&prepared).unwrap();
+    let rect = xml
+        .descendants()
+        .find(|node| node.has_tag_name("rect"))
+        .unwrap();
+    for attribute in [
+        "fill",
+        "stroke",
+        "stroke-width",
+        "fill-opacity",
+        "stroke-opacity",
+    ] {
+        assert_eq!(rect.attribute(attribute), None, "{attribute}");
+    }
+    let style = rect.attribute("style").unwrap();
+    for declaration in [
+        "fill:rgba(255,0,0,1)",
+        "stroke:none",
+        "fill-opacity:.5",
+        "stroke-opacity:.25",
+        "stroke-width:3px",
+    ] {
+        assert!(style.contains(declaration), "{declaration} in {style}");
+    }
+    assert!(!style.contains("lime"));
+    assert!(!style.contains("stroke-width:7"));
+}
+
+#[test]
 fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
     let source = br#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>"#;
     for styles in [
@@ -2654,7 +2692,7 @@ fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
         ],
         vec![super::SvgElementStyle {
             element_index: 1,
-            declarations: "fill:red",
+            declarations: "width:10px",
         }],
         vec![super::SvgElementStyle {
             element_index: 1,
@@ -2973,7 +3011,7 @@ fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_r
     };
     for root_style in [SvgRootStyle::default(), transparent, hidden] {
         assert!(matches!(
-            rasterize(root_style, "fill:red!important"),
+            rasterize(root_style, "width:10px!important"),
             Err(SvgError::InvalidDocument(_))
         ));
     }

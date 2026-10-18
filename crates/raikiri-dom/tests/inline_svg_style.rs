@@ -59,6 +59,45 @@ fn declarations_are_listed_by_preorder_index_without_the_root() {
 }
 
 #[test]
+fn painting_properties_are_listed_as_declarations() {
+    let elements = declarations(
+        "<style>rect{fill:blue;stroke:url(#g) red;fill-opacity:25%}.w{stroke-width:2px}</style>\
+         <svg width=20 height=20><rect class=w /><g><rect /></g></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    let rect = "fill:rgba(0,0,255,1)!important;stroke:url(\"#g\") rgba(255,0,0,1)!important;fill-opacity:0.25!important;";
+    assert_eq!(
+        listed,
+        [
+            (1, format!("{rect}stroke-width:2px!important;").as_str()),
+            (3, rect),
+        ]
+    );
+}
+
+#[test]
+fn css_wide_painting_keywords_are_listed_as_declarations() {
+    let elements = declarations(
+        "<style>rect{fill:inherit;stroke:unset;stroke-width:initial}</style>\
+         <svg width=20 height=20><rect /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            1,
+            "fill:inherit!important;stroke:inherit!important;stroke-width:1!important;"
+        )]
+    );
+}
+
+#[test]
 fn an_svg_without_matching_rules_lists_nothing() {
     let elements = declarations("<svg width=20 height=20><rect /></svg>");
     assert!(elements.is_empty());

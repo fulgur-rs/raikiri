@@ -56,6 +56,11 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     match value {
         PropertyValue::ContextualColor(color) => serialize_one_color(color.source.as_ref()),
         PropertyValue::AllRevertLayer => Some("revert-layer".to_owned()),
+        PropertyValue::Fill(text)
+        | PropertyValue::Stroke(text)
+        | PropertyValue::FillOpacity(text)
+        | PropertyValue::StrokeOpacity(text)
+        | PropertyValue::StrokeWidth(text) => Some(text.to_string()),
         PropertyValue::FontSizeKeyword(keyword) => Some(keyword.as_css_str().to_owned()),
         PropertyValue::FontSizeCalc(calc) => Some(serialize_length_percentage_or_calc(
             &LengthPercentageOrCalc::RelativeCalc(*calc),

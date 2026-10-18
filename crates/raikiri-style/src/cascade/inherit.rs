@@ -1525,11 +1525,47 @@ fn svg_color_is_current_color(source: &str) -> bool {
     parser.expect_ident_matching("currentcolor").is_ok() && parser.expect_exhausted().is_ok()
 }
 
+/// The initial value of an SVG presentation property, as the SVG renderer
+/// reads it (SVG 2 §13).
+/// The value of the SVG presentation property `key` with the given text.
+fn svg_presentation_value(key: crate::property::PropertyKey, text: &str) -> PropertyValue {
+    use crate::property::PropertyKey::*;
+    let text = text.into();
+    match key {
+        Fill => PropertyValue::Fill(text),
+        Stroke => PropertyValue::Stroke(text),
+        FillOpacity => PropertyValue::FillOpacity(text),
+        StrokeOpacity => PropertyValue::StrokeOpacity(text),
+        _ => PropertyValue::StrokeWidth(text),
+    }
+}
+
+fn svg_presentation_initial(key: crate::property::PropertyKey) -> &'static str {
+    use crate::property::PropertyKey::*;
+    match key {
+        Fill => "black",
+        Stroke => "none",
+        _ => "1",
+    }
+}
+
 fn svg_property_is_exported(key: crate::property::PropertyKey) -> bool {
     use crate::property::PropertyKey::*;
     matches!(
         key,
-        Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility | Display | Opacity
+        Color
+            | FontFamily
+            | FontSize
+            | FontWeight
+            | FontStyle
+            | Visibility
+            | Display
+            | Opacity
+            | Fill
+            | Stroke
+            | FillOpacity
+            | StrokeOpacity
+            | StrokeWidth
     )
 }
 
@@ -1537,7 +1573,17 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
     use crate::property::PropertyKey::*;
     matches!(
         key,
-        Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility
+        Color
+            | FontFamily
+            | FontSize
+            | FontWeight
+            | FontStyle
+            | Visibility
+            | Fill
+            | Stroke
+            | FillOpacity
+            | StrokeOpacity
+            | StrokeWidth
     )
 }
 
@@ -1566,6 +1612,11 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         }
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
+        PropertyValue::Fill(text)
+        | PropertyValue::Stroke(text)
+        | PropertyValue::FillOpacity(text)
+        | PropertyValue::StrokeOpacity(text)
+        | PropertyValue::StrokeWidth(text) => Some(text.to_string()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
         PropertyValue::FontWeight(FontWeightValue::Lighter) => Some("lighter".into()),
         // `<absolute-size>` keywords keep their computed px size. SVG
@@ -2243,6 +2294,20 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                 } else {
                     crate::property::FontStyle::Normal
                 });
+            }
+            // The SVG renderer inherits these itself: an `inherit` or `unset`
+            // is exported as the keyword, and `initial` as the initial value.
+            key @ (crate::property::PropertyKey::Fill
+            | crate::property::PropertyKey::Stroke
+            | crate::property::PropertyKey::FillOpacity
+            | crate::property::PropertyKey::StrokeOpacity
+            | crate::property::PropertyKey::StrokeWidth) => {
+                let text = if initial {
+                    svg_presentation_initial(key)
+                } else {
+                    "inherit"
+                };
+                return svg_presentation_value(key, text);
             }
             crate::property::PropertyKey::VerticalAlign => {
                 return PropertyValue::VerticalAlign(if keyword == CssWideKeyword::Inherit {
@@ -3056,6 +3121,11 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::ColumnWidth(_)
         | PropertyValue::ColumnFill(_)
         | PropertyValue::TextGroupAlign(_)
+        | PropertyValue::Fill(_)
+        | PropertyValue::Stroke(_)
+        | PropertyValue::FillOpacity(_)
+        | PropertyValue::StrokeOpacity(_)
+        | PropertyValue::StrokeWidth(_)
         | PropertyValue::ColumnSpan(_)
         | PropertyValue::Columns(_)
         | PropertyValue::ColumnRule(_)
@@ -3625,6 +3695,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ColumnCount(value) => target.column_count = value,
         PropertyValue::ColumnFill(value) => target.column_fill = value,
         PropertyValue::TextGroupAlign(value) => target.text_group_align = value,
+        // Only the SVG export reads these: see `PropertyValue::SvgPresentation`.
+        PropertyValue::Fill(_)
+        | PropertyValue::Stroke(_)
+        | PropertyValue::FillOpacity(_)
+        | PropertyValue::StrokeOpacity(_)
+        | PropertyValue::StrokeWidth(_) => {}
         PropertyValue::ColumnSpan(value) => target.column_span = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
         PropertyValue::ColumnRuleWidth(value) => {

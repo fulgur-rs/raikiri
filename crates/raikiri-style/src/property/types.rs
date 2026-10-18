@@ -7820,6 +7820,11 @@ impl DeferredValue {
                 | PropertyKey::BorderImageRepeat
                 | PropertyKey::BoxDecorationBreak
                 | PropertyKey::TextShadow
+                | PropertyKey::Fill
+                | PropertyKey::Stroke
+                | PropertyKey::FillOpacity
+                | PropertyKey::StrokeOpacity
+                | PropertyKey::StrokeWidth
         ) {
             return None;
         }
@@ -11501,6 +11506,25 @@ pub enum PropertyValue {
     /// `text-group-align: none | start | end | left | right | center` —
     /// non-inherited, initial `none` (CSS Text 4).
     TextGroupAlign(TextGroupAlign),
+    /// `fill` — **inherited**, initial `black` (SVG 2 §13). The text is the
+    /// validated `<paint>` in the form an SVG renderer reads it. No
+    /// computed-style field holds it: the host cascade resolves it for the
+    /// descendants of an inline SVG only, and the SVG export is its sole
+    /// consumer (see [`crate::cascade::SvgStyleProperty`]).
+    Fill(Box<str>),
+    /// `stroke` — **inherited**, initial `none` (SVG 2 §13). Same shape as
+    /// [`PropertyValue::Fill`].
+    Stroke(Box<str>),
+    /// `fill-opacity` — **inherited**, initial `1` (SVG 2 §13). The text is the
+    /// number clamped to `[0, 1]`; same shape as [`PropertyValue::Fill`].
+    FillOpacity(Box<str>),
+    /// `stroke-opacity` — **inherited**, initial `1` (SVG 2 §13). Same shape as
+    /// [`PropertyValue::FillOpacity`].
+    StrokeOpacity(Box<str>),
+    /// `stroke-width` — **inherited**, initial `1` (SVG 2 §13). The text is a
+    /// non-negative number, percentage or length an SVG renderer resolves;
+    /// same shape as [`PropertyValue::Fill`].
+    StrokeWidth(Box<str>),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12119,6 +12143,13 @@ pub enum PropertyKey {
     BorderImage,
     // CSS Text 4 text-group-align; appended to preserve existing key slots.
     TextGroupAlign,
+    // SVG 2 painting properties carried by `PropertyValue::SvgPresentation`;
+    // appended to preserve existing key slots.
+    Fill,
+    Stroke,
+    FillOpacity,
+    StrokeOpacity,
+    StrokeWidth,
 }
 
 impl PropertyValue {
@@ -12371,6 +12402,11 @@ impl PropertyValue {
             PropertyValue::Transform(_) => PropertyKey::Transform,
             PropertyValue::TransformOrigin(..) => PropertyKey::TransformOrigin,
             PropertyValue::Filter(_) => PropertyKey::Filter,
+            PropertyValue::Fill(_) => PropertyKey::Fill,
+            PropertyValue::Stroke(_) => PropertyKey::Stroke,
+            PropertyValue::FillOpacity(_) => PropertyKey::FillOpacity,
+            PropertyValue::StrokeOpacity(_) => PropertyKey::StrokeOpacity,
+            PropertyValue::StrokeWidth(_) => PropertyKey::StrokeWidth,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
             PropertyValue::BorderSpacing(_) => PropertyKey::BorderSpacing,
@@ -13522,6 +13558,11 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "transform" => PropertyKey::Transform,
         "transform-origin" => PropertyKey::TransformOrigin,
         "filter" => PropertyKey::Filter,
+        "fill" => PropertyKey::Fill,
+        "stroke" => PropertyKey::Stroke,
+        "fill-opacity" => PropertyKey::FillOpacity,
+        "stroke-opacity" => PropertyKey::StrokeOpacity,
+        "stroke-width" => PropertyKey::StrokeWidth,
         _ => return None,
     })
 }

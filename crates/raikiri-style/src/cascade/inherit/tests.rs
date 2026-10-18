@@ -11748,6 +11748,156 @@ fn svg_font_size_calc_of_percent_and_em_exports_its_em_multiple() {
     assert_eq!(font_size(b), Some(None));
 }
 
+/// The exported SVG properties of the `rect` of `css` applied to an SVG.
+fn svg_rect_properties(
+    css: &str,
+    attributes: &[(&str, &str)],
+    inline_style: Option<&str>,
+) -> Vec<SvgStyleProperty> {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, css);
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let rect =
+        doc.push_element_with_namespace(svg, "rect", "http://www.w3.org/2000/svg", attributes);
+    doc.nodes[rect].inline_style = inline_style.map(str::to_owned);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    result
+        .svg_style_properties(StyleNodeId(rect as u64))
+        .to_vec()
+}
+
+/// `(inherited, expression)` of `key` among `properties`.
+fn exported(properties: &[SvgStyleProperty], key: PropertyKey) -> Option<(bool, Option<String>)> {
+    properties
+        .iter()
+        .find(|property| property.property == key)
+        .map(|property| (property.inherited, property.expression.clone()))
+}
+
+#[test]
+fn svg_painting_properties_export_their_validated_text() {
+    let properties = svg_rect_properties(
+        "rect { fill: blue; stroke: url(#g) none; fill-opacity: 50%; \
+         stroke-opacity: 2; stroke-width: 2PX }",
+        &[],
+        None,
+    );
+    let text = |key| exported(&properties, key);
+    assert_eq!(
+        text(PropertyKey::Fill),
+        Some((false, Some("rgba(0,0,255,1)".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::Stroke),
+        Some((false, Some("url(\"#g\") none".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::FillOpacity),
+        Some((false, Some("0.5".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeOpacity),
+        Some((false, Some("1".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeWidth),
+        Some((false, Some("2px".into())))
+    );
+}
+
+#[test]
+fn svg_painting_properties_follow_the_cascade_order() {
+    let fill = |css: &str, attributes: &[(&str, &str)], inline_style: Option<&str>| {
+        exported(
+            &svg_rect_properties(css, attributes, inline_style),
+            PropertyKey::Fill,
+        )
+        .and_then(|(_, text)| text)
+    };
+    // Specificity, source order, `!important` and the `style` attribute decide
+    // as they do for any other property.
+    assert_eq!(
+        fill(
+            "rect { fill: red } #r { fill: green } rect { fill: blue }",
+            &[("id", "r")],
+            None
+        ),
+        Some("rgba(0,128,0,1)".into())
+    );
+    assert_eq!(
+        fill(
+            "rect { fill: blue !important } #r { fill: green }",
+            &[("id", "r")],
+            None
+        ),
+        Some("rgba(0,0,255,1)".into())
+    );
+    assert_eq!(
+        fill("rect { fill: blue }", &[], Some("fill: green")),
+        Some("rgba(0,128,0,1)".into())
+    );
+    // An invalid declaration is dropped and does not hide an earlier one.
+    assert_eq!(
+        fill("rect { fill: red; fill: 12 }", &[], None),
+        Some("rgba(255,0,0,1)".into())
+    );
+}
+
+#[test]
+fn an_svg_presentation_attribute_is_left_to_the_svg() {
+    // The attribute is already in the SVG source; only a declaration that
+    // outranks it needs exporting.
+    let properties = svg_rect_properties("", &[("fill", "red"), ("stroke-width", "3")], None);
+    assert_eq!(exported(&properties, PropertyKey::Fill), None);
+    assert_eq!(exported(&properties, PropertyKey::StrokeWidth), None);
+}
+
+#[test]
+fn svg_painting_properties_resolve_variables() {
+    let properties = svg_rect_properties("rect { --c: green; fill: var(--c) }", &[], None);
+    assert_eq!(
+        exported(&properties, PropertyKey::Fill),
+        Some((false, Some("rgba(0,128,0,1)".into())))
+    );
+}
+
+#[test]
+fn svg_painting_properties_take_the_css_wide_keywords() {
+    let properties = svg_rect_properties(
+        "rect { fill: inherit; stroke: unset; fill-opacity: initial; \
+         stroke-opacity: initial; stroke-width: initial }",
+        &[],
+        None,
+    );
+    // All of them inherit, so `unset` is `inherit`, and the SVG renderer
+    // does the inheriting.
+    for key in [PropertyKey::Fill, PropertyKey::Stroke] {
+        assert_eq!(
+            exported(&properties, key),
+            Some((true, Some("inherit".into())))
+        );
+    }
+    assert_eq!(
+        exported(&properties, PropertyKey::FillOpacity),
+        Some((false, Some("1".into())))
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((false, Some("1".into())))
+    );
+    let properties = svg_rect_properties("rect { fill: initial; stroke: initial }", &[], None);
+    assert_eq!(
+        exported(&properties, PropertyKey::Fill),
+        Some((false, Some("black".into())))
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::Stroke),
+        Some((false, Some("none".into())))
+    );
+}
+
 #[test]
 fn overflow_clip_margin_inherits_explicitly() {
     let mut doc = TestDoc::new();

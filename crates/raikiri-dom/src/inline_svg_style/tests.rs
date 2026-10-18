@@ -99,3 +99,50 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
     assert_eq!(css.matches(":inherit!important;").count(), 7, "{css}");
     assert!(css.contains("font-size:100%!important;"), "{css}");
 }
+
+#[test]
+fn descendant_declarations_carry_painting_properties_as_declared() {
+    let painting = [
+        (PropertyKey::Fill, "fill", "rgba(255,0,0,1)"),
+        (PropertyKey::Stroke, "stroke", "url(\"#g\") none"),
+        (PropertyKey::FillOpacity, "fill-opacity", "0.5"),
+        (PropertyKey::StrokeOpacity, "stroke-opacity", "0.25"),
+        (PropertyKey::StrokeWidth, "stroke-width", "3px"),
+    ];
+    for (property, name, value) in painting {
+        let declared = [SvgStyleProperty {
+            property,
+            inherited: false,
+            expression: Some(value.into()),
+        }];
+        let mut budget = 1024;
+        assert_eq!(
+            node_declarations(&ComputedValues::initial(), &declared, &mut budget).unwrap(),
+            format!("{name}:{value}!important;")
+        );
+
+        let inherited = [SvgStyleProperty {
+            property,
+            inherited: true,
+            expression: None,
+        }];
+        let mut budget = 1024;
+        assert_eq!(
+            node_declarations(&ComputedValues::initial(), &inherited, &mut budget).unwrap(),
+            format!("{name}:inherit!important;")
+        );
+
+        // No computed field backs these properties, so a declaration without
+        // its text has nothing to export.
+        let missing = [SvgStyleProperty {
+            property,
+            inherited: false,
+            expression: None,
+        }];
+        let mut budget = 1024;
+        assert_eq!(
+            node_declarations(&ComputedValues::initial(), &missing, &mut budget).unwrap(),
+            ""
+        );
+    }
+}
