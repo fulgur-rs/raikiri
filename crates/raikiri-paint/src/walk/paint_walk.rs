@@ -31,6 +31,18 @@ pub(super) struct PaintWalk<'w, S> {
     /// The page name that `@page` rules are matched against, if any.
     pub(super) active_page_name: Option<Option<&'w str>>,
     pub(super) geometry: PageGeometry,
+    /// Where the flow of the page starts on its y axis.
+    pub(super) content_origin_y: f32,
+    pub(super) root_transform: Affine,
+    pub(super) root_id: usize,
+    /// The element whose background the canvas takes, if any.
+    pub(super) canvas_owner: Option<usize>,
+    pub(super) layout_fragments: &'w [raikiri_dom::LayoutFragment],
+    /// The fragments of each node under each parent fragment, in layout order.
+    pub(super) fragments_by_parent_and_node: HashMap<(Option<usize>, usize), Vec<usize>>,
+    pub(super) fragmented_nodes: HashSet<usize>,
+    /// The height of the content generated for a node, found once.
+    pub(super) generated_flow_heights: HashMap<usize, f32>,
     pub(super) pixel_source: Option<&'w dyn ImagePixelSource>,
     pub(super) custom_highlights: &'w [crate::TextHighlightRange],
     pub(super) warnings: &'w mut Vec<RenderWarning>,
