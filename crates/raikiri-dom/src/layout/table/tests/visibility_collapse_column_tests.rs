@@ -422,6 +422,18 @@ const COLLAPSED_ROW: &str = "visibility:collapse";
 /// every column an equal share of what the borders leave, so a cell wraps by
 /// how much border the table spends.
 fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
+    let (doc, table, _) = laid_out_rows("table-layout:fixed", width, columns, rows);
+    doc.nodes[table].unrounded_layout.size.height
+}
+
+/// The table [`rows_height`] measures, laid out with `table_css` besides its
+/// `width`, and its cells by row.
+fn laid_out_rows(
+    table_css: &str,
+    width: u32,
+    columns: &[&'static str],
+    rows: &[Row],
+) -> (Document, usize, Vec<Vec<usize>>) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(
@@ -435,12 +447,13 @@ fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
         "div",
         Style::default(),
         Some(format!(
-            "display:table;table-layout:fixed;border-collapse:collapse;width:{width}px"
+            "display:table;{table_css};border-collapse:collapse;width:{width}px"
         )),
     );
     for css in columns {
         doc.append_element(Some(table), "div", Style::default(), Some(*css));
     }
+    let mut by_row = Vec::new();
     for &(row_css, cells) in rows {
         let row = doc.append_element(
             Some(table),
@@ -448,6 +461,7 @@ fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
             Style::default(),
             Some(format!("display:table-row;{row_css}")),
         );
+        let mut ids = Vec::new();
         for &(css, text) in cells {
             let cell = doc.append_element(
                 Some(row),
@@ -458,12 +472,14 @@ fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
                 )),
             );
             doc.append_text(cell, text);
+            ids.push(cell);
         }
+        by_row.push(ids);
     }
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
-    doc.nodes[table].unrounded_layout.size.height
+    (doc, table, by_row)
 }
 
 #[test]
@@ -516,6 +532,94 @@ fn a_collapsed_column_is_measured_with_the_borders_it_shares_with_a_neighbour() 
     let measured = rows_height(100, &[COLLAPSED_COL, COL], &rows);
     assert_eq!(measured, rows_height(100, &[COL, COL], &rows));
     assert_eq!(measured, 20.0);
+}
+
+/// A wrapping cell and a collapsed cell with a wide border on the side that
+/// faces it.
+const WRAPS: &str = "X X X X X X";
+
+#[test]
+fn a_column_after_a_collapsed_one_is_measured_with_the_borders_it_had_beside_it() {
+    // The collapsed cell's wide right border is also the neighbour's left
+    // border while the column is in place, and narrows the text there. The
+    // row keeps the height it had.
+    let rows: [Row; 1] = [(
+        "",
+        &[
+            ("", "X"),
+            ("border-right:20px solid black", "X"),
+            ("", WRAPS),
+        ],
+    )];
+    let measured = rows_height(80, &[COL, COLLAPSED_COL, COL], &rows);
+    assert_eq!(measured, rows_height(80, &[COL, COL, COL], &rows));
+    assert_eq!(measured, 60.0);
+}
+
+#[test]
+fn a_column_before_a_collapsed_one_is_measured_with_the_borders_it_had_beside_it() {
+    let rows: [Row; 1] = [(
+        "",
+        &[
+            ("", WRAPS),
+            ("border-left:20px solid black", "X"),
+            ("", "X"),
+        ],
+    )];
+    let measured = rows_height(80, &[COL, COLLAPSED_COL, COL], &rows);
+    assert_eq!(measured, rows_height(80, &[COL, COL, COL], &rows));
+    assert_eq!(measured, 60.0);
+}
+
+#[test]
+fn an_automatic_table_sizes_the_columns_in_place_with_the_borders_they_had() {
+    // The wide border adds to the next cell's max-content width while the
+    // column is in place, so it changes how the columns the rows are measured
+    // at share the table.
+    let rows: [Row; 1] = [(
+        "",
+        &[
+            ("", "X"),
+            ("border-right:20px solid black", "X"),
+            ("", WRAPS),
+        ],
+    )];
+    let height = |columns: &[&'static str]| {
+        let (doc, table, _) = laid_out_rows("table-layout:auto", 100, columns, &rows);
+        doc.nodes[table].unrounded_layout.size.height
+    };
+    let measured = height(&[COL, COLLAPSED_COL, COL]);
+    assert_eq!(measured, height(&[COL, COL, COL]));
+    assert_eq!(measured, 10.0);
+}
+
+#[test]
+fn a_cell_beside_a_collapsed_column_breaks_its_lines_at_the_borders_it_keeps() {
+    // The cell is as wide when the rows are measured as when it is laid out,
+    // but its left border is not: the lines of the measure were broken at the
+    // border it had beside the collapsed column, and are not kept.
+    let rows: [Row; 1] = [(
+        "",
+        &[
+            ("", "X"),
+            ("border-right:20px solid black", "X"),
+            ("", WRAPS),
+        ],
+    )];
+    let columns = [
+        "display:table-column;width:40px",
+        "display:table-column;visibility:collapse;width:40px",
+        "display:table-column;width:40px",
+    ];
+    let (doc, _, cells) = laid_out_rows("table-layout:fixed", 120, &columns, &rows);
+    let cell = cells[0][2];
+    let lines = doc.nodes[cell]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("the cell breaks its text into lines");
+    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 40.0);
+    assert_eq!(lines.width, 40.0);
 }
 
 #[test]

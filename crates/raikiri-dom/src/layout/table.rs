@@ -477,7 +477,7 @@ fn compute_table_layout_checked(
     let table_border = resolve_table_rect(&table_style.border, inputs.parent_size);
     // The columns that collapse still set the widths the rows are measured at,
     // so the borders around them are read before they are left out.
-    let natural_border_width = shown
+    let borders_in_place = shown
         .as_ref()
         .filter(|_| cell_index.is_some() && columns_collapse)
         .map(|shown| {
@@ -501,6 +501,11 @@ fn compute_table_layout_checked(
             resolve_collapsed_borders(doc, resolved, index, table_idx);
         }
     }
+    let columns_in_place = borders_in_place.map(|(border_width, in_place)| ColumnsInPlace {
+        border_width,
+        in_place,
+        remaining: snapshot_borders(doc, &grid),
+    });
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
     let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
@@ -769,10 +774,16 @@ fn compute_table_layout_checked(
     // collapse ("col visibility:collapse doesn't change table height").
     let natural_insets_width = pad.left
         + pad.right
-        + natural_border_width.unwrap_or_else(|| collapsed.inline_border_width())
+        + columns_in_place.as_ref().map_or_else(
+            || collapsed.inline_border_width(),
+            |columns| columns.border_width,
+        )
         + border_spacing.0 * (grid.n_cols as f32 + 1.0);
-    let natural_widths = columns_collapse
-        .then(|| resolve_table_columns(doc, &mut grid, &pass, natural_insets_width));
+    let natural_widths = columns_collapse.then(|| {
+        measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+            resolve_table_columns(doc, &mut grid, &pass, natural_insets_width)
+        })
+    });
     let mut column_widths = if columns_collapse {
         let mut remaining = without_collapsed_columns(&grid, &collapsed_cols, false);
         let mut widths =
@@ -846,7 +857,12 @@ fn compute_table_layout_checked(
 
     // Row heights
     let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
-    let mut row_heights = resolve_row_heights(doc, &mut grid, height_widths, border_spacing)?;
+    let mut row_heights = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+        resolve_row_heights(doc, &mut grid, height_widths, border_spacing)
+    })?;
+    if let Some(columns) = &columns_in_place {
+        columns.forget_stale_row_passes(&mut grid);
+    }
     for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
         if *hidden {
             *height = 0.0;
@@ -3705,10 +3721,97 @@ fn reset_collapsed_borders(doc: &mut Document, grid: &TableGrid) {
     }
 }
 
+/// The borders the cells and rows of a grid have at one point of border
+/// resolution: the layout width of each cell's sides and the collapsed borders
+/// the cells and rows paint.
+struct BorderState {
+    cells: Vec<(usize, Rect<LengthPercentage>, Option<Sides<ComputedBorder>>)>,
+    rows: Vec<(usize, Option<Sides<ComputedBorder>>)>,
+}
+
+/// The two border states of a table with collapsed columns in the collapsed
+/// borders model. The columns that collapse still set the widths the rows are
+/// measured at, so the rows are measured with the borders every column in
+/// place gives the cells, and the cells are laid out with the borders the
+/// columns that remain give them.
+struct ColumnsInPlace {
+    /// [`CollapsedLines::inline_border_width`] with every column in place.
+    border_width: f32,
+    /// The borders with every column in place.
+    in_place: BorderState,
+    /// The borders with the collapsed columns left out.
+    remaining: BorderState,
+}
+
+impl ColumnsInPlace {
+    /// Forget the row-pass layout of each cell whose borders differ between
+    /// the two states: its lines were broken at borders it no longer has.
+    fn forget_stale_row_passes(&self, grid: &mut TableGrid) {
+        let states = self.in_place.cells.iter().zip(&self.remaining.cells);
+        for (cell, (in_place, remaining)) in grid.cells.iter_mut().zip(states) {
+            if in_place.1 != remaining.1 {
+                cell.row_pass = None;
+            }
+        }
+    }
+}
+
+/// Run `measure` with the borders every column in place gives the cells, when
+/// columns collapse, and leave the cells with the borders of the columns that
+/// remain.
+fn measured_in_place<R>(
+    doc: &mut LayoutSession<'_>,
+    columns: Option<&ColumnsInPlace>,
+    measure: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let Some(columns) = columns else {
+        return measure(doc);
+    };
+    apply_borders(doc, &columns.in_place);
+    let measured = measure(doc);
+    apply_borders(doc, &columns.remaining);
+    measured
+}
+
+/// Record the borders the cells and rows of `grid` have now.
+fn snapshot_borders(doc: &mut Document, grid: &TableGrid) -> BorderState {
+    let cells = grid
+        .cells
+        .iter()
+        .map(|cell| {
+            let border = doc
+                .layout_style_for_key(cell.node_id)
+                .expect("table cell layout style")
+                .border;
+            let painted = doc.table_layout_node_mut(cell.node_id).collapsed_border;
+            (cell.node_id, border, painted)
+        })
+        .collect();
+    let rows = grid
+        .rows
+        .iter()
+        .map(|&row| (row, doc.nodes[row].collapsed_border))
+        .collect();
+    BorderState { cells, rows }
+}
+
+/// Give the cells and rows the borders `state` recorded.
+fn apply_borders(doc: &mut Document, state: &BorderState) {
+    for &(cell, border, painted) in &state.cells {
+        doc.layout_style_for_key_mut(cell)
+            .expect("table cell layout style")
+            .border = border;
+        doc.table_layout_node_mut(cell).collapsed_border = painted;
+    }
+    for &(row, painted) in &state.rows {
+        doc.nodes[row].collapsed_border = painted;
+    }
+}
+
 /// The inline-axis width that collapsed borders take from the table while
 /// every column of `grid` is in place ([`CollapsedLines::inline_border_width`]
-/// of the grid with those columns). `collapsed_rows` stay out, as they do when
-/// the columns are shown.
+/// of the grid with those columns), and the borders the cells then have.
+/// `collapsed_rows` stay out, as they do when the columns are shown.
 ///
 /// Columns that collapse are still measured at the widths they had before,
 /// and those widths depend on the borders they had too, so this resolves
@@ -3724,19 +3827,24 @@ fn border_width_with_columns_in_place(
     table_idx: usize,
     table_border: &Rect<f32>,
     basis: Option<f32>,
-) -> f32 {
+) -> (f32, BorderState) {
     let rows_shown = without_collapsed_rows(grid, collapsed_rows);
     if rows_shown.rows.is_empty() {
         // Nothing shows, so no cell border meets the table's own.
-        return table_border.left + table_border.right;
+        reset_collapsed_borders(doc, grid);
+        return (
+            table_border.left + table_border.right,
+            snapshot_borders(doc, grid),
+        );
     }
     let index = CellIndex::new(&rows_shown);
     reset_collapsed_borders(doc, grid);
     resolve_collapsed_borders(doc, &rows_shown, &index, table_idx);
     let width = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis)
         .inline_border_width();
+    let in_place = snapshot_borders(doc, grid);
     reset_collapsed_borders(doc, shown);
-    width
+    (width, in_place)
 }
 
 fn compute_collapsed_lines(
