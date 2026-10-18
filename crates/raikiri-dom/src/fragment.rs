@@ -109,6 +109,18 @@ impl FragmentationContext {
         })
     }
 
+    /// Return the context of a subtree that lies in one piece in `column`:
+    /// no later column and no column height breaks the lines below it.
+    pub(crate) fn confined_to(self, column: usize) -> Self {
+        Self {
+            column_index: column,
+            column_count: column + 1,
+            available_height: None,
+            column_fill: ColumnFillValue::Auto,
+            ..self
+        }
+    }
+
     /// Return a child context translated into one of this container's columns.
     pub(crate) fn in_column(self, column_index: usize, origin_x: f32, origin_y: f32) -> Self {
         Self {

@@ -30,7 +30,7 @@ pub(super) fn balance(
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, has_empty, mut high) = collect(tree, entries)?;
+    let (paragraphs, paragraph_count, has_empty, mut high) = collect(tree, entries, true)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
         || !high.is_finite()
@@ -63,7 +63,7 @@ pub(super) fn fill_definite(
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) = collect(tree, entries)?;
+    let (paragraphs, paragraph_count, _, _) = collect(tree, entries, true)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
     }
@@ -77,9 +77,14 @@ pub(super) fn fill_definite(
     Some(finish_group(group.placements, height))
 }
 
+/// The paragraphs of `entries` with their line extents, when each entry is a
+/// plain paragraph. With `atomics`, a paragraph may hold atomic inlines, which
+/// go to the column of their line. The row and page streams place only lines,
+/// so they pass `false` and leave such a paragraph to the other strategies.
 fn collect(
     tree: &Document,
     entries: &[Measurement],
+    atomics: bool,
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
     let mut paragraphs = Vec::with_capacity(entries.len());
     let mut paragraph_count = 0;
@@ -111,7 +116,12 @@ fn collect(
             && node.style.overflow.x == taffy::Overflow::Visible
             && node.style.overflow.y == taffy::Overflow::Visible;
         if !can_balance_paragraph_box(tree, child)
-            || (!empty && !can_balance_single_paragraph(tree, child))
+            || (!empty
+                && !if atomics {
+                    can_balance_atomic_paragraph(tree, child)
+                } else {
+                    can_balance_single_paragraph(tree, child)
+                })
             || node.display() != DisplayValue::Block
             || is_right_aligned_in_parent(tree, child)
             || node.break_before != BreakBetween::Auto
@@ -407,7 +417,7 @@ pub(super) fn fill_rows(
     later: f32,
     budget: usize,
 ) -> Result<Rows, RowsStop> {
-    let (paragraphs, count, _, _) = collect(tree, entries).ok_or(RowsStop::Unsupported)?;
+    let (paragraphs, count, _, _) = collect(tree, entries, false).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
         return Err(RowsStop::Unsupported);
     }
@@ -530,7 +540,7 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let Some((paragraphs, count, _, _)) = collect(tree, entries) else {
+    let Some((paragraphs, count, _, _)) = collect(tree, entries, false) else {
         return Ok(None);
     };
     if count == 0 || context.column_count == 0 {
