@@ -365,7 +365,7 @@ fn a_float_pushes_the_lines_of_a_block_after_down_but_not_its_height() {
         "<div><span></span></div>",
         "span{float:left;width:100%;height:40px}div::after{content:'X';display:block;height:20px}",
     );
-    // As an ordinary block: the box sits beside the float at the top of the
-    // div, and its line overflows it below the float.
-    assert_eq!(boxes(&document, "div"), vec![(0, 0.0, 100.0, 40.0)]);
+    // The block's line sits below the float, but its auto height follows the
+    // 20px block box; the float does not enlarge this non-BFC div.
+    assert_eq!(boxes(&document, "div"), vec![(0, 0.0, 100.0, 20.0)]);
 }

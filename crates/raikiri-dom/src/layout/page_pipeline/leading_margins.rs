@@ -91,8 +91,15 @@ pub(super) fn truncate(
                 control.check_discovery_page_index(page)?;
                 let delta = pages.origin(page) - child_y;
                 document.nodes[child].unrounded_layout.location.y += delta;
-                follow_moved_ifc_block(document, child, delta);
-                shrink_ancestors_after_margin_truncation(document, cascade, child, delta, root);
+                let followed_ifc_boxes = follow_moved_ifc_block(document, child, delta);
+                shrink_ancestors_after_margin_truncation(
+                    document,
+                    cascade,
+                    child,
+                    delta,
+                    root,
+                    &followed_ifc_boxes,
+                );
                 child_y += delta;
                 moved = true;
             }

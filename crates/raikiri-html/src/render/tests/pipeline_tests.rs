@@ -2151,8 +2151,8 @@ fn pipeline_leaves_footnotes_out_of_the_body_end() {
 #[test]
 fn pipeline_keeps_an_inline_holding_a_float_to_its_line() {
     // CSS 2.1 §10.6.1: a float adds no height to the inline that holds it,
-    // so the span keeps its line's height and the paragraph is as tall as
-    // with the float placed in it directly: 130px, and one page.
+    // so the span keeps its line's height and the normal block stays 100px.
+    // The outer flow-root still includes the float's extent and its padding.
     let doc = parse(
         "<style>@page{size:250px 250px;margin:0} body{margin:0;display:flow-root;padding-bottom:60px}</style>\
          <div style='line-height:50px'>a<br>b<span id=s><span style='float:left;width:10px;height:80px'></span></span></div>",
@@ -2170,8 +2170,9 @@ fn pipeline_keeps_an_inline_holding_a_float_to_its_line() {
             .size
             .height
     };
-    assert_eq!(height("div", 0), 130.0);
+    assert_eq!(height("div", 0), 100.0);
     assert!(height("span", 0) < 50.0, "{}", height("span", 0));
+    assert_eq!(height("body", 0), 190.0);
 }
 
 /// The page-flow top of each element with an `id`, in source order.

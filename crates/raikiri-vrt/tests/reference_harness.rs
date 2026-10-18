@@ -6,7 +6,7 @@
 
 use raikiri_vrt::reference::{FixtureError, Tolerance, compare_png, load_fixture, run_and_compare};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 
@@ -91,6 +91,16 @@ fn build_fixture(html: Option<&[u8]>, pages: &[(u32, Vec<u8>)]) -> TempDir {
         }
     }
     dir
+}
+
+fn reference_diff_dir(fixture: &TempDir) -> PathBuf {
+    // Match src/reference.rs, which honors runtime target paths in this order.
+    let target_dir = std::env::var("CARGO_TARGET_TMPDIR")
+        .or_else(|_| std::env::var("CARGO_TARGET_DIR"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("target"));
+    let fixture_name = fixture.path().file_name().unwrap().to_str().unwrap();
+    target_dir.join("reference-diffs").join(fixture_name)
 }
 
 fn tiny_png() -> Vec<u8> {
@@ -261,25 +271,7 @@ fn test_run_and_compare_success_removes_no_files() {
     let png = encode_png(&solid([200, 100, 50, 255], 4, 4), 4, 4);
     let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, png.clone())]);
 
-    // run_and_compare's diff_dir_root() reads CARGO_TARGET_TMPDIR /
-    // CARGO_TARGET_DIR from the *runtime* process environment, where neither
-    // is set (those are cargo-supplied compile-time vars for the test/bench
-    // target, not propagated to the running binary's env) — so it falls
-    // through to the relative "target/reference-diffs", resolved against
-    // the process's current directory, which `cargo test` sets to the
-    // package's manifest directory. CARGO_MANIFEST_DIR (compile-time) gives
-    // us that same directory to compute the actual on-disk location.
-    let fixture_name = dir
-        .path()
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    let diff_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("reference-diffs")
-        .join(&fixture_name);
+    let diff_dir = reference_diff_dir(&dir);
 
     // Ensure no stale diff dir from a prior run.
     let _ = fs::remove_dir_all(&diff_dir);
@@ -301,31 +293,13 @@ fn test_run_and_compare_success_removes_no_files() {
 fn test_run_and_compare_writes_artifacts_on_diff() {
     use std::panic;
     // Compare mismatch → panics with a DiffReport, and both actual/diff
-    // PNGs land under target/reference-diffs/<fixture>/.
+    // PNGs land under the runtime target directory's reference-diffs folder.
     let _guard = EnvGuard::read(); // exclude concurrent env-setter tests
     let expected = encode_png(&solid([0, 0, 255, 255], 4, 4), 4, 4); // blue
     let actual = encode_png(&solid([255, 0, 0, 255], 4, 4), 4, 4); // red
     let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, expected)]);
 
-    // run_and_compare's diff_dir_root() reads CARGO_TARGET_TMPDIR /
-    // CARGO_TARGET_DIR from the *runtime* process environment, where neither
-    // is set (those are cargo-supplied compile-time vars for the test/bench
-    // target, not propagated to the running binary's env) — so it falls
-    // through to the relative "target/reference-diffs", resolved against
-    // the process's current directory, which `cargo test` sets to the
-    // package's manifest directory. CARGO_MANIFEST_DIR (compile-time) gives
-    // us that same directory to compute the actual on-disk location.
-    let fixture_name = dir
-        .path()
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    let diff_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("reference-diffs")
-        .join(&fixture_name);
+    let diff_dir = reference_diff_dir(&dir);
     let _ = fs::remove_dir_all(&diff_dir);
 
     // catch_unwind because run_and_compare panics on diff. AssertUnwindSafe
@@ -376,6 +350,7 @@ fn test_run_and_compare_writes_artifacts_on_diff() {
         all_magenta,
         "expected every pixel in diff.png to be magenta"
     );
+    fs::remove_dir_all(&diff_dir).expect("remove generated diff artifacts");
 }
 
 #[test]
@@ -417,21 +392,8 @@ fn test_run_and_compare_page_count_mismatch() {
     // Fixture: one expected page. The pipeline returns two pages → mismatch.
     let dir = build_fixture(Some(b"<p>hi</p>"), &[(0, png_a.clone())]);
 
-    let fixture_name = dir
-        .path()
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    // Mirror src/reference.rs::diff_dir_root() precedence: CARGO_TARGET_TMPDIR →
-    // CARGO_TARGET_DIR → <manifest>/target. Reading env with EnvGuard::read()
-    // held is safe (guard serialises env access with env-setter tests).
-    let target_dir = std::env::var("CARGO_TARGET_TMPDIR")
-        .or_else(|_| std::env::var("CARGO_TARGET_DIR"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| Path::new(env!("CARGO_MANIFEST_DIR")).join("target"));
-    let diff_dir = target_dir.join("reference-diffs").join(&fixture_name);
+    // EnvGuard serializes reads with tests that temporarily set these variables.
+    let diff_dir = reference_diff_dir(&dir);
     let _ = fs::remove_dir_all(&diff_dir);
 
     let png_a_clone = png_a.clone();
