@@ -319,7 +319,7 @@ fn insert_annotation_pieces(
 
 /// The logical rectangle `rect` of a line that starts `line_top` below its
 /// origin, placed in the paragraph by `placement`.
-fn placed(rect: LogicalRect, line_top: f32, placement: Placement) -> LogicalRect {
+pub(super) fn placed(rect: LogicalRect, line_top: f32, placement: Placement) -> LogicalRect {
     let start = placement.apply(rect.inline_start, rect.block_start + line_top);
     let end = placement.apply(
         rect.inline_start + rect.inline_size,
@@ -330,6 +330,53 @@ fn placed(rect: LogicalRect, line_top: f32, placement: Placement) -> LogicalRect
         block_start: start.1.min(end.1),
         inline_size: (end.0 - start.0).abs(),
         block_size: (end.1 - start.1).abs(),
+    }
+}
+
+/// Call `visit` for every atomic inline of `lines`, including those in ruby
+/// annotations and the annotations nested in them. It gets the fragment, the
+/// block offset of the line the fragment is on, and the placement that maps
+/// that line to the paragraph's logical coordinates: the identity for an atomic
+/// in the paragraph's own lines.
+pub(super) fn for_each_atomic(
+    lines: &[Line],
+    mut visit: impl FnMut(&AtomicFragment, f32, Placement),
+) {
+    for line in lines {
+        for fragment in line.fragments() {
+            match fragment {
+                Fragment::Atomic(atomic) => {
+                    visit(&atomic, line.block_offset(), Placement::IDENTITY)
+                }
+                Fragment::RubyAnnotation(annotation) => {
+                    let placement =
+                        Placement::IDENTITY.annotation(annotation.transform(), line.block_offset());
+                    annotation_atomics(annotation, placement, &mut visit);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Call `visit` for the atomic inlines of the ruby `annotation`, whose line
+/// `placement` maps to the paragraph, and of the annotations nested in it.
+fn annotation_atomics(
+    annotation: shodo::RubyAnnotationView<'_>,
+    placement: Placement,
+    visit: &mut impl FnMut(&AtomicFragment, f32, Placement),
+) {
+    let line = annotation.line();
+    for fragment in line.fragments() {
+        match fragment {
+            Fragment::Atomic(atomic) => visit(&atomic, line.block_offset(), placement),
+            Fragment::RubyAnnotation(nested) => annotation_atomics(
+                nested,
+                placement.annotation(nested.transform(), line.block_offset()),
+                visit,
+            ),
+            _ => {}
+        }
     }
 }
 

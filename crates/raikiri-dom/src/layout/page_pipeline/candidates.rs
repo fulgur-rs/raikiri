@@ -14,14 +14,7 @@ use super::{
 };
 
 #[derive(Clone, Copy, Default)]
-pub(super) struct BoxContext {
-    pub(super) is_text: bool,
-    pub(super) is_rendered_leaf: bool,
-    pub(super) is_direct_body_element: bool,
-    pub(super) is_table_row: bool,
-    pub(super) is_flex_item: bool,
-    pub(super) is_grid_item: bool,
-    pub(super) is_named: bool,
+pub(super) struct CandidateFlowContext {
     pub(super) is_float_descendant: bool,
     pub(super) is_out_of_flow_descendant: bool,
     /// Whether the candidate takes part in page-name transitions. Floats
@@ -30,7 +23,109 @@ pub(super) struct BoxContext {
     /// box left at its static position, which keeps its name in the page
     /// flow.
     pub(super) page_name_in_flow: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct ElementContext {
+    pub(super) is_rendered_leaf: bool,
+    pub(super) is_direct_body_element: bool,
+    pub(super) is_table_row: bool,
+    pub(super) is_flex_item: bool,
+    pub(super) is_grid_item: bool,
+    pub(super) is_named: bool,
     pub(super) deferred_named_break_after: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum BoxContext {
+    Text(CandidateFlowContext),
+    Element {
+        flow: CandidateFlowContext,
+        attributes: ElementContext,
+    },
+}
+
+impl Default for BoxContext {
+    fn default() -> Self {
+        Self::Element {
+            flow: CandidateFlowContext::default(),
+            attributes: ElementContext::default(),
+        }
+    }
+}
+
+impl BoxContext {
+    pub(super) fn text(flow: CandidateFlowContext) -> Self {
+        Self::Text(flow)
+    }
+
+    pub(super) fn element(flow: CandidateFlowContext, attributes: ElementContext) -> Self {
+        Self::Element { flow, attributes }
+    }
+
+    fn flow(self) -> CandidateFlowContext {
+        match self {
+            Self::Text(flow) | Self::Element { flow, .. } => flow,
+        }
+    }
+
+    fn element_attributes(self) -> Option<ElementContext> {
+        match self {
+            Self::Text(_) => None,
+            Self::Element { attributes, .. } => Some(attributes),
+        }
+    }
+
+    pub(super) fn is_text(self) -> bool {
+        matches!(self, Self::Text(_))
+    }
+
+    pub(super) fn is_rendered_leaf(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.is_rendered_leaf)
+    }
+
+    pub(super) fn is_direct_body_element(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.is_direct_body_element)
+    }
+
+    pub(super) fn is_table_row(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.is_table_row)
+    }
+
+    pub(super) fn is_flex_item(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.is_flex_item)
+    }
+
+    pub(super) fn is_grid_item(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.is_grid_item)
+    }
+
+    pub(super) fn is_named(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.is_named)
+    }
+
+    pub(super) fn is_float_descendant(self) -> bool {
+        self.flow().is_float_descendant
+    }
+
+    pub(super) fn is_out_of_flow_descendant(self) -> bool {
+        self.flow().is_out_of_flow_descendant
+    }
+
+    pub(super) fn page_name_in_flow(self) -> bool {
+        self.flow().page_name_in_flow
+    }
+
+    pub(super) fn deferred_named_break_after(self) -> bool {
+        self.element_attributes()
+            .is_some_and(|attributes| attributes.deferred_named_break_after)
+    }
 }
 
 #[derive(Clone)]
@@ -368,19 +463,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         node_id,
                         raw_y,
                         height,
-                        context: BoxContext {
-                            is_text: true,
-                            is_rendered_leaf: false,
-                            is_direct_body_element: false,
-                            is_table_row: false,
-                            is_flex_item: false,
-                            is_grid_item: false,
-                            is_named: false,
+                        context: BoxContext::text(CandidateFlowContext {
                             is_float_descendant: inside_float,
                             is_out_of_flow_descendant: inside_out_of_flow,
                             page_name_in_flow: !inside_float && !inside_out_of_flow,
-                            deferred_named_break_after: false,
-                        },
+                        }),
                         page_name: frame.inherited_page_name,
                         named_flex_context,
                         ifc_root,
@@ -628,20 +715,23 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         node_id,
                         raw_y: candidate_raw_y,
                         height: candidate_height,
-                        context: BoxContext {
-                            is_text: false,
-                            is_rendered_leaf,
-                            is_direct_body_element: direct_body_child,
-                            is_table_row: table_row_candidate,
-                            is_flex_item: flex_item_candidate,
-                            is_grid_item: grid_item_candidate,
-                            is_named: own_page_name.is_some(),
-                            is_float_descendant: inside_float,
-                            is_out_of_flow_descendant: out_of_flow_subtree,
-                            page_name_in_flow: !inside_float
-                                && (!out_of_flow_subtree || own_page_name.is_some()),
-                            deferred_named_break_after,
-                        },
+                        context: BoxContext::element(
+                            CandidateFlowContext {
+                                is_float_descendant: inside_float,
+                                is_out_of_flow_descendant: out_of_flow_subtree,
+                                page_name_in_flow: !inside_float
+                                    && (!out_of_flow_subtree || own_page_name.is_some()),
+                            },
+                            ElementContext {
+                                is_rendered_leaf,
+                                is_direct_body_element: direct_body_child,
+                                is_table_row: table_row_candidate,
+                                is_flex_item: flex_item_candidate,
+                                is_grid_item: grid_item_candidate,
+                                is_named: own_page_name.is_some(),
+                                deferred_named_break_after,
+                            },
+                        ),
                         page_name: page_name.clone(),
                         named_flex_context,
                         ifc_root: None,

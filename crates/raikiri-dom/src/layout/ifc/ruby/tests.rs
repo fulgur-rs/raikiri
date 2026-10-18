@@ -302,26 +302,26 @@ fn annotation_boxes_keep_their_place_in_tree_order() {
 #[test]
 fn content_without_a_ruby_mapping_falls_back() {
     let unplain: [fn(&mut Document, usize); 6] = [
-        // An atomic inline.
+        // A block.
         |doc, ruby| {
-            element(doc, ruby, "span", "display:inline-block");
+            element(doc, ruby, "div", "display:block");
         },
-        // An atomic inline in an annotation of a text container.
+        // A block in an annotation of a text container.
         |doc, ruby| {
             let rtc = element(doc, ruby, "rtc", "display:ruby-text-container");
             let annotation = element(doc, rtc, "rt", "display:ruby-text");
-            element(doc, annotation, "span", "display:inline-block");
+            element(doc, annotation, "div", "display:block");
         },
-        // An atomic inline in a base of a base container.
+        // A block in a base of a base container.
         |doc, ruby| {
             let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
             let base = element(doc, rbc, "rb", "display:ruby-base");
-            element(doc, base, "span", "display:inline-block");
+            element(doc, base, "div", "display:block");
         },
         // A nested ruby that is not plain.
         |doc, ruby| {
             let inner = element(doc, ruby, "ruby", "display:ruby");
-            element(doc, inner, "span", "display:inline-block");
+            element(doc, inner, "div", "display:block");
         },
         // A base in a text container.
         |doc, ruby| {
@@ -629,13 +629,21 @@ fn annotation_levels_map_their_visibility_and_position() {
     );
 }
 
-/// Lay the paragraph out and return each run's text owner, whether it is an
-/// annotation, and its first glyph's position.
-fn runs(fixture: Fixture) -> Vec<(usize, bool, (f32, f32))> {
+/// A run's text owner, whether it is an annotation, and its first glyph's
+/// position.
+type Run = (usize, bool, (f32, f32));
+
+/// Lay the paragraph out and return its runs.
+fn runs(fixture: Fixture) -> Vec<Run> {
+    lay_out(fixture).1
+}
+
+/// Lay the paragraph out and return the document with the runs of `runs`.
+fn lay_out(fixture: Fixture) -> (Document, Vec<Run>) {
     let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     let lines = PositionedLines::new(&doc, &cascade, root, None).expect("lines");
-    lines
+    let runs = lines
         .lines()
         .flat_map(|line| {
             line.runs
@@ -646,7 +654,8 @@ fn runs(fixture: Fixture) -> Vec<(usize, bool, (f32, f32))> {
                 })
                 .collect::<Vec<_>>()
         })
-        .collect()
+        .collect();
+    (doc, runs)
 }
 
 #[test]
@@ -997,7 +1006,7 @@ fn improper_annotations_stay_plain_wherever_inline_content_goes() {
     assert!(!is_planned(|doc, ruby| {
         let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
         let annotation = rt(doc, rbc, "x");
-        element(doc, annotation, "span", "display:inline-block");
+        element(doc, annotation, "div", "display:block");
     }));
 }
 
@@ -1244,6 +1253,23 @@ fn deeply_nested_content_falls_back() {
     assert!(plan(&fixture.doc, &fixture.cascade, container).is_none());
 }
 
+#[test]
+fn deeply_nested_annotation_content_falls_back_without_overflowing_the_stack() {
+    let mut container = 0;
+    let fixture = block_fixture("", |doc, root| {
+        container = ruby(doc, root);
+        let rbc = element(doc, container, "rbc", "display:ruby-base-container");
+        // An improper annotation holding a chain of inline elements far
+        // deeper than the planner follows.
+        let mut parent = rt(doc, rbc, "");
+        for _ in 0..50_000 {
+            parent = element(doc, parent, "span", "display:inline");
+        }
+        doc.append_text(parent, "a");
+    });
+    assert!(plan(&fixture.doc, &fixture.cascade, container).is_none());
+}
+
 /// The number of lines of a paragraph of two ruby segments, `aa` over `x`
 /// and `bb` over `y`, laid out with a continuation break at the text that
 /// `at` picks from the gap text, the second base's text and its offset.
@@ -1390,15 +1416,9 @@ fn rubies_that_lay_out_their_own_content_keep_their_annotations_over_the_bases()
     }
 }
 
-#[test]
-fn ruby_segments_are_kept_or_report_the_item_budget() {
-    let fixture = block_fixture("line-height:20px", |doc, root| {
-        let container = ruby(doc, root);
-        rb(doc, container, "aa");
-        rb(doc, container, "bb");
-        rt(doc, container, "x");
-        rt(doc, container, "y");
-    });
+/// Project `fixture` under every item budget from none to 63 and without one:
+/// the paragraph holds the `expected` text or the budget is reported.
+fn assert_item_budget(fixture: &Fixture, expected: &[&str]) {
     let fonts = crate::layout::ifc::test_support::ahem_fonts();
     for max_items in (0..64).map(Some).chain([None]) {
         let limits = Limits {
@@ -1416,7 +1436,7 @@ fn ruby_segments_are_kept_or_report_the_item_budget() {
             Ok(projected) => {
                 let text = projected.paragraph.text();
                 assert!(
-                    text.contains("aa") && text.contains("bb"),
+                    expected.iter().all(|part| text.contains(part)),
                     "{max_items:?}: {text:?}"
                 );
             }
@@ -1424,6 +1444,30 @@ fn ruby_segments_are_kept_or_report_the_item_budget() {
             Err(error) => panic!("{max_items:?}: {error}"),
         }
     }
+}
+
+#[test]
+fn ruby_segments_are_kept_or_report_the_item_budget() {
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aa");
+        rb(doc, container, "bb");
+        rt(doc, container, "x");
+        rt(doc, container, "y");
+    });
+    assert_item_budget(&fixture, &["aa", "bb"]);
+}
+
+#[test]
+fn atomic_inlines_in_ruby_report_the_item_budget() {
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let base = rb(doc, container, "aa");
+        inline_block(doc, base, 5, 5);
+        let annotation = rt(doc, container, "x");
+        inline_block(doc, annotation, 5, 5);
+    });
+    assert_item_budget(&fixture, &["aa"]);
 }
 
 #[test]
@@ -1631,4 +1675,252 @@ fn a_box_in_a_positioned_ruby_base_container_is_placed_against_its_bases() {
     assert_eq!(piece.border_box.width, 20.0, "{piece:?}");
     let located = doc.nodes[child].unrounded_layout.location.x;
     assert_eq!(located, piece.border_box.x + 10.0);
+}
+
+/// An inline-block of `width` × `height` px with no content.
+fn inline_block(doc: &mut Document, parent: usize, width: u32, height: u32) -> usize {
+    element(
+        doc,
+        parent,
+        "span",
+        &format!("display:inline-block;width:{width}px;height:{height}px"),
+    )
+}
+
+/// The border box of the box `id` as `(x, y, width, height)`.
+fn border_box(doc: &Document, id: usize) -> (f32, f32, f32, f32) {
+    let layout = doc.nodes[id].unrounded_layout;
+    (
+        layout.location.x,
+        layout.location.y,
+        layout.size.width,
+        layout.size.height,
+    )
+}
+
+#[test]
+fn atomic_inlines_in_a_base_stay_on_the_baseline_under_their_annotation() {
+    let mut ids = (0, 0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let base = element(doc, container, "rb", "display:ruby-base");
+        ids.0 = doc.append_text(base, "a");
+        ids.1 = inline_block(doc, base, 20, 30);
+        let annotation = rt(doc, container, "x");
+        ids.2 = doc.nodes[annotation].children[0];
+    });
+    let (doc, runs) = lay_out(fixture);
+    let run = |id: usize| runs.iter().find(|run| run.0 == id).expect("run").2;
+    let atomic = border_box(&doc, ids.1);
+    assert_eq!((atomic.2, atomic.3), (20.0, 30.0), "{atomic:?}");
+    // The box follows the base text on its baseline, and the annotation is
+    // over the box.
+    assert_eq!(atomic.1 + atomic.3, run(ids.0).1, "{atomic:?} {runs:?}");
+    assert!(atomic.0 > run(ids.0).0, "{atomic:?} {runs:?}");
+    assert!(run(ids.2).1 < atomic.1, "{atomic:?} {runs:?}");
+}
+
+#[test]
+fn an_atomic_inline_alone_in_a_base_is_annotated() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        ids.0 = inline_block(doc, container, 20, 30);
+        let annotation = rt(doc, container, "x");
+        ids.1 = doc.nodes[annotation].children[0];
+    });
+    let (doc, runs) = lay_out(fixture);
+    let atomic = border_box(&doc, ids.0);
+    assert_eq!((atomic.2, atomic.3), (20.0, 30.0), "{atomic:?}");
+    let annotation = runs.iter().find(|run| run.0 == ids.1).expect("annotation");
+    assert!(
+        annotation.1 && annotation.2.1 < atomic.1,
+        "{atomic:?} {runs:?}"
+    );
+}
+
+/// A ruby with an atomic inline in its annotation over the base text "aa",
+/// in a paragraph that runs in `direction`: the box and the base text's first
+/// glyph.
+fn annotation_atomic(direction: &str) -> (f32, (f32, f32, f32, f32), (f32, f32)) {
+    let mut ids = (0, 0);
+    let fixture = block_fixture(
+        &format!("line-height:20px;direction:{direction}"),
+        |doc, root| {
+            let container = ruby(doc, root);
+            let base = rb(doc, container, "aa");
+            ids.0 = doc.nodes[base].children[0];
+            let annotation = rt(doc, container, "");
+            ids.1 = inline_block(doc, annotation, 10, 10);
+        },
+    );
+    let root = fixture.root;
+    let (doc, runs) = lay_out(fixture);
+    let base = runs.iter().find(|run| run.0 == ids.0).expect("base").2;
+    (
+        doc.nodes[root].unrounded_layout.size.width,
+        border_box(&doc, ids.1),
+        base,
+    )
+}
+
+#[test]
+fn atomic_inlines_in_an_annotation_are_placed_over_their_base() {
+    let (_, atomic, base) = annotation_atomic("ltr");
+    assert_eq!((atomic.2, atomic.3), (10.0, 10.0), "{atomic:?}");
+    // The box is above the base text and centered over its two 10px glyphs.
+    assert!(atomic.1 + atomic.3 <= base.1, "{atomic:?} {base:?}");
+    assert_eq!(atomic.0, base.0 + 5.0, "{atomic:?} {base:?}");
+}
+
+#[test]
+fn atomic_inlines_in_an_annotation_follow_a_right_to_left_base() {
+    let (width, atomic, base) = annotation_atomic("rtl");
+    assert_eq!((atomic.2, atomic.3), (10.0, 10.0), "{atomic:?}");
+    // The base text runs from the right edge, and the box is centered over it.
+    assert!(atomic.1 + atomic.3 <= base.1, "{atomic:?} {base:?}");
+    assert_eq!(atomic.0, width - 20.0 + 5.0, "{atomic:?} {width}");
+}
+
+#[test]
+fn atomic_inlines_in_inter_character_annotations_stay_plain() {
+    // The annotation's line is turned beside its base, which a box in it does
+    // not follow.
+    let planned = |position: &str, atomic: bool, in_container: bool| {
+        let mut container = 0;
+        let fixture = block_fixture("", |doc, root| {
+            container = element(
+                doc,
+                root,
+                "ruby",
+                &format!("display:ruby;ruby-position:{position}"),
+            );
+            rb(doc, container, "a");
+            let annotations = if in_container {
+                element(
+                    doc,
+                    container,
+                    "rtc",
+                    "display:ruby-text-container;ruby-position:inter-character",
+                )
+            } else {
+                container
+            };
+            let annotation = rt(doc, annotations, "x");
+            if atomic {
+                inline_block(doc, annotation, 5, 5);
+            }
+        });
+        plan(&fixture.doc, &fixture.cascade, container).is_some()
+    };
+    assert!(planned("inter-character", false, false));
+    assert!(!planned("inter-character", true, false));
+    assert!(planned("over", false, true));
+    assert!(!planned("over", true, true));
+    assert!(planned("over", true, false));
+}
+
+#[test]
+fn atomic_inlines_alone_on_both_sides_of_a_pairing_stay_plain() {
+    // An atomic inline has no text, so shodo would take an annotation of boxes
+    // over bases of boxes for a repeat of them and hide it.
+    assert!(!is_planned(|doc, ruby| {
+        inline_block(doc, ruby, 5, 5);
+        let annotation = rt(doc, ruby, "");
+        inline_block(doc, annotation, 5, 5);
+    }));
+    // The text of a box is a paragraph of its own, and white space is not text.
+    assert!(!is_planned(|doc, ruby| {
+        let base = rb(doc, ruby, " ");
+        text_element(doc, base, "span", "display:inline-block", "t");
+        let annotation = rt(doc, ruby, " ");
+        text_element(doc, annotation, "span", "display:inline-block", "t");
+    }));
+    // An annotation that has no base of its own gets an empty one.
+    assert!(!is_planned(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        let annotation = rt(doc, rbc, "");
+        inline_block(doc, annotation, 5, 5);
+    }));
+    // Text on either side tells the two apart.
+    assert!(is_planned(|doc, ruby| {
+        let base = rb(doc, ruby, "a");
+        inline_block(doc, base, 5, 5);
+        let annotation = rt(doc, ruby, "");
+        inline_block(doc, annotation, 5, 5);
+    }));
+    assert!(is_planned(|doc, ruby| {
+        inline_block(doc, ruby, 5, 5);
+        let annotation = rt(doc, ruby, "x");
+        inline_block(doc, annotation, 5, 5);
+    }));
+    // An annotation of text is not a repeat of a base of a box.
+    assert!(is_planned(|doc, ruby| {
+        inline_block(doc, ruby, 5, 5);
+        rt(doc, ruby, "x");
+    }));
+}
+
+#[test]
+fn atomic_inlines_in_a_nested_annotation_are_placed_over_their_base() {
+    let mut ids = (0, 0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let outer = rb(doc, container, "aaaa");
+        let annotation = element(doc, container, "rt", "display:ruby-text;font-size:5px");
+        let nested = ruby(doc, annotation);
+        let base = rb(doc, nested, "p");
+        let inner = rt(doc, nested, "");
+        ids.0 = doc.nodes[outer].children[0];
+        ids.1 = doc.nodes[base].children[0];
+        ids.2 = inline_block(doc, inner, 10, 10);
+    });
+    let (doc, runs) = lay_out(fixture);
+    let run = |id: usize| runs.iter().find(|run| run.0 == id).expect("run").2;
+    let atomic = border_box(&doc, ids.2);
+    assert_eq!((atomic.2, atomic.3), (10.0, 10.0), "{atomic:?}");
+    // The box is over the nested base, which is over the outer one.
+    assert!(atomic.1 + atomic.3 <= run(ids.1).1, "{atomic:?} {runs:?}");
+    assert!(run(ids.1).1 < run(ids.0).1, "{atomic:?} {runs:?}");
+    assert!(
+        atomic.0 < run(ids.1).0 + 5.0 && atomic.0 + 10.0 > run(ids.1).0,
+        "{atomic:?} {runs:?}"
+    );
+}
+
+#[test]
+fn an_atomic_inline_in_a_ruby_without_annotations_stays_in_the_line() {
+    let mut atomic = 0;
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        doc.append_text(root, "a");
+        let container = ruby(doc, root);
+        atomic = inline_block(doc, container, 20, 30);
+    });
+    let (doc, _) = lay_out(fixture);
+    let atomic = border_box(&doc, atomic);
+    // The box follows the text before the ruby.
+    assert_eq!(
+        (atomic.0, atomic.2, atomic.3),
+        (10.0, 20.0, 30.0),
+        "{atomic:?}"
+    );
+}
+
+#[test]
+fn atomic_inlines_in_vertical_ruby_stay_plain() {
+    // The boxes of a vertical paragraph are not placed along its physical
+    // axes yet, so those of a ruby keep to the ordinary inline path.
+    let planned = |mode: &str| {
+        let mut container = 0;
+        let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
+            container = ruby(doc, root);
+            rb(doc, container, "a");
+            let annotation = rt(doc, container, "x");
+            inline_block(doc, annotation, 5, 5);
+        });
+        plan(&fixture.doc, &fixture.cascade, container).is_some()
+    };
+    assert!(planned("horizontal-tb"));
+    assert!(!planned("vertical-rl"));
+    assert!(!planned("vertical-lr"));
 }
