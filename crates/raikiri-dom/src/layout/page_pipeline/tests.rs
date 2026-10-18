@@ -18714,6 +18714,139 @@ fn a_page_type_change_leaves_a_box_at_a_non_finite_position_where_it_is() {
 }
 
 #[test]
+fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
+    let (mut doc, cascade, root) =
+        crate::layout::test_support::ahem_paragraph("A", "break-before:page");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = |node_id, raw_y, page_name: Option<&str>| PageCandidate {
+        node_id,
+        raw_y,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: page_name.map(str::to_string),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = |name_context_seen, comparison: Option<&str>, uses_positioned_coordinates| {
+        pagination_state::CandidateEntry {
+            name_context_seen,
+            comparison_page_name: comparison.map(str::to_string),
+            keep_local_page_type: false,
+            page_before_candidate: 0,
+            ifc_root: None,
+            participates_in_margin_adjacency: false,
+            uses_positioned_coordinates,
+        }
+    };
+    let node_count = doc.nodes.len();
+    let meet = |doc: &mut Document, candidate: &PageCandidate, entry: &_| {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.flow_shift = 5.0;
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        state.begin_box(&mut session, &env, candidate, entry)
+    };
+
+    // A forced break in the middle of a page is a page transition, and the
+    // box starts after the shift of the flow.
+    let (page_break, position) = meet(
+        &mut doc,
+        &candidate(root, 30.0, None),
+        &entry(false, None, false),
+    );
+    assert_eq!(position.effective_y, 35.0);
+    assert!(!position.starts_after_forced_break);
+    assert!(page_break.forced_before && page_break.forced_transition);
+    assert!(page_break.is_page_transition());
+    assert_eq!(page_break.margin_top, 0.0);
+
+    // One that coincides with the start of the page describes the page edge
+    // that is already there.
+    let (page_break, position) = meet(
+        &mut doc,
+        &candidate(root, -5.0, None),
+        &entry(false, None, false),
+    );
+    assert_eq!(position.effective_y, 0.0);
+    assert!(page_break.forced_before && !page_break.forced_transition);
+    assert!(!page_break.is_page_transition());
+
+    // A box with no break before it meets none, unless it names another page
+    // type than the flow it follows.
+    let (page_break, _) = meet(
+        &mut doc,
+        &candidate(body, 30.0, None),
+        &entry(true, None, false),
+    );
+    assert!(!page_break.forced_before && !page_break.named_page_change);
+    assert!(!page_break.forced_transition && !page_break.pending_break_applies);
+    assert!(!page_break.is_page_transition());
+    let (page_break, _) = meet(
+        &mut doc,
+        &candidate(body, 30.0, Some("b")),
+        &entry(true, Some("a"), false),
+    );
+    assert!(!page_break.forced_before && page_break.named_page_change);
+    assert!(page_break.forced_transition && page_break.is_page_transition());
+
+    // A box that follows its containing box through positioned insets starts
+    // where that box put it, whatever the shift of the flow.
+    doc.nodes[body].unrounded_layout.location.y = 123.0;
+    let positioned_y = current_abs_y(&doc, body);
+    let (_, position) = meet(
+        &mut doc,
+        &candidate(body, 30.0, None),
+        &entry(false, None, true),
+    );
+    assert_eq!(position.effective_y, positioned_y);
+    assert_ne!(position.effective_y, 35.0);
+}
+
+#[test]
+fn a_box_that_avoids_a_break_inside_it_is_a_page_transition() {
+    let overflow = |page, flex_item| BoxOverflow {
+        page,
+        avoided_run: false,
+        table_row: false,
+        table_row_lead: 0.0,
+        row_group_lead: None,
+        flex_item,
+        grid_item: false,
+    };
+    let page_break = |forced_transition, overflow| pagination_state::BoxBreak {
+        margin_top: 0.0,
+        relative_offset: 0.0,
+        overflow,
+        forced_before: false,
+        forced_transition,
+        named_page_change: false,
+        margins_collapse_through: false,
+        collapses_with_previous_block: false,
+        pending_break_applies: false,
+    };
+    assert!(!page_break(false, overflow(false, false)).is_page_transition());
+    assert!(page_break(true, overflow(false, false)).is_page_transition());
+    assert!(page_break(false, overflow(true, false)).is_page_transition());
+    assert!(page_break(false, overflow(false, true)).is_page_transition());
+}
+
+#[test]
 fn placement_halts_at_a_page_past_the_page_limit() {
     let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
     layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();

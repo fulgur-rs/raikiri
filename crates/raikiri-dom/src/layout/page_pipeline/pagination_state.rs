@@ -136,6 +136,14 @@ pub(super) struct BoxBreak {
     pub(super) pending_break_applies: bool,
 }
 
+impl BoxBreak {
+    /// Whether the box starts a page of its own: a forced break, a change of
+    /// the page type or a break inside the box that it avoids opens the page.
+    pub(super) fn is_page_transition(&self) -> bool {
+        self.forced_transition || self.overflow.moves_box()
+    }
+}
+
 /// Where a box is placed while the page it starts on is settled.
 pub(super) struct BoxPosition {
     /// Where the box starts in the flow.
@@ -455,130 +463,28 @@ impl PaginationState {
     ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
-            body_id,
             control,
             page_origins,
-            content_width,
-            avoided_breaks,
             insets,
             page_box,
             ..
         } = *env;
         let CandidateEntry {
-            name_context_seen,
-            ref comparison_page_name,
             keep_local_page_type,
             page_before_candidate,
             participates_in_margin_adjacency,
-            uses_positioned_coordinates,
             ..
         } = *entry;
         let node_id = candidate.node_id;
         let name_participates_in_flow = candidate.context.page_name_in_flow;
 
-        let computed = &cascade.computed[node_id];
-        if matches!(computed.float, FloatValue::Footnote) {
+        if matches!(cascade.computed[node_id].float, FloatValue::Footnote) {
             return self.place_footnote(document, env, candidate);
         }
-        let candidate_page_name = candidate.page_name.clone();
-        // Copy layout data before any break adjustment so the immutable node
-        // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
         let height = candidate.height;
-        place_first_table_header(
-            document,
-            &mut self.table_headers,
-            node_id,
-            self.flow_shift,
-            page_origins,
-        );
-        let effective_y = if uses_positioned_coordinates {
-            current_abs_y(document, node_id)
-        } else {
-            raw_y + self.flow_shift
-        };
-        materialize_y(document, node_id, effective_y);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before);
-        // A block box with no block size and no in-flow content lets its
-        // block-start and block-end margins collapse through it.
-        let margins_collapse_through = collapses_through(document, cascade, node_id, height);
-        let (margin_top, trailing_margin) =
-            break_margins(document, cascade, node_id, content_width);
-        let page_start = page_origins.origin(self.current_page);
-        let page_end = page_start + page_origins.step_at(self.current_page);
-        // Whether the box fits is decided at its normal-flow position,
-        // before any relative offset.
-        let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
-        let overflow = avoided_breaks.measure(
-            document,
-            cascade,
-            candidate,
-            &BoxFit {
-                effective_y,
-                flow_y: effective_y - relative_offset,
-                margin_top,
-                trailing_margin,
-                page_start,
-                page_end,
-                next_page_step: page_origins.step_at(self.current_page.saturating_add(1)),
-            },
-            &self.table_headers,
-            &mut self.trailing_flex_children,
-        );
-        // A named page requested by a class-A box starts a new page when it
-        // differs from the current named page. `auto` leaves the current page
-        // type in place; it does not manufacture a second break boundary.
-        // Any non-empty class-A box with a different page name starts a new
-        // page.  `None` is the anonymous/unnamed page type, so an anonymous
-        // box after a named one is a transition too.  Named boxes that start
-        // at the coordinate of a preceding zero-height named box join its
-        // transition: no block-size has been consumed on that page yet, so a
-        // break there would only leave the zero-height boxes alone on a page.
-        // This matters for chains of empty named boxes with overflowing text,
-        // including the first non-empty box that follows the chain.
-        let named_page_change = box_changes_page_name(
-            name_context_seen,
-            &candidate_page_name,
-            comparison_page_name,
-            self.last_named.joins_transition(candidate),
-        );
-        // A forced break at the start of a page already opened by natural
-        // overflow describes the same boundary and must not create a blank
-        // page. The forced break sits before the box's margin box, so the
-        // test uses its block-start margin edge.
-        let forced_break_at_page_start = forced_before
-            && margin_box_starts_page(
-                page_origins,
-                effective_y - margin_top.max(0.0),
-                self.current_page,
-                page_start,
-            );
-
-        let collapses_with_previous_block =
-            collapses_with_previous_block(document, candidate, participates_in_margin_adjacency);
-        let pending_break_applies = self.pending_break.applies_to(document, node_id);
-        // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
-        // truncated, while a forced break keeps the block-start margin of the
-        // box after it.
-        let forced_transition = pending_break_applies
-            || (forced_before && !forced_break_at_page_start)
-            || named_page_change;
-        let page_transition = self.saw_child && (forced_transition || overflow.moves_box());
-        let page_break = BoxBreak {
-            margin_top,
-            relative_offset,
-            overflow,
-            forced_before,
-            forced_transition,
-            named_page_change,
-            margins_collapse_through,
-            collapses_with_previous_block,
-            pending_break_applies,
-        };
-        let mut position = BoxPosition {
-            effective_y,
-            starts_after_forced_break: false,
-        };
+        let (page_break, mut position) = self.begin_box(document, env, candidate, entry);
+        let page_transition = self.saw_child && page_break.is_page_transition();
         if self.saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
@@ -628,13 +534,13 @@ impl PaginationState {
                     cascade,
                     parent_id,
                     node_id,
-                    collapses_with_previous_block && margins_collapse_through,
+                    page_break.collapses_with_previous_block && page_break.margins_collapse_through,
                 );
             }
             self.sibling_margins.record_bottom(
                 parent_id,
                 node_id,
-                collapses_with_previous_block,
+                page_break.collapses_with_previous_block,
                 raw_y + height,
             );
         }
@@ -660,7 +566,7 @@ impl PaginationState {
                 page_before_candidate,
             ),
         ) {
-            self.page_names.current = candidate_page_name;
+            self.page_names.current = candidate.page_name.clone();
             if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
                 self.last_named = LastNamedBox::new(document, candidate, node_id, raw_y, height);
             }
@@ -735,6 +641,134 @@ impl PaginationState {
         self.reach.include(placement.page, false);
         self.saw_child = true;
         Ok(())
+    }
+
+    /// Begins the placement of the box `candidate`: places the first header of
+    /// the table it holds, fixes the box at its position in the flow, and works
+    /// out what it meets there: the break it starts after or on, the page type
+    /// it names, and the margins around it.
+    pub(super) fn begin_box(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+    ) -> (BoxBreak, BoxPosition) {
+        let FlowEnv {
+            cascade,
+            body_id,
+            page_origins,
+            content_width,
+            avoided_breaks,
+            ..
+        } = *env;
+        let CandidateEntry {
+            name_context_seen,
+            ref comparison_page_name,
+            participates_in_margin_adjacency,
+            uses_positioned_coordinates,
+            ..
+        } = *entry;
+        let node_id = candidate.node_id;
+        let computed = &cascade.computed[node_id];
+        // Copy layout data before any break adjustment so the immutable node
+        // borrow does not overlap the in-place location update below.
+        let raw_y = candidate.raw_y;
+        let height = candidate.height;
+        place_first_table_header(
+            document,
+            &mut self.table_headers,
+            node_id,
+            self.flow_shift,
+            page_origins,
+        );
+        let effective_y = if uses_positioned_coordinates {
+            current_abs_y(document, node_id)
+        } else {
+            raw_y + self.flow_shift
+        };
+        materialize_y(document, node_id, effective_y);
+        let forced_before = page_break_is_forced(document, node_id, computed.break_before);
+        // A block box with no block size and no in-flow content lets its
+        // block-start and block-end margins collapse through it.
+        let margins_collapse_through = collapses_through(document, cascade, node_id, height);
+        let (margin_top, trailing_margin) =
+            break_margins(document, cascade, node_id, content_width);
+        let page_start = page_origins.origin(self.current_page);
+        let page_end = page_start + page_origins.step_at(self.current_page);
+        // Whether the box fits is decided at its normal-flow position,
+        // before any relative offset.
+        let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
+        let overflow = avoided_breaks.measure(
+            document,
+            cascade,
+            candidate,
+            &BoxFit {
+                effective_y,
+                flow_y: effective_y - relative_offset,
+                margin_top,
+                trailing_margin,
+                page_start,
+                page_end,
+                next_page_step: page_origins.step_at(self.current_page.saturating_add(1)),
+            },
+            &self.table_headers,
+            &mut self.trailing_flex_children,
+        );
+        // A named page requested by a class-A box starts a new page when it
+        // differs from the current named page. `auto` leaves the current page
+        // type in place; it does not manufacture a second break boundary.
+        // Any non-empty class-A box with a different page name starts a new
+        // page.  `None` is the anonymous/unnamed page type, so an anonymous
+        // box after a named one is a transition too.  Named boxes that start
+        // at the coordinate of a preceding zero-height named box join its
+        // transition: no block-size has been consumed on that page yet, so a
+        // break there would only leave the zero-height boxes alone on a page.
+        // This matters for chains of empty named boxes with overflowing text,
+        // including the first non-empty box that follows the chain.
+        let named_page_change = box_changes_page_name(
+            name_context_seen,
+            &candidate.page_name,
+            comparison_page_name,
+            self.last_named.joins_transition(candidate),
+        );
+        // A forced break at the start of a page already opened by natural
+        // overflow describes the same boundary and must not create a blank
+        // page. The forced break sits before the box's margin box, so the
+        // test uses its block-start margin edge.
+        let forced_break_at_page_start = forced_before
+            && margin_box_starts_page(
+                page_origins,
+                effective_y - margin_top.max(0.0),
+                self.current_page,
+                page_start,
+            );
+
+        let collapses_with_previous_block =
+            collapses_with_previous_block(document, candidate, participates_in_margin_adjacency);
+        let pending_break_applies = self.pending_break.applies_to(document, node_id);
+        // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
+        // truncated, while a forced break keeps the block-start margin of the
+        // box after it.
+        let forced_transition = pending_break_applies
+            || (forced_before && !forced_break_at_page_start)
+            || named_page_change;
+        let page_break = BoxBreak {
+            margin_top,
+            relative_offset,
+            overflow,
+            forced_before,
+            forced_transition,
+            named_page_change,
+            margins_collapse_through,
+            collapses_with_previous_block,
+            pending_break_applies,
+        };
+        let position = BoxPosition {
+            effective_y,
+            starts_after_forced_break: false,
+        };
+        (page_break, position)
     }
 
     /// Opens the page a box starts on when it meets a page transition: a
