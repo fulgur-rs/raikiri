@@ -985,6 +985,71 @@ fn page_counters_follow_page_resets_and_increments() {
 }
 
 #[test]
+fn page_counter_base_comes_from_the_root_element_counter_reset() {
+    let third = MarginBoxPageContext::new(2, 6, false);
+    let content = |css: &str| {
+        boxes_on_page(css, third)
+            .first()
+            .unwrap_or_else(|| panic!("no box for {css:?}"))
+            .content
+            .clone()
+    };
+    let page_rule = "@page { margin: 40px; @top-left { content: counter(page) } }";
+    assert_eq!(content(page_rule), "3");
+    assert_eq!(
+        content(&format!("html {{ counter-reset: page 7 }} {page_rule}")),
+        "10"
+    );
+    // The page context's own reset wins over the root element's, and applies
+    // on every page (20 + 1), not once for the document.
+    assert_eq!(
+        content(
+            "html { counter-reset: page 7 } \
+             @page { margin: 40px; counter-reset: page 20; @top-left { content: counter(page) } }"
+        ),
+        "21"
+    );
+}
+
+#[test]
+fn page_counter_base_is_zero_when_the_root_element_has_no_reset() {
+    // The first element child of the document is the root element, whatever
+    // its name; one without a `counter-reset` leaves the base at zero.
+    let mut doc = engine_document();
+    let style = doc.append_element(
+        Some(doc.root_index()),
+        "style",
+        Style::default(),
+        None::<&str>,
+    );
+    doc.append_text(
+        style,
+        "@page { margin: 40px; @top-left { content: counter(page) } }",
+    );
+    let rules = build_rule_tree(&doc);
+    let styled = cascade(&doc, &rules).expect("cascade Ok");
+    let boxes = page_margin_boxes(
+        &doc,
+        &styled,
+        &styled.page,
+        small_page(),
+        MarginBoxPageContext::new(2, 6, false),
+    );
+    assert_eq!(boxes.first().unwrap().content, "3");
+
+    // A document with no element at all falls back to the document node.
+    let mut empty = engine_document();
+    empty.append_text(empty.root_index(), "text only");
+    let rules = build_rule_tree(&empty);
+    let styled = cascade(&empty, &rules).expect("cascade Ok");
+    assert_eq!(
+        computed_counter_reset_value(&styled, "page"),
+        0,
+        "no element, no reset"
+    );
+}
+
+#[test]
 fn margin_box_quotes_come_from_the_box_the_page_or_the_root() {
     let content = "content: open-quote 'q' close-quote no-open-quote no-close-quote";
     assert_eq!(

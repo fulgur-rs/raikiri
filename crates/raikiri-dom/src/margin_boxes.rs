@@ -27,7 +27,7 @@ use raikiri_style::{
     MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult, PageMarginBoxCascadeResult,
     PageMarginBoxSlot,
 };
-use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
+use raikiri_traits::{NodeId, PageBox, PaintInsets, PaintRect};
 use smol_str::SmolStr;
 use std::ops::Range;
 use std::sync::Arc;
@@ -547,23 +547,6 @@ fn text_style(font_size: f32, font_family: &[FontFamilyName]) -> StandaloneStyle
     }
 }
 
-fn find_html(doc: &Document) -> Option<usize> {
-    let mut stack: Vec<usize> = vec![doc.root_index()];
-    while let Some(id) = stack.pop() {
-        let node = doc.get_node(id)?;
-        if !node.is_in_document() {
-            continue;
-        }
-        if node.kind() == NodeKind::Element && node.tag_name() == Some("html") {
-            return Some(id);
-        }
-        for &c in node.children.iter().rev() {
-            stack.push(c);
-        }
-    }
-    None
-}
-
 fn margin_box_property(
     rule: &PageMarginBoxCascadeResult,
     key: PropertyKey,
@@ -573,13 +556,6 @@ fn margin_box_property(
         .rev()
         .find(|declaration| declaration.value().key() == key)
         .map(|declaration| declaration.value())
-}
-
-fn root_computed<'a>(
-    document: &Document,
-    cascade: &'a CascadeResult,
-) -> Option<&'a raikiri_style::ComputedValues> {
-    find_html(document).map(|id| &cascade.computed[id])
 }
 
 /// `value` when it is finite, else zero.
@@ -649,21 +625,17 @@ fn counter_increment_value(value: Option<&PropertyValue>, name: &str) -> Option<
     found.then_some(total)
 }
 
-fn computed_counter_reset_value(document: &Document, cascade: &CascadeResult, name: &str) -> i32 {
-    root_computed(document, cascade)
-        .and_then(|computed| {
-            computed
-                .counter_reset
-                .iter()
-                .rev()
-                .find(|(counter_name, _)| counter_name.as_str() == name)
-                .map(|(_, value)| page_reset_value(*value))
-        })
-        .unwrap_or(0)
+fn computed_counter_reset_value(cascade: &CascadeResult, name: &str) -> i32 {
+    cascade
+        .root_element_computed()
+        .counter_reset
+        .iter()
+        .rev()
+        .find(|(counter_name, _)| counter_name.as_str() == name)
+        .map_or(0, |(_, value)| page_reset_value(*value))
 }
 
 fn page_counter_value(
-    document: &Document,
     cascade: &CascadeResult,
     page: &PageCascadeResult,
     name: &str,
@@ -686,7 +658,7 @@ fn page_counter_value(
     let reset = counter_reset_value(page_declarations.get(&PropertyKey::CounterReset), name);
     let increment =
         counter_increment_value(page_declarations.get(&PropertyKey::CounterIncrement), name);
-    let base = reset.unwrap_or_else(|| computed_counter_reset_value(document, cascade, name));
+    let base = reset.unwrap_or_else(|| computed_counter_reset_value(cascade, name));
     let explicit_empty_reset = matches!(
         page_declarations.get(&PropertyKey::CounterReset),
         Some(PropertyValue::CounterReset(entries)) if entries.is_empty()
@@ -721,7 +693,6 @@ fn page_counter_value(
 }
 
 fn margin_counter_value(
-    document: &Document,
     cascade: &CascadeResult,
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
@@ -731,7 +702,7 @@ fn margin_counter_value(
     if name == "pages" {
         return context.page_count.min(i32::MAX as u32) as i32;
     }
-    let page_value = page_counter_value(document, cascade, page, name, context);
+    let page_value = page_counter_value(cascade, page, name, context);
     let reset_declaration = margin_box_property(rule, PropertyKey::CounterReset);
     let inherits_page_counter =
         matches!(reset_declaration, Some(PropertyValue::CounterResetInherit));
@@ -891,7 +862,7 @@ fn resolved_margin_content(
     let mut quote_depth = 0_usize;
     let mut push_counter = |text: &mut String, name: &str, style: &CounterStyle| {
         let start = text.len();
-        let value = margin_counter_value(document, cascade, page, rule, name, context);
+        let value = margin_counter_value(cascade, page, rule, name, context);
         let mut formatted = format_counter(value, style, &cascade.counter_styles);
         let is_deferred = name == "pages" && context.page_count_deferred;
         if is_deferred {
