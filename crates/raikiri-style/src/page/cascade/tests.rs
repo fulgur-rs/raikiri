@@ -1200,8 +1200,6 @@ fn cascade_page_font_size_keyword_uses_the_monospace_medium() {
         page_font_size_with("font-family: monospace; font-size: larger"),
         13.0 * 1.2
     );
-    // No declared size: the inherited `medium` becomes the monospace one.
-    assert_eq!(page_font_size_with("font-family: monospace"), 13.0);
     // Sizes that are not keyword-derived, and families that are not the lone
     // generic `monospace`, keep their pixels.
     assert_eq!(
@@ -1252,6 +1250,93 @@ fn cascade_page_font_size_keyword_follows_the_family_it_inherits() {
         PageInheritance::FromRoot(&monospace_root(20.0, false)),
     );
     assert_eq!(result.declarations().get(&PropertyKey::FontSize), None);
+}
+
+#[test]
+fn cascade_page_undeclared_font_size_stays_absent_but_follows_the_monospace_medium() {
+    // The inherited `medium` becomes the monospace one, and `em` follows it,
+    // but the declaration map still lists only what the page declared.
+    for decls in [
+        "font-family: monospace; padding-top: 1em",
+        "font-family: monospace; font-size: var(--missing); padding-top: 1em",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&format!("@page {{ {decls} }}"), Origin::Author);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&ComputedValues::initial()),
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::FontSize),
+            None,
+            "{decls}"
+        );
+        assert_eq!(
+            result.declarations().get(&PropertyKey::PaddingTop),
+            Some(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+                Length::Px(13.0)
+            ))),
+            "{decls}"
+        );
+    }
+}
+
+/// The `font-size` of the `@top-center` box of `@page { <page>; @top-center {
+/// content: 'x'; <margin> } }`.
+fn margin_box_font_size_with(root: &ComputedValues, page: &str, margin: &str) -> f32 {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        &format!("@page {{ {page}; @top-center {{ content: 'x'; {margin} }} }}"),
+        Origin::Author,
+    );
+    let page = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(root),
+    );
+    let rule = page
+        .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+        .expect("top-center margin box");
+    page.margin_box_style(&rule, None).font_size.0
+}
+
+#[test]
+fn margin_box_rescales_a_keyword_page_font_size_when_it_changes_family() {
+    let initial = ComputedValues::initial();
+    // The page's `0.7em` of the monospace `medium` stays keyword-derived, so a
+    // margin box back on a 16px-`medium` family rescales it, as a child
+    // element would.
+    assert_eq!(
+        margin_box_font_size_with(
+            &initial,
+            "font-family: monospace; font-size: 0.7em",
+            "font-family: serif"
+        ),
+        16.0 * 0.7
+    );
+    assert_eq!(
+        margin_box_font_size_with(&initial, "font-family: monospace; font-size: 0.7em", ""),
+        13.0 * 0.7
+    );
+    // The same holds when the keyword size is the same as phase 2 computed.
+    assert_eq!(
+        margin_box_font_size_with(
+            &monospace_root(13.0, true),
+            "font-size: 0.5em",
+            "font-family: serif"
+        ),
+        8.0
+    );
+    // An explicit pixel size has no keyword to rescale.
+    assert_eq!(
+        margin_box_font_size_with(
+            &initial,
+            "font-family: monospace; font-size: 20px",
+            "font-family: serif"
+        ),
+        20.0
+    );
 }
 
 #[test]

@@ -1812,32 +1812,36 @@ pub(crate) fn cascade_page_with_normal_line_height(
         }
     }
 
-    // A keyword-derived size picks its `medium` from the page context's own
-    // family, which phase 2 could not see. Keep the public declaration map and
-    // the `em` basis below on the one size.
-    if let Some(keyword_size) = page_context_keyword_font_size(
-        &font_winners,
-        page_context_font_size(&resolved, inherited),
-        inherited,
-        &ctx,
-        normal_line_height,
-    ) {
-        resolved.insert(
-            PropertyKey::FontSize,
-            resolve_against_inherited(
-                PropertyValue::FontSize(Length::Px(keyword_size.0)),
-                inherited,
-                &ctx,
-            ),
-        );
-    }
+    // The page context's font as an element declaring these winners would
+    // compute it. A keyword-derived size picks its `medium` from the page
+    // context's own family, which phase 2 could not see.
+    let element_font =
+        page_context_element_font(&font_winners, inherited, &ctx, normal_line_height);
+    let phase2_font_size = page_context_font_size(&resolved, inherited);
+    let font_size = match &element_font {
+        Some(element) if element.font_size != phase2_font_size => {
+            // Keep the public declaration map on the one size; a size that was
+            // not declared, or was invalid at computed-value time, stays absent.
+            if resolved.contains_key(&PropertyKey::FontSize) {
+                resolved.insert(
+                    PropertyKey::FontSize,
+                    resolve_against_inherited(
+                        PropertyValue::FontSize(Length::Px(element.font_size.0)),
+                        inherited,
+                        &ctx,
+                    ),
+                );
+            }
+            element.font_size
+        }
+        _ => phase2_font_size,
+    };
     // Step 4 (phase 3): absolutize the remaining lengths against the page
     // context's own font-size and apply the border and column-rule width gates.
     // Splitting this out of step 3 is forced by the same constraint the element
     // path has: `padding: 2em` needs the page
     // context's font-size, which step 3 only finalises once *all* winners have
     // been seen — `best` iteration order is `HashMap`-random.
-    let font_size = page_context_font_size(&resolved, inherited);
     let page_ch_advance =
         page_context_ch_advance(&resolved, inherited, font_size, normal_line_height);
     let ctx = ctx.with_ch_advance(page_ch_advance);
@@ -1892,16 +1896,26 @@ pub(crate) fn cascade_page_with_normal_line_height(
     };
     // Only margin boxes inherit from the page context's computed values.
     let page_style = (!margin_boxes.is_empty()).then(|| {
+        let mut computed = computed_over(
+            inherited,
+            cascade_order
+                .iter()
+                .filter_map(|(_, key)| resolved.get(key).cloned())
+                .map(ComputedOverValue::Resolved),
+            &ctx,
+            normal_line_height,
+        );
+        // The resolved size is plain pixels. Keep the keyword it derives from,
+        // so a margin box that changes `font-family` rescales it against that
+        // family's `medium`, as a child element would.
+        if let Some(element) = &element_font
+            && element.font_size == computed.font_size
+        {
+            computed.font_size_keyword = element.font_size_keyword;
+            computed.font_size_keyword_basis = element.font_size_keyword_basis;
+        }
         Arc::new(PageStyle {
-            computed: computed_over(
-                inherited,
-                cascade_order
-                    .iter()
-                    .filter_map(|(_, key)| resolved.get(key).cloned())
-                    .map(ComputedOverValue::Resolved),
-                &ctx,
-                normal_line_height,
-            ),
+            computed,
             context: ctx,
         })
     });
@@ -2014,8 +2028,9 @@ fn computed_over(
     specified.finalize_with(parent, ctx, normal_line_height)
 }
 
-/// The page context's `font-size` as an element would compute it, or `None`
-/// when phase 2's pixel size `phase2_size` already is that.
+/// The page context's `font-family` and `font-size` computed over the root
+/// element's style exactly as an element would, or `None` when neither is
+/// declared.
 ///
 /// A keyword-derived `font-size` (`medium`, `em` or `%` of it, `larger`,
 /// `smaller`) is a multiple of the `medium` of the box's own family, and that
@@ -2023,21 +2038,19 @@ fn computed_over(
 /// [`crate::computed::FontSizeKeywordInfo`]). Phase 2 only sees the root's
 /// pixel size, so `@page { font-family: monospace; font-size: 0.7em }` would
 /// come out as 0.7 × 16 instead of 0.7 × 13, and `@page { font-size: medium }`
-/// under a monospace root as 16 instead of 13. This computes the declared
-/// family and size over the root element's style exactly as an element would,
-/// so the two paths cannot disagree. A size that is not keyword-derived
-/// (`20px`) computes to the same pixels either way.
-fn page_context_keyword_font_size(
+/// under a monospace root as 16 instead of 13. Sharing the element path keeps
+/// the two from disagreeing. A size that is not keyword-derived (`20px`)
+/// computes to the same pixels either way.
+fn page_context_element_font(
     font_winners: &[PropertyValue],
-    phase2_size: ComputedLength,
     inherited: &ComputedValues,
     ctx: &ResolveContext,
     normal_line_height: Option<&dyn NormalLineHeight>,
-) -> Option<ComputedLength> {
+) -> Option<ComputedValues> {
     if font_winners.is_empty() {
         return None;
     }
-    let computed = computed_over(
+    Some(computed_over(
         inherited,
         font_winners
             .iter()
@@ -2045,8 +2058,7 @@ fn page_context_keyword_font_size(
             .map(ComputedOverValue::Specified),
         ctx,
         normal_line_height,
-    );
-    (computed.font_size != phase2_size).then_some(computed.font_size)
+    ))
 }
 
 /// The page context's own computed `font-size` — the `em` basis for phase 3.
