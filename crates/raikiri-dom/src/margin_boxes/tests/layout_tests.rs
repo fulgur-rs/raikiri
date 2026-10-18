@@ -5,7 +5,7 @@ use super::*;
 
 const AHEM: &str = "font-family: Ahem; font-size: 10px;";
 
-fn boxes_for(css: &str) -> Vec<MarginBox> {
+pub(super) fn boxes_for(css: &str) -> Vec<MarginBox> {
     let (doc, cascade) = page_cascade_fixture(css);
     layout_page(&doc, &cascade, small_page())
 }
@@ -15,7 +15,7 @@ fn boxes_on_page(css: &str, context: MarginBoxPageContext) -> Vec<MarginBox> {
     page_margin_boxes(&doc, &cascade, &cascade.page, small_page(), context)
 }
 
-fn rects(boxes: &[MarginBox]) -> Vec<(PageMarginBoxSlot, [f32; 4])> {
+pub(super) fn rects(boxes: &[MarginBox]) -> Vec<(PageMarginBoxSlot, [f32; 4])> {
     boxes
         .iter()
         .map(|margin_box| {
@@ -175,19 +175,20 @@ fn auto_top_boxes_share_a_row_by_the_width_of_their_vertical_lines() {
 }
 
 #[test]
-fn fixed_height_side_boxes_center_in_their_thirds() {
+fn fixed_height_side_boxes_sit_at_the_start_the_middle_and_the_end() {
+    // 220px lie between the corners, from y = 40 to y = 260.
     let boxes = boxes_for(
         "@page { margin: 40px; \
-           @right-top { content: ''; height: 20px } \
-           @right-middle { content: ''; height: 20px } \
-           @right-bottom { content: ''; height: 20px } }",
+           @right-top { content: ''; height: 60px } \
+           @right-middle { content: ''; height: 60px } \
+           @right-bottom { content: ''; height: 60px } }",
     );
     assert_eq!(
         rects(&boxes),
         [
-            (PageMarginBoxSlot::RightTop, [360.0, 66.67, 40.0, 20.0]),
-            (PageMarginBoxSlot::RightMiddle, [360.0, 140.0, 40.0, 20.0]),
-            (PageMarginBoxSlot::RightBottom, [360.0, 213.33, 40.0, 20.0]),
+            (PageMarginBoxSlot::RightTop, [360.0, 40.0, 40.0, 60.0]),
+            (PageMarginBoxSlot::RightMiddle, [360.0, 120.0, 40.0, 60.0]),
+            (PageMarginBoxSlot::RightBottom, [360.0, 200.0, 40.0, 60.0]),
         ]
     );
 }
