@@ -6,7 +6,7 @@ mod positioned;
 mod sizing;
 
 use crate::layout::context::{LayoutSession, TextGroupScope};
-use crate::taffy_impl::resolve_calc;
+use crate::taffy_impl::{fit_content_limit, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};
 use shodo::style::TextGroupAlign;
 use sizing::Metrics;
@@ -122,27 +122,25 @@ pub(crate) fn compute_block_flow(
         let minimum = intrinsic_width(tree, node, AvailableSpace::MinContent)
             + metrics.inset.horizontal_axis_sum();
         let fit = |limit: f32| maximum.min(limit).max(minimum);
-        let width = match style.size.width.expand() {
+        let size = style.size.width.expand();
+        let room = || match inputs.available_space.width {
+            AvailableSpace::MaxContent => maximum,
+            AvailableSpace::MinContent => minimum,
+            AvailableSpace::Definite(limit) => fit(limit),
+        };
+        let width = match size {
             taffy::ExpandedDimension::MinContent => minimum,
             taffy::ExpandedDimension::MaxContent => maximum,
-            taffy::ExpandedDimension::FitContentPx(limit) => {
-                fit(limit + metrics.inset.horizontal_axis_sum())
+            // The limit of `fit-content(<length-percentage>)` is a size in
+            // the box-sizing box; a percentage that cannot resolve sizes the
+            // box like `auto`.
+            taffy::ExpandedDimension::FitContentPx(_)
+            | taffy::ExpandedDimension::FitContentPercent(_)
+            | taffy::ExpandedDimension::FitContentCalc(_) => {
+                fit_content_limit(size, inputs.parent_size.width)
+                    .map_or_else(room, |limit| fit(limit + metrics.adjustment.width))
             }
-            taffy::ExpandedDimension::FitContentPercent(limit) => {
-                inputs.parent_size.width.map_or(maximum, |basis| {
-                    fit(limit * basis + metrics.inset.horizontal_axis_sum())
-                })
-            }
-            taffy::ExpandedDimension::FitContentCalc(handle) => {
-                inputs.parent_size.width.map_or(maximum, |basis| {
-                    fit(resolve_calc(handle, basis) + metrics.inset.horizontal_axis_sum())
-                })
-            }
-            _ => match inputs.available_space.width {
-                AvailableSpace::MaxContent => maximum,
-                AvailableSpace::MinContent => minimum,
-                AvailableSpace::Definite(limit) => fit(limit),
-            },
+            _ => room(),
         };
         metrics.clamp_width(width)
     };

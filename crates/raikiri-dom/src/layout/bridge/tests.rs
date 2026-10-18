@@ -2540,6 +2540,43 @@ fn apply_computed_to_style_bridges_max_and_fit_content_width_to_taffy() {
     );
 }
 
+#[test]
+fn apply_computed_to_style_bridges_the_fit_content_function_limit_to_taffy() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let widths: Vec<usize> = [
+        "font-size:20px;width:fit-content(2em)",
+        "width:fit-content(25%)",
+        "inline-size:fit-content(calc(50% - 10px))",
+        "width:fit-content(calc(10px + 5px))",
+    ]
+    .into_iter()
+    .map(|css| {
+        doc.append_element(
+            Some(html),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{css}")),
+        )
+    })
+    .collect();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+    let width = |node: usize| doc.layout_node_with_style(node).unwrap().style.size.width;
+
+    assert_eq!(width(widths[0]), Dimension::fit_content_px(40.0));
+    assert_eq!(width(widths[1]), Dimension::fit_content_percent(0.25));
+    assert!(width(widths[2]).is_fit_content_calc());
+    // A calc without a percentage is a plain length.
+    assert_eq!(width(widths[3]), Dimension::fit_content_px(15.0));
+    for node in widths {
+        assert!(width(node).is_sizing_keyword());
+    }
+}
+
 /// The Taffy size bridged for each `(parent css, child tag, child css)`.
 fn bridged_sizes(cases: &[(&str, &str, &str)]) -> Vec<taffy::Size<Dimension>> {
     use raikiri_style::{build_rule_tree, cascade};
@@ -2572,7 +2609,12 @@ fn bridged_widths(cases: &[(&str, &str, &str)]) -> Vec<Dimension> {
 
 #[test]
 fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
-    for keyword in ["max-content", "fit-content"] {
+    for keyword in [
+        "max-content",
+        "fit-content",
+        "fit-content(50px)",
+        "fit-content(50%)",
+    ] {
         let width = format!("display:block;width:{keyword}");
         let widths = bridged_widths(&[
             // A flex or grid item is sized by the container's algorithm.
@@ -2607,6 +2649,30 @@ fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
 fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
     let width = "display:block;width:max-content";
     let keyword = Dimension::max_content();
+    assert_eq!(
+        bridged_widths(&[
+            (
+                "display:block",
+                "div",
+                "display:block;width:fit-content(50px)"
+            ),
+            (
+                "display:flow-root",
+                "div",
+                "display:block;width:fit-content(50%)"
+            ),
+            (
+                "display:block",
+                "div",
+                "display:contents;width:fit-content(50px)"
+            ),
+        ]),
+        [
+            Dimension::fit_content_px(50.0),
+            Dimension::fit_content_percent(0.5),
+            Dimension::auto(),
+        ],
+    );
     assert_eq!(
         bridged_widths(&[
             ("display:block", "div", width),

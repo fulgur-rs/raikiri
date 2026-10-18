@@ -1647,8 +1647,8 @@ fn border_top_width_parse_px() {
 // Initial: auto, Inherited: no.
 //
 // This task accepts `auto`, `min-content`, `max-content`, the bare
-// `fit-content` and nonnegative `<length-percentage>`; the `fit-content()`
-// limit is checked but not carried yet (b).
+// `fit-content`, `fit-content(<length-percentage>)` and nonnegative
+// `<length-percentage>`.
 
 #[test]
 fn width_parse_auto_keyword() {
@@ -2115,15 +2115,77 @@ fn width_and_inline_size_keep_the_fit_content_keyword() {
 }
 
 #[test]
-fn width_computes_the_fit_content_function_as_auto() {
-    // The limit is checked but not carried to layout yet.
+fn width_keeps_the_limit_of_the_fit_content_function() {
+    let limit = |length| LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(length));
     assert_eq!(
         parse("fit-content(50%)", "width"),
-        Some(PropertyValue::Width(LengthOrAuto::Auto))
+        Some(PropertyValue::Width(limit(Length::Percent(50.0))))
     );
+    assert_eq!(
+        parse("fit-content(100px)", "width"),
+        Some(PropertyValue::Width(limit(Length::Px(100.0))))
+    );
+    assert_eq!(
+        parse("FIT-CONTENT( 2em )", "inline-size"),
+        Some(PropertyValue::InlineSize(limit(Length::Em(2.0))))
+    );
+    // The function differs from both `auto` and the bare keyword.
+    assert_ne!(
+        parse("fit-content(100px)", "width"),
+        parse("fit-content", "width")
+    );
+    assert_ne!(parse("fit-content(100px)", "width"), parse("auto", "width"));
     // A bare keyword followed by a parenthesis is not the function: the
     // keyword leaves the block unconsumed, which no declaration accepts.
     assert_eq!(parse_entire("fit-content (50%)", "width"), None);
+}
+
+#[test]
+fn width_rejects_a_fit_content_function_without_one_limit() {
+    for value in [
+        "fit-content()",
+        "fit-content(10px 20px)",
+        "fit-content(auto)",
+        "fit-content(min-content)",
+        "fit-content(10px, 20px)",
+    ] {
+        assert_eq!(parse_entire(value, "width"), None, "{value}");
+    }
+}
+
+#[test]
+fn width_keeps_a_mixed_calc_as_the_limit_of_the_fit_content_function() {
+    // A mixed calc waits for its percentage like `width: calc(10% + 20px)`;
+    // the grammar the cascade reads it with keeps its terms.
+    assert!(matches!(
+        parse("fit-content(calc(10% + 20px))", "width"),
+        Some(PropertyValue::Deferred(_))
+    ));
+    let grammar = |source: &str| {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        parse_property_grammar("width", &mut parser)
+    };
+    let Some(PropertyValue::Width(LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Calc(calc)))) =
+        grammar("fit-content(calc(10% + 20px))")
+    else {
+        panic!("a mixed calc limit stays a calc");
+    };
+    assert_eq!((calc.percent, calc.px), (10.0, 20.0));
+    // A calc without a percentage folds to a length, and one below zero is
+    // clamped to the range instead of rejected.
+    assert_eq!(
+        grammar("fit-content(calc(10px + 20px))"),
+        Some(PropertyValue::Width(LengthOrAuto::FitContentOf(
+            LengthPercentageOrCalc::Length(Length::Px(30.0))
+        )))
+    );
+    assert_eq!(
+        grammar("fit-content(calc(10px - 20px))"),
+        Some(PropertyValue::Width(LengthOrAuto::FitContentOf(
+            LengthPercentageOrCalc::Length(Length::Px(0.0))
+        )))
+    );
 }
 
 #[test]
@@ -2133,12 +2195,13 @@ fn width_drops_a_fit_content_function_with_a_negative_limit() {
     for property in ["width", "inline-size"] {
         assert_eq!(parse("fit-content(-10px)", property), None);
         assert_eq!(parse("fit-content(-5%)", property), None);
-        assert_eq!(
-            parse("fit-content(0px)", property),
-            parse("fit-content(10px)", property)
-        );
     }
-    assert!(parse("fit-content(0px)", "width").is_some());
+    assert_eq!(
+        parse("fit-content(0px)", "width"),
+        Some(PropertyValue::Width(LengthOrAuto::FitContentOf(
+            LengthPercentageOrCalc::Length(Length::Px(0.0))
+        )))
+    );
 }
 
 #[test]

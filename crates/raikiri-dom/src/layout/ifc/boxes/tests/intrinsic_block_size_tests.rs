@@ -328,3 +328,264 @@ fn a_content_keyword_width_adds_the_padding_and_obeys_the_min_and_max_width() {
         (30.0, 20.0)
     );
 }
+
+#[test]
+fn a_fit_content_function_limits_the_width_between_min_and_max_content() {
+    // The text is 90px wide at most and 40px at its longest word, whatever
+    // the room the root leaves: the limit replaces it.
+    for (root, lead) in [
+        ("width: 200px", "x"),
+        ("width: 200px", ""),
+        ("width: 30px", "x"),
+    ] {
+        for (limit, expected) in [
+            ("200px", (90.0, 10.0)),
+            ("60px", (60.0, 20.0)),
+            ("30px", (40.0, 20.0)),
+            ("0px", (40.0, 20.0)),
+        ] {
+            assert_eq!(
+                child_size(root, lead, &format!("width: fit-content({limit})")),
+                expected,
+                "{root}, lead {lead:?}, {limit}"
+            );
+        }
+    }
+    // The same box sized by the bare keyword takes the room instead.
+    assert_eq!(
+        child_size("width: 200px", "x", "width: fit-content"),
+        (90.0, 10.0)
+    );
+    assert_eq!(
+        child_size("width: 200px", "x", "width: fit-content(60px)"),
+        (60.0, 20.0)
+    );
+}
+
+#[test]
+fn a_fit_content_function_resolves_a_percentage_against_the_root() {
+    for lead in ["", "x"] {
+        assert_eq!(
+            child_size("width: 120px", lead, "width: fit-content(50%)"),
+            (60.0, 20.0),
+            "lead {lead:?}"
+        );
+        assert_eq!(
+            child_size("width: 120px", lead, "width: fit-content(10%)"),
+            (40.0, 20.0),
+            "lead {lead:?}"
+        );
+        assert_eq!(
+            child_size("width: 120px", lead, "width: fit-content(100%)"),
+            (90.0, 10.0),
+            "lead {lead:?}"
+        );
+        // A mixed calc keeps its percentage: 50% of 120px less 10px.
+        assert_eq!(
+            child_size("width: 120px", lead, "width: fit-content(calc(50% - 10px))"),
+            (50.0, 20.0),
+            "lead {lead:?}"
+        );
+        // A calc without a percentage resolves without the root's size.
+        assert_eq!(
+            child_size(
+                "width: 120px",
+                lead,
+                "width: fit-content(calc(20px + 40px))"
+            ),
+            (60.0, 20.0),
+            "lead {lead:?}"
+        );
+    }
+}
+
+#[test]
+fn a_fit_content_function_limits_the_box_sizing_box() {
+    // The limit is a content-box size: the padding comes on top of it.
+    assert_eq!(
+        child_size(
+            "width: 200px",
+            "",
+            "width: fit-content(60px); padding: 0 5px"
+        ),
+        (70.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            "width: 200px",
+            "x",
+            "width: fit-content(60px); padding: 0 5px"
+        ),
+        (70.0, 20.0)
+    );
+    // With `border-box` it is the border-box size.
+    let css = "width: fit-content(60px); padding: 0 5px; box-sizing: border-box";
+    assert_eq!(child_size("width: 200px", "", css), (60.0, 20.0));
+    assert_eq!(child_size("width: 200px", "x", css), (60.0, 20.0));
+}
+
+#[test]
+fn a_fit_content_function_width_obeys_the_min_and_max_width() {
+    assert_eq!(
+        child_size(
+            "width: 200px",
+            "",
+            "width: fit-content(60px); max-width: 50px"
+        ),
+        (50.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            "width: 200px",
+            "x",
+            "width: fit-content(60px); min-width: 80px"
+        ),
+        (80.0, 20.0)
+    );
+}
+
+#[test]
+fn a_fit_content_function_width_applies_to_the_inline_size_of_a_vertical_root() {
+    let root = "writing-mode: vertical-lr; width: auto; height: 50px";
+    // The inline axis is the physical height; the text breaks at its space.
+    assert_eq!(
+        child_size(root, "x", "inline-size: fit-content(60px)"),
+        (20.0, 60.0)
+    );
+    assert_eq!(
+        child_size(root, "x", "inline-size: fit-content(30px)"),
+        (20.0, 40.0)
+    );
+    assert_eq!(
+        child_size(root, "x", "inline-size: fit-content(200px)"),
+        (10.0, 90.0)
+    );
+    assert_eq!(
+        child_size(root, "x", "inline-size: fit-content(50%)"),
+        (20.0, 40.0)
+    );
+}
+
+#[test]
+fn a_flex_container_takes_a_fit_content_function_width() {
+    for display in ["flex", "inline-flex"] {
+        for lead in ["", "x"] {
+            for (limit, expected) in [
+                ("200px", (90.0, 10.0)),
+                ("60px", (60.0, 20.0)),
+                ("30px", (40.0, 20.0)),
+                ("50%", (60.0, 20.0)),
+                ("calc(50% - 20px)", (40.0, 20.0)),
+            ] {
+                assert_eq!(
+                    child_size(
+                        "width: 120px",
+                        lead,
+                        &format!("display: {display}; width: fit-content({limit})")
+                    ),
+                    expected,
+                    "{display}, lead {lead:?}, {limit}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        child_size(
+            "width: 120px",
+            "",
+            "display: flex; width: fit-content(60px); padding: 0 5px"
+        ),
+        (70.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            "width: 120px",
+            "",
+            "display: flex; width: fit-content(60px); max-width: 50px"
+        ),
+        (50.0, 20.0)
+    );
+}
+
+#[test]
+fn a_grid_container_and_a_table_take_a_fit_content_function_width() {
+    for display in ["grid", "table"] {
+        for (limit, expected) in [
+            ("200px", (90.0, 10.0)),
+            ("60px", (60.0, 20.0)),
+            ("30px", (40.0, 20.0)),
+            ("50%", (60.0, 20.0)),
+        ] {
+            assert_eq!(
+                child_size(
+                    "width: 120px",
+                    "",
+                    &format!("display: {display}; width: fit-content({limit})")
+                ),
+                expected,
+                "{display}, {limit}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_float_and_an_inline_block_take_a_fit_content_function_width() {
+    for css in ["float: left", "display: inline-block"] {
+        for (limit, expected) in [
+            ("200px", (90.0, 10.0)),
+            ("60px", (60.0, 20.0)),
+            ("30px", (40.0, 20.0)),
+            ("50%", (60.0, 20.0)),
+        ] {
+            assert_eq!(
+                child_size(
+                    "width: 120px",
+                    "",
+                    &format!("{css}; width: fit-content({limit})")
+                ),
+                expected,
+                "{css}, {limit}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_absolutely_positioned_box_takes_a_fit_content_function_width() {
+    let root = "position: relative; width: 120px";
+    for (limit, expected) in [
+        ("200px", (90.0, 10.0)),
+        ("60px", (60.0, 20.0)),
+        ("30px", (40.0, 20.0)),
+        ("50%", (60.0, 20.0)),
+        ("calc(50% - 10px)", (50.0, 20.0)),
+    ] {
+        assert_eq!(
+            child_size(
+                root,
+                "",
+                &format!("position: absolute; width: fit-content({limit})")
+            ),
+            expected,
+            "{limit}"
+        );
+    }
+    // The limit is a content-box size unless `box-sizing` says otherwise.
+    assert_eq!(
+        child_size(
+            root,
+            "",
+            "position: absolute; width: fit-content(60px); padding: 0 5px"
+        ),
+        (70.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            root,
+            "",
+            "position: absolute; width: fit-content(60px); padding: 0 5px; box-sizing: border-box"
+        ),
+        (60.0, 20.0)
+    );
+}

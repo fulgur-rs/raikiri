@@ -385,6 +385,9 @@ fn lift_length_percentage_or_auto(computed: ComputedLengthPercentageOrAuto) -> L
         ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
         ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::FitContent,
+        ComputedLengthPercentageOrAuto::FitContentOf(limit) => {
+            LengthOrAuto::FitContentOf(lift_length_percentage_or_calc(limit))
+        }
     }
 }
 

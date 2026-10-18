@@ -557,6 +557,51 @@ fn max_content_and_fit_content_preferred_widths_survive_the_cascade() {
 }
 
 #[test]
+fn the_fit_content_function_keeps_its_limit_through_the_cascade() {
+    let font = cascade_doc("", "div", Some("font-size: 20px; width: fit-content(2em)"));
+    assert_eq!(
+        font.width,
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Px(40.0))
+    );
+    let percent = cascade_doc("", "div", Some("inline-size: fit-content(25%)"));
+    assert_eq!(
+        percent.width,
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Percent(25.0))
+    );
+    assert!(percent.width.is_content_keyword());
+    // A mixed calc keeps its percentage for the containing block, also when a
+    // variable supplies a term.
+    let calc = cascade_doc(
+        "",
+        "div",
+        Some("--gap: 4px; width: fit-content(calc(50% - var(--gap)))"),
+    );
+    assert_eq!(
+        calc.width,
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Calc(
+            CalcLengthPercentage {
+                percent: 50.0,
+                px: -4.0,
+            }
+        ))
+    );
+    let vertical = cascade_doc(
+        "",
+        "div",
+        Some("inline-size: fit-content(30px); writing-mode: vertical-rl"),
+    );
+    assert_eq!(
+        vertical
+            .vertical_logical_size
+            .as_ref()
+            .map(|size| size.height),
+        Some(ComputedLengthPercentageOrAuto::FitContentOf(
+            ComputedLengthPercentageOrCalc::Px(30.0)
+        ))
+    );
+}
+
+#[test]
 fn an_invalid_later_preferred_size_still_wins_the_axis() {
     let physical_invalid = cascade_doc("", "div", Some("inline-size: 10px; width: var(--missing)"));
     assert_eq!(physical_invalid.width, ComputedLengthPercentageOrAuto::Auto);
@@ -6083,7 +6128,9 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
-            | ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::Length(Length::Px(0.0)),
+            | ComputedLengthPercentageOrAuto::FitContent
+            | ComputedLengthPercentageOrAuto::FitContentOf(_) =>
+                LengthOrAuto::Length(Length::Px(0.0)),
         })))
     );
 }

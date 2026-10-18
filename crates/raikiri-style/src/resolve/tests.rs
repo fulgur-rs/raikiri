@@ -905,6 +905,39 @@ fn resolve_length_percentage_or_auto_keeps_the_sizing_keywords() {
     }
 }
 
+/// The limit of `fit-content(<length-percentage>)` is absolutized like a
+/// padding: a font-relative length becomes px and a percentage waits for the
+/// containing block.
+#[test]
+fn resolve_length_percentage_or_auto_absolutizes_the_fit_content_limit() {
+    let fs = ComputedLength(20.0);
+    let limit = |limit| {
+        resolve_length_percentage_or_auto(LengthOrAuto::FitContentOf(limit), fs, None, &CTX)
+    };
+    assert_eq!(
+        limit(LengthPercentageOrCalc::Length(Length::Em(2.0))),
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Px(40.0)),
+    );
+    assert_eq!(
+        limit(LengthPercentageOrCalc::Length(Length::Percent(50.0))),
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Percent(50.0)),
+    );
+    let calc = CalcLengthPercentage {
+        percent: 10.0,
+        px: 20.0,
+    };
+    assert_eq!(
+        limit(LengthPercentageOrCalc::Calc(calc)),
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Calc(calc)),
+    );
+    // A limit that computes below zero clamps to the `[0,∞]` range.
+    assert_eq!(
+        limit(LengthPercentageOrCalc::Length(Length::Px(-5.0))),
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Px(0.0)),
+    );
+    assert!(limit(LengthPercentageOrCalc::Length(Length::Px(1.0))).is_content_keyword());
+}
+
 /// A margin never holds a sizing keyword, but a stray one must compute to the
 /// margin's initial zero, not to a keyword the layout would read as `auto`.
 #[test]
@@ -913,6 +946,7 @@ fn resolve_margin_length_or_auto_drops_the_sizing_keywords() {
         LengthOrAuto::MinContent,
         LengthOrAuto::MaxContent,
         LengthOrAuto::FitContent,
+        LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(Length::Px(10.0))),
     ] {
         assert_eq!(
             resolve_margin_length_or_auto(specified, ComputedLength(16.0), None, &CTX),
@@ -929,6 +963,7 @@ fn computed_flex_basis_reads_a_stray_sizing_keyword_as_auto() {
         LengthOrAuto::MinContent,
         LengthOrAuto::MaxContent,
         LengthOrAuto::FitContent,
+        LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(Length::Px(10.0))),
     ] {
         assert_eq!(
             computed_flex_basis(specified, ComputedLength(16.0), None, &CTX),

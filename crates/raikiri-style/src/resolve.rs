@@ -459,9 +459,9 @@ pub type ComputedWordSpacing = ComputedLetterSpacing;
 ///   "Value: auto | `<length-percentage>` | min-content | max-content |
 ///   fit-content(`<length-percentage>`)" / "Computed value: as specified, with
 ///   `<length-percentage>` values computed". The latter directly justifies
-///   this type: lengths are absolutized and percentages pass through.
-///   (`min-content` / `max-content` / `fit-content()` are unsupported by
-///   specified-layer [`LengthOrAuto`]: an existing gap outside this module.)
+///   this type: lengths are absolutized and percentages pass through. The
+///   sizing keywords stay keywords, and the limit of `fit-content()` is
+///   absolutized the same way (see [`Self::FitContentOf`]).
 ///
 /// The meaning of [`Auto`](Self::Auto) depends on the property (distribution
 /// of available space for margins, automatic size calculation for width/height).
@@ -503,15 +503,23 @@ pub enum ComputedLengthPercentageOrAuto {
     MaxContent,
     /// The bare `fit-content` sizing keyword, kept as specified.
     FitContent,
+    /// The `fit-content(<length-percentage>)` function with its limit
+    /// absolutized; a percentage in the limit stays unresolved until the
+    /// containing block's inline size is known.
+    FitContentOf(ComputedLengthPercentageOrCalc),
 }
 
 impl ComputedLengthPercentageOrAuto {
     /// Whether this is one of the sizing keywords (`min-content`,
-    /// `max-content`, `fit-content`) that take the size from the box's
-    /// content rather than from its containing block (CSS Sizing 3 §3.1.1).
+    /// `max-content`, `fit-content`) or the `fit-content()` function that take
+    /// the size from the box's content rather than from its containing block
+    /// (CSS Sizing 3 §3.1.1).
     #[must_use]
     pub const fn is_content_keyword(self) -> bool {
-        matches!(self, Self::MinContent | Self::MaxContent | Self::FitContent)
+        matches!(
+            self,
+            Self::MinContent | Self::MaxContent | Self::FitContent | Self::FitContentOf(_)
+        )
     }
 }
 
@@ -2742,6 +2750,9 @@ pub fn resolve_length_percentage_or_auto(
         LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::MinContent,
         LengthOrAuto::MaxContent => ComputedLengthPercentageOrAuto::MaxContent,
         LengthOrAuto::FitContent => ComputedLengthPercentageOrAuto::FitContent,
+        LengthOrAuto::FitContentOf(limit) => ComputedLengthPercentageOrAuto::FitContentOf(
+            resolve_non_negative_length_percentage_or_calc(limit, font_size, own_line_height, ctx),
+        ),
         LengthOrAuto::Calc(value) => ComputedLengthPercentageOrAuto::Calc(value),
         LengthOrAuto::RelativeCalc(value) => {
             resolve_relative_calc(value, font_size, own_line_height, ctx)
@@ -2950,7 +2961,8 @@ fn resolve_css_position_offset(
             ComputedLengthPercentageOrAuto::Auto
             | ComputedLengthPercentageOrAuto::MinContent
             | ComputedLengthPercentageOrAuto::MaxContent
-            | ComputedLengthPercentageOrAuto::FitContent => {
+            | ComputedLengthPercentageOrAuto::FitContent
+            | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)) // cov:ignore: a relative calc resolves only to Px, Percent or Calc
             }
         },
@@ -3267,7 +3279,8 @@ fn computed_flex_basis(
         // cov:ignore: only the width / inline-size parser produces sizing keywords
         ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent => ComputedFlexBasis::Auto,
+        | ComputedLengthPercentageOrAuto::FitContent
+        | ComputedLengthPercentageOrAuto::FitContentOf(_) => ComputedFlexBasis::Auto,
     }
 }
 
@@ -3552,7 +3565,10 @@ fn fold_resolved_calc(resolved: ComputedLengthPercentageOrAuto) -> ComputedLengt
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent => ComputedLengthPercentageOrCalc::Px(0.0),
+        | ComputedLengthPercentageOrAuto::FitContent
+        | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
+            ComputedLengthPercentageOrCalc::Px(0.0)
+        }
     }
 }
 
@@ -3586,9 +3602,10 @@ pub fn resolve_margin_length_or_auto(
         }
         // Only `width` / `inline-size` parse the sizing keywords; a margin
         // never holds one.
-        LengthOrAuto::MinContent | LengthOrAuto::MaxContent | LengthOrAuto::FitContent => {
-            ComputedLengthPercentageOrAuto::Px(0.0)
-        }
+        LengthOrAuto::MinContent
+        | LengthOrAuto::MaxContent
+        | LengthOrAuto::FitContent
+        | LengthOrAuto::FitContentOf(_) => ComputedLengthPercentageOrAuto::Px(0.0),
         LengthOrAuto::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),

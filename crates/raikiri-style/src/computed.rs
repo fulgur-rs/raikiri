@@ -992,11 +992,11 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>).
     ///
     /// The spec grammar is `auto | <length-percentage [0,∞]> | min-content |
-    /// max-content | fit-content(<length-percentage>)`, but currently only
-    /// `auto` and non-negative `<length-percentage>` are accepted. The other
-    /// options are not implemented. Negative values violate `[0,∞]` and are
-    /// discarded at parse time (see [`crate::property::PropertyValue::Width`]
-    /// and `parse_width`).
+    /// max-content | fit-content(<length-percentage>)`; the parser accepts all
+    /// of it, the keywords and the `fit-content()` limit staying in the
+    /// computed value (see [`ComputedLengthPercentageOrAuto::FitContentOf`]).
+    /// Negative values violate `[0,∞]` and are discarded at parse time (see
+    /// [`crate::property::PropertyValue::Width`] and `parse_width`).
     ///
     /// As specified by "Computed value: as specified, with `<length-percentage>`
     /// values computed", lengths become absolute px while percentages remain

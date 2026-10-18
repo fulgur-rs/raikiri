@@ -893,6 +893,20 @@ fn sizing_keywords_resolve_against_the_containing_block() {
         width(Dimension::fit_content_percent(0.25)),
         Some(("measure", 200.0))
     );
+    let mut arena = Vec::new();
+    let calc = crate::taffy_impl::push_calc(
+        &mut arena,
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 25.0,
+            px: -50.0,
+        },
+        true,
+    );
+    // 25% of the 800px basis less 50px.
+    assert_eq!(
+        width(Dimension::fit_content_calc(calc)),
+        Some(("measure", 150.0))
+    );
     assert_eq!(width(Dimension::fit_content()), Some(("measure", 300.0)));
     assert_eq!(width(Dimension::stretch()), Some(("exact", 300.0)));
     assert_eq!(width(Dimension::length(10.0)), None);

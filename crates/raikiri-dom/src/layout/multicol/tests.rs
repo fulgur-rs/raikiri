@@ -3172,10 +3172,18 @@ fn ancestor_width_table_treats_max_and_fit_content_as_intrinsic() {
         Some("display:block;width:fit-content"),
     );
     let fit_text = doc.append_text(fit, "test");
+    // The limit of the function does not make the width an authored one.
+    let limited = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:fit-content(50px)"),
+    );
+    let limited_text = doc.append_text(limited, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
     let widths = AncestorFacts::new(&doc, &cascade, 800.0);
-    for (node, text) in [(max, max_text), (fit, fit_text)] {
+    for (node, text) in [(max, max_text), (fit, fit_text), (limited, limited_text)] {
         assert!(widths.in_intrinsic_width(node));
         assert!(widths.in_intrinsic_width(text));
         // A keyword width is not an authored containing width: the text

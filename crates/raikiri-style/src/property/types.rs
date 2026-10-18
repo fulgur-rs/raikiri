@@ -1236,6 +1236,12 @@ pub enum LengthOrAuto {
     /// `min(max-content, max(min-content, stretch-fit))`. Produced by the
     /// `width` / `inline-size` parser and honored where `min-content` is.
     FitContent,
+    /// The `fit-content(<length-percentage [0,∞]>)` function (CSS Sizing 3
+    /// §3.1.1): `min(max-content, max(min-content, <limit>))`. Produced by the
+    /// `width` / `inline-size` parser and honored where `min-content` is. A
+    /// percentage limit resolves against the containing block's inline size at
+    /// used-value time; against an indefinite size the box sizes like `auto`.
+    FitContentOf(LengthPercentageOrCalc),
 }
 
 /// A `<length-percentage>` that keeps a mixed-unit `calc()` until it can be
