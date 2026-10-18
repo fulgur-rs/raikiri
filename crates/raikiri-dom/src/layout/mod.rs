@@ -62,6 +62,7 @@ mod fixed;
 pub(crate) mod ifc;
 mod initial_containing_block;
 pub(crate) mod multicol;
+pub(crate) mod oof_containing_block;
 mod page;
 mod page_pipeline;
 mod relative;
