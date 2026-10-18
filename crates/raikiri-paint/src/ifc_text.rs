@@ -26,6 +26,8 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
+mod line_paint;
+use line_paint::{LineGroups, LinePaint, PiecesByLine, block_pieces, kept_whole_box};
 mod typographic;
 pub(crate) use typographic::{BackgroundSlice, Paragraph, enclosing_inline_opacities};
 
@@ -290,44 +292,11 @@ pub(crate) fn hold_ifc_lines<'a>(
     let vertical = writing_mode != WritingMode::HorizontalTb;
     // Pages never cut a paragraph across its lines: each of its lines goes
     // with the paragraph's content box.
-    let paragraph_box = page_lines
-        .filter(|lines| lines.keeps_paragraph_whole(vertical))
-        .and_then(|_| document.ifc_layout_node(root_id))
-        .map(|node| {
-            kurbo::Rect::from_origin_size(
-                (f64::from(base.x), f64::from(base.y + base.shift_y)),
-                (
-                    f64::from(node.unrounded_layout.content_box_width()),
-                    f64::from(node.unrounded_layout.content_box_height()),
-                ),
-            )
-        });
-    let pieces = document
-        .ifc_layout_node(root_id)
-        .and_then(|node| node.ifc_inline_boxes())
-        .unwrap_or_default();
-    // A box split across lines is sliced from one joined box, which spans
-    // every line of the paragraph, including those on other pages, along
-    // the paragraph's inline axis.
-    let progression = |node| {
-        crate::walk::InlineProgression::new(
-            writing_mode,
-            computed_for_id(cascade, node)
-                .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl),
-        )
-    };
-    let all_slices = typographic::background_slices(&pieces, progression);
-    let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
-    let mut slices_by_line = vec![Vec::new(); positioned.all_lines().len()];
-    for (piece, slice) in pieces.into_iter().zip(all_slices) {
-        if let (Some(line_pieces), Some(line_slices)) = (
-            pieces_by_line.get_mut(piece.line),
-            slices_by_line.get_mut(piece.line),
-        ) {
-            line_pieces.push(piece);
-            line_slices.push(slice);
-        }
-    }
+    let paragraph_box = kept_whole_box(document, root_id, page_lines, vertical, base);
+    let PiecesByLine {
+        pieces: pieces_by_line,
+        slices: slices_by_line,
+    } = PiecesByLine::new(&positioned, document, cascade, root_id);
     let offsets = positioned.offsets;
     let hit_layout =
         (!custom_highlights.is_empty()).then(|| LineLayout::new(positioned.all_lines()));
@@ -339,118 +308,28 @@ pub(crate) fn hold_ifc_lines<'a>(
         cascade,
         root_id,
     };
-    // A translucent `::first-line` composites the paint of the first line
-    // as one group. It splits the inline elements on that line from their
-    // other lines (CSS Pseudo 4 §2.1.1), so the first line has groups of its
-    // own.
-    let first_line_opacity = raikiri_dom::paint_rules::first_line_opacity_layer(document, root_id);
     // A page holds a paragraph it keeps whole as it holds its lines.
     let off_band = page_lines
         .zip(paragraph_box)
         .is_some_and(|(lines, rect)| !lines.holds_line(paint_transform, rect));
-    // A block-level `::before` or `::after` paints its own box, cut along
-    // the block axis where pagination cuts its lines. Its pieces on the
-    // lines hold only its text. Like other block boxes, it is sliced even
-    // under `box-decoration-break: clone`, as pagination reserves no room
-    // for cloned edges.
-    let blocks: Vec<_> = root_node
-        .ifc_generated_block_pieces()
-        .into_iter()
-        .filter(|_| !off_band)
-        .map(|block| {
-            (
-                raikiri_dom::InlineBoxPiece {
-                    node: block.node,
-                    line: block.line,
-                    border_box: block.border_box,
-                    content_box: block.content_box,
-                    has_start_edge: block.has_block_start_edge,
-                    has_end_edge: block.has_block_end_edge,
-                    parent: None,
-                    source_container: None,
-                    source_owner: None,
-                },
-                typographic::BackgroundSlice {
-                    outer: block.joined_border_box,
-                    content: block.joined_content_box,
-                },
-            )
-        })
-        .collect();
+    let blocks = block_pieces(root_node, off_band);
     let block_nodes: std::collections::HashSet<usize> =
         blocks.iter().map(|(piece, _)| piece.node).collect();
-    // A box goes with the paint of its first line, below the text of the
-    // lines after it.
-    let on_first_line =
-        |piece: &raikiri_dom::InlineBoxPiece| first_line_opacity.is_some() && piece.line == 0;
-    let mut first_line = first_line_opacity.map(|opacity| {
-        let mut pieces = pieces_by_line.first().cloned().unwrap_or_default();
-        pieces.extend(blocks.iter().map(|(piece, _)| *piece).filter(on_first_line));
-        (
-            typographic::TypographicPaint::new(paragraph, root_node, &pieces),
-            opacity,
-        )
-    });
-    // One set of groups serves every other line, so an element or
-    // pseudo-element split over lines composites its complete paint at once
-    // (CSS Color 4 §3.3).
-    let mut rest_pieces: Vec<_> = pieces_by_line
-        .iter()
-        .skip(usize::from(first_line.is_some()))
-        .flatten()
-        .cloned()
-        .collect();
-    rest_pieces.extend(
-        blocks
-            .iter()
-            .map(|(piece, _)| *piece)
-            .filter(|piece| !on_first_line(piece)),
-    );
-    let mut rest = typographic::TypographicPaint::new(paragraph, root_node, &rest_pieces);
-    for (piece, joined) in &blocks {
-        let Some(cv) = computed_for_id(cascade, piece.node)
-            .filter(|cv| cv.visibility == raikiri_style::property::Visibility::Visible)
-        else {
-            continue;
-        };
-        let outer = piece.border_box;
-        if outer.width <= 0.0 || outer.height <= 0.0 {
-            continue;
-        }
-        let (dx, dy) = cumulative_offset(document, root_id, positioned.offsets, piece.node);
-        let (x, y) = (base.x + dx, base.y + base.shift_y + dy);
-        let paint = match first_line.as_mut() {
-            Some((first, _)) if on_first_line(piece) => first,
-            _ => &mut rest,
-        };
-        let group = paint.piece_group(piece);
-        // The piece's edges are along the block axis: its progression runs
-        // down the page.
-        crate::walk::paint_inline_box(
-            image_cache,
-            paint.box_target(group, piece),
-            cv,
-            piece,
-            Some(joined),
-            crate::walk::InlineProgression {
-                vertical: true,
-                reversed: false,
-            },
-            transform_applies(document, cascade, piece.node, cv),
-            x,
-            y,
-            pixel_source,
-            warnings,
-            paint_transform,
-            piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
-        );
+    let mut groups = LineGroups::new(paragraph, root_node, &pieces_by_line, &blocks);
+    LinePaint {
+        image_cache,
+        paragraph,
+        offsets,
+        base,
+        paint_transform,
+        fixed_viewport,
+        pixel_source,
+        warnings,
     }
+    .paint_block_pieces(&mut groups, &blocks);
     for positioned_line in positioned.lines() {
         let line_index = positioned_line.index;
-        let paint = match first_line.as_mut() {
-            Some((first, _)) if line_index == 0 => first,
-            _ => &mut rest,
-        };
+        let paint = groups.for_line(line_index);
         let line = positioned_line.line;
         let (column_x, column_y) = positioned_line.offset;
         let position = IfcPosition {
@@ -831,8 +710,8 @@ pub(crate) fn hold_ifc_lines<'a>(
     }
     Some(HeldLines {
         paragraph,
-        rest,
-        first_line,
+        rest: groups.rest,
+        first_line: groups.first_line,
         clip: Rect::new(
             0.0,
             0.0,
