@@ -317,3 +317,20 @@ fn a_decoration_of_the_block_and_one_of_its_first_line_both_reach_the_first_line
         "the second line keeps the block's underline: {blue:?}"
     );
 }
+
+#[test]
+fn a_decoration_of_a_nested_first_line_takes_the_color_of_the_first_line_around_it() {
+    // The underline of `.inner::first-line` is in `currentColor`, which is
+    // the blue of the `::first-line` of the block around it, not the red of
+    // `.inner` itself. It lies 20px below the baseline of the first line.
+    let rgba = raster(
+        "<div class=outer><div class=inner>X<br>X</div></div>",
+        ".outer::first-line{color:blue} \
+         .inner{color:red} \
+         .inner::first-line{text-decoration:underline;text-underline-offset:20px}",
+    );
+    let blue = tinted_rows(&rgba, 2);
+    let red = tinted_rows(&rgba, 0);
+    assert!(blue.iter().any(|&y| (27..32).contains(&y)), "{blue:?}");
+    assert!(red.iter().all(|&y| y < 27), "{red:?}");
+}

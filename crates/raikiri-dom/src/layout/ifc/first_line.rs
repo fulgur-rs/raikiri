@@ -79,13 +79,18 @@ impl FirstLine {
             .map(|&id| StyleNodeId::new(id as u64))
             .collect();
         let root_values = cascade.first_line_style(doc, &origins, root_id, root_id, None)?;
+        // A `::first-line` box takes the values of the `::first-line` boxes
+        // around it, as the text of the line does, so its decoration is
+        // looked up from those values.
         let decorating = line_origins
             .iter()
-            .filter_map(|&id| {
-                let style = cascade
-                    .pseudo
-                    .get(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))?;
-                has_paintable_line(style.text_decoration_line).then(|| (id, style.as_ref().clone()))
+            .zip(&origins)
+            .filter_map(|(&id, &origin)| {
+                let ordinary = cascade.pseudo.get(&(origin, PseudoElem::FirstLine))?;
+                has_paintable_line(ordinary.text_decoration_line)
+                    .then(|| cascade.first_line_style(doc, &origins, origin, origin, None))
+                    .flatten()
+                    .map(|style| (id, style))
             })
             .collect();
         Some(Self {
