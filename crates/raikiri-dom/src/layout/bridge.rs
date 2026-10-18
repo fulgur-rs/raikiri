@@ -822,13 +822,20 @@ fn bridge_padding(
 ///   future work for the paint layer.
 /// - `border-image` and `border-radius` are out of scope.
 fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
-    let b = cv.border;
-    style.border = Rect {
-        top: computed_length_to_taffy_length_percentage(b.top.width(), diag),
-        right: computed_length_to_taffy_length_percentage(b.right.width(), diag),
-        bottom: computed_length_to_taffy_length_percentage(b.bottom.width(), diag),
-        left: computed_length_to_taffy_length_percentage(b.left.width(), diag),
-    };
+    style.border = taffy_border_widths(&cv.border, diag);
+}
+
+/// The taffy border widths of `border`, as [`bridge_border`] sets them.
+pub(super) fn taffy_border_widths(
+    border: &raikiri_style::property::Sides<raikiri_style::ComputedBorder>,
+    diag: &mut Vec<LayoutWarn>,
+) -> Rect<LengthPercentage> {
+    Rect {
+        top: computed_length_to_taffy_length_percentage(border.top.width(), diag),
+        right: computed_length_to_taffy_length_percentage(border.right.width(), diag),
+        bottom: computed_length_to_taffy_length_percentage(border.bottom.width(), diag),
+        left: computed_length_to_taffy_length_percentage(border.left.width(), diag),
+    }
 }
 
 fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {

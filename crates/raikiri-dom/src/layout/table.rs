@@ -469,6 +469,28 @@ fn compute_table_layout_checked(
         .as_ref()
         .filter(|shown| !shown.rows.is_empty() && shown.n_cols > 0)
         .map(CellIndex::new);
+    // Container metrics, split so collapse can substitute collapsed outer
+    // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
+    // border participates in conflict resolution with edge cells).
+    let table_style = &doc.layout_node_with_style(table_idx).unwrap().style;
+    let pad = resolve_table_rect(&table_style.padding, inputs.parent_size);
+    let table_border = resolve_table_rect(&table_style.border, inputs.parent_size);
+    // The columns that collapse still set the widths the rows are measured at,
+    // so the borders around them are read before they are left out.
+    let natural_border_width = shown
+        .as_ref()
+        .filter(|_| cell_index.is_some() && columns_collapse)
+        .map(|shown| {
+            border_width_with_columns_in_place(
+                doc,
+                &grid,
+                &collapsed_rows,
+                shown,
+                table_idx,
+                &table_border,
+                inputs.parent_size.width,
+            )
+        });
     if let Some(index) = cell_index.as_ref() {
         let (resolved, index) = match (shown.as_ref(), shown_index.as_ref()) {
             (Some(shown), Some(shown_index)) => (Some(shown), shown_index),
@@ -476,9 +498,7 @@ fn compute_table_layout_checked(
             (None, _) => (Some(&grid), index),
         };
         if let Some(resolved) = resolved {
-            resolve_collapsed_row_borders(doc, resolved);
-            resolve_collapsed_cell_borders(doc, resolved, index);
-            resolve_collapsed_table_edges(doc, resolved, table_idx);
+            resolve_collapsed_borders(doc, resolved, index, table_idx);
         }
     }
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
@@ -489,13 +509,6 @@ fn compute_table_layout_checked(
     } else {
         caption_inline_minimum
     };
-
-    // Container metrics, split so collapse can substitute collapsed outer
-    // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
-    // border participates in conflict resolution with edge cells).
-    let table_style = &doc.layout_node_with_style(table_idx).unwrap().style;
-    let pad = resolve_table_rect(&table_style.padding, inputs.parent_size);
-    let table_border = resolve_table_rect(&table_style.border, inputs.parent_size);
 
     // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
     // The table's outer size caller may have imposed via `apply_page_content_box_to_body` / block layout.
@@ -754,8 +767,10 @@ fn compute_table_layout_checked(
     // A collapsed column leaves the table, but its cells still count toward
     // the row heights, which keep the widths the columns had before the
     // collapse ("col visibility:collapse doesn't change table height").
-    let natural_insets_width =
-        padding_border_size.width - overlap_w + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+    let natural_insets_width = pad.left
+        + pad.right
+        + natural_border_width.unwrap_or_else(|| collapsed.inline_border_width())
+        + border_spacing.0 * (grid.n_cols as f32 + 1.0);
     let natural_widths = columns_collapse
         .then(|| resolve_table_columns(doc, &mut grid, &pass, natural_insets_width));
     let mut column_widths = if columns_collapse {
@@ -3240,6 +3255,12 @@ struct CollapsedLines {
 }
 
 impl CollapsedLines {
+    /// The inline-axis width the collapsed borders take from the table: the
+    /// outer left and right borders, less the overlaps between columns.
+    fn inline_border_width(&self) -> f32 {
+        self.outer_left + self.outer_right - self.col_overlaps.iter().sum::<f32>()
+    }
+
     fn separate(table_border: &Rect<f32>) -> Self {
         Self {
             col_overlaps: Vec::new(),
@@ -3650,6 +3671,72 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
             );
         }
     }
+}
+
+/// Resolve the borders of `grid` (CSS 2.1 §17.6.2.1): rows against their
+/// cells, adjoining cells against each other, and edge cells against the table.
+fn resolve_collapsed_borders(
+    doc: &mut Document,
+    grid: &TableGrid,
+    index: &CellIndex,
+    table_idx: usize,
+) {
+    resolve_collapsed_row_borders(doc, grid);
+    resolve_collapsed_cell_borders(doc, grid, index);
+    resolve_collapsed_table_edges(doc, grid, table_idx);
+}
+
+/// Give every cell and row of `grid` the borders it has before any
+/// resolution: the widths of its computed border, as the bridge sets them
+/// (it has already reported any warning for those widths), and no collapsed
+/// border. A grid resolved next then does not inherit what an earlier
+/// resolution of another grid left on them.
+fn reset_collapsed_borders(doc: &mut Document, grid: &TableGrid) {
+    for cell in &grid.cells {
+        let node = doc.table_layout_node_mut(cell.node_id);
+        node.collapsed_border = None;
+        let border = node.computed_border.expect("table cell computed border");
+        doc.layout_style_for_key_mut(cell.node_id)
+            .expect("table cell layout style")
+            .border = super::bridge::taffy_border_widths(&border, &mut Vec::new());
+    }
+    for &row in &grid.rows {
+        doc.nodes[row].collapsed_border = None;
+    }
+}
+
+/// The inline-axis width that collapsed borders take from the table while
+/// every column of `grid` is in place ([`CollapsedLines::inline_border_width`]
+/// of the grid with those columns). `collapsed_rows` stay out, as they do when
+/// the columns are shown.
+///
+/// Columns that collapse are still measured at the widths they had before,
+/// and those widths depend on the borders they had too, so this resolves
+/// the grid with the columns in it. Cells that remain in `shown` are returned
+/// to their unresolved borders afterwards, for the caller to resolve `shown`;
+/// the cells of the collapsed columns keep the borders they resolved to, which
+/// they are measured with.
+fn border_width_with_columns_in_place(
+    doc: &mut Document,
+    grid: &TableGrid,
+    collapsed_rows: &[bool],
+    shown: &TableGrid,
+    table_idx: usize,
+    table_border: &Rect<f32>,
+    basis: Option<f32>,
+) -> f32 {
+    let rows_shown = without_collapsed_rows(grid, collapsed_rows);
+    if rows_shown.rows.is_empty() {
+        // Nothing shows, so no cell border meets the table's own.
+        return table_border.left + table_border.right;
+    }
+    let index = CellIndex::new(&rows_shown);
+    reset_collapsed_borders(doc, grid);
+    resolve_collapsed_borders(doc, &rows_shown, &index, table_idx);
+    let width = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis)
+        .inline_border_width();
+    reset_collapsed_borders(doc, shown);
+    width
 }
 
 fn compute_collapsed_lines(

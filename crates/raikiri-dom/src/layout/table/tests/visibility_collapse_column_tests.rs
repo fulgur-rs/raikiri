@@ -412,6 +412,142 @@ fn a_collapsed_column_leaves_the_row_height_it_gave() {
     assert_eq!(layout.size.height, 40.0);
 }
 
+/// A table row for [`rows_height`]: its style, then its (style, text) cells.
+type Row<'a> = (&'a str, &'a [(&'a str, &'a str)]);
+
+const COLLAPSED_ROW: &str = "visibility:collapse";
+
+/// The height of a collapsed-border table with the given column boxes and
+/// `rows`, whose cells are set in 10px Ahem. Fixed layout at `width` hands
+/// every column an equal share of what the borders leave, so a cell wraps by
+/// how much border the table spends.
+fn rows_height(width: u32, columns: &[&'static str], rows: &[Row]) -> f32 {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(format!(
+            "display:table;table-layout:fixed;border-collapse:collapse;width:{width}px"
+        )),
+    );
+    for css in columns {
+        doc.append_element(Some(table), "div", Style::default(), Some(*css));
+    }
+    for &(row_css, cells) in rows {
+        let row = doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some(format!("display:table-row;{row_css}")),
+        );
+        for &(css, text) in cells {
+            let cell = doc.append_element(
+                Some(row),
+                "div",
+                Style::default(),
+                Some(format!(
+                    "display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px;{css}"
+                )),
+            );
+            doc.append_text(cell, text);
+        }
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    doc.nodes[table].unrounded_layout.size.height
+}
+
+#[test]
+fn a_collapsed_edge_column_keeps_its_border_in_the_widths_rows_are_measured_at() {
+    // The collapsed first column's 20px left border is the table's left edge
+    // until it collapses, and it narrows the columns the row heights are
+    // measured at. The text wraps there as in the table that never collapsed.
+    let wraps = "X X X X X X";
+    let first: [Row; 2] = [
+        ("", &[("border-left:20px solid black", "X"), ("", "X")]),
+        ("", &[("", wraps), ("", "X")]),
+    ];
+    let measured = rows_height(120, &[COLLAPSED_COL, COL], &first);
+    assert_eq!(measured, rows_height(120, &[COL, COL], &first));
+    assert_eq!(measured, 30.0);
+    // The same holds at the other edge.
+    let last: [Row; 2] = [
+        ("", &[("", "X"), ("border-right:20px solid black", "X")]),
+        ("", &[("", "X"), ("", wraps)]),
+    ];
+    let measured = rows_height(120, &[COL, COLLAPSED_COL], &last);
+    assert_eq!(measured, rows_height(120, &[COL, COL], &last));
+    assert_eq!(measured, 30.0);
+}
+
+#[test]
+fn a_collapsed_column_keeps_its_overlaps_in_the_widths_rows_are_measured_at() {
+    // Borders that meet inside the table overlap by their shared width. With
+    // the middle column collapsed, the cells beside it meet each other; the
+    // widths the rows are measured at still count the lines on both sides of
+    // the collapsed column.
+    let bordered = "border:10px solid black";
+    let cells: [Row; 1] = [(
+        "",
+        &[(bordered, "X"), (bordered, "X"), (bordered, "X X X X X X")],
+    )];
+    let measured = rows_height(231, &[COL, COLLAPSED_COL, COL], &cells);
+    assert_eq!(measured, rows_height(231, &[COL, COL, COL], &cells));
+    assert_eq!(measured, 50.0);
+}
+
+#[test]
+fn a_collapsed_column_is_measured_with_the_borders_it_shares_with_a_neighbour() {
+    // The neighbour's wide border is also the collapsed cell's right border
+    // while the column is in place, which narrows the text there.
+    let rows: [Row; 1] = [(
+        "",
+        &[("", "X X X X X X"), ("border-left:20px solid black", "X")],
+    )];
+    let measured = rows_height(100, &[COLLAPSED_COL, COL], &rows);
+    assert_eq!(measured, rows_height(100, &[COL, COL], &rows));
+    assert_eq!(measured, 20.0);
+}
+
+#[test]
+fn a_collapsed_row_stays_out_of_the_borders_measured_with_the_columns_in_place() {
+    // The collapsed row's wide border never takes part in resolution, so it
+    // does not narrow the widths the other rows are measured at.
+    let kept: [Row; 2] = [
+        ("", &[("border-left:20px solid black", "X"), ("", "X")]),
+        ("", &[("", "X X X X X X"), ("", "X")]),
+    ];
+    let with_collapsed: [Row; 3] = [
+        kept[0],
+        kept[1],
+        (
+            COLLAPSED_ROW,
+            &[("border-left:60px solid black", "X"), ("", "X")],
+        ),
+    ];
+    let measured = rows_height(90, &[COLLAPSED_COL, COL], &with_collapsed);
+    assert_eq!(measured, rows_height(90, &[COLLAPSED_COL, COL], &kept));
+    assert_eq!(measured, 30.0);
+}
+
+#[test]
+fn a_table_whose_rows_and_columns_all_collapse_has_no_height() {
+    let only: [Row; 1] = [(
+        COLLAPSED_ROW,
+        &[("border-left:20px solid black", "X"), ("", "X")],
+    )];
+    assert_eq!(rows_height(120, &[COLLAPSED_COL, COL], &only), 0.0);
+}
+
 #[test]
 fn a_collapsed_column_lays_out_like_a_table_without_it() {
     // Both border models: the table is as wide as one that never had the
