@@ -1147,6 +1147,69 @@ fn root_with_font_size(px: f32) -> ComputedValues {
     }
 }
 
+/// The page context's `font-size` for `@page { <decls> }`, as the public declaration map and the
+/// margin-box inheritance carry it.
+fn page_font_size_with(decls: &str) -> f32 {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&format!("@page {{ {decls} }}"), Origin::Author);
+    let result = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&ComputedValues::initial()),
+    );
+    match result.declarations().get(&PropertyKey::FontSize) {
+        Some(PropertyValue::FontSize(Length::Px(v))) => *v,
+        other => panic!("expected FontSize(Px(_)), got {other:?}"),
+    }
+}
+
+#[test]
+fn cascade_page_font_size_keyword_uses_the_monospace_medium() {
+    // `medium` is 13px for the generic `monospace` family, so a keyword-derived
+    // size scales that instead of 16px (`FontSizeKeywordInfo`).
+    assert_eq!(
+        page_font_size_with("font-family: monospace; font-size: 0.7em"),
+        13.0 * 0.7
+    );
+    assert_eq!(
+        page_font_size_with("font-family: monospace; font-size: 50%"),
+        6.5
+    );
+    assert_eq!(
+        page_font_size_with("font-family: monospace; font-size: medium"),
+        13.0
+    );
+    assert_eq!(
+        page_font_size_with("font-family: monospace; font-size: larger"),
+        13.0 * 1.2
+    );
+    // No declared size: the inherited `medium` becomes the monospace one.
+    assert_eq!(page_font_size_with("font-family: monospace"), 13.0);
+    // Sizes that are not keyword-derived, and families that are not the lone
+    // generic `monospace`, keep their pixels.
+    assert_eq!(
+        page_font_size_with("font-family: monospace; font-size: 20px"),
+        20.0
+    );
+    assert_eq!(
+        page_font_size_with("font-family: monospace, serif; font-size: 0.5em"),
+        8.0
+    );
+    assert_eq!(page_font_size_with("font-size: 0.5em"), 8.0);
+}
+
+#[test]
+fn cascade_page_font_size_calc_and_var_follow_the_monospace_medium() {
+    assert_eq!(
+        page_font_size_with("font-family: monospace; font-size: calc(50% + 0.5em)"),
+        13.0
+    );
+    assert_eq!(
+        page_font_size_with("--scale: 0.5em; font-family: monospace; font-size: var(--scale)"),
+        6.5
+    );
+}
+
 #[test]
 fn cascade_page_font_size_resolves_a_mixed_calc_against_the_root() {
     let root = root_with_font_size(20.0);

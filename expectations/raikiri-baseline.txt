@@ -4881,3 +4881,6 @@ css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-001.html
 css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-002.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-001.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-002.html
+
+# --- margin box text sized from the monospace medium of the page context (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
+css/css-page/margin-boxes/alignment-001-print.html
