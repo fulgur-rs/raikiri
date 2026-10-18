@@ -12,10 +12,10 @@
 //! `ruby-text-container` is improperly contained: an anonymous ruby container
 //! wraps each run of such boxes, giving every one an empty base of its own.
 //!
-//! Content that this mapping does not cover yet (atomic inlines, blocks,
-//! generated content, misparented bases) leaves the container to the
-//! ordinary inline path, which lays its bases and annotations out in the
-//! line.
+//! Content that this mapping does not cover yet (blocks, generated content,
+//! misparented bases, atomic inlines in an inter-character annotation or
+//! alone on both sides of a pairing) leaves the container to the ordinary
+//! inline path, which lays its bases and annotations out in the line.
 
 use super::assign::is_css_whitespace;
 use super::boxes::{IfcBox, IfcBoxKind};
@@ -32,7 +32,7 @@ use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
-use shodo::node::{NodeId, OutOfFlowKind, TextSource};
+use shodo::node::{InlineEdges, NodeId, OutOfFlowKind, TextSource};
 use shodo::{ParagraphBuilder, RubyContent};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -204,8 +204,13 @@ impl Planner<'_> {
             self.found.push(id);
             return true;
         }
+        // An atomic inline is one box in the line, whatever its content.
+        let boxed = box_kind(cascade, doc, id);
+        if boxed == Some(IfcBoxKind::Atomic) {
+            return true;
+        }
         if doc.nodes[id].kind() != NodeKind::Element
-            || box_kind(cascade, doc, id).is_some()
+            || boxed.is_some()
             || has_generated_content(cascade, id)
         {
             return false;
@@ -227,10 +232,20 @@ impl Planner<'_> {
             },
             // An annotation outside a ruby container is wrapped in an
             // anonymous ruby container when it is laid out (CSS Ruby 1 §2.2).
-            DisplayValue::RubyText => doc.nodes[id]
-                .children
-                .iter()
-                .all(|&child| self.is_plain_inline_at(child, depth + 1)),
+            DisplayValue::RubyText => {
+                let parent = doc.parent_of(id).unwrap_or(id);
+                let children = &doc.nodes[id].children;
+                // An atomic inline in it is not turned beside its base, and
+                // without text it is the whole annotation of an empty base,
+                // which shodo would hide as a repeat of it (see
+                // `has_objects_alone`).
+                let atomic_trouble = holds_atomic(doc, cascade, children)
+                    && (is_inter_character(cascade, parent) || !has_text(doc, cascade, children));
+                !atomic_trouble
+                    && children
+                        .iter()
+                        .all(|&child| self.is_plain_inline_at(child, depth + 1))
+            }
             _ => false,
         }
     }
@@ -595,10 +610,54 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
     if !current.bases.is_empty() || !current.levels.is_empty() {
         segments.push(current);
     }
+    // An inter-character annotation is turned beside its base, which an
+    // atomic inline in it does not follow.
+    let turned_atomic = segments.iter().any(|segment| {
+        segment.levels.iter().any(|level| {
+            is_inter_character(cascade, level.container.unwrap_or(ruby))
+                && level
+                    .annotations
+                    .iter()
+                    .any(|part| holds_atomic(doc, cascade, &part.children))
+        })
+    });
+    if turned_atomic || has_objects_alone(doc, cascade, &segments) {
+        return None;
+    }
     Some(Plan {
         segments,
         out_of_flow: planner.out_of_flow,
         base_containers: planner.base_containers,
+    })
+}
+
+/// Whether a segment annotates a base that has no text with an annotation of
+/// atomic inlines alone. shodo takes an annotation whose text equals that of
+/// its bases for a repeat of them and hides it, and atomic inlines have no
+/// text, so such an annotation would vanish; the ordinary inline path keeps
+/// it in the line instead.
+fn has_objects_alone(doc: &Document, cascade: &CascadeResult, segments: &[Segment]) -> bool {
+    segments.iter().any(|segment| {
+        (segment.bases.is_empty()
+            || segment
+                .bases
+                .iter()
+                .any(|base| !has_text(doc, cascade, &base.children)))
+            && segment.levels.iter().any(|level| {
+                level.annotations.iter().any(|part| {
+                    holds_atomic(doc, cascade, &part.children)
+                        && !has_text(doc, cascade, &part.children)
+                })
+            })
+    })
+}
+
+/// Whether `nodes` lay out text other than white space.
+fn has_text(doc: &Document, cascade: &CascadeResult, nodes: &[usize]) -> bool {
+    texts(doc, cascade, nodes).into_iter().any(|id| {
+        doc.nodes[id]
+            .text_content()
+            .is_some_and(|text| text.chars().any(|c| !is_css_whitespace(c)))
     })
 }
 
@@ -613,9 +672,32 @@ fn texts(doc: &Document, cascade: &CascadeResult, nodes: &[usize]) -> Vec<usize>
         if doc.nodes[id].kind() == NodeKind::Text {
             texts.push(id);
         }
-        stack.extend(doc.nodes[id].children.iter().rev());
+        // The text of an atomic inline belongs to a paragraph of its own.
+        if !is_atomic(cascade, doc, id) {
+            stack.extend(doc.nodes[id].children.iter().rev());
+        }
     }
     texts
+}
+
+/// Whether the content of `nodes` holds an atomic inline in the line.
+fn holds_atomic(doc: &Document, cascade: &CascadeResult, nodes: &[usize]) -> bool {
+    nodes.iter().any(|&id| {
+        !is_skipped(doc, id)
+            && !is_out_of_flow(doc, cascade, id)
+            && (is_atomic(cascade, doc, id) || holds_atomic(doc, cascade, &doc.nodes[id].children))
+    })
+}
+
+/// Whether the annotations that `owner` gives its `ruby-position` to are
+/// placed between the characters of their base.
+fn is_inter_character(cascade: &CascadeResult, owner: usize) -> bool {
+    cascade.computed[owner].ruby_position == RubyPosition::InterCharacter
+}
+
+/// Whether `id` is an atomic inline.
+fn is_atomic(cascade: &CascadeResult, doc: &Document, id: usize) -> bool {
+    box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic)
 }
 
 /// Whether text goes through the paragraph's `::first-letter`.
@@ -744,6 +826,10 @@ impl Content<'_, '_> {
                 builder.push_forced_break(NodeId(id as u64));
                 continue;
             }
+            if is_atomic(self.cascade, self.doc, id) {
+                self.push_atomic(builder, id, letter)?;
+                continue;
+            }
             if node.display() == DisplayValue::Ruby
                 && let Some(plan) = plan(self.doc, self.cascade, id)
             {
@@ -776,6 +862,37 @@ impl Content<'_, '_> {
             builder.close_inline();
         }
         Ok(())
+    }
+
+    /// Push the atomic inline `id` as a box of its own in the line. The
+    /// paragraph sizes it from its layout, as it does outside a ruby.
+    fn push_atomic(
+        &mut self,
+        builder: &mut ParagraphBuilder,
+        id: usize,
+        letter: Letter,
+    ) -> Result<(), IfcError> {
+        if letter == Letter::Base {
+            self.sink.first_letter.stop();
+        }
+        let cv = &self.cascade.computed[id];
+        let style = styled(self.doc, self.cascade, cv, id, self.fonts)?;
+        // The break opportunities around an atomic come from its parent's
+        // style, not its own.
+        let parent = &self.cascade.computed[self.doc.parent_of(id).unwrap_or(id)];
+        self.sink.text_nowrap.insert(
+            id as u64,
+            parent.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        );
+        builder.push_atomic(NodeId(id as u64), &style, InlineEdges::default());
+        self.sink.boxes.push(IfcBox {
+            node: id,
+            kind: IfcBoxKind::Atomic,
+        });
+        match builder.error() {
+            Some(error) => Err(IfcError::Limit(error)),
+            None => Ok(()),
+        }
     }
 
     fn push_text(
@@ -918,11 +1035,19 @@ impl Content<'_, '_> {
                 .or_else(|| {
                     parts().find_map(|part| {
                         part.element.or_else(|| {
-                            part.children
-                                .iter()
-                                .copied()
-                                .find(|&id| !is_skipped(self.doc, id))
+                            part.children.iter().copied().find(|&id| {
+                                !is_skipped(self.doc, id) && !is_atomic(self.cascade, self.doc, id)
+                            })
                         })
+                    })
+                })
+                // A segment of atomic inlines alone is named after the first.
+                .or_else(|| {
+                    parts().find_map(|part| {
+                        part.children
+                            .iter()
+                            .copied()
+                            .find(|&id| !is_skipped(self.doc, id))
                     })
                 })
             else {

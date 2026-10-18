@@ -3,6 +3,7 @@
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
 use super::generated_blocks;
+use super::inline_boxes::{for_each_atomic, placed};
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
@@ -2318,16 +2319,12 @@ fn hide_truncated_atomics(
         return;
     }
     let mut on_a_line = HashSet::with_capacity(outputs.len());
-    for line in lines {
-        for fragment in line.fragments() {
-            #[cfg(test)]
-            crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS
-                .with(|steps| steps.set(steps.get() + 1));
-            if let shodo::Fragment::Atomic(atomic) = fragment {
-                on_a_line.insert(atomic.node.0 as usize);
-            }
-        }
-    }
+    for_each_atomic(lines, |atomic, _, _| {
+        #[cfg(test)]
+        crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS
+            .with(|steps| steps.set(steps.get() + 1));
+        on_a_line.insert(atomic.node.0 as usize);
+    });
     for &(node, _) in outputs {
         #[cfg(test)]
         crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS
@@ -2356,44 +2353,40 @@ fn place_atomics(
             .with(|steps| steps.set(steps.get() + 1));
         outputs_by_node.entry(*node).or_insert(output);
     }
-    for line in lines {
-        for fragment in line.fragments() {
-            let shodo::Fragment::Atomic(atomic) = fragment else {
-                continue;
-            };
-            let node = atomic.node.0 as usize;
-            #[cfg(test)]
-            crate::layout::test_support::IFC_ATOMIC_OUTPUT_LOOKUP_STEPS
-                .with(|steps| steps.set(steps.get() + 1));
-            let Some(output) = outputs_by_node.get(&node).copied() else {
-                continue;
-            };
-            // The fragment is relative to the line's top and the content-box
-            // start; the layout is relative to the root's border box. A
-            // relatively positioned atomic is drawn offset from that place,
-            // which taffy's layout location carries for inline-level boxes.
-            let (dx, dy) = relative_inset(
-                tree,
-                node,
-                geometry.content_size.width,
-                relative_height(&geometry),
-                geometry.axes,
-            );
-            // A right-to-left line runs from the right edge: its inline axis
-            // is mirrored inside the content box.
-            let rect = atomic.border_rect;
-            let start = if rtl {
-                geometry.width - (rect.inline_start + rect.inline_size)
-            } else {
-                rect.inline_start
-            };
-            let location = taffy::Point {
-                x: geometry.edges.0 + start + dx,
-                y: geometry.top_edge + line.block_offset() + atomic.border_rect.block_start + dy,
-            };
-            commit_child_layout(tree, node, output, location, geometry.width);
-        }
-    }
+    for_each_atomic(lines, |atomic, line_top, placement| {
+        let node = atomic.node.0 as usize;
+        #[cfg(test)]
+        crate::layout::test_support::IFC_ATOMIC_OUTPUT_LOOKUP_STEPS
+            .with(|steps| steps.set(steps.get() + 1));
+        let Some(output) = outputs_by_node.get(&node).copied() else {
+            return; // cov:ignore: every atomic fragment is a box that was measured.
+        };
+        // The fragment is relative to the line's top and the content-box
+        // start; the layout is relative to the root's border box. A
+        // relatively positioned atomic is drawn offset from that place,
+        // which taffy's layout location carries for inline-level boxes.
+        let (dx, dy) = relative_inset(
+            tree,
+            node,
+            geometry.content_size.width,
+            relative_height(&geometry),
+            geometry.axes,
+        );
+        // An atomic in a ruby annotation is placed with its annotation.
+        let rect = placed(atomic.border_rect, line_top, placement);
+        // A right-to-left line runs from the right edge: its inline axis
+        // is mirrored inside the content box.
+        let start = if rtl {
+            geometry.width - (rect.inline_start + rect.inline_size)
+        } else {
+            rect.inline_start
+        };
+        let location = taffy::Point {
+            x: geometry.edges.0 + start + dx,
+            y: geometry.top_edge + rect.block_start + dy,
+        };
+        commit_child_layout(tree, node, output, location, geometry.width);
+    });
 }
 
 /// The root's content height as the basis of a percentage `top` or
