@@ -682,11 +682,18 @@ fn texts(doc: &Document, cascade: &CascadeResult, nodes: &[usize]) -> Vec<usize>
 
 /// Whether the content of `nodes` holds an atomic inline in the line.
 fn holds_atomic(doc: &Document, cascade: &CascadeResult, nodes: &[usize]) -> bool {
-    nodes.iter().any(|&id| {
-        !is_skipped(doc, id)
-            && !is_out_of_flow(doc, cascade, id)
-            && (is_atomic(cascade, doc, id) || holds_atomic(doc, cascade, &doc.nodes[id].children))
-    })
+    // Iterative: the nesting is not bounded where this is asked.
+    let mut stack = nodes.to_vec();
+    while let Some(id) = stack.pop() {
+        let renders = !is_skipped(doc, id) && !is_out_of_flow(doc, cascade, id);
+        if renders && is_atomic(cascade, doc, id) {
+            return true;
+        }
+        if renders {
+            stack.extend(&doc.nodes[id].children);
+        }
+    }
+    false
 }
 
 /// Whether the annotations that `owner` gives its `ruby-position` to are

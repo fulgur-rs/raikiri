@@ -1253,6 +1253,23 @@ fn deeply_nested_content_falls_back() {
     assert!(plan(&fixture.doc, &fixture.cascade, container).is_none());
 }
 
+#[test]
+fn deeply_nested_annotation_content_falls_back_without_overflowing_the_stack() {
+    let mut container = 0;
+    let fixture = block_fixture("", |doc, root| {
+        container = ruby(doc, root);
+        let rbc = element(doc, container, "rbc", "display:ruby-base-container");
+        // An improper annotation holding a chain of inline elements far
+        // deeper than the planner follows.
+        let mut parent = rt(doc, rbc, "");
+        for _ in 0..50_000 {
+            parent = element(doc, parent, "span", "display:inline");
+        }
+        doc.append_text(parent, "a");
+    });
+    assert!(plan(&fixture.doc, &fixture.cascade, container).is_none());
+}
+
 /// The number of lines of a paragraph of two ruby segments, `aa` over `x`
 /// and `bb` over `y`, laid out with a continuation break at the text that
 /// `at` picks from the gap text, the second base's text and its offset.
