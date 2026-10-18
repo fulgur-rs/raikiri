@@ -571,7 +571,8 @@ pub(crate) struct IfcState {
     /// Results produced by `Document::shape_standalone_text` for this
     /// document. Atomic because shaping takes `&Document`.
     pub(crate) standalone_calls: AtomicUsize,
-    /// The runs `Document::shape_standalone_text_shared` handed out lately.
+    /// The runs [`crate::Document::shape_standalone_text_shared`] handed out
+    /// lately.
     pub(crate) standalone_memo: super::standalone::StandaloneMemo,
     /// How many times a paragraph was scanned for its min- and max-content
     /// widths.
