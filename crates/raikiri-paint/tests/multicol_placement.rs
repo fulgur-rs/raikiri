@@ -683,6 +683,47 @@ fn text_inside_a_relative_box_below_a_column_child_is_painted_shifted_once() {
 }
 
 #[test]
+fn a_relative_wrapper_with_a_width_splits_its_paragraph_and_is_shifted_once() {
+    // The width keeps the wrapper on the constrained chain, which slices the
+    // paragraph at the column end like a wrapper without a width.
+    for (inset, margin) in [
+        ("left:5px", "margin-left:5px"),
+        ("right:-5px", "margin-left:5px"),
+        ("left:10%", "margin-left:4px"),
+    ] {
+        for decoration in ["", "background:red;"] {
+            compare(
+                &format!(
+                    "<div class=mc><div style='{decoration}position:relative;{inset};width:40px'><p>A<br>B<br>C<br>D</p></div></div>"
+                ),
+                ".mc{height:40px;column-fill:auto}",
+                &format!(
+                    "<div class=mc style='height:40px;column-fill:auto'><div style='{decoration}{margin};width:40px'><p>A<br>B<br>C<br>D</p></div></div>"
+                ),
+            );
+        }
+    }
+}
+
+#[test]
+fn a_relative_paragraph_with_a_width_splits_and_is_shifted_once() {
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;width:40px'>A<br>B<br>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div class=mc style='height:40px;column-fill:auto'><p style='margin-left:5px;width:40px'>A<br>B<br>C<br>D</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_box_below_a_wrapper_with_a_width_is_shifted_once() {
+    compare(
+        "<div class=mc><div style='width:40px'><div style='position:relative;left:5px'><p>A<br>B<br>C<br>D</p></div></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div class=mc style='height:40px;column-fill:auto'><div style='width:40px'><div style='margin-left:5px'><p>A<br>B<br>C<br>D</p></div></div></div>",
+    );
+}
+
+#[test]
 fn a_relative_column_container_is_painted_shifted_once() {
     compare(
         "<div class=mc style='position:relative;left:5px;top:3px;background:lime'><p>A<br>B<br>C<br>D</p></div>",
