@@ -1713,22 +1713,21 @@ pub fn closes_deferred_inline_content(
         && !merges_clipped_inline_content(document, cascade, node_id)
 }
 
-/// A `visibility: hidden` table does not paint its own box.
-pub fn is_visibility_hidden_table(cv: &ComputedValues) -> bool {
-    cv.visibility == Visibility::Hidden
-        && matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable)
+/// Whether a box with these values paints none of its own decorations: its
+/// background, borders, shadows and outline (CSS Display 3 §4). Its content
+/// and descendants decide their visibility for themselves.
+///
+/// `collapse` counts as `hidden`, as it does for text. Table layout does not
+/// remove collapsed rows and columns, so a collapsed table part keeps its
+/// space and, like a cell that inherits `collapse` from its row, paints
+/// nothing.
+pub fn hides_own_box(cv: &ComputedValues) -> bool {
+    cv.visibility != Visibility::Visible
 }
 
-/// A hidden table row or row group does not paint its own decorations.
-pub fn is_visibility_hidden_table_part(cv: &ComputedValues) -> bool {
-    cv.visibility == Visibility::Hidden
-        && matches!(
-            cv.display,
-            DisplayValue::TableRow
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-        )
+/// A table that is not visible does not paint its own box.
+pub fn is_visibility_hidden_table(cv: &ComputedValues) -> bool {
+    hides_own_box(cv) && matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable)
 }
 
 /// Whether a table row or row group has a background or border to paint.

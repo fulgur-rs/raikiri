@@ -1924,3 +1924,38 @@ fn z_indexed_inline_content_holding_a_block_stays_in_the_lines() {
     let [p, b] = ["p", "b"].map(|id| by_id(&result, id));
     assert!(step_at(&result, Step::Text(p)) < step_at(&result, Step::Box(b)));
 }
+
+/// A box that is not visible lists no decoration of its own in either order,
+/// while a visible box inside it does. The row stays `hidden`: a collapsed
+/// row takes its own path through both lists. A replaced element with a table
+/// display that is not visible paints nothing in either order.
+#[test]
+fn boxes_that_are_not_visible_keep_native_and_public_order() {
+    for keyword in ["hidden", "collapse"] {
+        let result = assert_same_order(
+            &format!(
+                "<div id=a style='visibility:{keyword};background:red'>\
+                 <div id=b style='visibility:visible;background:blue'>x</div></div>\
+                 <table><tr id=r style='visibility:hidden;background:red'>\
+                 <td id=c>y</td></tr></table>\
+                 <svg id=s width='20' height='10' \
+                 style='display:table;visibility:{keyword};background:red'>\
+                 <rect width='10' height='10' visibility='visible'/></svg>"
+            ),
+            "",
+        );
+        let page = result.pages().next().expect("a page");
+        let boxes: Vec<usize> = page
+            .paint_order()
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::Box(fragment) => Some(node_index(fragment.node())),
+                _ => None,
+            })
+            .collect();
+        for hidden in ["a", "r", "c", "s"] {
+            assert!(!boxes.contains(&by_id(&result, hidden)), "{hidden}");
+        }
+        assert!(boxes.contains(&by_id(&result, "b")));
+    }
+}

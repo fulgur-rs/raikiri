@@ -58,7 +58,9 @@ pub enum PaintEvent<'a> {
     PopTransform,
     /// An element's background, borders and outline. For a replaced element
     /// the fragment's kind is `Replaced` and the same fragment follows in a
-    /// [`PaintEvent::Replaced`] event.
+    /// [`PaintEvent::Replaced`] event. An element that is not `visible` has
+    /// none: the decoration of its box is not listed, though its descendants
+    /// that are visible list theirs.
     Box(Fragment<'a>),
     /// The outer `box-shadow`s of a table row or row group of the separated
     /// borders model, whose [`PaintEvent::Box`] events follow inside
@@ -78,7 +80,11 @@ pub enum PaintEvent<'a> {
     /// and group, inside that group's [`PaintEvent::PushOpacity`].
     GroupTextLine(TextLineId, NodeId),
     /// The content of a replaced element (an image, an inline SVG or a
-    /// canvas). Follows the element's [`PaintEvent::Box`].
+    /// canvas). Follows the element's [`PaintEvent::Box`], if it lists one.
+    /// An element that is not `visible` still lists it: its image has no
+    /// raster image to paint, but an SVG root keeps its vector source so that
+    /// descendants that set `visibility:visible` can paint. A table-display
+    /// element that is not visible lists nothing, as a hidden table does.
     Replaced(Fragment<'a>),
     /// Prepared raster marker of a list item. Its placement is owned by this page.
     MarkerImage(NodeId),
@@ -883,7 +889,10 @@ impl Document {
                             let fragment = items.fragment(item);
                             if let Some(cells) = self
                                 .anonymous_table_part_background_cells(node_id)
-                                .filter(|_| !paint_rules::is_visibility_hidden_table_part(cv))
+                                // A part that is not visible has no cell
+                                // backgrounds to clip; its box is dropped
+                                // with the others below.
+                                .filter(|_| !paint_rules::hides_own_box(cv))
                                 .filter(|_| paint_rules::paints_table_part_decoration(cv))
                             {
                                 // Box shadows are ignored on internal table
@@ -1173,6 +1182,18 @@ impl Document {
         }
         let mut clipped_events = Vec::with_capacity(events.len());
         for event in events {
+            // A box that is not visible paints no decoration of its own,
+            // wherever its fragments were listed; its descendants decide for
+            // themselves.
+            let hides_decoration = match event {
+                PaintEvent::Box(fragment) => fragment_hides_box(cascade, &fragment),
+                PaintEvent::LineBox(piece) => fragment_hides_box(cascade, &piece.fragment),
+                PaintEvent::GeneratedBox(generated) => paint_rules::hides_own_box(generated.style),
+                _ => false,
+            };
+            if hides_decoration {
+                continue;
+            }
             let mut chain = match event {
                 PaintEvent::Box(fragment)
                 | PaintEvent::OuterBoxShadow(fragment)
@@ -2379,6 +2400,15 @@ fn list_paragraph<'a>(
         stack.extend(frames.blocks.into_iter().rev());
         stack.extend(frames.below.into_iter().rev());
     }
+}
+
+/// Whether the element of `fragment` is not visible, so that its box paints
+/// no decoration.
+fn fragment_hides_box(cascade: &CascadeResult, fragment: &Fragment<'_>) -> bool {
+    usize::try_from(fragment.node().0)
+        .ok()
+        .and_then(|node| cascade.computed.get(node))
+        .is_some_and(paint_rules::hides_own_box)
 }
 
 /// How many of the first events of `content`, the content of opacity group

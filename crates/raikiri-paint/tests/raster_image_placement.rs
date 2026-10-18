@@ -111,3 +111,15 @@ fn percentage_image_padding_uses_the_layout_containing_width() {
         ),
     );
 }
+
+#[test]
+fn an_image_that_is_not_visible_paints_nothing() {
+    for keyword in ["hidden", "collapse"] {
+        assert_same(
+            raster(&format!(
+                "<img src='image.png' style='visibility:{keyword};border:2px solid black'>"
+            )),
+            raster(""),
+        );
+    }
+}

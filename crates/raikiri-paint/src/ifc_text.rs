@@ -529,6 +529,9 @@ pub(crate) fn hold_ifc_lines<'a>(
                 piece_transform *= turn;
                 paint.turn(group, piece, turn);
             }
+            if raikiri_dom::paint_rules::hides_own_box(cv) {
+                continue;
+            }
             crate::walk::paint_inline_box(
                 image_cache,
                 paint.box_target(group, piece),
