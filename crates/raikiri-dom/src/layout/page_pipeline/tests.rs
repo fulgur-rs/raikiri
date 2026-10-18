@@ -17959,3 +17959,138 @@ fn only_a_named_box_or_a_sized_leaf_holds_content_in_its_columns() {
     assert!(!box_occupies_column(&named, false, 10.0));
     assert!(!box_occupies_column(&leaf, false, 10.0));
 }
+
+#[test]
+fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_moved_floats() {
+    // `body > clearing, floater, wrapper > nested`, after a float moved to
+    // 100..140 on the left of `body`.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, parent, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let clearing = block(&mut doc, body, "display:block;clear:left");
+    let floater = block(&mut doc, body, "display:block;float:left");
+    let wrapper = block(&mut doc, body, "display:block");
+    let nested = block(&mut doc, wrapper, "display:block;clear:left");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    doc.nodes[body].unrounded_layout.size.width = 100.0;
+    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+        width: 60.0,
+        height: 10.0,
+    };
+    doc.nodes[floater].unrounded_layout.margin.top = 4.0;
+    doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
+    let pages = PageOrigins::new(&[], 100.0);
+    let moved_floats = || {
+        let mut floats = FloatShifts {
+            later: 20.0,
+            ..Default::default()
+        };
+        floats.record_edge(
+            body,
+            FloatEdge {
+                node: 99,
+                side: 0,
+                top: 100.0,
+                bottom: 140.0,
+                width: 50.0,
+            },
+        );
+        floats
+    };
+    let candidate = |node_id, raw_y, direct_body_element| PageCandidate {
+        node_id,
+        raw_y,
+        height: 10.0,
+        context: candidates::BoxContext {
+            is_direct_body_element: direct_body_element,
+            ..Default::default()
+        },
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let settle = |doc: &mut Document, state: &mut PaginationState, candidate: &PageCandidate| {
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        state.settle_shifts(
+            &mut session,
+            &cascade,
+            body,
+            candidate,
+            &TextLineIndex::default(),
+            &pages,
+        );
+    };
+
+    // A box before the candidate that underflowed into the preceding page
+    // keeps its correction for the flow after it.
+    let mut state = PaginationState::default();
+    state.deferred_shifts.underflow = Some((clearing, 7.0));
+    settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
+    assert_eq!(state.flow_shift, 7.0);
+    assert!(state.deferred_shifts.underflow.is_none());
+
+    // Leaving a subtree that could not hold a moved box takes back the part
+    // of the shift it did not absorb, and returns to the page the flow was on.
+    let mut state = PaginationState {
+        flow_shift: 12.0,
+        current_page: 3,
+        ..Default::default()
+    };
+    state.subtree_shifts.bounded.push((clearing, 5.0, 2));
+    settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (7.0, 2));
+    assert!(state.subtree_shifts.bounded.is_empty());
+
+    // So does leaving the moved float whose shift is pending.
+    let mut state = PaginationState {
+        flow_shift: 50.0,
+        current_page: 4,
+        ..Default::default()
+    };
+    state.float_shifts.pending = Some((floater, 30.0, 1));
+    settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (20.0, 1));
+    assert!(state.float_shifts.pending.is_none());
+    assert_eq!(state.float_shifts.later, 30.0);
+
+    // A box that clears the moved float moves below it, and so does the flow
+    // after it. The box then starts on the page its new position falls on.
+    let mut state = PaginationState {
+        float_shifts: moved_floats(),
+        ..Default::default()
+    };
+    settle(&mut doc, &mut state, &candidate(clearing, 130.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
+    // No ancestor holds a box directly below the body.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+
+    // The ancestors of a nested box grow to hold its shift.
+    let mut state = PaginationState {
+        float_shifts: moved_floats(),
+        ..Default::default()
+    };
+    settle(&mut doc, &mut state, &candidate(nested, 130.0, false));
+    assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 30.0);
+
+    // A float that does not fit beside the moved one moves below it and then
+    // is the float that the floats after it keep below.
+    let mut state = PaginationState {
+        float_shifts: moved_floats(),
+        ..Default::default()
+    };
+    settle(&mut doc, &mut state, &candidate(floater, 130.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (14.0, 1));
+    assert_eq!(state.float_shifts.pending, Some((floater, 14.0, 0)));
+
+    // A box with nothing to clear stays where it is.
+    let mut state = PaginationState::default();
+    settle(&mut doc, &mut state, &candidate(clearing, 130.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 0));
+}
