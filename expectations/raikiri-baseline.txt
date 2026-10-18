@@ -263,6 +263,7 @@ css/css-backgrounds/background-color-body-propagation-001.html
 css/css-backgrounds/background-gradient-interpolation-001.html
 css/css-backgrounds/background-gradient-subpixel-fills-area.html
 css/css-backgrounds/background-image-centered.html
+css/css-backgrounds/background-image-centered-with-border-radius.html
 css/css-backgrounds/background-image-cover-zoomed-1.html
 css/css-backgrounds/background-image-gradient-interpolation-repaint.html
 css/css-backgrounds/background-image-large-with-auto.html

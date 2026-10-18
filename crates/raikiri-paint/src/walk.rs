@@ -3807,6 +3807,8 @@ pub(crate) fn paint_document_impl(
                                 &paint_border_radius,
                                 painted_border,
                                 &paint_padding,
+                                matches!(cv.border_image.source, BackgroundImage::None)
+                                    && border_hides_background_edge(painted_border, cv.color),
                                 pixel_source,
                                 warnings,
                             );
@@ -4108,6 +4110,7 @@ pub(crate) fn paint_document_impl(
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
+                            false,
                             pixel_source,
                             warnings,
                         );
@@ -5279,6 +5282,38 @@ fn paint_inline_svg(
     true
 }
 
+/// Whether the borders cover the outer edge of the background, so the
+/// background can be pulled in from that edge without leaving a gap.
+///
+/// Every side needs a width and an opaque color, and a style that draws a
+/// continuous stripe at the outer edge: `dotted` and `dashed` leave gaps, and
+/// a `double` border only does once its outer line is wide enough.
+fn border_hides_background_edge(
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    current_color: CssColor,
+) -> bool {
+    [&border.top, &border.right, &border.bottom, &border.left]
+        .iter()
+        .all(|side| {
+            let width = side.width().px();
+            let opaque = match side.color {
+                BorderColor::Resolved(color) => color.a == u8::MAX,
+                BorderColor::CurrentColor => current_color.a == u8::MAX,
+                _ => false, // cov:ignore: defensive fallback for future BorderColor variants
+            };
+            let continuous = match side.style() {
+                BorderStyle::Solid
+                | BorderStyle::Groove
+                | BorderStyle::Ridge
+                | BorderStyle::Inset
+                | BorderStyle::Outset => true,
+                BorderStyle::Double => width >= 5.0,
+                _ => false,
+            };
+            width > 0.0 && opaque && continuous
+        })
+}
+
 /// The final background layer of `cv` without its image: what a box paints
 /// when only its background color is drawn.
 fn color_only_background_layer(cv: &ComputedValues) -> raikiri_style::ComputedBackgroundLayer {
@@ -5306,6 +5341,7 @@ pub(crate) fn paint_element_background(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    border_hides_edge: bool,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -5319,6 +5355,7 @@ pub(crate) fn paint_element_background(
         border_radius,
         border,
         padding,
+        border_hides_edge,
         pixel_source,
         warnings,
         None,
@@ -5343,6 +5380,7 @@ fn paint_element_background_layers(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    border_hides_edge: bool,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     image_slice: Option<Rect>,
@@ -5371,6 +5409,7 @@ fn paint_element_background_layers(
             border_radius,
             border,
             padding,
+            border_hides_edge,
             &layer.size,
             &layer.position,
             &layer.repeat,
@@ -5423,6 +5462,7 @@ fn paint_element_background_slice(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    border_hides_edge: bool,
     background_size: &ComputedBackgroundSize,
     background_position: &ComputedCssPosition,
     background_repeat: &raikiri_style::property::BackgroundRepeat,
@@ -5512,6 +5552,24 @@ fn paint_element_background_slice(
                     && side.width().px() > 0.0
                     && matches!(side.color, BorderColor::Resolved(c) if c == effective)
             });
+    // A rounded border-box background is pulled in from the border edge when
+    // the border hides that edge, so the anti-aliased corner pixels do not
+    // blend the background into the border's fringe. The inset is half the
+    // border width, or a sixth when a double border has a gap to keep covered
+    // (the shrink Chrome applies to avoid background bleed). Positioning is
+    // unaffected: only the painted area shrinks.
+    let bleed_inset = (border_hides_edge
+        && matches!(clip, VisualBox::BorderBox)
+        && used_border_radii(border_radius, radius_reference.0, radius_reference.1)
+            .iter()
+            .flatten()
+            .any(|value| *value > 0.0))
+    .then(|| {
+        let double = [&border.top, &border.right, &border.bottom, &border.left]
+            .iter()
+            .any(|side| side.style() == BorderStyle::Double);
+        if double { 1.0 / 6.0 } else { 0.5 }
+    });
     let clip = if border_box_union {
         VisualBox::BorderBox
     } else {
@@ -5614,6 +5672,9 @@ fn paint_element_background_slice(
                     &ComputedBorderRadius::all(ComputedLength(0.0)),
                     border,
                     padding,
+                    // The mask already limits the background to the border
+                    // ring, so there is no edge to keep clear of the image.
+                    false,
                     background_size,
                     background_position,
                     background_repeat,
@@ -5645,7 +5706,18 @@ fn paint_element_background_slice(
                 (by1 - bb - pb).round(),
             )
         }
-        VisualBox::BorderBox => Rect::new(bx0, by0, bx1, by1),
+        VisualBox::BorderBox => match bleed_inset {
+            Some(fraction) => {
+                radius_inset = (bl * fraction, bt * fraction, br * fraction, bb * fraction);
+                Rect::new(
+                    bx0 + radius_inset.0,
+                    by0 + radius_inset.1,
+                    bx1 - radius_inset.2,
+                    by1 - radius_inset.3,
+                )
+            }
+            None => Rect::new(bx0, by0, bx1, by1),
+        },
         // `text` returns above; this arm is unreachable but keeps the match
         // exhaustive for future `VisualBox` variants.
         // cov:ignore: unreachable text arm; early return above handles text
@@ -6817,6 +6889,7 @@ pub(crate) fn paint_inline_box(
         },
         if slice.is_some() { &cv.border } else { &border },
         &background_padding,
+        false,
         pixel_source,
         warnings,
         slice.map(|_| piece_rect),
