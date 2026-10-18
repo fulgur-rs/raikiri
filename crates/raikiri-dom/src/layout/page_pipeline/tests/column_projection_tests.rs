@@ -154,3 +154,129 @@ fn a_translucent_first_line_lists_the_elements_on_both_sides_of_the_break() {
     // on the first.
     assert_eq!(split, [built[0]]);
 }
+
+/// The paragraph built by `build` under `sheet` and `root_css`, laid out and
+/// prepared for projection.
+fn prepared(
+    sheet: &str,
+    root_css: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> (Document, usize, ParagraphProjection) {
+    let Fixture {
+        mut doc,
+        cascade,
+        root,
+    } = sheet_fixture(sheet, root_css, build);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let control = PageLayoutControl::default();
+    let mut work = ProjectionWork::new(&control, 1_000_000);
+    let projection = ParagraphProjection::prepare(&doc, &cascade, root, 0, &mut work)
+        .expect("a paragraph prepares");
+    (doc, root, projection)
+}
+
+/// The owners and kinds of the generated pieces of `projection`.
+fn generated_kinds(projection: &ParagraphProjection) -> Vec<(usize, Option<crate::GeneratedKind>)> {
+    projection
+        .generated(None)
+        .iter()
+        .map(|&(owner, kind, ..)| (owner, kind))
+        .collect()
+}
+
+fn text_paragraph(doc: &mut Document, root: usize) {
+    doc.append_text(root, "aa bb");
+}
+
+#[test]
+fn a_block_level_before_is_one_piece_painted_as_its_box() {
+    let (_, root, projection) = prepared(
+        r#"div::before { content: "x"; display: block }"#,
+        "width:200px",
+        text_paragraph,
+    );
+    // The `::before` is listed once, by its box, and not again by the piece
+    // of its text on its line.
+    assert_eq!(
+        generated_kinds(&projection),
+        [(root, Some(crate::GeneratedKind::Before))]
+    );
+    let (.., edges) = projection.generated(None)[0];
+    assert_eq!(edges, Some((true, true)));
+}
+
+#[test]
+fn a_block_level_after_follows_the_text_it_comes_after() {
+    let (_, root, projection) = prepared(
+        r#"div::after { content: "y"; display: block }"#,
+        "width:200px",
+        text_paragraph,
+    );
+    let [(owner, Some(kind), piece, offset, shift, top, height, Some(_))] =
+        projection.generated(None)[..]
+    else {
+        panic!("one block-level piece");
+    };
+    assert_eq!((owner, kind), (root, crate::GeneratedKind::After));
+    // It sits on the second line, below the text, and is as tall as its line.
+    assert_eq!((offset.0, shift, top, height), (0.0, 0.0, 10.0, 10.0));
+    assert_eq!(piece.border_box.y, 10.0);
+}
+
+#[test]
+fn a_block_level_generated_box_that_is_not_visible_is_not_painted() {
+    for css in [
+        "visibility:hidden",
+        "height:0",
+        "width:0",
+        "visibility:collapse",
+    ] {
+        let sheet = format!(r#"div::before {{ content: "x"; display: block; {css} }}"#);
+        let (doc, root, projection) = prepared(&sheet, "width:200px", text_paragraph);
+        // The layout placed the box; it only is not painted.
+        assert_eq!(
+            doc.nodes[root].ifc_generated_block_pieces().len(),
+            1,
+            "{css}"
+        );
+        assert!(generated_kinds(&projection).is_empty(), "{css}");
+    }
+}
+
+#[test]
+fn an_inline_generated_box_is_painted_apart_from_its_text_by_the_piece_on_its_line() {
+    let (_, root, projection) = prepared(
+        r#"div::before { content: "x" }"#,
+        "width:200px",
+        text_paragraph,
+    );
+    let [(owner, Some(kind), _, offset, shift, _, height, None)] = projection.generated(None)[..]
+    else {
+        panic!("one inline piece");
+    };
+    assert_eq!((owner, kind), (root, crate::GeneratedKind::Before));
+    assert_eq!((offset, shift, height), ((0.0, 0.0), 0.0, 10.0));
+}
+
+#[test]
+fn an_inline_generated_box_that_is_not_visible_is_not_painted_apart() {
+    let (_, _, projection) = prepared(
+        r#"div::before { content: "x"; visibility: hidden }"#,
+        "width:200px",
+        text_paragraph,
+    );
+    assert!(generated_kinds(&projection).is_empty());
+}
+
+#[test]
+fn a_plain_inline_element_is_painted_apart_only_when_the_first_line_changes_it() {
+    let (_, _, plain) = prepared("", "width:200px", |doc, root| {
+        two_lines(doc, root);
+    });
+    assert!(generated_kinds(&plain).is_empty());
+    let mut built = Vec::new();
+    let (_, _, restyled) = prepared("div::first-line{color:red}", "width:50px", |doc, root| {
+        built = two_lines(doc, root);
+    });
+    assert_eq!(generated_kinds(&restyled), [(built[0], None)]);
+}
