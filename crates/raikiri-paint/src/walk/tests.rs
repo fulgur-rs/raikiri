@@ -6798,8 +6798,10 @@ fn clip_layer_bounds(scene: &Scene) -> Vec<Rect> {
         .collect()
 }
 
-/// Lay `markup` out on one 800x600 page with the Ahem font and paint it.
-fn paged_scene(markup: &str) -> Scene {
+/// Lay `markup` out on one 800x600 page with the Ahem font and paint it for
+/// a raster output of `device_scale` device pixels per CSS pixel, or for a
+/// vector output with `None`.
+fn paged_scene(markup: &str, device_scale: Option<f32>) -> Scene {
     let mut parsed = raikiri_html::parse(
         markup.as_bytes(),
         &raikiri_html::ParseOptions {
@@ -6812,7 +6814,16 @@ fn paged_scene(markup: &str) -> Scene {
     parsed.dom.set_font_collection(
         raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("collection"),
     );
-    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let mut options = raikiri_style::CascadeOptions::default();
+    options.border_width_device_scale = device_scale;
+    let cascade = raikiri_html::build_cascaded_with_options(
+        &parsed,
+        &raikiri_style::MediaContext::default(),
+        &raikiri_style::PageContextQuery::default(),
+        &[],
+        &options,
+    )
+    .expect("the cascade succeeds");
     let mut page = PageBox::new();
     page.width = 800.0;
     page.height = 600.0;
@@ -6834,9 +6845,42 @@ fn paged_scene(markup: &str) -> Scene {
 
 #[test]
 fn a_column_clip_grows_outward_across_the_columns_only() {
+    let clip = Rect::new(274.5, 8.5, 525.25, 88.25);
     assert_eq!(
-        snap_column_clip_outward(Rect::new(274.5, 8.5, 525.25, 88.25)),
+        snap_column_clip_outward(clip, Some(DeviceGrid::uniform(1.0))),
         Rect::new(274.0, 8.5, 526.0, 88.25)
+    );
+    // Whole device pixels at 2 per CSS pixel, 0.5 device pixel in.
+    assert_eq!(
+        snap_column_clip_outward(
+            Rect::new(274.5, 8.5, 525.3, 88.25),
+            Some(DeviceGrid {
+                scale_x: 2.0,
+                offset_x: 0.5,
+                scale_y: 2.0,
+                offset_y: 0.5,
+            })
+        ),
+        Rect::new(274.25, 8.5, 525.75, 88.25)
+    );
+    // A mirrored grid grows the same device pixels outward.
+    assert_eq!(
+        snap_column_clip_outward(
+            clip,
+            Some(DeviceGrid {
+                scale_x: -1.0,
+                offset_x: 800.0,
+                scale_y: 1.0,
+                offset_y: 0.0,
+            })
+        ),
+        Rect::new(274.0, 8.5, 526.0, 88.25)
+    );
+    // Without a grid, or with one that cannot place the edges, it is exact.
+    assert_eq!(snap_column_clip_outward(clip, None), clip);
+    assert_eq!(
+        snap_column_clip_outward(clip, Some(DeviceGrid::uniform(0.0))),
+        clip
     );
 }
 
@@ -6847,12 +6891,54 @@ fn an_orthogonal_flow_in_a_column_is_clipped_by_the_same_column_edges() {
     // outward and the top and bottom edges, where the flow breaks into the
     // next column, keep their fractional position (17.6px lines).
     let markup = "<!DOCTYPE html><style>.c{columns:3;column-fill:auto;height:5em;orphans:3;widows:3;font:16px/1.1 Ahem}.v{writing-mode:vertical-rl}</style><body><div class=c><div>a<br>b<br>c<br></div><div class=v><div>d<br>e<br>f<br>g<br>h<br>i<br>j<br></div></div></div></body>";
-    let clips = clip_layer_bounds(&paged_scene(markup));
+    let clips = clip_layer_bounds(&paged_scene(markup, Some(1.0)));
     assert_eq!(clips.len(), 2, "one clip for each column the flow is in");
     for clip in clips {
         assert_eq!((clip.x0.fract(), clip.x1.fract()), (0.0, 0.0), "{clip:?}");
         assert_ne!(clip.y0.fract(), 0.0, "{clip:?}");
     }
+}
+
+/// Three columns of 250.67px, the paragraph in the second starting where the
+/// first ends, inside `wrapper_style`.
+fn columns_in(wrapper_style: &str) -> String {
+    format!(
+        "<!DOCTYPE html><style>.c{{columns:3;column-fill:auto;height:5em;orphans:3;widows:3;font:16px/1 Ahem}}</style><body><div style='{wrapper_style}'><div class=c><div>a<br>b<br>c<br></div><div><div>d<br>e<br>f<br>g<br>h<br>i<br>j<br></div></div></div></div></body>"
+    )
+}
+
+#[test]
+fn a_column_clip_under_a_scaled_ancestor_grows_by_less_than_a_device_pixel() {
+    let exact = clip_layer_bounds(&paged_scene(&columns_in("transform:scale(3)"), None));
+    let snapped = clip_layer_bounds(&paged_scene(&columns_in("transform:scale(3)"), Some(1.0)));
+    assert_eq!(exact.len(), 2);
+    assert_eq!(snapped.len(), 2);
+    for (exact, snapped) in exact.iter().zip(&snapped) {
+        for (exact, snapped, outward) in [(exact.x0, snapped.x0, -1.0), (exact.x1, snapped.x1, 1.0)]
+        {
+            assert!(
+                (snapped - snapped.round()).abs() < 1e-6,
+                "{snapped} is not on a device pixel"
+            );
+            let growth = (snapped - exact) * outward;
+            assert!((0.0..1.0).contains(&growth), "grew by {growth} pixels");
+        }
+    }
+}
+
+#[test]
+fn a_column_clip_keeps_its_exact_edges_for_a_vector_output_and_a_rotation() {
+    let vector = clip_layer_bounds(&paged_scene(&columns_in("transform:scale(3)"), None));
+    assert_eq!(vector.len(), 2);
+    assert!(
+        vector.iter().any(|clip| clip.x0.fract() != 0.0),
+        "{vector:?}"
+    );
+    let rotated = columns_in("transform:rotate(10deg)");
+    assert_eq!(
+        clip_layer_bounds(&paged_scene(&rotated, Some(1.0))),
+        clip_layer_bounds(&paged_scene(&rotated, None))
+    );
 }
 
 #[test]
@@ -6867,8 +6953,8 @@ fn a_fragment_clip_on_a_fractional_column_edge_does_not_dim_the_first_ink_column
         )
     };
     let rows = "d<br>e<br>f<br>g<br>h<br>i<br>j<br>";
-    let wrapped = paged_scene(&page(&format!("<div><div>{rows}</div></div>")));
-    let direct = paged_scene(&page(&format!("<div>{rows}</div>")));
+    let wrapped = paged_scene(&page(&format!("<div><div>{rows}</div></div>")), Some(1.0));
+    let direct = paged_scene(&page(&format!("<div>{rows}</div>")), Some(1.0));
     let clips = clip_layer_bounds(&wrapped);
     assert_eq!(
         clips.len(),
