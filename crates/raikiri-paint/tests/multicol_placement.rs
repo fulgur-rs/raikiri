@@ -418,11 +418,25 @@ fn an_empty_fixed_height_column_container_reserves_its_box() {
 }
 
 #[test]
-fn a_single_column_rtl_container_preserves_ordinary_block_flow() {
+fn a_single_column_rtl_container_continues_in_an_overflow_column_to_the_left() {
+    // The lines past the first column go to a column 120px to the left of the
+    // page, so only the first two stay on it.
     compare(
         "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
         ".mc{height:40px;column-count:1;direction:rtl}.mc p{direction:ltr}",
-        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn a_relative_block_in_an_rtl_container_is_painted_shifted_once() {
+    // The painter adds the offset of a block that columns fragment, so the
+    // column placement leaves it out: the block is painted where it is in
+    // ordinary flow.
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{direction:rtl;height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:60px;top:0;width:40px;direction:rtl'><p style='position:relative;left:5px;background:lime'>A<br>B</p></div>",
     );
 }
 
@@ -566,4 +580,472 @@ fn an_unfinished_paragraph_background_fills_its_column_extent() {
         "body{color:transparent}",
         "<div style='position:absolute;left:0;top:0;width:40px;height:100px;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:60px;background:lime'></div>",
     );
+}
+
+#[test]
+fn a_relative_paragraph_in_a_column_is_painted_shifted_once() {
+    for inset in ["left:5px", "right:5px", "left:10%", "left:5px;top:3px"] {
+        let paragraph = format!("<p style='position:relative;{inset};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_relative_paragraph_in_a_later_column_is_painted_shifted_once() {
+    for inset in ["left:5px", "right:5px"] {
+        compare(
+            &format!(
+                "<div class=mc><p>A<br>B</p><p style='position:relative;{inset};background:lime'>C<br>D</p></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='position:relative;{inset};background:lime'>C<br>D</p></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn relative_paragraphs_of_balanced_columns_are_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;background:lime'>A</p><p>B</p><p style='position:relative;left:3px;background:lime'>C</p><p>D</p></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p style='position:relative;left:5px;background:lime'>A</p><p>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='position:relative;left:3px;background:lime'>C</p><p>D</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_block_holding_paragraphs_keeps_its_inset_across_columns() {
+    let wrapper = |style: &str| {
+        format!(
+            "<div class=mc><div style='{style};background:lime'><p>A<br>B</p><p>C<br>D</p></div></div>"
+        )
+    };
+    let css = ".mc{height:40px;column-fill:auto}";
+    let relative = raster(&wrapper("position:relative;left:5px"), css);
+    let margin = raster(&wrapper("margin-left:5px;margin-right:-5px"), css);
+    assert_eq!(
+        relative
+            .chunks_exact(4)
+            .zip(margin.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn a_sticky_paragraph_in_a_column_keeps_its_layout_offset() {
+    let paragraph = "<p style='position:sticky;left:5px;background:lime'>A<br>B</p>";
+    compare(
+        &format!("<div class=mc>{paragraph}</div>"),
+        ".mc{height:40px;column-fill:auto}",
+        &format!("<div style='width:40px'>{paragraph}</div>"),
+    );
+}
+
+#[test]
+fn a_relative_paragraph_in_a_padded_container_resolves_its_inset_against_the_column() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='position:relative;left:10%;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto;padding:0 20px}",
+        "<div style='position:absolute;left:20px;top:0;width:40px'><p>A<br>B</p></div><div style='position:absolute;left:80px;top:0;width:40px'><p style='position:relative;left:10%;background:lime'>C<br>D</p></div>",
+    );
+}
+
+#[test]
+fn a_floated_relative_paragraph_in_a_column_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='float:left;position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:5px;top:0;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_column_child_with_horizontal_margins_fills_the_column_between_them() {
+    for margin in [
+        "margin-left:7px",
+        "margin-right:7px",
+        "margin:0 5px 0 3px",
+        "margin-left:10%",
+    ] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_column_child_with_a_margin_in_a_later_column_fills_the_column_between_them() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='margin-left:7px;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='margin-left:7px;background:lime'>C<br>D</p></div>",
+    );
+}
+
+#[test]
+fn a_column_child_with_a_margin_in_a_balanced_container_fills_the_column_between_them() {
+    compare(
+        "<div class=mc><p style='margin-left:7px;background:lime'>A</p><p>B</p><p style='margin-right:7px;background:lime'>C</p><p>D</p></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p style='margin-left:7px;background:lime'>A</p><p>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='margin-right:7px;background:lime'>C</p><p>D</p></div>",
+    );
+}
+
+#[test]
+fn a_right_to_left_column_child_with_a_margin_fills_the_column_between_them() {
+    for margin in [
+        "margin-left:7px",
+        "margin-right:7px",
+        "margin-left:10%",
+        "margin-right:10%",
+    ] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;left:60px;top:0;width:40px;direction:rtl'>{paragraph}</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_column_child_with_calc_negative_or_oversized_margins_matches_block_flow() {
+    for margin in [
+        "margin-left:calc(2px + 5px)",
+        "margin-left:-7px",
+        "margin:0 -4px 0 6px",
+        "margin-left:50px",
+        "margin-left:30px;margin-right:30px",
+    ] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_column_child_with_auto_margins_matches_block_flow() {
+    for margin in ["margin:0 auto", "margin-left:auto", "margin-right:auto"] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_column_child_with_a_width_and_auto_margins_is_placed_within_the_column() {
+    for margin in [
+        "margin:0 auto",
+        "margin-left:auto",
+        "margin-right:auto",
+        "margin:0 auto 0 4px",
+        "margin:0 4px 0 auto",
+    ] {
+        let paragraph = format!("<p style='width:20px;{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_right_to_left_column_child_with_a_width_and_auto_margins_is_placed_within_the_column() {
+    for margin in [
+        "margin:0 auto",
+        "margin-left:auto",
+        "margin-right:auto",
+        "margin:0 auto 0 4px",
+        "margin:0 4px 0 auto",
+    ] {
+        let paragraph = format!("<p style='width:20px;{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;left:60px;top:0;width:40px;direction:rtl'>{paragraph}</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_floated_column_child_with_auto_margins_keeps_zero_margins() {
+    compare(
+        "<div class=mc><p style='float:left;width:20px;margin:0 auto;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;width:20px;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_in_a_later_column_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='float:left;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><p style='position:absolute;left:60px;top:0;background:lime'>C<br>D</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_in_a_balanced_container_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p>A</p><p style='float:left;background:lime'>B<br>C</p></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A</p></div><p style='position:absolute;left:60px;top:0;background:lime'>B<br>C</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_with_a_margin_shrinks_to_its_content_inside_it() {
+    for margin in ["margin-left:7px", "margin:0 5px 0 3px", "margin-right:7px"] {
+        compare(
+            &format!(
+                "<div class=mc><p style='float:left;{margin};background:lime'>A<br>B</p></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<p style='position:absolute;left:0;top:0;{margin};background:lime'>A<br>B</p>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_floated_column_child_that_would_overflow_the_column_is_limited_to_it() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A B<br>C</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;width:40px;background:lime'>A B<br>C</p>",
+    );
+}
+
+#[test]
+fn a_floated_block_holding_a_paragraph_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><div style='float:left;background:lime'><p>A<br>B</p></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;background:lime'><p>A<br>B</p></div>",
+    );
+}
+
+#[test]
+fn a_right_to_left_floated_column_child_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto;direction:rtl}",
+        "<p style='position:absolute;left:60px;top:0;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_right_floated_column_child_sits_at_the_right_edge_of_its_column() {
+    for (css, left) in [
+        (".mc{height:40px;column-fill:auto}", 20),
+        (".mc{height:40px;column-fill:auto;direction:rtl}", 80),
+    ] {
+        compare(
+            "<div class=mc><p style='float:right;background:lime'>A<br>B</p></div>",
+            css,
+            &format!("<p style='position:absolute;left:{left}px;top:0;background:lime'>A<br>B</p>"),
+        );
+    }
+}
+
+#[test]
+fn a_right_floated_column_child_in_a_later_column_sits_at_the_right_edge_of_it() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='float:right;margin-right:5px;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><p style='position:absolute;left:75px;top:0;background:lime'>C<br>D</p>",
+    );
+}
+
+#[test]
+fn a_floated_box_without_lines_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><div style='float:left;background:lime'><div style='width:20px;height:20px;background:blue'></div></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;background:lime'><div style='width:20px;height:20px;background:blue'></div></div>",
+    );
+}
+
+#[test]
+fn a_relative_right_floated_column_child_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='float:right;position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:25px;top:0;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_relative_floated_column_child_with_a_width_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='float:left;width:40px;position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:5px;top:0;width:40px;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_fits_the_room_its_margin_leaves() {
+    compare(
+        "<div class=mc><p style='float:left;margin-left:10px;background:lime'>A B<br>C</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;margin-left:10px;width:30px;background:lime'>A B<br>C</p>",
+    );
+}
+
+#[test]
+fn a_relative_box_with_an_inset_is_assigned_to_a_column_of_a_definite_height_container() {
+    compare(
+        "<div class=mc><div style='position:relative;left:5px;height:40px;background:lime'></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:5px;top:0;width:40px;height:40px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_relative_paragraph_after_a_full_column_moves_to_the_next_column_of_a_definite_height_container()
+ {
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;color:lime'>A</p><p>B</p><p style='position:relative;left:5px;color:blue'>C</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p style='margin-left:5px;margin-right:-5px;color:lime'>A</p><p>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='margin-left:5px;margin-right:-5px;color:blue'>C</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_box_with_each_inline_inset_is_painted_shifted_once_in_a_definite_height_container() {
+    for (inset, shift) in [
+        ("left:5px", "left:5px;top:0"),
+        ("right:5px", "left:-5px;top:0"),
+        ("left:5px;right:20px", "left:5px;top:0"),
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><div style='position:relative;{inset};height:20px;background:lime'></div></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div style='position:absolute;{shift};width:40px;height:20px;background:lime'></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_relative_box_in_a_later_column_of_a_definite_height_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><div style='height:40px;background:blue'></div><div style='position:relative;left:5px;height:20px;background:lime'></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:blue'></div><div style='position:absolute;left:65px;top:0;width:40px;height:20px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_relative_box_in_a_right_to_left_definite_height_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><div style='position:relative;left:5px;height:20px;background:lime'></div></div>",
+        ".mc{height:40px;column-fill:auto;direction:rtl}",
+        "<div style='position:absolute;left:65px;top:0;width:40px;height:20px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn relative_paragraphs_with_each_inline_inset_are_painted_shifted_once_in_a_definite_height_container()
+ {
+    for (inset, shift) in [
+        ("right:5px", "left:-5px;top:0"),
+        ("left:5px", "left:5px;top:0"),
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><p style='position:relative;{inset};color:lime'>A</p><p>B</p></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div style='position:absolute;left:0;top:20px;width:40px'><p>B</p></div><div style='position:absolute;{shift};width:40px'><p style='color:lime'>A</p></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn display_contents_children_of_a_definite_height_container_are_painted() {
+    // An element with `display: contents` has no box, so it paints no
+    // background, and the blocks inside it are painted where the columns put
+    // them.
+    compare(
+        "<div class=mc style='height:60px'><div style='display:contents;background:blue'><p>A</p></div><div style='display:contents'><div style='display:contents'><p>B</p></div></div></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A</div><div style='position:absolute;left:0;top:20px'>B</div>",
+    );
+}
+
+#[test]
+fn display_contents_children_of_a_balanced_container_are_painted() {
+    compare(
+        "<div class=mc><div style='display:contents'><p>A</p><p>B</p></div><div style='display:contents'><p>C</p><p>D</p></div></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+    );
+}
+
+fn compare_bodies(body: &str, plain: &str, css: &str) {
+    assert_eq!(raster(body, css), raster(plain, css));
+}
+
+#[test]
+fn a_display_contents_wrapper_keeps_the_column_clip_of_its_children() {
+    // The blocks that columns clip to their height are clipped the same way
+    // when an element without a box wraps them.
+    let css = ".mc{height:40px;column-fill:auto}";
+    for inner in [
+        "<div style='display:grid;height:80px;background:blue'></div>",
+        "<div style='display:table;background:blue'><div style='display:table-row'><div style='display:table-cell;width:20px;height:80px'></div></div></div>",
+        "<div style='height:0'><div style='height:80px;background:blue'></div></div>",
+    ] {
+        compare_bodies(
+            &format!("<div class=mc><div style='display:contents'>{inner}</div></div><p>X</p>"),
+            &format!("<div class=mc>{inner}</div><p>X</p>"),
+            css,
+        );
+        compare_bodies(
+            &format!(
+                "<div class=mc><div style='display:contents'><div style='display:contents'>{inner}</div></div></div><p>X</p>"
+            ),
+            &format!("<div class=mc>{inner}</div><p>X</p>"),
+            css,
+        );
+    }
 }

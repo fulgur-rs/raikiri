@@ -469,6 +469,28 @@ fn compute_table_layout_checked(
         .as_ref()
         .filter(|shown| !shown.rows.is_empty() && shown.n_cols > 0)
         .map(CellIndex::new);
+    // Container metrics, split so collapse can substitute collapsed outer
+    // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
+    // border participates in conflict resolution with edge cells).
+    let table_style = &doc.layout_node_with_style(table_idx).unwrap().style;
+    let pad = resolve_table_rect(&table_style.padding, inputs.parent_size);
+    let table_border = resolve_table_rect(&table_style.border, inputs.parent_size);
+    // The columns that collapse still set the widths the rows are measured at,
+    // so the borders around them are read before they are left out.
+    let borders_in_place = shown
+        .as_ref()
+        .filter(|_| cell_index.is_some() && columns_collapse)
+        .map(|shown| {
+            border_width_with_columns_in_place(
+                doc,
+                &grid,
+                &collapsed_rows,
+                shown,
+                table_idx,
+                &table_border,
+                inputs.parent_size.width,
+            )
+        });
     if let Some(index) = cell_index.as_ref() {
         let (resolved, index) = match (shown.as_ref(), shown_index.as_ref()) {
             (Some(shown), Some(shown_index)) => (Some(shown), shown_index),
@@ -476,11 +498,16 @@ fn compute_table_layout_checked(
             (None, _) => (Some(&grid), index),
         };
         if let Some(resolved) = resolved {
-            resolve_collapsed_row_borders(doc, resolved);
-            resolve_collapsed_cell_borders(doc, resolved, index);
-            resolve_collapsed_table_edges(doc, resolved, table_idx);
+            resolve_collapsed_borders(doc, resolved, index, table_idx);
         }
     }
+    let columns_in_place =
+        shown
+            .as_ref()
+            .zip(borders_in_place)
+            .map(|(shown, (border_width, in_place))| {
+                ColumnsInPlace::new(doc, &grid, shown, border_width, in_place)
+            });
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
     let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
@@ -489,13 +516,6 @@ fn compute_table_layout_checked(
     } else {
         caption_inline_minimum
     };
-
-    // Container metrics, split so collapse can substitute collapsed outer
-    // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
-    // border participates in conflict resolution with edge cells).
-    let table_style = &doc.layout_node_with_style(table_idx).unwrap().style;
-    let pad = resolve_table_rect(&table_style.padding, inputs.parent_size);
-    let table_border = resolve_table_rect(&table_style.border, inputs.parent_size);
 
     // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
     // The table's outer size caller may have imposed via `apply_page_content_box_to_body` / block layout.
@@ -754,10 +774,18 @@ fn compute_table_layout_checked(
     // A collapsed column leaves the table, but its cells still count toward
     // the row heights, which keep the widths the columns had before the
     // collapse ("col visibility:collapse doesn't change table height").
-    let natural_insets_width =
-        padding_border_size.width - overlap_w + border_spacing.0 * (grid.n_cols as f32 + 1.0);
-    let natural_widths = columns_collapse
-        .then(|| resolve_table_columns(doc, &mut grid, &pass, natural_insets_width));
+    let natural_insets_width = pad.left
+        + pad.right
+        + columns_in_place.as_ref().map_or_else(
+            || collapsed.inline_border_width(),
+            |columns| columns.border_width,
+        )
+        + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+    let natural_widths = columns_collapse.then(|| {
+        measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+            resolve_table_columns(doc, &mut grid, &pass, natural_insets_width)
+        })
+    });
     let mut column_widths = if columns_collapse {
         let mut remaining = without_collapsed_columns(&grid, &collapsed_cols, false);
         let mut widths =
@@ -831,7 +859,12 @@ fn compute_table_layout_checked(
 
     // Row heights
     let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
-    let mut row_heights = resolve_row_heights(doc, &mut grid, height_widths, border_spacing)?;
+    let mut row_heights = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+        resolve_row_heights(doc, &mut grid, height_widths, border_spacing)
+    })?;
+    if let Some(columns) = &columns_in_place {
+        columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
+    }
     for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
         if *hidden {
             *height = 0.0;
@@ -1398,12 +1431,6 @@ fn build_table_grid(
     })
 }
 
-/// Authored `<col>` sizing in grid order.
-///
-/// Walks the table's direct children (and `colgroup` children) for
-/// `display: table-column` elements. `span` (HTML §4.9.8, max 1000)
-/// expands to that many entries. Direct `<col>` children (anonymous
-/// colgroup) are included in DOM order.
 /// Authored sizing of one `<col>`: width + min/max-width (lengths only;
 /// percentages and calc-with-percentage are indefinite at column-measure
 /// time and handled by the caller).
@@ -1414,6 +1441,11 @@ struct ColSizing {
     max_width: Dimension,
 }
 
+/// Authored `<col>` sizing in grid order, one entry per column.
+///
+/// The columns come from [`each_column_run`], so `span` (HTML §4.9.8, max
+/// 1000) expands to that many entries and `display: contents` wrappers are
+/// looked through.
 fn collect_col_widths(
     doc: &Document,
     table_idx: usize,
@@ -1457,7 +1489,9 @@ fn collapsed_columns(doc: &Document, table_idx: usize, n_cols: u16) -> Vec<bool>
 /// is collapsed, and its length. `span` (HTML §4.9.8, max 1000) sets the
 /// length; a `<colgroup>` without `<col>` children stands for its own `span`
 /// columns and sizes them itself. Direct `<col>` children (anonymous
-/// colgroup) are included in DOM order.
+/// colgroup) are included in DOM order. A `display: contents` element makes
+/// no box, so its children take its place, both under the table and under a
+/// `<colgroup>`.
 fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize, bool, usize)) {
     fn col_span(doc: &Document, node_id: usize) -> usize {
         doc.ifc_layout_node(node_id)
@@ -1466,18 +1500,38 @@ fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize,
             .and_then(|value| value.parse::<usize>().ok())
             .map_or(1, |v| v.clamp(1, 1000))
     }
-    for &child_id in &doc.nodes[table_idx].children {
-        if !doc.nodes[child_id].is_in_document() {
-            continue;
+    // The children of `parent` that take part in the table, with each
+    // `display: contents` child replaced by its own children. Elements that
+    // are never rendered (`script`, `datalist`, ...) drop out together with
+    // their subtrees, as they do from the table's row projection.
+    // spec: https://www.w3.org/TR/css-display-3/#valdef-display-contents
+    fn box_children(doc: &Document, parent: usize, out: &mut Vec<usize>) {
+        // An explicit stack keeps deeply nested wrappers off the call stack.
+        let mut pending: Vec<usize> = doc.nodes[parent].children.iter().rev().copied().collect();
+        while let Some(child_id) = pending.pop() {
+            if !doc.nodes[child_id].is_in_document()
+                || doc.nodes[child_id].is_non_rendered_html_element()
+            {
+                continue;
+            }
+            if doc.nodes[child_id].display() == DisplayValue::Contents {
+                pending.extend(doc.nodes[child_id].children.iter().rev());
+            } else {
+                out.push(child_id);
+            }
         }
+    }
+    let mut table_children = Vec::new();
+    box_children(doc, table_idx, &mut table_children);
+    let mut group_children = Vec::new();
+    for child_id in table_children {
         match doc.nodes[child_id].display() {
             DisplayValue::TableColumnGroup => {
                 let group_collapsed = doc.nodes[child_id].collapses_table_columns;
                 let mut has_columns = false;
-                for &col_id in &doc.nodes[child_id].children {
-                    if !doc.nodes[col_id].is_in_document() {
-                        continue;
-                    }
+                group_children.clear();
+                box_children(doc, child_id, &mut group_children);
+                for &col_id in &group_children {
                     match doc.nodes[col_id].display() {
                         DisplayValue::TableColumn => {}
                         // A `<col>` that generates no box still ends the
@@ -2420,79 +2474,7 @@ fn resolve_row_heights(
     for cell in &mut grid.cells {
         let columns = cell_column_range(cell, column_widths.len())?;
         let cell_width = spanned_size(&column_widths[columns], spacing.0);
-        // Cell height floors the row rather than stretching the content used
-        // for alignment. Preserve ordinary block border and margin sizing.
-        let authored_height = doc
-            .layout_style_for_key(cell.node_id)
-            .expect("table cell layout style")
-            .size
-            .height;
-        if !authored_height.is_auto() {
-            doc.layout_style_for_key_mut(cell.node_id)
-                .expect("table cell layout style")
-                .size
-                .height = Dimension::auto();
-            doc.table_layout_node_mut(cell.node_id).cache.clear();
-        }
-        let output = doc.compute_child_layout(
-            NodeId::from(cell.node_id),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::InherentSize,
-                axis: taffy::tree::RequestedAxis::Horizontal,
-                known_dimensions: Size {
-                    width: Some(cell_width),
-                    height: None,
-                },
-                parent_size: Size {
-                    width: Some(cell_width),
-                    height: None,
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(cell_width),
-                    height: AvailableSpace::MAX_CONTENT,
-                },
-                known_dimensions_are_definite: taffy::geometry::Size {
-                    width: true,
-                    height: true,
-                },
-                vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
-            },
-        );
-        if !authored_height.is_auto() {
-            doc.layout_style_for_key_mut(cell.node_id)
-                .expect("table cell layout style")
-                .size
-                .height = authored_height;
-            doc.table_layout_node_mut(cell.node_id).cache.clear();
-        }
-        cell.row_pass = (authored_height.is_auto() && row_pass_is_final(doc, cell.node_id))
-            .then_some(RowPassLayout {
-                width: cell_width,
-                scrollable_overflow_rect: output.scrollable_overflow_rect,
-            });
-        // Distribute rowspan height across spanned rows (simple: equally)
-        cell.natural_height = output.size.height;
-        let style = doc
-            .layout_style_for_key(cell.node_id)
-            .expect("table cell layout style");
-        let padding = style
-            .padding
-            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
-        let border = style
-            .border
-            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
-        let authored_height = resolve_dimension(style.size.height, None).map_or(0.0, |height| {
-            if style.box_sizing == taffy::BoxSizing::ContentBox {
-                height + padding.top + padding.bottom + border.top + border.bottom
-            } else {
-                height
-            }
-        });
-        let h = output.size.height.max(authored_height);
-        let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
-        cell.baseline =
-            baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
+        let h = measure_cell(doc, cell, cell_width);
         let rs = cell.row_span as usize;
         if rs == 1 {
             row_heights[cell.row as usize] = f32_max_compat(row_heights[cell.row as usize], h);
@@ -2548,6 +2530,87 @@ fn resolve_row_heights(
         }
     }
     Ok(row_heights)
+}
+
+/// Lay `cell` out at `cell_width` with no definite height, and record what the
+/// rows and the final placement need of it: the lines it can keep, its height
+/// and its baseline. Returns the height it asks of its rows.
+fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_width: f32) -> f32 {
+    // Cell height floors the row rather than stretching the content used
+    // for alignment. Preserve ordinary block border and margin sizing.
+    let authored_height = doc
+        .layout_style_for_key(cell.node_id)
+        .expect("table cell layout style")
+        .size
+        .height;
+    if !authored_height.is_auto() {
+        doc.layout_style_for_key_mut(cell.node_id)
+            .expect("table cell layout style")
+            .size
+            .height = Dimension::auto();
+        doc.table_layout_node_mut(cell.node_id).cache.clear();
+    }
+    let output = doc.compute_child_layout(
+        NodeId::from(cell.node_id),
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: taffy::tree::RequestedAxis::Horizontal,
+            known_dimensions: Size {
+                width: Some(cell_width),
+                height: None,
+            },
+            parent_size: Size {
+                width: Some(cell_width),
+                height: None,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(cell_width),
+                height: AvailableSpace::MAX_CONTENT,
+            },
+            known_dimensions_are_definite: taffy::geometry::Size {
+                width: true,
+                height: true,
+            },
+            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        },
+    );
+    if !authored_height.is_auto() {
+        doc.layout_style_for_key_mut(cell.node_id)
+            .expect("table cell layout style")
+            .size
+            .height = authored_height;
+        doc.table_layout_node_mut(cell.node_id).cache.clear();
+    }
+    cell.row_pass = (authored_height.is_auto() && row_pass_is_final(doc, cell.node_id)).then_some(
+        RowPassLayout {
+            width: cell_width,
+            scrollable_overflow_rect: output.scrollable_overflow_rect,
+        },
+    );
+    // Distribute rowspan height across spanned rows (simple: equally)
+    cell.natural_height = output.size.height;
+    let style = doc
+        .layout_style_for_key(cell.node_id)
+        .expect("table cell layout style");
+    let padding = style
+        .padding
+        .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+    let border = style
+        .border
+        .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+    let authored_height = resolve_dimension(style.size.height, None).map_or(0.0, |height| {
+        if style.box_sizing == taffy::BoxSizing::ContentBox {
+            height + padding.top + padding.bottom + border.top + border.bottom
+        } else {
+            height
+        }
+    });
+    let h = output.size.height.max(authored_height);
+    let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
+    cell.baseline =
+        baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
+    h
 }
 
 // ---------------------------------------------------------------------------
@@ -3219,6 +3282,12 @@ struct CollapsedLines {
 }
 
 impl CollapsedLines {
+    /// The inline-axis width the collapsed borders take from the table: the
+    /// outer left and right borders, less the overlaps between columns.
+    fn inline_border_width(&self) -> f32 {
+        self.outer_left + self.outer_right - self.col_overlaps.iter().sum::<f32>()
+    }
+
     fn separate(table_border: &Rect<f32>) -> Self {
         Self {
             col_overlaps: Vec::new(),
@@ -3629,6 +3698,236 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
             );
         }
     }
+}
+
+/// Resolve the borders of `grid` (CSS 2.1 §17.6.2.1): rows against their
+/// cells, adjoining cells against each other, and edge cells against the table.
+fn resolve_collapsed_borders(
+    doc: &mut Document,
+    grid: &TableGrid,
+    index: &CellIndex,
+    table_idx: usize,
+) {
+    resolve_collapsed_row_borders(doc, grid);
+    resolve_collapsed_cell_borders(doc, grid, index);
+    resolve_collapsed_table_edges(doc, grid, table_idx);
+}
+
+/// Give every cell and row of `grid` the borders it has before any
+/// resolution: the widths of its computed border, as the bridge sets them
+/// (it has already reported any warning for those widths), and no collapsed
+/// border. A grid resolved next then does not inherit what an earlier
+/// resolution of another grid left on them.
+fn reset_collapsed_borders(doc: &mut Document, grid: &TableGrid) {
+    for cell in &grid.cells {
+        doc.table_layout_node_mut(cell.node_id).collapsed_border = None;
+        let border = authored_border(doc, cell.node_id);
+        doc.layout_style_for_key_mut(cell.node_id)
+            .expect("table cell layout style")
+            .border = border;
+    }
+    for &row in &grid.rows {
+        doc.nodes[row].collapsed_border = None;
+    }
+}
+
+/// The layout widths of `cell`'s computed border, as the bridge sets them (it
+/// has already reported any warning for those widths).
+fn authored_border(doc: &mut Document, cell: usize) -> Rect<LengthPercentage> {
+    let border = doc
+        .table_layout_node_mut(cell)
+        .computed_border
+        .expect("table cell computed border");
+    super::bridge::taffy_border_widths(&border, &mut Vec::new())
+}
+
+/// The borders the cells and rows of a grid have at one point of border
+/// resolution: the layout width of each cell's sides and the collapsed borders
+/// the cells and rows paint.
+struct BorderState {
+    cells: Vec<(usize, Rect<LengthPercentage>, Option<Sides<ComputedBorder>>)>,
+    rows: Vec<(usize, Option<Sides<ComputedBorder>>)>,
+}
+
+/// The two border states of a table with collapsed columns in the collapsed
+/// borders model. The columns that collapse still set the widths the rows are
+/// measured at, so the rows are measured with the borders every column in
+/// place gives the cells, and the cells are laid out with the borders the
+/// columns that remain give them.
+struct ColumnsInPlace {
+    /// [`CollapsedLines::inline_border_width`] with every column in place.
+    border_width: f32,
+    /// The borders the cells are measured with: the inline sides they have
+    /// with every column in place, and the block sides the rest of the layout
+    /// counts, which are those of the grid that remains. A row line is shared
+    /// by two rows only as far as that grid overlaps them, so a border that
+    /// only a collapsed column gave the rows would count twice.
+    in_place: BorderState,
+    /// The borders with the collapsed columns left out.
+    remaining: BorderState,
+}
+
+impl ColumnsInPlace {
+    /// `in_place` and `border_width` are what the grid with every column of
+    /// `grid` resolved to ([`border_width_with_columns_in_place`]); `shown`
+    /// has been resolved since, so the cells now have the borders of the grid
+    /// that remains.
+    fn new(
+        doc: &mut Document,
+        grid: &TableGrid,
+        shown: &TableGrid,
+        border_width: f32,
+        in_place: BorderState,
+    ) -> Self {
+        let remaining = snapshot_borders(doc, grid);
+        let remains: std::collections::HashSet<usize> =
+            shown.cells.iter().map(|cell| cell.node_id).collect();
+        let cells = in_place
+            .cells
+            .into_iter()
+            .zip(&remaining.cells)
+            .map(|((cell, mut border, painted), kept)| {
+                // The cells of the collapsed columns are not part of the grid
+                // that remains, which resolves nothing for them.
+                let block = if remains.contains(&cell) {
+                    kept.1
+                } else {
+                    authored_border(doc, cell)
+                };
+                border.top = block.top;
+                border.bottom = block.bottom;
+                (cell, border, painted)
+            })
+            .collect();
+        Self {
+            border_width,
+            in_place: BorderState {
+                cells,
+                rows: in_place.rows,
+            },
+            remaining,
+        }
+    }
+
+    /// Measure again each cell whose borders differ between the two states,
+    /// with the borders it keeps: the measure of the rows broke its lines at
+    /// borders it no longer has, so neither its lines, its height nor its
+    /// baseline are those it is laid out and aligned by. The rows keep the
+    /// heights they were measured at.
+    fn measure_changed_cells(
+        &self,
+        doc: &mut LayoutSession<'_>,
+        grid: &mut TableGrid,
+        column_widths: &[f32],
+        spacing: (f32, f32),
+    ) -> Result<(), raikiri_traits::LayoutError> {
+        let states = self.in_place.cells.iter().zip(&self.remaining.cells);
+        for (cell, (in_place, remaining)) in grid.cells.iter_mut().zip(states) {
+            if in_place.1 != remaining.1 {
+                let columns = cell_column_range(cell, column_widths.len())?;
+                measure_cell(doc, cell, spanned_size(&column_widths[columns], spacing.0));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Run `measure` with the borders every column in place gives the cells, when
+/// columns collapse, and leave the cells with the borders of the columns that
+/// remain.
+fn measured_in_place<R>(
+    doc: &mut LayoutSession<'_>,
+    columns: Option<&ColumnsInPlace>,
+    measure: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let Some(columns) = columns else {
+        return measure(doc);
+    };
+    apply_borders(doc, &columns.in_place);
+    let measured = measure(doc);
+    apply_borders(doc, &columns.remaining);
+    measured
+}
+
+/// Record the borders the cells and rows of `grid` have now.
+fn snapshot_borders(doc: &mut Document, grid: &TableGrid) -> BorderState {
+    let cells = grid
+        .cells
+        .iter()
+        .map(|cell| {
+            let border = doc
+                .layout_style_for_key(cell.node_id)
+                .expect("table cell layout style")
+                .border;
+            let painted = doc.table_layout_node_mut(cell.node_id).collapsed_border;
+            (cell.node_id, border, painted)
+        })
+        .collect();
+    let rows = grid
+        .rows
+        .iter()
+        .map(|&row| (row, doc.nodes[row].collapsed_border))
+        .collect();
+    BorderState { cells, rows }
+}
+
+/// Give the cells and rows the borders `state` recorded, and drop the layouts
+/// the cells cached under other borders.
+fn apply_borders(doc: &mut Document, state: &BorderState) {
+    for &(cell, border, painted) in &state.cells {
+        let style = doc
+            .layout_style_for_key_mut(cell)
+            .expect("table cell layout style");
+        let changed = style.border != border;
+        style.border = border;
+        let node = doc.table_layout_node_mut(cell);
+        node.collapsed_border = painted;
+        if changed {
+            node.cache.clear();
+        }
+    }
+    for &(row, painted) in &state.rows {
+        doc.nodes[row].collapsed_border = painted;
+    }
+}
+
+/// The inline-axis width that collapsed borders take from the table while
+/// every column of `grid` is in place ([`CollapsedLines::inline_border_width`]
+/// of the grid with those columns), and the borders the cells then have.
+/// `collapsed_rows` stay out, as they do when the columns are shown.
+///
+/// Columns that collapse are still measured at the widths they had before,
+/// and those widths depend on the borders they had too, so this resolves
+/// the grid with the columns in it. Cells that remain in `shown` are returned
+/// to their unresolved borders afterwards, for the caller to resolve `shown`;
+/// the cells of the collapsed columns keep the borders they resolved to, which
+/// they are measured with.
+fn border_width_with_columns_in_place(
+    doc: &mut Document,
+    grid: &TableGrid,
+    collapsed_rows: &[bool],
+    shown: &TableGrid,
+    table_idx: usize,
+    table_border: &Rect<f32>,
+    basis: Option<f32>,
+) -> (f32, BorderState) {
+    let rows_shown = without_collapsed_rows(grid, collapsed_rows);
+    if rows_shown.rows.is_empty() {
+        // Nothing shows, so no cell border meets the table's own.
+        reset_collapsed_borders(doc, grid);
+        return (
+            table_border.left + table_border.right,
+            snapshot_borders(doc, grid),
+        );
+    }
+    let index = CellIndex::new(&rows_shown);
+    reset_collapsed_borders(doc, grid);
+    resolve_collapsed_borders(doc, &rows_shown, &index, table_idx);
+    let width = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis)
+        .inline_border_width();
+    let in_place = snapshot_borders(doc, grid);
+    reset_collapsed_borders(doc, shown);
+    (width, in_place)
 }
 
 fn compute_collapsed_lines(

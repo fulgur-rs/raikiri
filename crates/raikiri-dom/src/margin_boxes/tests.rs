@@ -256,7 +256,12 @@ fn margin_row_lays_out_fixed_width_background() {
         margin_row_margins(10.0),
     );
     assert_eq!(boxes.len(), 1);
-    assert_eq!(boxes[0].rect, PaintRect::new(10.0, 0.0, 100.0, 10.0));
+    // The lone center box is centered on the edge between the side margins.
+    let available = PageBox::A4.width - 10.0 - 10.0;
+    assert_eq!(
+        boxes[0].rect,
+        PaintRect::new(10.0 + (available - 100.0) / 2.0, 0.0, 100.0, 10.0)
+    );
     assert_eq!(boxes[0].background_color, fixed_margin_spec().background);
     assert!(boxes[0].text.is_none());
 }
@@ -286,7 +291,7 @@ fn vertical_margin_box_intrinsics_use_physical_axes() {
     spec.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
     spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
     assert_eq!(margin_box_text_width(&doc, &spec, None), 20.0);
-    assert_eq!(margin_box_intrinsic_height(&doc, &spec), 30.0);
+    assert_eq!(margin_box_intrinsic_height(&doc, &spec, 40.0), 30.0);
 }
 
 #[test]
@@ -540,6 +545,51 @@ fn margin_box_text_runs_sit_inside_the_box() {
     // below the line top.
     assert_eq!(run.origin, (40.0, 15.0 + 8.0));
     assert_eq!(run.advance, 30.0);
+}
+
+#[test]
+fn margin_box_line_height_sets_the_line_spacing_and_the_first_baseline() {
+    // Each line is `line-height` tall, with the text centered in it, so the
+    // first baseline sits half of the leading lower and the next line is one
+    // `line-height` further down. The Ahem line is 10px tall with its
+    // baseline 8px below the top.
+    let origins = |line_height: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@page {{ margin: 40px; \
+               @top-left {{ content: 'a\\A b'; white-space: pre; font-family: Ahem; \
+                           font-size: 10px; vertical-align: top; {line_height} }} }}"
+        ));
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        head.text_runs()
+            .iter()
+            .map(|run| run.origin.1)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(origins(""), [8.0, 18.0]);
+    assert_eq!(origins("line-height: normal"), [8.0, 18.0]);
+    assert_eq!(origins("line-height: 3"), [18.0, 48.0]);
+    assert_eq!(origins("line-height: 25px"), [15.5, 40.5]);
+}
+
+#[test]
+fn margin_box_line_height_is_the_height_a_vertical_align_places() {
+    // The centered 30px line spans 5px to 35px of the 40px strip, and the
+    // bottom aligned one 10px to 40px.
+    for (align, baseline) in [("top", 18.0), ("middle", 23.0), ("text-bottom", 28.0)] {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@page {{ margin: 40px; \
+               @top-left {{ content: 'abc'; font-family: Ahem; font-size: 10px; \
+                           line-height: 30px; vertical-align: {align} }} }}"
+        ));
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        assert_eq!(head.text_runs()[0].origin.1, baseline, "{align}");
+    }
 }
 
 #[test]

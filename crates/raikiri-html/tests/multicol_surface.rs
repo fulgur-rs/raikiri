@@ -731,7 +731,9 @@ fn a_short_plain_wrapper_with_a_huge_column_count_projects_once() {
 }
 
 #[test]
-fn single_column_rtl_wrapper_preserves_ordinary_block_flow() {
+fn single_column_rtl_wrapper_continues_in_the_overflow_column_to_the_left() {
+    // The overflow column of a left-to-right container is to its right, 120px
+    // on (100px column and 20px gap); that of a right-to-left one mirrors it.
     let document = lay_out(
         "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
         ".mc{height:40px;column-count:1;direction:rtl}.mc p{direction:ltr}",
@@ -741,8 +743,8 @@ fn single_column_rtl_wrapper_preserves_ordinary_block_flow() {
         [
             ("A".into(), (0.0, 16.0)),
             ("B".into(), (0.0, 36.0)),
-            ("C".into(), (0.0, 56.0)),
-            ("D".into(), (0.0, 76.0)),
+            ("C".into(), (-120.0, 16.0)),
+            ("D".into(), (-120.0, 36.0)),
             ("E".into(), (0.0, 56.0)),
         ]
     );
@@ -1263,5 +1265,335 @@ fn collapsible_white_space_inside_an_inline_wrapper_keeps_the_forced_break() {
     assert_eq!(
         text_origins(&document),
         [("A".into(), (0.0, 16.0)), ("B".into(), (60.0, 16.0))]
+    );
+}
+
+/// The border box origins of the elements named `tag` on `page`, in paint
+/// order.
+fn element_origins(document: &DocumentLayout, page: u32, tag: &str) -> Vec<(f32, f32)> {
+    let page = document.page(page).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    page.paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::Box(fragment) if dom.local_name(fragment.node()) == Some(tag) => {
+                let rect = fragment.rect();
+                Some((rect.x, rect.y))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn atomic_inlines_of_one_paragraph_continue_in_the_columns_of_the_next_page() {
+    // Two 80px lines fill a 160px page column, so the first page holds four
+    // lines and the last two are balanced over the columns of the second.
+    let document = lay_out(
+        "<div class=mc>\
+         <i></i><br><i></i><br><i></i><br><i></i><br><i></i><br><i></i>\
+         </div>",
+        "i{display:inline-block;vertical-align:top;width:25px;height:80px;background:green}",
+    );
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [(0.0, 0.0), (0.0, 80.0), (60.0, 0.0), (60.0, 80.0)]
+    );
+    assert_eq!(
+        element_origins(&document, 1, "i"),
+        [(0.0, 0.0), (60.0, 0.0)]
+    );
+}
+
+#[test]
+fn an_atomic_inline_moves_with_the_text_on_its_line() {
+    let document = lay_out(
+        "<div class=mc>A<i></i><br>B<i></i><br>C<i></i><br>D<i></i></div>",
+        "i{display:inline-block;width:15px;height:20px;vertical-align:top;background:green}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (60.0, 16.0)),
+            ("D".into(), (60.0, 36.0)),
+        ]
+    );
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [(20.0, 0.0), (20.0, 20.0), (80.0, 0.0), (80.0, 20.0)]
+    );
+}
+
+#[test]
+fn atomic_inlines_in_a_nested_container_are_laid_out_once() {
+    // The inner container is not split by the paragraph code, so each atomic
+    // inline is painted once, not once more in the next column of the outer
+    // container.
+    let document = lay_out(
+        "<div style='width:200px;height:100px;column-count:2;column-gap:10px;column-fill:auto'>\
+         <div style='column-count:2;column-gap:10px'>\
+         <i></i><br><i></i><br><i></i><br><i></i>\
+         </div></div>",
+        "i{display:inline-block;vertical-align:top;width:20px;height:20px;background:green}",
+    );
+    assert_eq!(element_origins(&document, 0, "i").len(), 4);
+}
+
+#[test]
+fn an_rtl_container_fills_its_columns_from_the_right() {
+    // Columns are 40px wide with a 20px gap. The first is at the right edge,
+    // and an Ahem glyph is right aligned in it.
+    let document = lay_out("<div class=mc>A<br>B<br>C<br>D</div>", ".mc{direction:rtl}");
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (80.0, 16.0)),
+            ("B".into(), (80.0, 36.0)),
+            ("C".into(), (20.0, 16.0)),
+            ("D".into(), (20.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn the_paragraphs_of_an_rtl_container_fill_its_columns_from_the_right() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+        ".mc{direction:rtl}.mc p{direction:ltr}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (60.0, 16.0)),
+            ("B".into(), (60.0, 36.0)),
+            ("C".into(), (0.0, 16.0)),
+            ("D".into(), (0.0, 36.0)),
+            ("E".into(), (0.0, 56.0)),
+        ]
+    );
+}
+
+#[test]
+fn the_paragraphs_of_an_rtl_container_continue_in_columns_of_a_definite_height() {
+    // Three columns of two lines each: the overflow one is left of the others.
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D<br>E</p></div>",
+        ".mc{direction:rtl;height:40px;column-fill:auto}.mc p{direction:ltr}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (60.0, 16.0)),
+            ("B".into(), (60.0, 36.0)),
+            ("C".into(), (0.0, 16.0)),
+            ("D".into(), (0.0, 36.0)),
+            ("E".into(), (-60.0, 16.0)),
+        ]
+    );
+}
+
+#[test]
+fn the_blocks_of_an_rtl_container_continue_in_the_columns_to_the_left() {
+    let document = lay_out(
+        "<div class=mc><i></i><i></i><i></i><i></i><i></i></div>",
+        ".mc{direction:rtl;height:40px;column-fill:auto}\
+         i{display:block;height:20px;background:green}",
+    );
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [
+            (60.0, 0.0),
+            (60.0, 20.0),
+            (0.0, 0.0),
+            (0.0, 20.0),
+            (-60.0, 0.0)
+        ]
+    );
+}
+
+#[test]
+fn an_rtl_container_balances_around_a_spanner() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><div style='column-span:all;height:20px'></div><p>C<br>D</p></div>",
+        ".mc{direction:rtl}.mc p{direction:ltr}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (60.0, 16.0)),
+            ("B".into(), (0.0, 16.0)),
+            ("C".into(), (60.0, 56.0)),
+            ("D".into(), (0.0, 56.0)),
+        ]
+    );
+}
+
+#[test]
+fn the_atomic_inlines_of_an_rtl_container_continue_in_the_columns_of_the_next_page() {
+    let document = lay_out(
+        "<div class=mc>\
+         <i></i><br><i></i><br><i></i><br><i></i><br><i></i><br><i></i>\
+         </div>",
+        ".mc{direction:rtl}\
+         i{display:inline-block;vertical-align:top;width:25px;height:80px;background:green}",
+    );
+    assert_eq!(document.page_count(), 2);
+    // Each box is right aligned on its line, 15px in from the column's left.
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [(75.0, 0.0), (75.0, 80.0), (15.0, 0.0), (15.0, 80.0)]
+    );
+    assert_eq!(
+        element_origins(&document, 1, "i"),
+        [(75.0, 0.0), (15.0, 0.0)]
+    );
+}
+
+#[test]
+fn the_rows_of_a_nested_container_in_an_rtl_container_continue_to_the_left() {
+    // The inner container takes the outer column's width, and the lines past
+    // its first row go to the next outer column, which is to the left.
+    let document = lay_out(
+        "<div class=mc style='width:170px;height:60px;column-gap:10px;column-fill:auto'>\
+         <div style='column-count:1'><p>A<br>B<br>C<br>D<br>E</p></div></div>",
+        ".mc{direction:rtl}.mc p{direction:ltr}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (90.0, 16.0)),
+            ("B".into(), (90.0, 36.0)),
+            ("C".into(), (90.0, 56.0)),
+            ("D".into(), (0.0, 16.0)),
+            ("E".into(), (0.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_narrow_paragraph_in_an_rtl_container_is_flush_with_the_right_edge_of_its_column() {
+    // The 30px paragraph leaves 10px of each 40px column on its left.
+    let document = lay_out(
+        "<div class=mc><p style='width:30px'>A<br>B<br>C<br>D</p></div>",
+        ".mc{direction:rtl}",
+    );
+    assert_eq!(
+        element_origins(&document, 0, "p"),
+        [(70.0, 0.0), (10.0, 0.0)]
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (80.0, 16.0)),
+            ("B".into(), (80.0, 36.0)),
+            ("C".into(), (20.0, 16.0)),
+            ("D".into(), (20.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_paragraph_that_cannot_join_the_balance_keeps_all_its_lines_in_its_column() {
+    // The padded second paragraph is not balanced with the first, so each
+    // paragraph stays whole in its own column.
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p style='padding-top:1px'>C<br>D</p></div>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (60.0, 17.0)),
+            ("D".into(), (60.0, 37.0)),
+        ]
+    );
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p style='padding-top:1px'>C<br>D</p></div>",
+        ".mc{direction:rtl}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (80.0, 16.0)),
+            ("B".into(), (80.0, 36.0)),
+            ("C".into(), (20.0, 17.0)),
+            ("D".into(), (20.0, 37.0)),
+        ]
+    );
+}
+
+#[test]
+fn the_paragraphs_of_a_block_that_is_balanced_whole_keep_all_their_lines() {
+    // The wrapper is one item of the balance, so both of its paragraphs stay
+    // in the first column; the padded paragraph is the second item.
+    let document = lay_out(
+        "<div class=mc><div><p>A<br>B</p><p>C<br>D</p></div><p style='padding-top:1px'>E<br>F</p></div>",
+        ".mc{column-count:3;width:160px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (0.0, 76.0)),
+            ("E".into(), (60.0, 17.0)),
+            ("F".into(), (60.0, 37.0)),
+        ]
+    );
+}
+
+#[test]
+fn narrow_paragraphs_among_others_in_an_rtl_container_are_flush_with_the_right_edge() {
+    // The second paragraph is too narrow to join the paragraphs that are cut
+    // at the column edges, so each paragraph is placed in its own column.
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p style='width:30px'>C<br>D</p></div>",
+        ".mc{direction:rtl;height:60px;column-fill:auto}",
+    );
+    assert_eq!(
+        element_origins(&document, 0, "p"),
+        [(60.0, 0.0), (10.0, 0.0)]
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (80.0, 16.0)),
+            ("B".into(), (80.0, 36.0)),
+            ("C".into(), (20.0, 16.0)),
+            ("D".into(), (20.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn the_columns_of_an_rtl_container_start_inside_its_left_padding_and_border() {
+    // The 100px content box starts 15px from the container's left edge.
+    let document = lay_out(
+        "<div class=mc><i></i><i></i><i></i><i></i></div>",
+        ".mc{direction:rtl;padding-left:10px;border-left:5px solid}\
+         i{display:block;height:20px;background:green}",
+    );
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [(75.0, 0.0), (75.0, 20.0), (15.0, 0.0), (15.0, 20.0)]
+    );
+}
+
+#[test]
+fn narrow_blocks_in_an_rtl_container_are_flush_with_the_right_edge_of_their_column() {
+    let document = lay_out(
+        "<div class=mc><i></i><i></i><i></i><i></i></div>",
+        ".mc{direction:rtl}i{display:block;width:30px;height:20px;background:green}",
+    );
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [(70.0, 0.0), (70.0, 20.0), (10.0, 0.0), (10.0, 20.0)]
     );
 }

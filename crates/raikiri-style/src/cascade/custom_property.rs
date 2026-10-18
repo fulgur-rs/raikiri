@@ -530,6 +530,25 @@ pub(crate) fn project_deferred_value(
             crate::property::PropertyKey::MarginBottom => PropertyValue::MarginBottom(pair.end),
             _ => return None,
         },
+        // `inset` and its logical 2-value forms fan out to the offset
+        // longhands the same way.
+        PropertyValue::Inset(sides) => match key {
+            crate::property::PropertyKey::Top => PropertyValue::Top(sides.top),
+            crate::property::PropertyKey::Right => PropertyValue::Right(sides.right),
+            crate::property::PropertyKey::Bottom => PropertyValue::Bottom(sides.bottom),
+            crate::property::PropertyKey::Left => PropertyValue::Left(sides.left),
+            _ => return None,
+        },
+        PropertyValue::InsetInline(pair) => match key {
+            crate::property::PropertyKey::Left => PropertyValue::Left(pair.start),
+            crate::property::PropertyKey::Right => PropertyValue::Right(pair.end),
+            _ => return None,
+        },
+        PropertyValue::InsetBlock(pair) => match key {
+            crate::property::PropertyKey::Top => PropertyValue::Top(pair.start),
+            crate::property::PropertyKey::Bottom => PropertyValue::Bottom(pair.end),
+            _ => return None,
+        },
         PropertyValue::PaddingInline(pair) => match key {
             crate::property::PropertyKey::PaddingLeft => PropertyValue::PaddingLeft(pair.start),
             crate::property::PropertyKey::PaddingRight => PropertyValue::PaddingRight(pair.end),

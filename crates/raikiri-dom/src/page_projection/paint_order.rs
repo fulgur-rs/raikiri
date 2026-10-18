@@ -94,7 +94,11 @@ pub enum PaintEvent<'a> {
     /// place of the element's [`PaintEvent::Box`] where a translucent
     /// `::first-line` splits the element: its pieces on the first line are
     /// inside the first line's group, and the others are with the rest of
-    /// the paragraph. Paint each as the element's box over the piece's
+    /// the paragraph. An element on the first line to which the
+    /// `::first-line` gives a color or font size other than its own is
+    /// listed by its pieces too, even if it has no box on later lines, so
+    /// that its piece on the first line carries the values in
+    /// [`LineBox::style`]. Paint each as the element's box over the piece's
     /// rectangle, with the borders of the start and end edges it has.
     LineBox(LineBox<'a>),
     /// One image of `::before` or `::after` content placed on this page,
@@ -1701,14 +1705,17 @@ fn push_paragraph<'a>(
         LinePart::Rest => later.contains(&element),
     };
     // An element on the first line and on later ones is split by line: its
-    // pieces on the lines of `part` stand for its box. Without prepared
-    // pieces on the page, its box goes with the other lines.
+    // pieces on the lines of `part` stand for its box. So are the pieces of
+    // an element whose color or font size the `::first-line` changes, even
+    // where it has no box on later lines. Without prepared pieces on the
+    // page, its box goes with the other lines.
     let line_pieces = |element: usize| {
-        (part != LinePart::All
+        let pieces = items.inline_boxes?.get(&(root, element))?;
+        ((part != LinePart::All
             && later.contains(&element)
             && lines_of_boxes.first.contains(&element))
-        .then(|| items.inline_boxes?.get(&(root, element)))
-        .flatten()
+            || crate::layout::first_line_restyles(root_node, items.cascade, element))
+        .then_some(pieces)
     };
     let push_line_boxes = |events: &mut Vec<PaintEvent<'a>>,
                            element: usize,

@@ -999,6 +999,10 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::Right(v) => PropertyValue::Right(basis.lpa(v)),
         PropertyValue::Bottom(v) => PropertyValue::Bottom(basis.lpa(v)),
         PropertyValue::Left(v) => PropertyValue::Left(basis.lpa(v)),
+        // Shorthand fall-throughs, as for `Margin` above.
+        PropertyValue::Inset(sides) => PropertyValue::Inset(Box::new(sides.map(|l| basis.lpa(l)))),
+        PropertyValue::InsetInline(pair) => PropertyValue::InsetInline(pair.map(|l| basis.lpa(l))),
+        PropertyValue::InsetBlock(pair) => PropertyValue::InsetBlock(pair.map(|l| basis.lpa(l))),
         // ── background-size / background-position ───────────────────────
         PropertyValue::BackgroundSize(v) => PropertyValue::BackgroundSize(
             v.iter().map(|size| basis.background_size(*size)).collect(),

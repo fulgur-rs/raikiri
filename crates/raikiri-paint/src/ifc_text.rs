@@ -92,6 +92,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
     page_box: raikiri_traits::PageBox,
     page_lines: Option<crate::walk::PageLines>,
     paint_transform: Affine,
+    fixed_viewport: Option<Rect>,
 ) {
     if let Some(lines) = hold_ifc_lines(
         image_cache,
@@ -107,6 +108,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         page_box,
         page_lines,
         paint_transform,
+        fixed_viewport,
     ) {
         lines.finish(scene);
     }
@@ -278,6 +280,7 @@ pub(crate) fn hold_ifc_lines<'a>(
     page_box: raikiri_traits::PageBox,
     page_lines: Option<crate::walk::PageLines>,
     paint_transform: Affine,
+    fixed_viewport: Option<Rect>,
 ) -> Option<HeldLines<'a>> {
     let positioned = PositionedLines::new(document, cascade, root_id, fragmentainer)?;
     let writing_mode = positioned.writing_mode;
@@ -439,6 +442,7 @@ pub(crate) fn hold_ifc_lines<'a>(
             pixel_source,
             warnings,
             paint_transform,
+            piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
         );
     }
     for positioned_line in positioned.lines() {
@@ -555,6 +559,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 pixel_source,
                 warnings,
                 piece_transform,
+                piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
             );
         }
         // Images of `::before` and `::after` content are replaced content
@@ -867,7 +872,28 @@ pub(crate) fn draw_ifc_lines(
         raikiri_traits::PageBox::A4,
         None,
         Affine::IDENTITY,
+        None,
     );
+}
+
+/// The page area in which the `fixed` background layers of the inline box
+/// `piece`, styled `cv`, are positioned, given the page area `fixed_viewport`
+/// that the layers of its paragraph's block are positioned in. A box without
+/// a `fixed` layer needs none. Inside an inline element that is the
+/// containing block of fixed-position boxes, a `fixed` layer is positioned
+/// like a `scroll` one, so the box gets no page area.
+fn piece_fixed_viewport(
+    paragraph: Paragraph<'_>,
+    cv: &raikiri_style::ComputedValues,
+    piece: &raikiri_dom::InlineBoxPiece,
+    fixed_viewport: Option<Rect>,
+) -> Option<Rect> {
+    fixed_viewport.filter(|_| {
+        cv.background_layers()
+            .iter()
+            .any(|layer| layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed)
+            && !typographic::in_fixed_containing_block(paragraph, piece)
+    })
 }
 
 /// Where `line` paints, before the transforms around its paragraph.
@@ -1156,8 +1182,8 @@ fn emphasis_origin(position: IfcPosition, block_offset: f32, draw: &RunDraw<'_>)
 /// on top, so callers draw the list in reverse. Each shadow is the run's glyphs
 /// and its decoration lines, in their paint order, filled with the shadow
 /// color. A blurred shadow is drawn inside a filter layer clipped to the
-/// lines grown by three times the blur radius, which isolates the blur from
-/// the rest of the page. The Gaussian's standard deviation is half the blur
+/// lines and the run's glyphs, grown by three times the blur radius, which
+/// isolates the blur from the rest of the page. The Gaussian's standard deviation is half the blur
 /// radius (CSS Backgrounds 3 §7.1).
 fn draw_shadow(
     scene: &mut impl PaintScene,
@@ -1184,10 +1210,29 @@ fn draw_shadow(
     if use_blur_layer {
         let extent = f64::from((blur * 3.0).max(1.0));
         let (x, y) = (f64::from(position.x), f64::from(position.y));
+        // Text that overflows its paragraph (`nowrap`, a negative
+        // `text-indent`) lies outside the paragraph's own width, and its
+        // shadow with it, so the clip also covers the run's glyphs. A glyph's
+        // ink can stick out of its advance box (an italic or synthetic
+        // oblique overhang, a mark, a swash, tight letter spacing), so each
+        // glyph is padded by one em, which the ink of an ordinary glyph does
+        // not exceed.
+        let pad = f64::from(font_size);
+        let (ink_left, ink_right) =
+            run.draw
+                .glyphs
+                .iter()
+                .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
+                    let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
+                    (
+                        left.min(start.min(end) - pad),
+                        right.max(start.max(end) + pad),
+                    )
+                });
         let clip = Rect::new(
-            x + dx - extent,
+            x + ink_left + dx - extent,
             y + dy - extent,
-            x + f64::from(width) + dx + extent,
+            x + ink_right + dx + extent,
             y + f64::from(height) + dy + extent,
         );
         scene.push_layer(

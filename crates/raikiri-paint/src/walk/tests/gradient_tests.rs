@@ -32,7 +32,6 @@ fn raster_layer(style: &str, width: u32, height: u32) -> Vec<u8> {
         &gradient,
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -330,7 +329,6 @@ fn conic_gradients_are_left_to_their_own_painter() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -378,6 +376,7 @@ fn element_background_paints_the_gradient_over_its_color() {
             top: 0.0,
             bottom: 0.0,
         },
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -389,6 +388,74 @@ fn element_background_paints_the_gradient_over_its_color() {
     );
     assert_eq!(pixel(&rgba, 40, 5, 5), [0, 255, 0, 255]);
     assert_eq!(pixel(&rgba, 40, 35, 5), BLUE);
+}
+
+#[test]
+fn rounded_box_color_and_gradient_are_clipped_to_the_curve_together() {
+    let render = |image: &str, color: &str| {
+        let cv = computed_for(&format!(
+            "background-color: {color}; background-image: {image}; border-radius: 8px"
+        ));
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &Rect::new(0.0, 0.0, 20.0, 20.0),
+        );
+        paint_element_background(
+            &ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            cv.background_color,
+            cv.background_layers(),
+            cv.color,
+            &cv.border_radius,
+            &cv.border,
+            &taffy::Rect {
+                left: 0.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 0.0,
+            },
+            BackgroundEnv::default(),
+            None,
+            &mut Vec::new(),
+        );
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            20,
+            20,
+        )
+    };
+    // An opaque gradient covers the red color under it, so the box looks the
+    // same with or without the color. Each clipped on its own, the
+    // antialiased edge would take the color and then the gradient over it,
+    // and show a red rim.
+    for image in [
+        "linear-gradient(blue, blue)",
+        "radial-gradient(blue, blue)",
+        "conic-gradient(blue, blue)",
+    ] {
+        let gradient_only = render(image, "transparent");
+        let with_color = render(image, "red");
+        assert!(
+            gradient_only
+                .chunks_exact(4)
+                .any(|pixel| pixel[0] > 0 && pixel[0] < 255),
+            "{image}: the curve antialiases some pixel"
+        );
+        for (index, (plain, colored)) in gradient_only.iter().zip(&with_color).enumerate() {
+            assert!(
+                plain.abs_diff(*colored) <= 1,
+                "{image}, byte {index}: {plain} vs {colored}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -417,6 +484,7 @@ fn gradient_keeps_its_clip_inside_a_matching_border() {
             top: 0.0,
             bottom: 0.0,
         },
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -452,6 +520,7 @@ fn raster_element_background(cv: &ComputedValues, width: u32, height: u32) -> Ve
             top: 0.0,
             bottom: 0.0,
         },
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -664,7 +733,6 @@ fn many_tiny_tiles_paint_their_average_color() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -697,7 +765,6 @@ fn a_long_row_of_tiny_tiles_still_paints() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -718,7 +785,6 @@ fn a_long_row_of_tiny_tiles_still_paints() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -787,6 +853,7 @@ fn border_area_gradients_paint_the_ring() {
             top: 0.0,
             bottom: 0.0,
         },
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -813,7 +880,6 @@ fn the_tile_fallback_keeps_single_space_tiles_and_padding() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -839,7 +905,6 @@ fn the_tile_fallback_keeps_single_space_tiles_and_padding() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -932,7 +997,6 @@ fn short_periods_in_long_gradients_still_repeat() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -973,7 +1037,6 @@ fn many_coincident_stops_make_one_hard_edge() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -1007,7 +1070,6 @@ fn a_space_axis_too_short_for_two_enlarged_tiles_places_one() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -1052,7 +1114,6 @@ fn a_lone_round_tile_keeps_its_fractional_edge() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -1072,7 +1133,7 @@ fn a_lone_round_tile_keeps_its_fractional_edge() {
 }
 
 /// Paint a layer of `style` over `area`, painted inside `painting`.
-fn layer_scene(style: &str, area: Rect, painting: Rect, clip: Option<&BezPath>) -> Scene {
+fn layer_scene(style: &str, area: Rect, painting: Rect) -> Scene {
     let cv = computed_for(style);
     let mut scene = Scene::new();
     assert!(gradient::paint_gradient_layer(
@@ -1080,7 +1141,6 @@ fn layer_scene(style: &str, area: Rect, painting: Rect, clip: Option<&BezPath>) 
         &gradient_of(&cv),
         area,
         painting,
-        clip,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -1124,31 +1184,45 @@ fn calc_sizes_and_empty_layers() {
         "background-image: linear-gradient(red, blue); background-size: 0px 10px",
         area,
         area,
-        None,
     );
     assert!(empty.commands.is_empty());
     let empty = layer_scene(
         "background-image: linear-gradient(red, blue)",
         area,
         Rect::new(0.0, 0.0, 0.0, 100.0),
-        None,
     );
     assert!(empty.commands.is_empty());
 }
 
 #[test]
-fn the_tile_fallback_fills_solid_tiles_inside_a_clip() {
+fn the_tile_fallback_fills_solid_tiles() {
     let area = Rect::new(0.0, 0.0, 1000.0, 1000.0);
-    let clip = kurbo::Shape::to_path(&area, 0.1);
     let scene = layer_scene(
         "background-image: repeating-linear-gradient(red 10px, blue 10px); \
          background-size: 1px 1px",
         area,
         area,
-        Some(&clip),
     );
     assert!(
         scene.commands.len() < 10,
+        "{} commands",
+        scene.commands.len()
+    );
+}
+
+#[test]
+fn the_tile_fallback_covers_round_tiles_that_shrink_past_the_estimate() {
+    // Two and a half tiles of 2px round up to three tiles of 1.67px on each
+    // axis, so the 220px painting area needs more tiles than the estimate from
+    // the 2px size allows for.
+    let scene = layer_scene(
+        "background-image: linear-gradient(red, blue); \
+         background-size: 2px 2px; background-repeat: round",
+        Rect::new(0.0, 0.0, 5.0, 5.0),
+        Rect::new(0.0, 0.0, 220.0, 220.0),
+    );
+    assert!(
+        (1..10).contains(&scene.commands.len()),
         "{} commands",
         scene.commands.len()
     );
@@ -1427,7 +1501,6 @@ fn average_colors_follow_the_clipped_ramp() {
         &gradient_of(&cv),
         area,
         area,
-        None,
         &cv.background_layers()[0].size,
         &cv.background_layers()[0].position,
         &cv.background_layers()[0].repeat,
@@ -1451,16 +1524,7 @@ fn out_of_gamut_conic_stops_clip_after_interpolation() {
     };
     let area = Rect::new(0.0, 0.0, 200.0, 200.0);
     let mut scene = Scene::new();
-    paint_conic_gradient(
-        &mut scene,
-        &conic,
-        area,
-        area,
-        &cv.border_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
-        cv.color,
-    );
+    paint_conic_gradient(&mut scene, &conic, area, area, cv.color);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         200,

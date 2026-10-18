@@ -1184,6 +1184,38 @@ fn host_opacity_and_visibility_apply_to_the_completed_svg() {
 }
 
 #[test]
+fn a_root_that_is_not_visible_draws_only_its_visible_descendants() {
+    let viewport = SvgViewport {
+        width: 2.0,
+        height: 1.0,
+    };
+    let hidden = SvgRootStyle {
+        visible: false,
+        ..SvgRootStyle::default()
+    };
+    let svg = SvgDocument::parse(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="1" height="1" fill="#ff0000"/><rect x="1" width="1" height="1" fill="#0000ff" visibility="visible"/></svg>"##,
+    )
+    .unwrap();
+    assert_eq!(
+        svg.rasterize(viewport, hidden, None).unwrap().rgba,
+        [0, 0, 0, 0, 0, 0, 255, 255]
+    );
+    assert_eq!(
+        svg.rasterize(viewport, SvgRootStyle::default(), None)
+            .unwrap()
+            .rgba,
+        [255, 0, 0, 255, 0, 0, 255, 255]
+    );
+    // The host hides the root even when the source calls it visible.
+    let svg = SvgDocument::parse(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" visibility="visible"><rect width="1" height="1" fill="#ff0000"/></svg>"##,
+    )
+    .unwrap();
+    assert_eq!(svg.rasterize(viewport, hidden, None).unwrap().rgba, [0; 8]);
+}
+
+#[test]
 fn root_opacity_can_be_neutralized_for_outer_group_compositing() {
     let sources: [&[u8]; 5] = [
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.25"><rect width="1" height="1" fill="#ff0000"/></svg>"##,
@@ -2810,4 +2842,143 @@ fn css_reference_validation_trims_only_c0_and_space() {
         reject_external_css_references("rect{fill:image-set(\"\u{a0}#paint\" 1x)}"),
         Err(SvgError::ExternalReference)
     ));
+}
+
+#[test]
+fn rasterizing_with_resolved_styles_applies_them_like_the_exported_source() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><rect width='20' height='10' fill='currentColor'/><rect width='20' height='10' fill='red' visibility='hidden'/></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let viewport = SvgViewport {
+        width: 20.0,
+        height: 10.0,
+    };
+    let elements = [
+        super::SvgElementStyle {
+            element_index: 1,
+            declarations: "color:rgba(0,0,255,1)!important",
+        },
+        super::SvgElementStyle {
+            element_index: 2,
+            declarations: "display:none!important",
+        },
+    ];
+    let font = super::SvgRootFont {
+        size: 12.0,
+        family: "sans-serif",
+        weight: 400.0,
+        style: "normal",
+    };
+    let resolved = super::SvgResolvedStyles {
+        root_color: [0, 0, 0, 255],
+        font,
+        elements: &elements,
+    };
+    let raster = svg
+        .rasterize_at_css_pixel_scale_with_resolved_styles(
+            viewport,
+            SvgRootStyle::default(),
+            resolved,
+            None,
+        )
+        .unwrap();
+    assert_eq!(&raster.rgba[..4], &[0, 0, 255, 255]);
+    // The exported source and the raster come from the same preparation.
+    let exported = svg
+        .styled_source_with_resolved_styles(
+            viewport,
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+            font,
+            &elements,
+        )
+        .unwrap();
+    let exported = SvgDocument::parse(exported.as_bytes())
+        .unwrap()
+        .rasterize_at_css_pixel_scale(viewport, SvgRootStyle::default(), None)
+        .unwrap();
+    assert_eq!(exported.rgba, raster.rgba);
+}
+
+#[test]
+fn rasterizing_with_resolved_styles_rejects_an_invalid_font() {
+    let source = format!("<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'/>");
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let resolved = super::SvgResolvedStyles {
+        root_color: [0, 0, 0, 255],
+        font: super::SvgRootFont {
+            size: 12.0,
+            family: "sans-serif",
+            weight: 0.0,
+            style: "normal",
+        },
+        elements: &[],
+    };
+    assert!(matches!(
+        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
+            SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            resolved,
+            None,
+        ),
+        Err(SvgError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_root() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><rect width='20' height='10'/></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let viewport = SvgViewport {
+        width: 20.0,
+        height: 10.0,
+    };
+    let font = super::SvgRootFont {
+        size: 12.0,
+        family: "sans-serif",
+        weight: 400.0,
+        style: "normal",
+    };
+    let rasterize = |root_style: SvgRootStyle, declarations| {
+        let elements = [super::SvgElementStyle {
+            element_index: 1,
+            declarations,
+        }];
+        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
+            viewport,
+            root_style,
+            super::SvgResolvedStyles {
+                root_color: [0, 0, 0, 255],
+                font,
+                elements: &elements,
+            },
+            None,
+        )
+    };
+    // Nothing is drawn at zero opacity, and a hidden root turns draw errors
+    // into a blank raster; neither accepts what a visible root rejects.
+    let transparent = SvgRootStyle {
+        opacity: 0.0,
+        ..SvgRootStyle::default()
+    };
+    let hidden = SvgRootStyle {
+        visible: false,
+        ..SvgRootStyle::default()
+    };
+    for root_style in [SvgRootStyle::default(), transparent, hidden] {
+        assert!(matches!(
+            rasterize(root_style, "fill:red!important"),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+    for root_style in [transparent, hidden] {
+        let blank = rasterize(root_style, "display:none!important").unwrap();
+        assert!(blank.rgba.iter().all(|&byte| byte == 0));
+    }
 }

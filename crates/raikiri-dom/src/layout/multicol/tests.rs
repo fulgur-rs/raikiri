@@ -21,7 +21,7 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
     );
     doc.append_text(child, "text");
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
 
     let original = doc.layout_node_with_style(child).unwrap().style.clone();
     doc.layout_node_with_style_mut(child)
@@ -29,43 +29,43 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
         .style
         .size
         .height = Dimension::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
     doc.layout_node_with_style_mut(child)
         .unwrap()
         .style
         .min_size
         .height = LengthPercentageAuto::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
     doc.layout_node_with_style_mut(child)
         .unwrap()
         .style
         .max_size
         .height = LengthPercentageAuto::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     *doc.layout_style_for_key_mut(child).unwrap() = original;
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Avoid;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Auto;
     doc.nodes[child].unrounded_layout.padding.top = 4.0;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     doc.nodes[child].unrounded_layout.padding.top = 0.0;
     doc.nodes[child].unrounded_layout.border.bottom = 4.0;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     doc.nodes[child].unrounded_layout.border.bottom = 0.0;
     doc.layout_node_with_style_mut(parent)
         .unwrap()
         .style
         .padding
         .left = LengthPercentage::length(4.0);
-    assert!(can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
     doc.layout_node_with_style_mut(parent)
         .unwrap()
         .style
         .border
         .top = LengthPercentage::length(1.0);
-    assert!(can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
     doc.layout_node_with_style_mut(parent)
         .unwrap()
         .style
@@ -75,12 +75,13 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
         .unwrap()
         .style
         .direction = TaffyDirection::Rtl;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
 }
 
 #[test]
 fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
     let context = FragmentationContext {
+        rtl: false,
         available_width: 200.0,
         available_height: None,
         column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -105,6 +106,7 @@ fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
 #[test]
 fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
     let context = FragmentationContext {
+        rtl: false,
         available_width: 300.0,
         available_height: Some(100.0),
         column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -134,6 +136,7 @@ fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
 #[test]
 fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_columns() {
     let context = FragmentationContext {
+        rtl: false,
         available_width: 300.0,
         available_height: None,
         column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -230,6 +233,7 @@ fn flex_float_chain_matches_an_ancestor_walk() {
         false
     }
     let multicol = |horizontal| crate::fragment::MulticolStyle {
+        rtl: false,
         count: Some(2),
         width: None,
         column_fill: ColumnFillValue::Balance,
@@ -1975,6 +1979,50 @@ fn containers_with_content_or_replaced_children_keep_other_strategies() {
 }
 
 #[test]
+fn only_a_relative_leaf_block_keeps_its_insets_in_the_stream() {
+    let supported = |child: &str| {
+        let (doc, parent, _) = lineless_fixture(
+            "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+            &[child],
+        );
+        lineless::supported(&doc, parent, true).is_some()
+    };
+    assert!(supported(
+        "display:block;height:50px;position:relative;left:5px"
+    ));
+    assert!(supported(
+        "display:block;height:50px;position:relative;left:5px;right:-5px"
+    ));
+    // The painter adds the offset of a relative box only.
+    assert!(!supported(
+        "display:block;height:50px;position:sticky;left:5px"
+    ));
+    // A block-axis offset moves the box across pages, which pagination
+    // measures from the location the columns gave it.
+    assert!(!supported(
+        "display:block;height:50px;position:relative;top:5px"
+    ));
+    assert!(!supported(
+        "display:block;height:50px;position:relative;bottom:5px"
+    ));
+}
+
+#[test]
+fn a_relative_containing_block_with_insets_keeps_other_strategies() {
+    let supported = |block: &str| {
+        let (doc, parent, _) = absolute_fixture(
+            DEFINITE_COLUMNS,
+            &[(block, &["position:absolute;top:0;width:10px;height:20px"])],
+        );
+        lineless::supported(&doc, parent, true).is_some()
+    };
+    assert!(supported("display:block;position:relative;height:50px"));
+    assert!(!supported(
+        "display:block;position:relative;left:5px;height:50px"
+    ));
+}
+
+#[test]
 fn an_orthogonal_block_without_lines_is_not_sliced() {
     let (doc, _, children) = lineless_fixture(
         "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
@@ -2188,6 +2236,247 @@ fn a_cloned_nested_multicol_fills_its_rows_with_paragraph_lines_between_its_padd
         .collect();
     assert_eq!(heights, [100.0, 100.0, 60.0]);
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+}
+
+/// A column container of `columns` columns, 100px high and filled in order,
+/// holding a one-column container of `lines` 10px lines styled by
+/// `inner_css`, not yet laid out. Returns the document, the inner container
+/// and its paragraph.
+fn nested_paragraph_document(
+    columns: usize,
+    inner_css: &str,
+    lines: usize,
+) -> (Document, usize, usize) {
+    styled_nested_paragraph_document(columns, 0.0, inner_css, "", lines)
+}
+
+/// `nested_paragraph_document` with `paragraph_css` on the paragraph, after a
+/// block of `lead` px when that is not zero.
+fn styled_nested_paragraph_document(
+    columns: usize,
+    lead: f32,
+    inner_css: &str,
+    paragraph_css: &str,
+    lines: usize,
+) -> (Document, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;width:{}px;height:100px;columns:{columns};column-gap:0;\
+             column-fill:auto",
+            columns * 100
+        )),
+    );
+    if lead > 0.0 {
+        doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:{lead}px")),
+        );
+    }
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;columns:1;font-size:10px;line-height:10px;{inner_css}"
+        )),
+    );
+    let paragraph = doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{paragraph_css}")),
+    );
+    for _ in 0..lines {
+        doc.append_text(paragraph, "a");
+        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+    }
+    (doc, inner, paragraph)
+}
+
+/// `nested_paragraph_document` laid out. Returns the document, the inner
+/// container and the paragraph's column ranges as (line start, line end,
+/// fragmentainer).
+fn nested_paragraph_rows(
+    columns: usize,
+    inner_css: &str,
+    lines: usize,
+) -> (Document, usize, Vec<(usize, usize, usize)>) {
+    let (mut doc, inner, paragraph) = nested_paragraph_document(columns, inner_css, lines);
+    layout_nested_flex_float_fixture(&mut doc);
+    let ranges = doc.nodes[paragraph]
+        .ifc_multicol_fragments()
+        .map(|ranges| {
+            ranges
+                .iter()
+                .map(|range| (range.line_start, range.line_end, range.fragmentainer))
+                .collect()
+        })
+        .unwrap_or_default();
+    (doc, inner, ranges)
+}
+
+#[test]
+fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() {
+    // Three rows of a 100px column fit the content, but the outer container
+    // declares two columns, so the third row is in an overflow column.
+    let (doc, inner, ranges) = nested_paragraph_rows(2, "", 25);
+    assert_eq!(ranges, [(0, 10, 0), (10, 20, 1), (20, 25, 2)]);
+    let heights: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == inner && fragment.fragment_index > 0)
+        .map(|fragment| fragment.rect.height)
+        .collect();
+    assert_eq!(heights, [100.0, 100.0, 50.0]);
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+
+    // A box that clones its padding has less room in each row, which can
+    // need one more outer column than the lines alone.
+    let (doc, inner, ranges) =
+        nested_paragraph_rows(2, "padding:10px 0;box-decoration-break:clone", 20);
+    assert_eq!(ranges, [(0, 8, 0), (8, 16, 1), (16, 20, 2)]);
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+}
+
+/// Lay out `styled_nested_paragraph_document` after a block of `lead` px under a
+/// fragment budget of `limit`.
+fn nested_paragraph_with_limit(
+    columns: usize,
+    lead: f32,
+    inner_css: &str,
+    lines: usize,
+    limit: usize,
+) -> (Document, usize, Result<(), raikiri_traits::LayoutError>) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let (mut doc, inner, _) = styled_nested_paragraph_document(columns, lead, inner_css, "", lines);
+    doc.fragment_tree.limit = limit;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    let result = layout_single_page(&mut doc, &cascade, page).map(|_| ());
+    (doc, inner, result)
+}
+
+#[test]
+fn paragraph_rows_the_fragment_budget_cannot_hold_report_exhaustion() {
+    use raikiri_traits::LayoutError;
+
+    // Whatever the budget, the layout either holds the three rows or reports
+    // that it ran out; it never drops the rows and lays the lines out in one
+    // column.
+    let mut exhausted = false;
+    for limit in 1..40 {
+        let (doc, inner, result) = nested_paragraph_with_limit(3, 0.0, "", 25, limit);
+        match result {
+            Ok(()) => assert_eq!(
+                doc.nodes[inner].multicol_rows.len(),
+                3,
+                "limit {limit} dropped the rows"
+            ),
+            Err(LayoutError::FragmentLimitExceeded { .. }) => exhausted = true,
+            Err(other) => panic!("limit {limit}: {other:?}"),
+        }
+    }
+    assert!(exhausted);
+}
+
+#[test]
+fn a_nested_multicol_without_room_or_lines_for_paragraph_rows_does_not_continue() {
+    // Padding that a clone repeats in every row leaves them no room for
+    // content in a 100px column.
+    let (doc, inner, ranges) =
+        nested_paragraph_rows(2, "padding:60px 0;box-decoration-break:clone", 25);
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
+    assert!(
+        ranges
+            .iter()
+            .all(|&(_, _, fragmentainer)| fragmentainer == 0)
+    );
+
+    // A container that is taller than the column only for the margin of an
+    // empty block has no paragraph to fill rows with.
+    let (mut doc, inner, _) = styled_nested_paragraph_document(2, 0.0, "", "margin-top:150px", 0);
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
+}
+
+#[test]
+fn a_nested_multicol_that_cannot_afford_its_rows_here_may_start_in_the_next_column() {
+    // The container follows a 60px block, so its rows from here (4 + 10 + 10 +
+    // 1 lines) need more records than a budget can have left, while from the
+    // top of the next column (10 + 10 + 5 lines) they need fewer. Running out
+    // while planning from here does not end the layout if that plan works.
+    let rows: Vec<Option<usize>> = (1..40)
+        .map(|limit| {
+            let (doc, inner, result) = nested_paragraph_with_limit(3, 60.0, "", 25, limit);
+            result.ok().map(|()| doc.nodes[inner].multicol_rows.len())
+        })
+        .collect();
+    assert!(rows.contains(&None), "some budget is too small");
+    assert!(
+        rows.contains(&Some(3)),
+        "a tight budget moves the container"
+    );
+    assert_eq!(rows.last(), Some(&Some(4)), "a large one keeps it here");
+}
+
+#[test]
+fn a_nested_multicol_that_fits_the_next_column_whole_moves_there_when_its_rows_do_not_fit() {
+    // Eight lines after a 60px block continue in a second row from here, but
+    // fit a column whole. A budget too small for the two rows moves the
+    // container instead of failing, and a larger one never fails after a
+    // smaller one succeeded.
+    let rows: Vec<Option<usize>> = (1..16)
+        .map(|limit| {
+            let (doc, inner, result) = nested_paragraph_with_limit(3, 60.0, "", 8, limit);
+            result.ok().map(|()| doc.nodes[inner].multicol_rows.len())
+        })
+        .collect();
+    let first_ok = rows
+        .iter()
+        .position(Option::is_some)
+        .expect("some budget works");
+    assert!(rows[first_ok..].iter().all(Option::is_some), "{rows:?}");
+    assert_eq!(rows[first_ok], Some(0), "the container moves whole");
+    assert_eq!(rows.last(), Some(&Some(2)), "a large budget keeps the rows");
+}
+
+#[test]
+fn paragraph_rows_planning_stops_at_the_fragment_budget() {
+    use raikiri_traits::LayoutError;
+
+    // Content that needs far more rows than the budget has records for is
+    // reported as exhausted without the rows being made.
+    let (doc, inner, result) = nested_paragraph_with_limit(2, 0.0, "", 3000, 20);
+    assert!(matches!(
+        result,
+        Err(LayoutError::FragmentLimitExceeded { .. })
+    ));
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
+
+    // So are the fragments of a single row: ten inner columns cut the lines of
+    // the first row into ten fragments, more than the budget has records for
+    // after the container's own layout.
+    let (doc, inner, result) =
+        nested_paragraph_with_limit(2, 0.0, "columns:10;column-gap:0", 3000, 30);
+    assert!(matches!(
+        result,
+        Err(LayoutError::FragmentLimitExceeded { .. })
+    ));
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
 }
 
 #[test]
@@ -3560,6 +3849,11 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     assert!(paragraphs(
         "display:block;margin:0 4px;padding-left:2px;border-right:2px solid"
     ));
+    // A relative offset is taken out of the column location, so the planner
+    // can place the paragraph.
+    assert!(paragraphs(
+        "display:block;margin:0;position:relative;left:10px;right:-10px"
+    ));
     for style in [
         "display:grid",
         "display:list-item",
@@ -3573,7 +3867,8 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;margin-top:20px",
         "display:block;margin-bottom:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
-        "display:block;margin:0;position:relative;left:10px",
+        "display:block;margin:0;position:sticky;left:10px",
+        "display:block;margin:0;position:relative;top:5px",
     ] {
         assert!(!paragraphs(style), "{style}");
     }
@@ -3634,4 +3929,39 @@ fn a_containing_block_with_no_block_size_is_sliced_for_the_absolute_boxes_it_hol
         Some("position:fixed;top:0;width:10px;height:20px"),
         true,
     ));
+}
+
+#[test]
+fn a_relative_column_child_is_placed_without_its_inset() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // The painter adds the inset of a box that is placed in a column, so
+    // the location layout gives it is the column's own.
+    for inset in ["left:5px", "right:5px", "left:10%", "left:5px;top:3px"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px;column-fill:auto"),
+        );
+        let child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some(format!("display:block;position:relative;{inset}").as_str()),
+        );
+        doc.append_text(child, "A B C");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+
+        let layout = doc.nodes[child].unrounded_layout;
+        assert_eq!(layout.location.x, 0.0, "{inset}");
+        assert_eq!(layout.size.width, 40.0, "{inset}");
+    }
 }

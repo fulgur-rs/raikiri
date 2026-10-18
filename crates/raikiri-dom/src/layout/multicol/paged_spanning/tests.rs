@@ -156,7 +156,6 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         crate::layout::test_support::page_box_800x600(),
     )
     .unwrap();
-    let parent = tree.parent_of(root).unwrap();
     let measured = tree.nodes[root].unrounded_layout;
     let entries = [(
         root,
@@ -167,6 +166,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         20.0,
     )];
     let context = FragmentationContext {
+        rtl: false,
         available_width: 100.0,
         available_height: None,
         column_fill: ColumnFillValue::Balance,
@@ -183,7 +183,6 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
     let mut work = ProjectionWork::new(&control, tree.fragment_tree.limit);
     let valid = paragraph_group::paginate(
         &tree,
-        parent,
         &entries,
         context,
         0.0,
@@ -196,7 +195,6 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         let mut work = ProjectionWork::new(&control, tree.fragment_tree.limit);
         let result = paragraph_group::paginate(
             &tree,
-            parent,
             &entries,
             context,
             0.0,

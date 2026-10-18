@@ -11718,3 +11718,139 @@ fn an_invalid_border_width_device_scale_is_not_reported() {
         assert_eq!(result.border_width_device_scale(), None);
     }
 }
+
+// ── inset / inset-* (CSS Positioned Layout 3 §3, CSS Logical Properties 1 §4.3) ──
+
+#[test]
+fn inset_shorthand_wired_through_cascade() {
+    let cv = cascade_doc("", "div", Some("inset: 1px 2px 3px auto"));
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.right, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(cv.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Auto);
+}
+
+#[test]
+fn inset_shorthand_then_longhand_later_longhand_wins() {
+    let cv = cascade_doc("", "div", Some("inset: 0; top: 7px"));
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(7.0));
+    assert_eq!(cv.right, ComputedLengthPercentageOrAuto::Px(0.0));
+    assert_eq!(cv.bottom, ComputedLengthPercentageOrAuto::Px(0.0));
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(0.0));
+    let cv = cascade_doc("", "div", Some("top: 7px; inset: 0"));
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(0.0));
+}
+
+#[test]
+fn inset_shorthand_important_beats_later_normal_physical_longhand() {
+    let cv = cascade_doc("", "div", Some("inset: 5px !important; left: 20px"));
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(5.0));
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(5.0));
+}
+
+#[test]
+fn inset_inline_and_block_shorthands_wired_through_cascade() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("inset-inline: 5px auto; inset-block: auto 6px"),
+    );
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(5.0));
+    assert_eq!(cv.right, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(cv.bottom, ComputedLengthPercentageOrAuto::Px(6.0));
+}
+
+#[test]
+fn inset_logical_longhands_follow_direction_through_cascade() {
+    let ltr = cascade_doc(
+        "",
+        "div",
+        Some(
+            "inset-inline-start: 1px; inset-inline-end: 2px; inset-block-start: 3px; inset-block-end: 4px",
+        ),
+    );
+    assert_eq!(ltr.left, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(ltr.right, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(ltr.top, ComputedLengthPercentageOrAuto::Px(3.0));
+    assert_eq!(ltr.bottom, ComputedLengthPercentageOrAuto::Px(4.0));
+    // `direction: rtl` swaps the inline sides but leaves the block axis alone.
+    let rtl = cascade_doc(
+        "",
+        "div",
+        Some(
+            "direction: rtl; inset-inline-start: 1px; inset-inline-end: 2px; \
+             inset-block-start: 3px; inset-block-end: 4px",
+        ),
+    );
+    assert_eq!(rtl.right, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(rtl.left, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(rtl.top, ComputedLengthPercentageOrAuto::Px(3.0));
+    assert_eq!(rtl.bottom, ComputedLengthPercentageOrAuto::Px(4.0));
+}
+
+#[test]
+fn inset_inline_shorthand_follows_direction_through_cascade() {
+    let cv = cascade_doc("", "div", Some("direction: rtl; inset-inline: 1px 2px"));
+    assert_eq!(cv.right, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Auto);
+}
+
+#[test]
+fn inset_inline_start_and_left_compete_on_the_same_cascade_key() {
+    let later_logical_wins = cascade_doc("", "div", Some("left: 1px; inset-inline-start: 2px"));
+    assert_eq!(
+        later_logical_wins.left,
+        ComputedLengthPercentageOrAuto::Px(2.0)
+    );
+    let later_physical_wins = cascade_doc("", "div", Some("inset-inline-start: 2px; left: 1px"));
+    assert_eq!(
+        later_physical_wins.left,
+        ComputedLengthPercentageOrAuto::Px(1.0)
+    );
+    // Under `direction: rtl` the logical start side is `right`, so `left` is
+    // a different slot and both declarations survive.
+    let rtl = cascade_doc(
+        "",
+        "div",
+        Some("direction: rtl; left: 1px; inset-inline-start: 2px"),
+    );
+    assert_eq!(rtl.left, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(rtl.right, ComputedLengthPercentageOrAuto::Px(2.0));
+}
+
+#[test]
+fn apply_value_direct_inset_shorthands() {
+    let mut cv = SpecifiedValues::initial();
+    let px = |v| LengthOrAuto::Length(Length::Px(v));
+    apply_value(
+        PropertyValue::Inset(Box::new(Sides {
+            top: px(1.0),
+            right: px(2.0),
+            bottom: px(3.0),
+            left: px(4.0),
+        })),
+        &mut cv,
+    );
+    assert_eq!(
+        (cv.top, cv.right, cv.bottom, cv.left),
+        (px(1.0), px(2.0), px(3.0), px(4.0))
+    );
+    apply_value(
+        PropertyValue::InsetInline(crate::property::StartEnd {
+            start: px(5.0),
+            end: px(6.0),
+        }),
+        &mut cv,
+    );
+    assert_eq!((cv.left, cv.right), (px(5.0), px(6.0)));
+    apply_value(
+        PropertyValue::InsetBlock(crate::property::StartEnd {
+            start: px(7.0),
+            end: px(8.0),
+        }),
+        &mut cv,
+    );
+    assert_eq!((cv.top, cv.bottom), (px(7.0), px(8.0)));
+}

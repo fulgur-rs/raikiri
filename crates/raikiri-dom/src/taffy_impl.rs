@@ -767,6 +767,25 @@ impl LayoutSession<'_> {
         } else {
             compute_cached_layout(self, node_id, inputs, compute)
         };
+        // An ifc root measured its baseline from the lines of this very call;
+        // the stored lines may be those of another width.
+        if !self.nodes[usize::from(node_id)]
+            .flags
+            .contains(NodeFlags::IS_IFC_ROOT)
+            && let Some(baseline) = first_inline_baseline(self, usize::from(node_id))
+        {
+            output.baselines.first = Some(baseline);
+        }
+        // A scroll container exports baselines clamped to its border box
+        // (CSS Box Alignment 3 §9.1), so content scrolled out of view does
+        // not move the baseline its parent aligns to.
+        // spec: https://www.w3.org/TR/css-align-3/#baseline-export
+        let scrolls = self
+            .layout_node_with_style(idx)
+            .is_some_and(|node| is_scroll_container(node.style.overflow));
+        if scrolls && inputs.run_mode == RunMode::PerformLayout {
+            clamp_baselines(&mut output.baselines, output.size.height);
+        }
         // A flex container keeps the first baseline of its performed layout,
         // which a list item's outside marker aligns with. A grid container's
         // baseline is found from the first-row items its detailed grid
@@ -776,15 +795,6 @@ impl LayoutSession<'_> {
             && self.nodes[usize::from(node_id)].formatting_context == FormattingContext::Flex
         {
             self.nodes[usize::from(node_id)].flex_first_baseline = output.baselines.first;
-        }
-        // An ifc root measured its baseline from the lines of this very call;
-        // the stored lines may be those of another width.
-        if !self.nodes[usize::from(node_id)]
-            .flags
-            .contains(NodeFlags::IS_IFC_ROOT)
-            && let Some(baseline) = first_inline_baseline(self, usize::from(node_id))
-        {
-            output.baselines.first = Some(baseline);
         }
         // The baselines of a box in a writing mode orthogonal to its parent's
         // run across the parent's line, so they say nothing about where the
@@ -1314,16 +1324,25 @@ fn measure_ifc_root(
         };
     }
     // The content of a multicol container is broken at the column width and
-    // split in its columns. A paragraph with boxes of its own is laid out in
-    // one column as wide as the container.
+    // split in its columns. Atomic inlines sit on the lines like text, so a
+    // paragraph that holds only them is split line by line in an outermost
+    // container. A paragraph with floats, blocks, out-of-flow boxes or
+    // generated blocks of its own, and one with boxes in a container nested in
+    // another, is laid out in one column as wide as the container.
     let nested_fragmentation = (!vertical)
         .then(|| fragmentation_context_for_ifc(tree, idx, &probe))
         .flatten();
+    let atomics_only = probe.generated_blocks.is_empty()
+        && probe
+            .boxes
+            .iter()
+            .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
+        && (probe.boxes.is_empty() || tree.context.fragmentation_stack.is_empty());
     let fragmentation = if vertical {
         None
     } else if nested_fragmentation.is_some() {
         nested_fragmentation
-    } else if has_boxes {
+    } else if !atomics_only {
         None
     } else {
         tree.nodes[idx]
@@ -1473,6 +1492,21 @@ fn measure_ifc_root(
         .or_else(|| {
             fragmentation.map(|context| crate::layout::root_column_fragments(&lines, context))
         });
+    // The fragments of a paragraph laid out across the columns by the engine
+    // come with its lines; only the ones split here still hold the boxes where
+    // the lines stand in one tall column.
+    if perform
+        && !probe.boxes.is_empty()
+        && lines.fragmentainer_line_ranges.is_none()
+        && let Some((fragments, _)) = &fragments
+    {
+        crate::layout::ifc::boxes::move_atomics_to_columns(
+            tree,
+            &probe.boxes,
+            &lines.lines,
+            fragments,
+        );
+    }
     let content_height = fragments
         .as_ref()
         .map_or(lines.height, |(_, height)| *height);
@@ -1559,6 +1593,19 @@ fn fragmentation_context_for_ifc(
     None // cov:ignore: the unsupported ancestor path remains outside the ignored nested flex-float WPT scope.
 }
 
+/// Whether `overflow` makes a box a scroll container on either axis.
+fn is_scroll_container(overflow: taffy::Point<taffy::Overflow>) -> bool {
+    overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
+}
+
+/// Keep each baseline of a scroll container within its border box, whose
+/// block size is `height`.
+fn clamp_baselines(baselines: &mut taffy::Baselines, height: f32) {
+    for baseline in [&mut baselines.first, &mut baselines.last] {
+        *baseline = baseline.map(|offset| offset.max(0.0).min(height));
+    }
+}
+
 /// Return the first baseline of an inline-block from the descendant layout
 /// tree: inline-blocks use the baseline of their last in-flow line box, so recover
 /// the last in-flow text line from the descendant layout tree. See CSS 2.1
@@ -1581,24 +1628,45 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
         return None;
     }
 
+    // A line found under a scroll container reports a baseline clamped to the
+    // container's border box, as the container itself would export it (CSS
+    // Box Alignment 3 §9.1). Each stack entry carries the top of its box in
+    // the coordinates of `root` and the vertical range that clamps the
+    // lines beneath it.
+    // spec: https://www.w3.org/TR/css-align-3/#baseline-export
     let mut stack = Vec::new();
     for &child in root_node.children.iter().rev() {
         if doc.nodes[child].is_in_document()
             && !doc.nodes[child].is_display_none()
             && doc.nodes[child].taffy_position() != TaffyPosition::Absolute
         {
-            stack.push((child, doc.nodes[child].unrounded_layout.location.y));
+            stack.push((
+                child,
+                doc.nodes[child].unrounded_layout.location.y,
+                (f32::NEG_INFINITY, f32::INFINITY),
+            ));
         }
     }
     let mut last_baseline = None;
-    while let Some((idx, offset_y)) = stack.pop() {
+    while let Some((idx, offset_y, outer_clip)) = stack.pop() {
         let node = &doc.layout_node_with_style(idx).unwrap();
+        // Clamping a value to this box and then to the boxes around it is
+        // clamping it to this box's edges, each clamped to the outer range.
+        let clip = if is_scroll_container(node.style.overflow) {
+            let bottom = offset_y + node.unrounded_layout.size.height;
+            (
+                offset_y.max(outer_clip.0).min(outer_clip.1),
+                bottom.max(outer_clip.0).min(outer_clip.1),
+            )
+        } else {
+            outer_clip
+        };
         if node.flags.contains(NodeFlags::IS_IFC_ROOT) {
             if let Some(line_baseline) = node.ifc.as_ref().and_then(|root| root.last_baseline()) {
                 let layout = &node.unrounded_layout;
                 let baseline = offset_y + layout.padding.top + layout.border.top + line_baseline;
                 if baseline.is_finite() {
-                    last_baseline = Some(baseline);
+                    last_baseline = Some(baseline.max(clip.0).min(clip.1));
                 }
             }
             continue;
@@ -1614,6 +1682,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
                 stack.push((
                     child,
                     offset_y + doc.nodes[child].unrounded_layout.location.y,
+                    clip,
                 ));
             }
         }
@@ -2047,11 +2116,17 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 
 /// Share Grid static alignment with fixed-box relayout, where page-area
 /// sizing can change the child's margin-box size after this dispatch.
+///
+/// `overflows` tells, per axis, whether the child's margin box is larger than
+/// the content box it is aligned in: a safe alignment of an overflowing box
+/// aligns as `start` (CSS Box Alignment 3 §4.4).
+// spec: https://www.w3.org/TR/css-align-3/#overflow-values
 pub(crate) fn auto_grid_abspos_static_alignment(
     child: &Style,
     parent: &Style,
+    overflows: Size<bool>,
 ) -> Option<Size<f32>> {
-    use taffy::{AlignItemsKeyword, GridPlacement};
+    use taffy::{AlignItemsKeyword, AlignmentSafety, GridPlacement};
 
     if child.position != TaffyPosition::Absolute
         || !child.inset.top.is_auto()
@@ -2066,22 +2141,44 @@ pub(crate) fn auto_grid_abspos_static_alignment(
         return None;
     }
 
+    // `self-start` and `self-end` follow the box's own direction where the
+    // axis is its inline axis (CSS Box Alignment 3 §5.2).
     let alignment_fraction = |self_alignment: Option<taffy::AlignSelf>,
-                              parent_alignment: taffy::AlignItems| {
-        match self_alignment.unwrap_or(parent_alignment).keyword() {
+                              parent_alignment: taffy::AlignItems,
+                              inline: bool,
+                              overflows: bool| {
+        let alignment = self_alignment
+            .unwrap_or(parent_alignment)
+            .resolve_self_relative(child.direction, parent.direction, inline);
+        let keyword = if alignment.safety == AlignmentSafety::Safe && overflows {
+            AlignItemsKeyword::Start
+        } else {
+            alignment.keyword
+        };
+        match keyword {
             AlignItemsKeyword::Center => 0.5,
             AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd => 1.0,
             _ => 0.0,
         }
     };
-    let inline = alignment_fraction(child.justify_self, parent.justify_items);
+    let inline = alignment_fraction(
+        child.justify_self,
+        parent.justify_items,
+        true,
+        overflows.width,
+    );
     Some(Size {
         width: if parent.direction == taffy::Direction::Rtl {
             1.0 - inline
         } else {
             inline
         },
-        height: alignment_fraction(child.align_self, parent.align_items),
+        height: alignment_fraction(
+            child.align_self,
+            parent.align_items,
+            false,
+            overflows.height,
+        ),
     })
 }
 
@@ -2118,7 +2215,7 @@ fn align_auto_grid_abspos_children(
     let content_height =
         (size.height - border.top - border.bottom - padding.top - padding.bottom).max(0.0);
 
-    let children: Vec<(usize, Size<f32>)> =
+    let placed: Vec<(usize, taffy::Layout)> =
         TaffyChildIter::new_for_session(tree, NodeId::from(idx))
             .filter_map(|child| {
                 let child = usize::from(child);
@@ -2127,44 +2224,49 @@ fn align_auto_grid_abspos_children(
                 {
                     return None;
                 }
-                let style = &tree.layout_node_with_style(child).unwrap().style;
-                auto_grid_abspos_static_alignment(style, parent_style)
-                    .map(|alignment| (child, alignment))
+                let node = tree.layout_node_with_style(child).unwrap();
+                let style = &node.style;
+                let mut layout = node.unrounded_layout;
+                // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
+                // §10.6.4).
+                let margin = taffy::Rect {
+                    left: if style.margin.left.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.left
+                    },
+                    right: if style.margin.right.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.right
+                    },
+                    top: if style.margin.top.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.top
+                    },
+                    bottom: if style.margin.bottom.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.bottom
+                    },
+                };
+                let free_width = content_width - layout.size.width - margin.left - margin.right;
+                let free_height = content_height - layout.size.height - margin.top - margin.bottom;
+                let overflows = Size {
+                    width: free_width < 0.0,
+                    height: free_height < 0.0,
+                };
+                let alignment = auto_grid_abspos_static_alignment(style, parent_style, overflows)?;
+                layout.location.x =
+                    border.left + padding.left + margin.left + alignment.width * free_width;
+                layout.location.y =
+                    border.top + padding.top + margin.top + alignment.height * free_height;
+                Some((child, layout))
             })
             .collect();
 
-    for (child, alignment) in children {
-        let node = &tree.layout_node_with_style(child).unwrap();
-        let style = &node.style;
-        let mut layout = node.unrounded_layout;
-        // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
-        // §10.6.4).
-        let margin = taffy::Rect {
-            left: if style.margin.left.is_auto() {
-                0.0
-            } else {
-                layout.margin.left
-            },
-            right: if style.margin.right.is_auto() {
-                0.0
-            } else {
-                layout.margin.right
-            },
-            top: if style.margin.top.is_auto() {
-                0.0
-            } else {
-                layout.margin.top
-            },
-            bottom: if style.margin.bottom.is_auto() {
-                0.0
-            } else {
-                layout.margin.bottom
-            },
-        };
-        let free_width = content_width - layout.size.width - margin.left - margin.right;
-        let free_height = content_height - layout.size.height - margin.top - margin.bottom;
-        layout.location.x = border.left + padding.left + margin.left + alignment.width * free_width;
-        layout.location.y = border.top + padding.top + margin.top + alignment.height * free_height;
+    for (child, layout) in placed {
         tree.set_unrounded_layout(NodeId::from(child), &layout);
     }
 }

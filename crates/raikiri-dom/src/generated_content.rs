@@ -237,6 +237,54 @@ pub fn is_in_flow_generated_text(
         })
 }
 
+/// Whether the `pseudo` of `element` is in-flow generated text that makes
+/// no line: an inline box whose `content` is only empty strings and that has
+/// no margin, border or padding. It holds nothing a line could show, so it
+/// neither is the first formatted line nor comes before content that is
+/// (CSS 2.1 §9.4.2). A `content` that is resolved while the paragraph is laid
+/// out, such as a counter, a quote or an attribute, is not judged here.
+pub(crate) fn is_blank_inline_generated_text(
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> bool {
+    use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, Sides};
+    is_in_flow_generated_text(cascade, element, pseudo)
+        && cascade
+            .pseudo
+            .get(&(StyleNodeId::new(element as u64), pseudo))
+            .is_some_and(|cv| {
+                matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents)
+                    && cv.content.iter().all(
+                        |part| matches!(part, ContentComponent::Literal(text) if text.is_empty()),
+                    )
+                    && cv.padding == Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))
+                    && cv.margin == Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))
+                    && [
+                        &cv.border.top,
+                        &cv.border.right,
+                        &cv.border.bottom,
+                        &cv.border.left,
+                    ]
+                    .iter()
+                    .all(|side| side.width().0 == 0.0)
+            })
+}
+
+/// Whether the `pseudo` of `element` is in-flow generated text that can make
+/// a line: in-flow generated text (see [`is_in_flow_generated_text`]) other
+/// than a blank inline box (see [`is_blank_inline_generated_text`]). Only
+/// such text ends the search for the paragraph whose first line an ancestor's
+/// `::first-line` and `::first-letter` reach.
+pub(crate) fn is_line_making_generated_text(
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> bool {
+    is_in_flow_generated_text(cascade, element, pseudo)
+        && !is_blank_inline_generated_text(cascade, element, pseudo)
+}
+
 /// Whether layout can place the images of the `::before` or `::after` of
 /// `element`: the pseudo-element is in-flow generated content (see
 /// [`is_in_flow_generated_text`]) and its element generates boxes, being in
@@ -498,23 +546,45 @@ impl<'a> CounterValues<'a> {
 pub struct CounterSnapshotView<'a> {
     snapshot: &'a CounterSnapshot,
     computed: Option<&'a ComputedValues>,
+    list_item_fallback: Option<&'a [i32]>,
 }
 
 impl<'a> CounterSnapshotView<'a> {
     /// Borrow `snapshot` and optionally apply pseudo-element counter
     /// directives on lookup.
     pub fn new(snapshot: &'a CounterSnapshot, computed: Option<&'a ComputedValues>) -> Self {
-        Self { snapshot, computed }
+        Self {
+            snapshot,
+            computed,
+            list_item_fallback: None,
+        }
+    }
+
+    pub(crate) fn with_list_item_fallback(
+        snapshot: &'a CounterSnapshot,
+        computed: Option<&'a ComputedValues>,
+        list_item_fallback: Option<&'a [i32]>,
+    ) -> Self {
+        Self {
+            snapshot,
+            computed,
+            list_item_fallback,
+        }
     }
 }
 
 impl CounterSnapshotLookup for CounterSnapshotView<'_> {
     fn values_for(&self, name: &str) -> CounterValues<'_> {
-        let base = self
+        let snapshot_values = self
             .snapshot
             .get(&raikiri_traits::Symbol::new(name))
             .map(Vec::as_slice)
             .unwrap_or_default();
+        let base = if name == "list-item" && snapshot_values.is_empty() {
+            self.list_item_fallback.unwrap_or(snapshot_values)
+        } else {
+            snapshot_values
+        };
         CounterValues::with_directives(base, self.computed, name)
     }
 }

@@ -14,6 +14,22 @@ fn longhand_names_are_matched_ascii_case_insensitively() {
 }
 
 #[test]
+fn inset_longhand_names_are_flow_relative_sides() {
+    for (name, side) in [
+        ("inset-inline-start", LogicalSide::InlineStart),
+        ("inset-inline-end", LogicalSide::InlineEnd),
+        ("Inset-Block-Start", LogicalSide::BlockStart),
+        ("inset-block-end", LogicalSide::BlockEnd),
+    ] {
+        assert_eq!(longhand_side(name), Some(side), "{name}");
+    }
+    // The physical offsets and the shorthands are not flow-relative longhands.
+    for name in ["top", "left", "inset", "inset-inline", "inset-block"] {
+        assert_eq!(longhand_side(name), None, "{name}");
+    }
+}
+
+#[test]
 fn non_box_keys_keep_their_slot() {
     let flow = FlowMapping {
         writing_mode: WritingMode::VerticalRl,
@@ -163,4 +179,71 @@ fn inherit_markers_and_deferred_values_move_to_every_side() {
     }
     let other = deferred("color", PropertyKey::Color);
     assert_eq!(flow.value(other.clone(), LogicalSide::BlockStart), other);
+}
+
+#[test]
+fn inset_values_and_keys_follow_the_abstract_to_physical_table() {
+    use crate::property::LengthOrAuto;
+    use PropertyKey::{Bottom as B, Left as L, Right as R, Top as T};
+    let auto = LengthOrAuto::Auto;
+    // Sides in the order block-start, inline-end, block-end, inline-start.
+    let sides = [
+        LogicalSide::BlockStart,
+        LogicalSide::InlineEnd,
+        LogicalSide::BlockEnd,
+        LogicalSide::InlineStart,
+    ];
+    for (writing_mode, direction, expected) in [
+        (WritingMode::HorizontalTb, Direction::Ltr, [T, R, B, L]),
+        (WritingMode::HorizontalTb, Direction::Rtl, [T, L, B, R]),
+        (WritingMode::VerticalRl, Direction::Ltr, [R, B, L, T]),
+        (WritingMode::VerticalLr, Direction::Rtl, [L, T, R, B]),
+        (WritingMode::SidewaysLr, Direction::Ltr, [L, T, R, B]),
+    ] {
+        let flow = FlowMapping {
+            writing_mode,
+            direction,
+        };
+        for (side, key) in sides.iter().zip(expected) {
+            assert_eq!(
+                flow.key(PropertyKey::Top, *side),
+                key,
+                "{writing_mode:?} {direction:?}"
+            );
+            let value = match key {
+                T => PropertyValue::Top(auto),
+                R => PropertyValue::Right(auto),
+                B => PropertyValue::Bottom(auto),
+                _ => PropertyValue::Left(auto),
+            };
+            // Whichever physical value the parser stored, the value lands on the mapped side.
+            assert_eq!(flow.value(PropertyValue::Left(auto), *side), value);
+        }
+    }
+}
+
+#[test]
+fn deferred_inset_values_move_to_every_side() {
+    use crate::property::DeferredValue;
+    let flow = FlowMapping::HORIZONTAL;
+    let deferred = |property: &'static str, key| {
+        PropertyValue::Deferred(DeferredValue {
+            property: SmolStr::new_static(property),
+            value: "var(--x)".into(),
+            key,
+        })
+    };
+    let from = deferred("inset-inline-start", PropertyKey::Left);
+    for (side, name, key) in [
+        (LogicalSide::BlockStart, "top", PropertyKey::Top),
+        (LogicalSide::InlineEnd, "right", PropertyKey::Right),
+        (LogicalSide::BlockEnd, "bottom", PropertyKey::Bottom),
+        (LogicalSide::InlineStart, "left", PropertyKey::Left),
+    ] {
+        assert_eq!(
+            flow.value(from.clone(), side),
+            deferred(name, key),
+            "{side:?}"
+        );
+    }
 }

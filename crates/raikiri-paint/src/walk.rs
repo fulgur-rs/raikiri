@@ -20,8 +20,8 @@ use peniko::color::{
 };
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
-    DeviceGrid, background_image_dimensions, background_tiles, border_image_geometry,
-    border_image_geometry_on_device_pixels, position_offset, rounded_background_tile_size,
+    DeviceGrid, VisibleArea, background_image_dimensions, background_tiles,
+    border_image_geometry_within, position_offset, rounded_background_tile_size,
 };
 use raikiri_dom::{CounterSnapshots, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
@@ -109,12 +109,23 @@ pub(crate) fn paint_canvas_background(
     // the opaque page color instead of compositing over it.
     let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
     fill_rect(scene, page_color.unwrap_or(white), page_rect);
+    // The page background covers the paper, but `background-origin` places it
+    // in the page box, whose border edge lies inside the page margins. The
+    // page border is painted at the same edge.
+    let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
+    let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
     paint_page_background_image(
         image_cache,
         scene,
         document,
         cascade,
-        page_rect,
+        PageBackgroundAreas {
+            paper: page_rect,
+            border_box: kurbo::Rect::from_origin_size(
+                (f64::from(margins.left), f64::from(margins.top)),
+                (f64::from(border_box_width), f64::from(border_box_height)),
+            ),
+        },
         pixel_source,
         warnings,
     );
@@ -132,16 +143,7 @@ pub(crate) fn paint_canvas_background(
         fill_rect(scene, color, canvas_rect);
     }
     let insets = raikiri_dom::page_content_insets(cascade, page_box);
-    let page_area = kurbo::Rect::from_origin_size(
-        (
-            f64::from(margins.left + insets.left),
-            f64::from(margins.top + insets.top),
-        ),
-        (
-            f64::from(insets.page_area_width(margins, page_box)),
-            f64::from(insets.page_area_height(margins, page_box)),
-        ),
-    );
+    let page_area = page_area_rect(margins, insets, page_box);
     paint_canvas_background_image(
         image_cache,
         scene,
@@ -151,6 +153,41 @@ pub(crate) fn paint_canvas_background(
         pixel_source,
         warnings,
     );
+}
+
+/// The page area in page-local coordinates: the page box inside its margins,
+/// border and padding, where the document flows and `fixed` background layers
+/// are positioned.
+fn page_area_rect(
+    margins: raikiri_dom::PageMargins,
+    insets: raikiri_dom::PageContentInsets,
+    page_box: PageBox,
+) -> Rect {
+    Rect::from_origin_size(
+        (
+            f64::from(margins.left + insets.left),
+            f64::from(margins.top + insets.top),
+        ),
+        (
+            f64::from(insets.page_area_width(margins, page_box)),
+            f64::from(insets.page_area_height(margins, page_box)),
+        ),
+    )
+}
+
+/// The page area that a box's `fixed` background layers are positioned in, or
+/// `None` when they behave like `scroll` ones.
+///
+/// A box that is, or lies inside, a containing block for fixed boxes (a
+/// transformed box, say) is not fixed to the page, and neither is anything
+/// under a transformed root, which carries the whole page with it (CSS
+/// Transforms 1 section 6).
+fn fixed_background_viewport(
+    page_area: Rect,
+    root_transform: Affine,
+    in_fixed_containing_block: bool,
+) -> Option<Rect> {
+    (root_transform == Affine::IDENTITY && !in_fixed_containing_block).then_some(page_area)
 }
 
 /// Where the images of the canvas background paint and are placed.
@@ -565,6 +602,16 @@ fn page_background_origins(cascade: &CascadeResult) -> Option<&[VisualBox]> {
     }
 }
 
+/// The page `background-attachment` list, one entry per layer.
+fn page_background_attachments(
+    cascade: &CascadeResult,
+) -> Option<&[raikiri_style::property::BackgroundAttachment]> {
+    match page_property(cascade, PropertyKey::BackgroundAttachment) {
+        Some(PropertyValue::BackgroundAttachment(attachments)) => Some(attachments),
+        _ => None,
+    }
+}
+
 /// The page `background-clip` of the first layer.
 #[cfg(test)]
 fn page_background_clip(cascade: &CascadeResult) -> VisualBox {
@@ -735,15 +782,28 @@ fn warn_unpainted_background_layers(layer_count: usize, warnings: &mut Vec<Rende
     });
 }
 
+/// Where the page background paints and where its images are placed.
+#[derive(Clone, Copy)]
+struct PageBackgroundAreas {
+    /// The paper, which every layer covers whatever its `background-clip`.
+    paper: Rect,
+    /// The page box's border edge, inside the page margins, which
+    /// `background-origin` insets.
+    border_box: Rect,
+}
+
+/// Paint the page background images over the paper, positioned in the page
+/// box.
 fn paint_page_background_image(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    area: Rect,
+    areas: PageBackgroundAreas,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
+    let area = areas.paper;
     // The page box paints a URL image through the pixel source, and a
     // linear or radial gradient itself.
     let Some(PropertyValue::BackgroundImage(images)) =
@@ -773,6 +833,7 @@ fn paint_page_background_image(
         _ => None,
     };
     let origins = page_background_origins(cascade);
+    let attachments = page_background_attachments(cascade);
     let border = page_border_widths(cascade, area);
     let padding = page_padding_widths(cascade, area);
     // The page context inherits `color` from the root element.
@@ -808,11 +869,12 @@ fn paint_page_background_image(
         });
         layer.repeat = page_layer_item(repeats, index, initial_layer.repeat);
         layer.origin = page_layer_item(origins, index, initial_layer.origin);
+        layer.attachment = page_layer_item(attachments, index, initial_layer.attachment);
         paint_page_background_layer(
             image_cache,
             scene,
             &layer,
-            area,
+            areas,
             (border, padding),
             (page_font_size, &resolve_context, current_color),
             pixel_source,
@@ -824,13 +886,17 @@ fn paint_page_background_image(
 /// Left, top, right and bottom widths of a box edge, in CSS px.
 type EdgeWidths = (f64, f64, f64, f64);
 
-/// Paint one `@page` background layer over the page border box `area`.
+/// Paint one `@page` background layer over the paper, positioned in the page
+/// box.
 #[allow(clippy::too_many_arguments)]
 fn paint_page_background_layer(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     layer: &raikiri_style::ComputedBackgroundLayer,
-    area: Rect,
+    PageBackgroundAreas {
+        paper: area,
+        border_box,
+    }: PageBackgroundAreas,
     (border, padding): (EdgeWidths, EdgeWidths),
     (page_font_size, resolve_context, current_color): (ComputedLength, &ResolveContext, CssColor),
     pixel_source: Option<&dyn ImagePixelSource>,
@@ -850,12 +916,18 @@ fn paint_page_background_layer(
     };
     let url = source.as_ref().ok().map(|(_, url)| url);
     // `@page` positioning area with nonzero margins/borders (CSS Page 3 page
-    // box plus CSS Backgrounds 3 section 2.8): `area` is the page border box
-    // (full paper for the page background), and origin insets it to the
-    // positioning box. The page background painting area covers the whole
-    // page box regardless of `background-clip` (CSS Page 3, "Page Backgrounds
-    // and Painting Order"), so every layer paints over all of `area`.
-    let positioning = origin_inset_rect(area, layer.origin, border, padding, url, warnings);
+    // box plus CSS Backgrounds 3 section 2.8): `border_box` is the page
+    // box's border edge, inside the page margins, and origin insets it to
+    // the positioning box. The page background painting area covers the
+    // whole paper regardless of `background-clip` (CSS Page 3, "Page
+    // Backgrounds and Painting Order"), so every layer paints over all of
+    // `area`. A `fixed` layer is instead fixed to the page box including its
+    // margins (CSS Backgrounds 3 section 2.5), whatever its origin.
+    let positioning = if layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed {
+        area
+    } else {
+        origin_inset_rect(border_box, layer.origin, border, padding, url, warnings)
+    };
     let painting = area;
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
@@ -870,6 +942,7 @@ fn paint_page_background_layer(
             &layer.size,
             &layer.position,
             &layer.repeat,
+            None,
             pixel_source,
             warnings,
         ),
@@ -890,7 +963,6 @@ fn paint_page_background_layer(
                 &gradient,
                 positioning,
                 painting,
-                None,
                 &layer.size,
                 &layer.position,
                 &layer.repeat,
@@ -977,7 +1049,6 @@ fn paint_canvas_background_layer(
             gradient,
             positioning,
             painting,
-            None,
             &layer.size,
             &layer.position,
             &layer.repeat,
@@ -1009,6 +1080,7 @@ fn paint_canvas_background_layer(
         &layer.size,
         &layer.position,
         &layer.repeat,
+        None,
         pixel_source,
         warnings,
     );
@@ -1428,7 +1500,9 @@ fn paint_list_marker_with_snapshots(
     else {
         return;
     };
-    if width <= 0.0 || height <= 0.0 {
+    // The marker is visible by its own `visibility`, which it inherits from
+    // its item unless `::marker` sets it; `collapse` hides it like `hidden`.
+    if width <= 0.0 || height <= 0.0 || raikiri_dom::paint_rules::hides_own_box(computed) {
         return;
     }
     let explicit_content = cascade
@@ -1617,6 +1691,7 @@ fn paint_margin_box(
                             &image.size,
                             &image.position,
                             &image.repeat,
+                            None,
                             source,
                             warnings,
                         );
@@ -2069,6 +2144,10 @@ pub(crate) fn paint_document_impl(
             /// ancestors move `parent_abs_y` from where layout placed it.
             paint_offset_y: f32,
             fragment_clip_height: Option<f32>,
+            /// On a `display: contents` child of a multicolumn container, the
+            /// column height that container clips its blocks to. The element
+            /// has no box, so its children are the ones the columns hold.
+            column_clip_height: Option<f32>,
             fragment_id: Option<usize>,
             fragment_origin_x: f32,
             fragment_origin_y: f32,
@@ -2094,6 +2173,9 @@ pub(crate) fn paint_document_impl(
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             decorations: text::DecorationContext,
+            /// The page area that `fixed` backgrounds of the paragraph's
+            /// inline boxes are positioned in.
+            fixed_viewport: Option<Rect>,
             /// Whether the paragraph's lines wait for the end of the layer,
             /// as those of the explicit cells beside it do.
             defer: bool,
@@ -2115,6 +2197,9 @@ pub(crate) fn paint_document_impl(
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             paint_transform: Affine,
+            /// The page area that `fixed` backgrounds of the paragraph's
+            /// inline boxes are positioned in.
+            fixed_viewport: Option<Rect>,
             /// Keep the paragraph's groups open until
             /// [`PaintFrame::FinishLines`] when it has any, so the boxes laid
             /// out beside the lines join them.
@@ -2197,6 +2282,9 @@ pub(crate) fn paint_document_impl(
     // the page border and padding.
     let content_width = insets.page_area_width(margins, page_box);
     let content_height = insets.page_area_height(margins, page_box);
+    // The page area in page-local coordinates, which `fixed` background
+    // layers are positioned in (CSS Backgrounds 3 section 2.5).
+    let page_area = page_area_rect(margins, insets, page_box);
     // Fixed-position containing blocks use the page area of the initial
     // layout even when a later named page has a different paper width.
     // The page area takes the root element's direction, which decides the
@@ -2454,6 +2542,7 @@ pub(crate) fn paint_document_impl(
             transform_y: 0.0,
             paint_offset_y: 0.0,
             fragment_clip_height: None,
+            column_clip_height: None,
             fragment_id: None,
             fragment_origin_x: 0.0,
             fragment_origin_y: 0.0,
@@ -2560,6 +2649,7 @@ pub(crate) fn paint_document_impl(
             transform_y,
             paint_offset_y,
             fragment_clip_height,
+            column_clip_height,
             fragment_id,
             fragment_origin_x,
             fragment_origin_y,
@@ -2583,6 +2673,7 @@ pub(crate) fn paint_document_impl(
                 fragmentainer,
                 inside_fixed,
                 decorations,
+                fixed_viewport,
                 defer: _,
             } => {
                 let layout = cell.unrounded_layout;
@@ -2676,6 +2767,7 @@ pub(crate) fn paint_document_impl(
                         .filter(|_| !inside_fixed)
                         .map(|lines| lines.translated(transform_y + paint_offset_y)),
                     paint_transform,
+                    fixed_viewport,
                 );
                 if clip.is_some() {
                     scene.pop_layer();
@@ -2792,6 +2884,7 @@ pub(crate) fn paint_document_impl(
                 fragmentainer,
                 inside_fixed,
                 paint_transform,
+                fixed_viewport,
                 hold,
                 boxes_in_groups,
             } => {
@@ -2847,6 +2940,7 @@ pub(crate) fn paint_document_impl(
                             .filter(|_| !inside_fixed)
                             .map(|lines| lines.translated(translation_y)),
                         paint_transform,
+                        fixed_viewport,
                     );
                     match lines {
                         Some(mut lines) if boxes_in_groups || lines.has_groups() => {
@@ -2892,6 +2986,7 @@ pub(crate) fn paint_document_impl(
                             .filter(|_| !inside_fixed)
                             .map(|lines| lines.translated(translation_y)),
                         paint_transform,
+                        fixed_viewport,
                     )
                     .map(|lines| lines.finish_leaving_groups(leaves_groups(&deferral_scopes)))
                     .unwrap_or_default();
@@ -2931,6 +3026,7 @@ pub(crate) fn paint_document_impl(
                         .filter(|_| !inside_fixed)
                         .map(|lines| lines.translated(translation_y)),
                     paint_transform,
+                    fixed_viewport,
                 ) {
                     if leaves_groups(&deferral_scopes) {
                         let left = finish_lines_leaving_groups(scene, lines);
@@ -3149,6 +3245,7 @@ pub(crate) fn paint_document_impl(
                 transform_y,
                 paint_offset_y,
                 fragment_clip_height,
+                column_clip_height,
                 fragment_id,
                 fragment_origin_x,
                 fragment_origin_y,
@@ -3169,6 +3266,7 @@ pub(crate) fn paint_document_impl(
                 transform_y,
                 paint_offset_y,
                 fragment_clip_height,
+                column_clip_height,
                 fragment_id,
                 fragment_origin_x,
                 fragment_origin_y,
@@ -3217,6 +3315,7 @@ pub(crate) fn paint_document_impl(
                     transform_y,
                     paint_offset_y,
                     fragment_clip_height,
+                    column_clip_height,
                     fragment_id: Some(current_fragment_id),
                     fragment_origin_x: node_abs_x,
                     fragment_origin_y: node_abs_y,
@@ -3761,6 +3860,22 @@ pub(crate) fn paint_document_impl(
                                 &paint_border_radius,
                                 painted_border,
                                 &paint_padding,
+                                BackgroundEnv {
+                                    border_hides_edge: matches!(
+                                        cv.border_image.source,
+                                        BackgroundImage::None
+                                    ) && border_hides_background_edge(
+                                        painted_border,
+                                        cv.color,
+                                    ),
+                                    device_grid: image_cache.device_grid(scene.transform),
+                                    fixed_viewport: fixed_background_viewport(
+                                        page_area,
+                                        root_transform,
+                                        inside_fixed_containing_block
+                                            || establishes_fixed_containing_block,
+                                    ),
+                                },
                                 pixel_source,
                                 warnings,
                             );
@@ -3956,26 +4071,14 @@ pub(crate) fn paint_document_impl(
                         paint_inline_svg(
                             scene,
                             document,
+                            cascade,
+                            cv,
                             node_id,
                             layout.size.width,
                             layout.size.height,
                             paint_x,
                             paint_y,
-                            &cv.border,
                             &paint_padding,
-                            [cv.color.r, cv.color.g, cv.color.b, cv.color.a],
-                            cv.opacity,
-                            cascade
-                                .opacity_specified
-                                .get(node_id)
-                                .copied()
-                                .unwrap_or(false),
-                            cascade
-                                .background_color_specified
-                                .get(node_id)
-                                .copied()
-                                .unwrap_or(false),
-                            !raikiri_dom::paint_rules::hides_own_box(cv),
                             warnings,
                         )
                     } else if document.is_canvas_element(node_id) {
@@ -4062,6 +4165,10 @@ pub(crate) fn paint_document_impl(
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
+                            BackgroundEnv {
+                                device_grid: image_cache.device_grid(scene.transform),
+                                ..BackgroundEnv::default()
+                            },
                             pixel_source,
                             warnings,
                         );
@@ -4467,6 +4574,11 @@ pub(crate) fn paint_document_impl(
                         fragmentainer,
                         inside_fixed: ifc_inside_fixed,
                         paint_transform: scene.transform,
+                        fixed_viewport: fixed_background_viewport(
+                            page_area,
+                            root_transform,
+                            inside_fixed_containing_block || establishes_fixed_containing_block,
+                        ),
                         // Lines clipped to the page content box hold no
                         // boxes, which that clip does not cover.
                         hold: !children.is_empty()
@@ -4496,6 +4608,12 @@ pub(crate) fn paint_document_impl(
                     }
                     _ => None,
                 };
+                // A `display: contents` element has no box, so the columns of
+                // the container it sits in hold its children.
+                let own_multicol_clip_height = own_multicol_clip_height
+                    .or((cv.display == DisplayValue::Contents)
+                        .then_some(column_clip_height)
+                        .flatten());
                 // A plain block in a block container leaves its inline
                 // content to the end of the layer (CSS 2.1 Appendix E): its
                 // lines and the boxes laid out beside them paint after the
@@ -4551,6 +4669,11 @@ pub(crate) fn paint_document_impl(
                             fragmentainer,
                             inside_fixed: ifc_inside_fixed,
                             decorations: child_decorations.clone(),
+                            fixed_viewport: fixed_background_viewport(
+                                page_area,
+                                root_transform,
+                                inside_fixed_containing_block || establishes_fixed_containing_block,
+                            ),
                             defer: defers,
                         });
                         continue;
@@ -4572,10 +4695,13 @@ pub(crate) fn paint_document_impl(
                         // area in the column, so its descendants must not
                         // paint into the following sibling's fragment. A
                         // block that layout broke into column pieces places
-                        // its descendants in those pieces itself.
+                        // its descendants in those pieces itself. A
+                        // `display: contents` element has no box at all, so
+                        // its children are the ones the columns hold.
                         Some(_) // cov:ignore: exercised by ignored exact paged-text WPT.
                             if !fragmented_nodes.contains(&child) && document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
                                 child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
+                                    && cascade.computed[child].display != DisplayValue::Contents
                                     && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
                                     && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
                             }) => // cov:ignore: exercised by ignored exact paged-text WPT.
@@ -4662,6 +4788,10 @@ pub(crate) fn paint_document_impl(
                         transform_y: child_transform_y,
                         paint_offset_y: child_paint_offset_y,
                         fragment_clip_height: child_fragment_clip_height,
+                        column_clip_height: (cascade.computed[child].display
+                            == DisplayValue::Contents)
+                            .then_some(own_multicol_clip_height)
+                            .flatten(),
                         fragment_id,
                         fragment_origin_x,
                         fragment_origin_y,
@@ -4778,6 +4908,11 @@ pub(crate) fn paint_document_impl(
                                 .filter(|_| !inside_fixed)
                                 .map(|lines| lines.translated(transform_y + paint_offset_y)),
                             paint_transform,
+                            fixed_background_viewport(
+                                page_area,
+                                root_transform,
+                                inside_fixed_containing_block,
+                            ),
                         );
                     }
                     // Any other text node lies outside every paragraph and
@@ -5129,66 +5264,109 @@ fn paint_canvas(
 fn paint_inline_svg(
     scene: &mut impl PaintScene,
     document: &Document,
+    cascade: &CascadeResult,
+    cv: &ComputedValues,
     node_id: usize,
     border_box_width: f32,
     border_box_height: f32,
     abs_x: f32,
     abs_y: f32,
-    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
-    inherited_color: [u8; 4],
-    opacity: f32,
-    host_opacity_is_specified: bool,
-    host_controls_root_background: bool,
-    visible: bool,
     warnings: &mut Vec<RenderWarning>,
 ) -> bool {
-    let bl = border.left.width().px();
-    let bt = border.top.width().px();
-    let br = border.right.width().px();
-    let bb = border.bottom.width().px();
+    let bl = cv.border.left.width().px();
+    let bt = cv.border.top.width().px();
+    let br = cv.border.right.width().px();
+    let bb = cv.border.bottom.width().px();
     let content_x = (abs_x + bl + padding.left) as f64;
     let content_y = (abs_y + bt + padding.top) as f64;
     let content_w = (border_box_width - bl - br - padding.left - padding.right).max(0.0);
     let content_h = (border_box_height - bt - bb - padding.top - padding.bottom).max(0.0);
-    if !visible || opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
+    let opacity = cv.opacity;
+    if opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
         return true;
     }
+    let visible = !raikiri_dom::paint_rules::hides_own_box(cv);
 
-    let svg = document
-        .serialize_svg_subtree(node_id)
-        .ok()
-        .flatten()
-        .and_then(|source| raikiri_svg::SvgDocument::parse(source.as_bytes()).ok())
-        .and_then(|svg| {
-            svg.rasterize_at_css_pixel_scale(
-                raikiri_svg::SvgViewport {
-                    width: content_w,
-                    height: content_h,
-                },
-                raikiri_svg::SvgRootStyle {
-                    inherited_color,
-                    // The host opacity remains the SVG root's inherited value
-                    // while the rasterizer removes its group alpha. The outer
-                    // paint group applies it with backgrounds and borders.
-                    opacity,
-                    neutralize_root_opacity: host_opacity_is_specified,
-                    host_controls_root_background,
-                    visible,
-                },
-                None,
-            )
-            .ok()
-        });
-    let Some(decoded) = svg else {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: None,
+    let source = document.serialize_svg_subtree(node_id).ok().flatten();
+    // The declarations the page's stylesheets give to the descendants, which
+    // the serialized source does not carry. A subtree whose declarations
+    // outgrow the size bound is drawn unstyled, as it always was.
+    let descendants =
+        raikiri_dom::inline_svg_style::inline_svg_element_declarations(document, cascade, node_id)
+            .unwrap_or_default();
+    // A root that is not visible shows only the descendants that set
+    // `visibility` themselves, so a source that never mentions it paints
+    // nothing.
+    if !visible
+        && source
+            .as_deref()
+            .is_none_or(|source| !source.contains("visibility"))
+        && descendants
+            .iter()
+            .all(|descendant| !descendant.declarations.contains("visibility"))
+    {
+        return true;
+    }
+    let svg = source.and_then(|source| {
+        let svg = raikiri_svg::SvgDocument::parse(source.as_bytes()).ok()?;
+        let elements: Vec<_> = descendants
+            .iter()
+            .map(|descendant| raikiri_svg::SvgElementStyle {
+                element_index: descendant.element_index,
+                declarations: &descendant.declarations,
+            })
+            .collect();
+        let inherited_color = [cv.color.r, cv.color.g, cv.color.b, cv.color.a];
+        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
+            raikiri_svg::SvgViewport {
+                width: content_w,
+                height: content_h,
             },
-            node_id: Some(NodeId::new(node_id as u64)),
-            details: "inline SVG could not be parsed or rasterized".to_owned(),
-        });
+            raikiri_svg::SvgRootStyle {
+                inherited_color,
+                // The host opacity remains the SVG root's inherited value
+                // while the rasterizer removes its group alpha. The outer
+                // paint group applies it with backgrounds and borders.
+                opacity,
+                neutralize_root_opacity: cascade
+                    .opacity_specified
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(false),
+                host_controls_root_background: cascade
+                    .background_color_specified
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(false),
+                visible,
+            },
+            raikiri_svg::SvgResolvedStyles {
+                root_color: inherited_color,
+                font: raikiri_svg::SvgRootFont {
+                    size: cv.font_size.0,
+                    weight: cv.font_weight,
+                    style: cv.font_style.as_css_str(),
+                    family: &raikiri_dom::inline_svg_style::svg_font_family(cv),
+                },
+                elements: &elements,
+            },
+            None,
+        )
+        .ok()
+    });
+    let Some(decoded) = svg else {
+        // Nothing was expected to show from a root that is not visible.
+        if visible {
+            warnings.push(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: None,
+                },
+                node_id: Some(NodeId::new(node_id as u64)),
+                details: "inline SVG could not be parsed or rasterized".to_owned(),
+            });
+        }
         return true;
     };
 
@@ -5203,6 +5381,11 @@ fn paint_inline_svg(
             node_id: Some(NodeId::new(node_id as u64)),
             details: "inline SVG produced an empty raster size".to_owned(),
         });
+        return true;
+    }
+    // A root that is not visible draws only the descendants that are
+    // visible themselves, so most of these paint nothing at all.
+    if !visible && decoded.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0) {
         return true;
     }
     let image_data = peniko::ImageData {
@@ -5233,6 +5416,38 @@ fn paint_inline_svg(
     true
 }
 
+/// Whether the borders cover the outer edge of the background, so the
+/// background can be pulled in from that edge without leaving a gap.
+///
+/// Every side needs a width and an opaque color, and a style that draws a
+/// continuous stripe at the outer edge: `dotted` and `dashed` leave gaps, and
+/// a `double` border only does once its outer line is wide enough.
+fn border_hides_background_edge(
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    current_color: CssColor,
+) -> bool {
+    [&border.top, &border.right, &border.bottom, &border.left]
+        .iter()
+        .all(|side| {
+            let width = side.width().px();
+            let opaque = match side.color {
+                BorderColor::Resolved(color) => color.a == u8::MAX,
+                BorderColor::CurrentColor => current_color.a == u8::MAX,
+                _ => false, // cov:ignore: defensive fallback for future BorderColor variants
+            };
+            let continuous = match side.style() {
+                BorderStyle::Solid
+                | BorderStyle::Groove
+                | BorderStyle::Ridge
+                | BorderStyle::Inset
+                | BorderStyle::Outset => true,
+                BorderStyle::Double => width >= 5.0,
+                _ => false,
+            };
+            width > 0.0 && opaque && continuous
+        })
+}
+
 /// The final background layer of `cv` without its image: what a box paints
 /// when only its background color is drawn.
 fn color_only_background_layer(cv: &ComputedValues) -> raikiri_style::ComputedBackgroundLayer {
@@ -5243,6 +5458,20 @@ fn color_only_background_layer(cv: &ComputedValues) -> raikiri_style::ComputedBa
         .unwrap_or_else(raikiri_style::ComputedBackgroundLayer::initial);
     layer.image = BackgroundImage::None;
     layer
+}
+
+/// What surrounds a box and shapes how its background is painted.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BackgroundEnv {
+    /// Whether the borders cover the outer edge of the background (see
+    /// [`border_hides_background_edge`]).
+    pub border_hides_edge: bool,
+    /// The raster output's device pixel grid, absent for a vector output.
+    pub device_grid: Option<DeviceGrid>,
+    /// The page area in the box's own coordinates, which a `fixed` layer is
+    /// positioned in. Without it a `fixed` layer is positioned like a
+    /// `scroll` one, as inside a transform.
+    pub fixed_viewport: Option<Rect>,
 }
 
 /// Paint an element's background color and every background layer.
@@ -5260,6 +5489,7 @@ pub(crate) fn paint_element_background(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    env: BackgroundEnv,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -5273,6 +5503,7 @@ pub(crate) fn paint_element_background(
         border_radius,
         border,
         padding,
+        env,
         pixel_source,
         warnings,
         None,
@@ -5297,6 +5528,7 @@ fn paint_element_background_layers(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    env: BackgroundEnv,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     image_slice: Option<Rect>,
@@ -5325,6 +5557,12 @@ fn paint_element_background_layers(
             border_radius,
             border,
             padding,
+            BackgroundEnv {
+                fixed_viewport: env.fixed_viewport.filter(|_| {
+                    layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed
+                }),
+                ..env
+            },
             &layer.size,
             &layer.position,
             &layer.repeat,
@@ -5377,6 +5615,7 @@ fn paint_element_background_slice(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    env: BackgroundEnv,
     background_size: &ComputedBackgroundSize,
     background_position: &ComputedCssPosition,
     background_repeat: &raikiri_style::property::BackgroundRepeat,
@@ -5466,18 +5705,45 @@ fn paint_element_background_slice(
                     && side.width().px() > 0.0
                     && matches!(side.color, BorderColor::Resolved(c) if c == effective)
             });
+    // A rounded border-box background is pulled in from the border edge when
+    // the border hides that edge, so the anti-aliased corner pixels do not
+    // blend the background into the border's fringe. The inset is half the
+    // border width, or a sixth when a double border has a gap to keep covered
+    // (the shrink Chrome applies to avoid background bleed). Positioning is
+    // unaffected: only the painted area shrinks.
+    let bleed_inset = (env.border_hides_edge
+        && matches!(clip, VisualBox::BorderBox)
+        && used_border_radii(border_radius, radius_reference.0, radius_reference.1)
+            .iter()
+            .flatten()
+            .any(|value| *value > 0.0))
+    .then(|| {
+        let double = [&border.top, &border.right, &border.bottom, &border.left]
+            .iter()
+            .any(|side| side.style() == BorderStyle::Double);
+        if double { 1.0 / 6.0 } else { 0.5 }
+    });
     let clip = if border_box_union {
         VisualBox::BorderBox
     } else {
         clip
     };
     // Positioning area from `background-origin` (CSS Backgrounds 3 section 2.8).
+    // It follows the layout box rather than the snapped painting box, so a
+    // centered or sized image lands where the unsnapped geometry puts it;
+    // the tile is snapped to device pixels when it is drawn.
     // `border-area`/`text` are not valid origins; warn and fall back to the
     // spec initial `padding-box` instead of silently mispositioning.
+    let (ux0, uy0, ux1, uy1) = (
+        abs_x as f64,
+        abs_y as f64,
+        (abs_x + width) as f64,
+        (abs_y + height) as f64,
+    );
     let (px0, py0, px1, py1) = match origin {
-        VisualBox::BorderBox => (bx0, by0, bx1, by1),
-        VisualBox::PaddingBox => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
-        VisualBox::ContentBox => (bx0 + bl + pl, by0 + bt + pt, bx1 - br - pr, by1 - bb - pb),
+        VisualBox::BorderBox => (ux0, uy0, ux1, uy1),
+        VisualBox::PaddingBox => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
+        VisualBox::ContentBox => (ux0 + bl + pl, uy0 + bt + pt, ux1 - br - pr, uy1 - bb - pb),
         VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
@@ -5489,12 +5755,16 @@ fn paint_element_background_slice(
                     "background-origin has an unsupported visual box; using padding-box positioning"
                         .into(),
             });
-            (bx0 + bl, by0 + bt, bx1 - br, by1 - bb)
+            (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb)
         }
         // cov:ignore: defensive fallback for future `VisualBox` variants
-        _ => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
+        _ => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
     };
-    let positioning = Rect::new(px0, py0, px1, py1);
+    // A `fixed` layer is positioned in the page area whatever its origin
+    // (CSS Backgrounds 3 section 2.5) and still painted in its clip box.
+    let positioning = env
+        .fixed_viewport
+        .unwrap_or_else(|| Rect::new(px0, py0, px1, py1));
     // Painting area from `background-clip` (CSS Backgrounds 3 section 2.7).
     // Width/height is border-box size from taffy layout.
     let mut radius_inset = (0.0, 0.0, 0.0, 0.0);
@@ -5568,6 +5838,12 @@ fn paint_element_background_slice(
                     &ComputedBorderRadius::all(ComputedLength(0.0)),
                     border,
                     padding,
+                    // The mask already limits the background to the border
+                    // ring, so there is no edge to keep clear of the image.
+                    BackgroundEnv {
+                        border_hides_edge: false,
+                        ..env
+                    },
                     background_size,
                     background_position,
                     background_repeat,
@@ -5599,7 +5875,18 @@ fn paint_element_background_slice(
                 (by1 - bb - pb).round(),
             )
         }
-        VisualBox::BorderBox => Rect::new(bx0, by0, bx1, by1),
+        VisualBox::BorderBox => match bleed_inset {
+            Some(fraction) => {
+                radius_inset = (bl * fraction, bt * fraction, br * fraction, bb * fraction);
+                Rect::new(
+                    bx0 + radius_inset.0,
+                    by0 + radius_inset.1,
+                    bx1 - radius_inset.2,
+                    by1 - radius_inset.3,
+                )
+            }
+            None => Rect::new(bx0, by0, bx1, by1),
+        },
         // `text` returns above; this arm is unreachable but keeps the match
         // exhaustive for future `VisualBox` variants.
         // cov:ignore: unreachable text arm; early return above handles text
@@ -5611,12 +5898,61 @@ fn paint_element_background_slice(
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
+    let rounded = rounded_background_path(
+        painting.x0,
+        painting.y0,
+        painting.x1,
+        painting.y1,
+        border_radius,
+        radius_inset,
+        radius_reference,
+    );
+    // A rounded box clips its color and its image or gradient to the curve
+    // together (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
+    // Clipped one by one, the antialiased edge would cover the color twice,
+    // once for the color and once more for the image over it, and show more of
+    // it past the curve. Square painting areas and color-only boxes skip the
+    // layer.
     if let BackgroundImage::Gradient(gradient) = bg_image {
+        if let Some(curve) = rounded.as_ref() {
+            scene.push_clip_layer(Affine::IDENTITY, curve);
+        }
         if bg.a != 0 {
             let base = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, base, None, &painting);
+        }
+        if let Gradient::Conic(conic) = &**gradient {
+            paint_conic_gradient(scene, conic, positioning, painting, current_color);
+        } else {
+            gradient::paint_gradient_layer(
+                scene,
+                gradient,
+                positioning,
+                image_slice.map_or(painting, |slice| painting.intersect(slice)),
+                background_size,
+                background_position,
+                background_repeat,
+                current_color,
+            );
+        }
+        if rounded.is_some() {
+            scene.pop_layer();
+        }
+        return;
+    }
+    let image = background_url.as_ref().zip(pixel_source);
+    let grouped = rounded.as_ref().filter(|_| image.is_some());
+    if let Some(curve) = grouped {
+        scene.push_clip_layer(Affine::IDENTITY, curve);
+    }
+    if effective.a != 0 {
+        if grouped.is_some() {
+            // The layer clips this fill to the curve.
+            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
+        } else {
             fill_rounded_background(
                 scene,
-                base,
+                color,
                 painting.x0,
                 painting.y0,
                 painting.x1,
@@ -5626,95 +5962,24 @@ fn paint_element_background_slice(
                 radius_reference,
             );
         }
-        if let Gradient::Conic(conic) = &**gradient {
-            paint_conic_gradient(
-                scene,
-                conic,
-                positioning,
-                painting,
-                border_radius,
-                radius_inset,
-                radius_reference,
-                current_color,
-            );
-            return;
-        }
-        let rounded = rounded_background_path(
-            painting.x0,
-            painting.y0,
-            painting.x1,
-            painting.y1,
-            border_radius,
-            radius_inset,
-            radius_reference,
-        );
-        gradient::paint_gradient_layer(
+    }
+    if let Some((url, source)) = image {
+        paint_background_from_source(
+            image_cache,
             scene,
-            gradient,
+            url,
             positioning,
             image_slice.map_or(painting, |slice| painting.intersect(slice)),
-            rounded.as_ref(),
             background_size,
             background_position,
             background_repeat,
-            current_color,
-        );
-        return;
-    }
-    if effective.a != 0 {
-        fill_rounded_background(
-            scene,
-            color,
-            painting.x0,
-            painting.y0,
-            painting.x1,
-            painting.y1,
-            border_radius,
-            radius_inset,
-            radius_reference,
+            env.device_grid,
+            source,
+            warnings,
         );
     }
-    if let (Some(url), Some(source)) = (background_url.as_ref(), pixel_source) {
-        // Clip URL images to the same rounded curve as the color fill
-        // (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
-        // Square painting areas skip the extra layer.
-        if let Some(rounded) = rounded_background_path(
-            painting.x0,
-            painting.y0,
-            painting.x1,
-            painting.y1,
-            border_radius,
-            radius_inset,
-            radius_reference,
-        ) {
-            scene.push_clip_layer(Affine::IDENTITY, &rounded);
-            paint_background_from_source(
-                image_cache,
-                scene,
-                url,
-                positioning,
-                image_slice.map_or(painting, |slice| painting.intersect(slice)),
-                background_size,
-                background_position,
-                background_repeat,
-                source,
-                warnings,
-            );
-            scene.pop_layer();
-        } else {
-            paint_background_from_source(
-                image_cache,
-                scene,
-                url,
-                positioning,
-                image_slice.map_or(painting, |slice| painting.intersect(slice)),
-                background_size,
-                background_position,
-                background_repeat,
-                source,
-                warnings,
-            );
-        }
+    if grouped.is_some() {
+        scene.pop_layer();
     }
 }
 
@@ -5765,6 +6030,7 @@ fn paint_background_from_source(
     size: &ComputedBackgroundSize,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
+    device_grid: Option<DeviceGrid>,
     pixel_source: &dyn ImagePixelSource,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -5797,6 +6063,7 @@ fn paint_background_from_source(
             image_h,
             position,
             repeat,
+            device_grid,
         );
     } else {
         warnings.push(RenderWarning {
@@ -5831,6 +6098,9 @@ fn paint_background_from_source(
 /// rest of `painting`; `round` rescales the tile so a whole number exactly
 /// fills the positioning width/height, then places and repeats it like
 /// `repeat`. Mixed axes combine independently.
+///
+/// On a raster output (`device_grid` is known) the tiles are drawn on whole
+/// device pixels, see [`tile_spans`].
 #[allow(clippy::too_many_arguments)]
 fn paint_background_image(
     image_cache: &crate::walk::ImageBrushCache,
@@ -5842,6 +6112,7 @@ fn paint_background_image(
     image_h: f64,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
+    device_grid: Option<DeviceGrid>,
 ) {
     if decoded.width == 0 || decoded.height == 0 {
         return;
@@ -5865,13 +6136,9 @@ fn paint_background_image(
     ) else {
         return;
     };
-    let (tile_w, tile_h) = (tiles.width, tiles.height);
     let brush = image_cache.whole(decoded);
-    let tile_shape = Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64);
-    let tile_scale = Affine::scale_non_uniform(
-        tile_w / decoded.width as f64,
-        tile_h / decoded.height as f64,
-    );
+    let (image_px_w, image_px_h) = (f64::from(decoded.width), f64::from(decoded.height));
+    let tile_shape = Rect::new(0.0, 0.0, image_px_w, image_px_h);
     // A `repeat` or `round` axis places tiles edge to edge, so one fill with
     // the image repeating along that axis covers it without a seam between
     // tiles, however small they are. A `space` or `no-repeat` axis keeps one
@@ -5884,6 +6151,31 @@ fn paint_background_image(
         )
     };
     let (continuous_x, continuous_y) = (continuous(repeat.x), continuous(repeat.y));
+    let xs = axis_tile_spans(
+        &tiles.x,
+        tiles.width,
+        repeat.x,
+        (
+            positioning.x0
+                + position_offset(position.horizontal, positioning.width() - tiles.width),
+            painting.x0,
+        ),
+        device_grid.map(|grid| (grid.scale_x, grid.offset_x)),
+    );
+    let ys = axis_tile_spans(
+        &tiles.y,
+        tiles.height,
+        repeat.y,
+        (
+            positioning.y0
+                + position_offset(position.vertical, positioning.height() - tiles.height),
+            painting.y0,
+        ),
+        device_grid.map(|grid| (grid.scale_y, grid.offset_y)),
+    );
+    // `background_tiles` returns a tile in each axis, so the fallbacks never apply.
+    let (origin_x, tile_w) = xs.first().copied().unwrap_or((painting.x0, tiles.width));
+    let (origin_y, tile_h) = ys.first().copied().unwrap_or((painting.y0, tiles.height));
     let mut pattern = brush.clone();
     if continuous_x {
         pattern.sampler.x_extend = PenikoExtend::Repeat;
@@ -5891,46 +6183,53 @@ fn paint_background_image(
     if continuous_y {
         pattern.sampler.y_extend = PenikoExtend::Repeat;
     }
-    // `background_tiles` returns a tile in each axis, so the fallback never applies.
-    let origin_x = tiles.x.first().copied().unwrap_or(painting.x0);
-    let origin_y = tiles.y.first().copied().unwrap_or(painting.y0);
     scene.push_clip_layer(Affine::IDENTITY, &painting);
     match (continuous_x, continuous_y) {
         (true, true) => scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
             pattern.as_ref(),
-            Some(Affine::translate((origin_x, origin_y)) * tile_scale),
+            Some(
+                Affine::translate((origin_x, origin_y))
+                    * Affine::scale_non_uniform(tile_w / image_px_w, tile_h / image_px_h),
+            ),
             &painting,
         ),
         (true, false) => {
-            for tile_y in &tiles.y {
+            for (tile_y, height) in &ys {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
                     pattern.as_ref(),
-                    Some(Affine::translate((origin_x, *tile_y)) * tile_scale),
-                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + tile_h),
+                    Some(
+                        Affine::translate((origin_x, *tile_y))
+                            * Affine::scale_non_uniform(tile_w / image_px_w, height / image_px_h),
+                    ),
+                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + height),
                 );
             }
         }
         (false, true) => {
-            for tile_x in &tiles.x {
+            for (tile_x, width) in &xs {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
                     pattern.as_ref(),
-                    Some(Affine::translate((*tile_x, origin_y)) * tile_scale),
-                    &Rect::new(*tile_x, painting.y0, *tile_x + tile_w, painting.y1),
+                    Some(
+                        Affine::translate((*tile_x, origin_y))
+                            * Affine::scale_non_uniform(width / image_px_w, tile_h / image_px_h),
+                    ),
+                    &Rect::new(*tile_x, painting.y0, *tile_x + width, painting.y1),
                 );
             }
         }
         (false, false) => {
-            for tile_y in &tiles.y {
-                for tile_x in &tiles.x {
+            for (tile_y, height) in &ys {
+                for (tile_x, width) in &xs {
                     scene.fill(
                         Fill::NonZero,
-                        Affine::translate((*tile_x, *tile_y)) * tile_scale,
+                        Affine::translate((*tile_x, *tile_y))
+                            * Affine::scale_non_uniform(width / image_px_w, height / image_px_h),
                         brush.as_ref(),
                         None,
                         &tile_shape,
@@ -5940,6 +6239,107 @@ fn paint_background_image(
         }
     }
     scene.pop_layer();
+}
+
+/// [`tile_spans`] for one axis of a layer, where `placed` is the start of the
+/// tile that `background-position` puts in the positioning area and
+/// `painting_start` the start of the painting area, both along that axis.
+///
+/// A `repeat` axis repeats from the placed tile, which can lie outside the
+/// painting area. When its pitch snaps to a different length than the CSS
+/// one, the repetition has to keep that tile as its anchor, or its phase would
+/// follow the painting area instead of `background-position`. The span
+/// returned is the tile of that repetition at or before `painting_start`. Any
+/// other axis is left to [`tile_spans`].
+fn axis_tile_spans(
+    starts: &[f64],
+    length: f64,
+    keyword: raikiri_style::property::BackgroundRepeatKeyword,
+    (placed, painting_start): (f64, f64),
+    grid: Option<(f64, f64)>,
+) -> Vec<(f64, f64)> {
+    use raikiri_style::property::BackgroundRepeatKeyword::Repeat;
+    let anchored = match keyword {
+        Repeat => tile_spans(&[placed], length, keyword, grid)
+            .first()
+            .copied(),
+        _ => None,
+    };
+    let Some((anchor, pitch)) = anchored else {
+        return tile_spans(starts, length, keyword, grid);
+    };
+    let tile_index = ((painting_start - anchor) / pitch).floor();
+    vec![(anchor + tile_index * pitch, pitch)]
+}
+
+/// The `(start, length)` spans along one axis that a layer's tiles are drawn
+/// at, snapped to device pixels when the output grid `(scale, offset)` is
+/// known.
+///
+/// A tile is drawn on whole device pixels so its edges stay crisp, but it is
+/// still placed from the unsnapped box: each edge moves to the nearest device
+/// pixel on its own, which keeps a tile that straddles a pixel boundary from
+/// being stretched over a partial pixel. A `repeat` axis keeps only its origin
+/// tile, whose length is the pitch of the repetition: a whole number of
+/// device pixels, at least one, so the copies stay on the grid however small
+/// the unsnapped tile is, and positive on a mirrored grid. A `round` axis
+/// keeps the pitch that fits its area.
+fn tile_spans(
+    starts: &[f64],
+    length: f64,
+    keyword: raikiri_style::property::BackgroundRepeatKeyword,
+    grid: Option<(f64, f64)>,
+) -> Vec<(f64, f64)> {
+    use raikiri_style::property::BackgroundRepeatKeyword::{Repeat, Round};
+    // A grid that cannot place a pixel edge (no scale, or an overflowed one)
+    // leaves the tiles where they are.
+    let grid =
+        grid.filter(|(scale, offset)| scale.is_finite() && *scale != 0.0 && offset.is_finite());
+    let snap = |value: f64| match grid {
+        Some((scale, offset)) => ((value * scale + offset).round() - offset) / scale,
+        None => value,
+    };
+    match keyword {
+        Round => starts
+            .first()
+            .map(|start| (*start, length))
+            .into_iter()
+            .collect(),
+        Repeat => starts
+            .first()
+            .map(|start| match grid {
+                // A mirrored grid has a negative scale; the pitch is a count
+                // of device pixels, so it takes the magnitude.
+                Some((scale, _)) => (
+                    snap(*start),
+                    (length * scale.abs()).round().max(1.0) / scale.abs(),
+                ),
+                None => (*start, length),
+            })
+            .into_iter()
+            .collect(),
+        _ => {
+            let snapped: Vec<(f64, f64)> = starts
+                .iter()
+                .map(|start| {
+                    let snapped = snap(*start);
+                    (snapped, snap(*start + length) - snapped)
+                })
+                .collect();
+            // A tile thinner than a device pixel can have both edges round to
+            // the same boundary. The axis then stays where it is instead of
+            // losing that tile, and as a whole, so the tiles that did snap
+            // cannot overlap the one that did not.
+            if snapped
+                .iter()
+                .all(|(_, snapped_length)| *snapped_length > 0.0)
+            {
+                snapped
+            } else {
+                starts.iter().map(|start| (*start, length)).collect()
+            }
+        }
+    }
 }
 
 /// Paint the border image of a box whose border box is `width` × `height`
@@ -5977,10 +6377,7 @@ pub(crate) fn paint_element_border_image(
         pixel_source,
         warnings,
         transform,
-        (
-            (f64::NEG_INFINITY, f64::INFINITY),
-            (f64::NEG_INFINITY, f64::INFINITY),
-        ),
+        VisibleArea::UNBOUNDED,
     )
 }
 
@@ -5999,10 +6396,10 @@ fn paint_border_image_within(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     transform: Affine,
-    (visible_x, visible_y): ((f64, f64), (f64, f64)),
+    visible: VisibleArea,
 ) -> bool {
-    let crosses = |x: f64, width: f64| x <= visible_x.1 && x + width >= visible_x.0;
-    let crosses_y = |y: f64, height: f64| y <= visible_y.1 && y + height >= visible_y.0;
+    let crosses = |x: f64, width: f64| x <= visible.x.1 && x + width >= visible.x.0;
+    let crosses_y = |y: f64, height: f64| y <= visible.y.1 && y + height >= visible.y.0;
     let border_box = (
         f64::from(abs_x),
         f64::from(abs_y),
@@ -6015,12 +6412,9 @@ fn paint_border_image_within(
         bottom: f64::from(border.bottom.width().px()),
         left: f64::from(border.left.width().px()),
     };
-    let geometry = |natural| match image_cache.device_grid(transform) {
-        Some(grid) => {
-            border_image_geometry_on_device_pixels(border_box, widths, image, natural, grid)
-        }
-        None => border_image_geometry(border_box, widths, image, natural),
-    };
+    let grid = image_cache.device_grid(transform);
+    let geometry =
+        |natural| border_image_geometry_within(border_box, widths, image, natural, grid, visible);
     match &image.source {
         BackgroundImage::Url(raw_url) => {
             let Some((url, pixel_source)) = image_cache.image_url(raw_url).zip(pixel_source) else {
@@ -6116,7 +6510,11 @@ fn paint_border_image_within(
                 if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
                     continue;
                 }
-                let (brush, pixels) = if let Some(brush) = &shared {
+                let (brush, pixels) = if let Some(averaged) =
+                    averaged_part_brush(image_cache, &decoded, part, crop, (scale_x, scale_y), grid)
+                {
+                    averaged
+                } else if let Some(brush) = &shared {
                     // Whole decoded pixels to image coordinates.
                     let pixels = Affine::scale_non_uniform(1.0 / scale_x, 1.0 / scale_y);
                     (brush.clone(), pixels)
@@ -6140,8 +6538,8 @@ fn paint_border_image_within(
                 let scale =
                     Affine::scale_non_uniform(part.tile_width / src_w, part.tile_height / src_h)
                         * Affine::translate((-src_x, -src_y));
-                for tile_y in part.y.iter().filter(|y| crosses_y(**y, part.tile_height)) {
-                    for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
+                for tile_y in &part.y {
+                    for tile_x in &part.x {
                         scene.fill(
                             Fill::NonZero,
                             Affine::translate((*tile_x, *tile_y)) * scale,
@@ -6172,8 +6570,8 @@ fn paint_border_image_within(
                     Affine::IDENTITY,
                     &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
                 );
-                for tile_y in part.y.iter().filter(|y| crosses_y(**y, part.tile_height)) {
-                    for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
+                for tile_y in &part.y {
+                    for tile_x in &part.x {
                         scene.fill(
                             Fill::NonZero,
                             Affine::IDENTITY,
@@ -6245,6 +6643,67 @@ impl PixelCrop {
             height: self.height(),
         }))
     }
+}
+
+/// The brush and the transform from its pixels to image coordinates for a
+/// border image `part` that a raster output draws much smaller than the
+/// decoded pixels it shows, or `None` when it is not (or the output is not a
+/// raster).
+///
+/// The part is averaged down to one pixel per device pixel along each axis
+/// that shrinks, and keeps the whole decoded pixels of `crop` along the
+/// others. A bilinear filter alone averages at most about two pixels per
+/// device pixel, so past that it would skip the pixels between its sample
+/// points and turn a seam between two colors of the image into a hard step
+/// instead of a blend. `pixels_per_unit` is the decoded pixels per image
+/// unit.
+fn averaged_part_brush(
+    image_cache: &crate::walk::ImageBrushCache,
+    decoded: &std::sync::Arc<raikiri_traits::DecodedImage>,
+    part: &raikiri_dom::image_geometry::BorderImagePart,
+    crop: PixelCrop,
+    pixels_per_unit: (f64, f64),
+    grid: Option<DeviceGrid>,
+) -> Option<(peniko::ImageBrush, Affine)> {
+    let grid = grid?;
+    let (src_x, src_y, src_w, src_h) = part.source;
+    let (scale_x, scale_y) = pixels_per_unit;
+    // The decoded pixels the part shows and the device pixels a tile covers.
+    let (source_w, source_h) = (src_w * scale_x, src_h * scale_y);
+    let (device_w, device_h) = (
+        part.tile_width * grid.scale_x.abs(),
+        part.tile_height * grid.scale_y.abs(),
+    );
+    let shrinks = |source: f64, device: f64| source > device * 1.5;
+    let (shrinks_x, shrinks_y) = (shrinks(source_w, device_w), shrinks(source_h, device_h));
+    if !shrinks_x && !shrinks_y {
+        return None;
+    }
+    // The span of decoded pixels along an axis and the pixels it becomes.
+    let axis = |shrinks: bool, span: (f64, f64), device: f64, kept: (u32, u32)| {
+        if shrinks {
+            (span, device.round().max(1.0) as u32)
+        } else {
+            ((f64::from(kept.0), f64::from(kept.1)), kept.1 - kept.0)
+        }
+    };
+    let ((x0, x1), width) = axis(
+        shrinks_x,
+        (src_x * scale_x, (src_x + src_w) * scale_x),
+        device_w,
+        (crop.x0, crop.x1),
+    );
+    let ((y0, y1), height) = axis(
+        shrinks_y,
+        (src_y * scale_y, (src_y + src_h) * scale_y),
+        device_h,
+        (crop.y0, crop.y1),
+    );
+    let brush = image_cache.averaged(decoded, [x0, y0, x1, y1], (width, height))?;
+    // The averaged pixels to image coordinates.
+    let to_image = Affine::translate((src_x, src_y))
+        * Affine::scale_non_uniform(src_w / f64::from(width), src_h / f64::from(height));
+    Some((brush, to_image))
 }
 
 /// The pixels of `decoded` between the corners `start` and `end` (in
@@ -6542,7 +7001,9 @@ impl InlineProgression {
 /// inline element, the way the element visit paints a box. `x` and `y` are
 /// the page position of the paragraph's content box; `progression` gives the
 /// axis the element's pieces run along; `transform` is what the piece is
-/// painted through inside the root element's transform.
+/// painted through inside the root element's transform; `fixed_viewport` is
+/// the page area its `fixed` background layers are positioned in, and `None`
+/// positions them like `scroll` ones.
 ///
 /// A side whose edge the piece does not carry (the element continues on
 /// another line there) has no border, padding or corner radius: the box is
@@ -6562,6 +7023,7 @@ pub(crate) fn paint_inline_box(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     transform: Affine,
+    fixed_viewport: Option<Rect>,
 ) {
     let outer = piece.border_box;
     let content = piece.content_box;
@@ -6772,6 +7234,11 @@ pub(crate) fn paint_inline_box(
         },
         if slice.is_some() { &cv.border } else { &border },
         &background_padding,
+        BackgroundEnv {
+            device_grid: image_cache.device_grid(transform),
+            fixed_viewport,
+            ..BackgroundEnv::default()
+        },
         pixel_source,
         warnings,
         slice.map(|_| piece_rect),
@@ -6807,9 +7274,15 @@ pub(crate) fn paint_inline_box(
             warnings,
             transform,
             if progression.vertical {
-                ((f64::NEG_INFINITY, f64::INFINITY), (low, high))
+                VisibleArea {
+                    x: VisibleArea::UNBOUNDED.x,
+                    y: (low, high),
+                }
             } else {
-                ((low, high), (f64::NEG_INFINITY, f64::INFINITY))
+                VisibleArea {
+                    x: (low, high),
+                    y: VisibleArea::UNBOUNDED.y,
+                }
             },
         );
         scene.pop_layer();
@@ -7631,17 +8104,13 @@ fn conic_to_peniko(
 ///
 /// The sweep geometry uses the positioning area for its center while the
 /// fill covers the painting area, mirroring the origin and clip split used
-/// for solid and image backgrounds. Rounded boxes reuse the shared rounded
-/// clip so the sweep follows the same curve.
-#[allow(clippy::too_many_arguments)]
+/// for solid and image backgrounds. A rounded box is clipped to its curve by
+/// the caller, around the background color and the sweep together.
 fn paint_conic_gradient(
     scene: &mut impl PaintScene,
     conic: &ConicGradient,
     positioning: Rect,
     painting: Rect,
-    border_radius: &ComputedBorderRadius,
-    radius_inset: (f64, f64, f64, f64),
-    radius_reference: (f64, f64),
     current_color: CssColor,
 ) {
     if positioning.width() <= 0.0 || positioning.height() <= 0.0 {
@@ -7652,19 +8121,7 @@ fn paint_conic_gradient(
     let Some(gradient) = conic_to_peniko(conic, center, current_color) else {
         return;
     };
-    if let Some(rounded) = rounded_background_path(
-        painting.x0,
-        painting.y0,
-        painting.x1,
-        painting.y1,
-        border_radius,
-        radius_inset,
-        radius_reference,
-    ) {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &rounded);
-    } else {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &painting);
-    }
+    scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &painting);
 }
 
 /// Infer a solid color from a url() string for minimal painting.

@@ -5,8 +5,10 @@ use taffy::Style;
 mod avoid_followup_tests;
 mod candidate_context_tests;
 mod candidate_text_tests;
+mod fragment_sources_tests;
 pub(super) mod link_ancestor_tests;
 mod paged_spanning_tests;
+mod source_walk_tests;
 mod table_follow_tests;
 
 #[test]
@@ -2168,6 +2170,340 @@ fn grid_auto_abspos_static_position_uses_all_parent_padding_sides() {
     );
     let child = doc.append_element(
         Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 10.0).abs() < 0.01);
+    assert!((layout.location.y - 10.0).abs() < 0.01);
+}
+
+#[test]
+fn grid_auto_abspos_last_baseline_falls_back_to_the_end_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some(
+            "position:absolute;width:20px;height:20px;\
+             align-self:last baseline;justify-self:last baseline",
+        ),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 90.0).abs() < 0.01);
+    assert!((layout.location.y - 90.0).abs() < 0.01);
+}
+
+#[test]
+fn grid_auto_abspos_last_baseline_keeps_an_oversized_box_at_the_start_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some(
+            "position:absolute;width:120px;height:120px;\
+             align-self:last baseline;justify-self:last baseline",
+        ),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 10.0).abs() < 0.01);
+    assert!((layout.location.y - 10.0).abs() < 0.01);
+}
+
+#[test]
+fn placed_grid_abspos_takes_last_baseline_from_the_container() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;position:relative;grid:100px / 100px;width:100px;height:100px;\
+             align-items:last baseline;justify-items:last baseline",
+        ),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;grid-area:1 / 1 / 2 / 2;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 80.0).abs() < 0.01);
+    assert!((layout.location.y - 80.0).abs() < 0.01);
+}
+
+#[test]
+fn placed_grid_abspos_last_baseline_falls_back_to_self_end() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;position:relative;grid:100px / 100px;width:100px;height:100px"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some(
+            "position:absolute;grid-area:1 / 1 / 2 / 2;width:20px;height:20px;\
+             direction:rtl;justify-self:last baseline",
+        ),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    // The end of a right-to-left box is its left edge.
+    assert!(layout.location.x.abs() < 0.01, "x: {}", layout.location.x);
+}
+
+#[test]
+fn grid_auto_abspos_last_baseline_in_an_rtl_box_falls_back_to_its_left_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px;"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px;direction:rtl;justify-self:last baseline"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    // The end of a right-to-left box is its left edge.
+    assert!(
+        (layout.location.x - 10.0).abs() < 0.01,
+        "x: {}",
+        layout.location.x
+    );
+}
+
+#[test]
+fn grid_auto_abspos_last_baseline_overflowing_an_rtl_container_keeps_its_right_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px;direction:rtl"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:120px;height:20px;justify-self:last baseline"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    // An oversized box stays at the inline start (right) edge and spills left.
+    assert!(
+        (layout.location.x - -10.0).abs() < 0.01,
+        "x: {}",
+        layout.location.x
+    );
+}
+
+#[test]
+fn abspos_with_both_insets_keeps_the_start_edge_under_a_last_baseline_container() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // `auto` takes the container's `last baseline` only for a static
+    // position; with both insets specified it behaves as `normal`.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;position:relative;width:100px;height:100px;\
+             align-items:last baseline;justify-items:last baseline",
+        ),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;left:0;right:0;top:0;bottom:0;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!(layout.location.x.abs() < 0.01);
+    assert!(layout.location.y.abs() < 0.01);
+}
+
+#[test]
+fn grid_auto_abspos_takes_last_baseline_from_the_container() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;width:100px;height:100px;padding:10px;\
+             align-items:last baseline;justify-items:last baseline",
+        ),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 90.0).abs() < 0.01);
+    assert!((layout.location.y - 90.0).abs() < 0.01);
+}
+
+#[test]
+fn abspos_under_display_contents_takes_last_baseline_from_the_grid() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // The `display: contents` element makes no box, so the grid is the
+    // abspos child's container and its `last baseline` reaches the child
+    // through `auto`.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;width:100px;height:100px;padding:10px;\
+             align-items:last baseline;justify-items:last baseline",
+        ),
+    );
+    let wrapper = doc.append_element(
+        Some(grid),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let inner_wrapper = doc.append_element(
+        Some(wrapper),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let child = doc.append_element(
+        Some(inner_wrapper),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 90.0).abs() < 0.01);
+    assert!((layout.location.y - 90.0).abs() < 0.01);
+}
+
+#[test]
+fn abspos_under_display_contents_ignores_the_alignment_of_the_wrapper() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // Only the grid is the container: a `last baseline` on the wrapper that
+    // makes no box does not reach the child, which stays at the start.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px"),
+    );
+    let wrapper = doc.append_element(
+        Some(grid),
+        "span",
+        Style::default(),
+        Some("display:contents;align-items:last baseline;justify-items:last baseline"),
+    );
+    let child = doc.append_element(
+        Some(wrapper),
         "div",
         Style::default(),
         Some("position:absolute;width:20px;height:20px"),
@@ -16934,6 +17270,38 @@ fn a_block_fits_a_page_step_within_a_thousandth() {
 }
 
 #[test]
+fn a_text_reaches_a_line_when_its_last_line_is_that_line_or_later() {
+    let owned = IfcTextLines {
+        root: 1,
+        width: 100.0,
+        lines: vec![
+            IfcTextLine {
+                line: 1,
+                top: 10.0,
+                bottom: 20.0,
+            },
+            IfcTextLine {
+                line: 2,
+                top: 20.0,
+                bottom: 30.0,
+            },
+        ],
+    };
+    // The text ends on or after the line, so a move from that line grows it.
+    assert!(reaches_line(Some(&owned), 0));
+    assert!(reaches_line(Some(&owned), 2));
+    // The text ends before the line, so the move leaves it alone.
+    assert!(!reaches_line(Some(&owned), 3));
+    // Text without lines of its own is never reached.
+    assert!(!reaches_line(None, 0));
+    let empty = IfcTextLines {
+        lines: Vec::new(),
+        ..owned
+    };
+    assert!(!reaches_line(Some(&empty), 0));
+}
+
+#[test]
 fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let pages = PageOrigins::new(&[], 100.0);
     // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
@@ -17681,6 +18049,14 @@ fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
         .find(|edge| edge.node == floater)
         .unwrap();
     assert_eq!((edge.side, edge.top, edge.bottom), (0, 140.0, 154.0));
+    // While that shift is pending, no other box is cleared or looks at the
+    // edges of its context.
+    assert!(clearance(&shifts, clearing, 130.0, 0.0).is_none());
+    assert!(shifts.edges_for(&doc, &cascade, clearing, body).is_none());
+    shifts.pending = None;
+    let (context, edges) = shifts.edges_for(&doc, &cascade, clearing, body).unwrap();
+    assert_eq!(context, body);
+    assert_eq!(edges.len(), 2);
 }
 
 #[test]
@@ -17867,4 +18243,1893 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
     assert!(!unresolved.is_finite());
     let unbounded = TransitionLanding::new(f32::INFINITY, 90.0, 8.0, 3.0, true, &overflow(0.0));
     assert!(!unbounded.is_finite());
+}
+
+#[test]
+fn a_forced_page_start_lands_on_the_later_of_the_next_and_the_natural_page() {
+    // A box on the current page opens the page after it.
+    assert_eq!(forced_target_page(2, 2), 3);
+    assert_eq!(forced_target_page(2, 0), 3);
+    // Content that overflowed past the current page puts the box on a later
+    // page already, and the break does not add another one.
+    assert_eq!(forced_target_page(2, 5), 5);
+    // The last page index has no next page to open.
+    assert_eq!(forced_target_page(u32::MAX, 0), u32::MAX);
+}
+
+#[test]
+fn a_box_runs_on_to_the_page_its_flow_end_falls_on() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // A box inside its first page stays on it, even when it ends at the edge.
+    assert_eq!(pages.end_page(20.0, 50.0), Some(0));
+    assert_eq!(pages.end_page(0.0, 100.0), Some(0));
+    // One that crosses the edge runs on to the page its end falls on.
+    assert_eq!(pages.end_page(50.0, 100.0), Some(1));
+    assert_eq!(pages.end_page(50.0, 260.0), Some(3));
+    // A box ending exactly at an edge belongs to the page before it.
+    assert_eq!(pages.end_page(50.0, 250.0), Some(2));
+    // A box with no block size or no usable position runs on nowhere.
+    assert_eq!(pages.end_page(50.0, 0.0), None);
+    assert_eq!(pages.end_page(-10.0, 50.0), None);
+    assert_eq!(pages.end_page(f32::NAN, 50.0), None);
+}
+
+#[test]
+fn only_a_named_box_or_a_sized_leaf_holds_content_in_its_columns() {
+    let context = |set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        context
+    };
+    let plain = context(|_| {});
+    let named = context(|context| context.is_named = true);
+    let leaf = context(|context| context.is_rendered_leaf = true);
+    // A named box counts whatever its size.
+    assert!(box_occupies_column(&named, true, 0.0));
+    // A rendered leaf needs a block size.
+    assert!(box_occupies_column(&leaf, true, 10.0));
+    assert!(!box_occupies_column(&leaf, true, 0.0));
+    // Any other box leaves the columns empty.
+    assert!(!box_occupies_column(&plain, true, 10.0));
+    // So does one that does not take part in the flow's page names.
+    assert!(!box_occupies_column(&named, false, 10.0));
+    assert!(!box_occupies_column(&leaf, false, 10.0));
+}
+
+/// The state of a flow over a document of `node_count` nodes before its first
+/// candidate.
+fn pagination_state_before_first_candidate(node_count: usize) -> PaginationState {
+    PaginationState::new(
+        HeaderRepeats::default(),
+        PageNames::new(None),
+        ColumnContexts::new(node_count),
+    )
+}
+
+#[test]
+fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_floats() {
+    // `body > clearing, floater, wrapper > nested`, after a float moved to
+    // 100..140 on the left of `body`.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, parent, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let clearing = block(&mut doc, body, "display:block;clear:left");
+    let floater = block(&mut doc, body, "display:block;float:left");
+    let wrapper = block(&mut doc, body, "display:block");
+    let nested = block(&mut doc, wrapper, "display:block;clear:left");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    doc.nodes[body].unrounded_layout.size.width = 100.0;
+    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+        width: 60.0,
+        height: 10.0,
+    };
+    doc.nodes[floater].unrounded_layout.margin.top = 4.0;
+    doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
+    let pages = PageOrigins::new(&[], 100.0);
+    let control = PageLayoutControl::new(None);
+    let lines = TextLineIndex::default();
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let node_count = doc.nodes.len();
+    let new_state = || pagination_state_before_first_candidate(node_count);
+    let moved_floats = || {
+        let mut floats = FloatShifts {
+            later: 20.0,
+            ..Default::default()
+        };
+        floats.record_edge(
+            body,
+            FloatEdge {
+                node: 99,
+                side: 0,
+                top: 100.0,
+                bottom: 140.0,
+                width: 50.0,
+            },
+        );
+        floats
+    };
+    let candidate = |node_id, raw_y, direct_body_element| PageCandidate {
+        node_id,
+        raw_y,
+        height: 10.0,
+        context: candidates::BoxContext {
+            is_direct_body_element: direct_body_element,
+            ..Default::default()
+        },
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let settle = |doc: &mut Document, state: &mut PaginationState, candidate: &PageCandidate| {
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let start = state
+            .begin_candidate(&mut session, &env, candidate)
+            .unwrap();
+        assert!(start.is_some());
+    };
+
+    // A box before the candidate that underflowed into the preceding page
+    // keeps its correction for the flow after it.
+    let mut state = new_state();
+    state.deferred_shifts.underflow = Some((clearing, 7.0));
+    settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
+    assert_eq!(state.flow_shift, 7.0);
+    assert!(state.deferred_shifts.underflow.is_none());
+
+    // Leaving a subtree that could not hold a moved box takes back the part
+    // of the shift it did not absorb, and returns to the page the flow was on.
+    let mut state = new_state();
+    state.flow_shift = 12.0;
+    state.current_page = 3;
+    state.subtree_shifts.bounded.push((clearing, 5.0, 2));
+    settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (7.0, 2));
+    assert!(state.subtree_shifts.bounded.is_empty());
+
+    // So does leaving the moved float whose shift is pending.
+    let mut state = new_state();
+    state.flow_shift = 50.0;
+    state.current_page = 4;
+    state.float_shifts.pending = Some((floater, 30.0, 1));
+    settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (20.0, 1));
+    assert!(state.float_shifts.pending.is_none());
+    assert_eq!(state.float_shifts.later, 30.0);
+
+    // A box that clears the moved float moves below it, and so does the flow
+    // after it. The box then starts on the page its new position falls on.
+    let mut state = new_state();
+    state.float_shifts = moved_floats();
+    settle(&mut doc, &mut state, &candidate(clearing, 130.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
+    // No ancestor holds a box directly below the body.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+
+    // The ancestors of a nested box grow to hold its shift.
+    let mut state = new_state();
+    state.float_shifts = moved_floats();
+    settle(&mut doc, &mut state, &candidate(nested, 130.0, false));
+    assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 30.0);
+
+    // A float that does not fit beside the moved one moves below it and then
+    // is the float that the floats after it keep below.
+    let mut state = new_state();
+    state.float_shifts = moved_floats();
+    settle(&mut doc, &mut state, &candidate(floater, 130.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (14.0, 1));
+    assert_eq!(state.float_shifts.pending, Some((floater, 14.0, 0)));
+
+    // A box with nothing to clear stays where it is.
+    let mut state = new_state();
+    settle(&mut doc, &mut state, &candidate(clearing, 130.0, true));
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 0));
+}
+
+#[test]
+fn pagination_goes_on_within_the_page_limit_and_stops_or_fails_at_it() {
+    // A control that rejects excess pages fails at the limit.
+    let strict = PageLayoutControl::new(Some(2));
+    assert!(strict.within_page_limit(1).unwrap());
+    assert!(matches!(
+        strict.within_page_limit(2),
+        Err(LayoutError::PageLimitExceeded {
+            limit: 2,
+            actual: 3
+        })
+    ));
+    assert!(!strict.page_limit_reached());
+    // One that truncates at the limit stops there and records that it did.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(2));
+    assert!(discovery.within_page_limit(1).unwrap());
+    assert!(!discovery.page_limit_reached());
+    assert!(!discovery.within_page_limit(2).unwrap());
+    assert!(discovery.page_limit_reached());
+    // A cancelled layout fails whatever the limit.
+    let abort = || true;
+    let aborted = PageLayoutControl::for_geometry_discovery(Some(2)).with_abort_check(&abort);
+    assert!(matches!(
+        aborted.within_page_limit(0),
+        Err(LayoutError::Aborted)
+    ));
+    // Without a limit every page is within it.
+    assert!(
+        PageLayoutControl::new(None)
+            .within_page_limit(u32::MAX)
+            .unwrap()
+    );
+}
+
+#[test]
+fn the_start_of_a_candidate_skips_what_is_not_placed() {
+    // `body > table > thead > tr > td` and a table holding only text, whose
+    // anonymous cell is not a node of the source tree.
+    let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    let body = doc.parent_of(root).unwrap();
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px"),
+    );
+    let header = doc.append_element(
+        Some(table),
+        "thead",
+        Style::default(),
+        Some("display:table-header-group"),
+    );
+    let row = doc.append_element(
+        Some(header),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let header_cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;height:20px"),
+    );
+    let body_row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(body_row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;height:20px"),
+    );
+    let text_table = doc.append_element(Some(body), "div", Style::default(), Some("display:table"));
+    doc.append_text(text_table, "aaaa bbbb");
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let anonymous_cell = doc.anonymous_table_cells(text_table).next().unwrap().0;
+    let headers =
+        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    assert!(headers.owner(header_cell).is_some());
+
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
+    let candidate = |node_id, ifc_root| PageCandidate {
+        node_id,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root,
+    };
+    let control = PageLayoutControl::new(None);
+    let start = |doc: &mut Document, state: &mut PaginationState, candidate: &PageCandidate| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control: &control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots,
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        state.begin_candidate(&mut session, &env, candidate)
+    };
+    let node_count = doc.nodes.len();
+
+    // The lines of a repeated header are placed from the table's rows.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.table_headers = headers;
+    let skipped = start(&mut doc, &mut state, &candidate(header_cell, None));
+    assert!(matches!(skipped, Ok(None)));
+
+    // So is a candidate that is not a node of the source tree.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let skipped = start(&mut doc, &mut state, &candidate(anonymous_cell, None));
+    assert!(matches!(skipped, Ok(None)));
+
+    // Any other candidate is placed with what its start settled.
+    let place = |start: Result<Option<pagination_state::CandidateEntry>, LayoutError>| match start {
+        Ok(Some(entry)) => entry,
+        _ => panic!("the candidate is placed"),
+    };
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.current_page = 3;
+    state.saw_child = true;
+    state.page_names = PageNames::new(Some("a".to_string()));
+    let mut named = candidate(table, Some((anonymous_cell, 5.0)));
+    named.page_name = Some("b".to_string());
+    named.context.page_name_in_flow = true;
+    let entry = place(start(&mut doc, &mut state, &named));
+    assert_eq!(entry.page_before_candidate, 3);
+    // The candidate compares its page type against the enclosing flow's.
+    assert!(entry.name_context_seen);
+    assert_eq!(entry.comparison_page_name.as_deref(), Some("a"));
+    assert!(!entry.keep_local_page_type);
+    assert_eq!(state.page_names.outer.as_deref(), Some("b"));
+    // It is the first inside its paragraph, which it moves.
+    assert_eq!(entry.ifc_root, Some((anonymous_cell, 5.0)));
+    assert!(!entry.uses_positioned_coordinates);
+    // A later candidate of the same paragraph leaves the root where it is.
+    let again = place(start(&mut doc, &mut state, &named));
+    assert_eq!(again.ifc_root, None);
+    // Leaving the page type the flow last opened keeps its physical page.
+    state.page_names.current = Some("c".to_string());
+    let leaving = place(start(&mut doc, &mut state, &named));
+    assert!(leaving.keep_local_page_type);
+}
+
+#[test]
+fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let text = doc.nodes[root].children[0];
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(Some(5));
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = PageCandidate {
+        node_id: text,
+        raw_y: f32::INFINITY,
+        height: 10.0,
+        context: candidates::BoxContext {
+            page_name_in_flow: true,
+            ..Default::default()
+        },
+        page_name: Some("b".to_string()),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: true,
+        comparison_page_name: Some("a".to_string()),
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut state = pagination_state_before_first_candidate(doc.nodes.len());
+    state.saw_child = true;
+    state.page_names = PageNames::new(Some("a".to_string()));
+
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    state
+        .place_text(&mut session, &env, &candidate, &entry)
+        .unwrap();
+
+    // The text opens the next page for the page type it names, but it has
+    // no position to move to the start of that page from.
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
+    assert_eq!(state.page_names.current.as_deref(), Some("b"));
+}
+
+#[test]
+fn a_page_type_change_leaves_a_box_at_a_non_finite_position_where_it_is() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(Some(5));
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = PageCandidate {
+        node_id: root,
+        raw_y: f32::INFINITY,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: Some("b".to_string()),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: true,
+        comparison_page_name: Some("a".to_string()),
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut state = pagination_state_before_first_candidate(doc.nodes.len());
+    state.saw_child = true;
+    state.page_names = PageNames::new(Some("a".to_string()));
+
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    state
+        .place_box(&mut session, &env, &candidate, &entry)
+        .unwrap();
+
+    // The box opens the next page for the page type it names, but it has no
+    // position to land at the start of that page from.
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
+}
+
+/// The break of a box that meets none: it neither moves nor names a page type,
+/// and no margin adjoins it.
+fn box_meeting_no_break() -> pagination_state::BoxBreak {
+    pagination_state::BoxBreak {
+        margin_top: 0.0,
+        relative_offset: 0.0,
+        overflow: BoxOverflow {
+            page: false,
+            avoided_run: false,
+            table_row: false,
+            table_row_lead: 0.0,
+            row_group_lead: None,
+            flex_item: false,
+            grid_item: false,
+        },
+        forced_before: false,
+        forced_transition: false,
+        named_page_change: false,
+        margins_collapse_through: false,
+        collapses_with_previous_block: false,
+        pending_break_applies: false,
+    }
+}
+
+#[test]
+fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
+    let (mut doc, cascade, root) =
+        crate::layout::test_support::ahem_paragraph("A", "break-before:page");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = |node_id, raw_y, page_name: Option<&str>| PageCandidate {
+        node_id,
+        raw_y,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: page_name.map(str::to_string),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = |name_context_seen, comparison: Option<&str>, uses_positioned_coordinates| {
+        pagination_state::CandidateEntry {
+            name_context_seen,
+            comparison_page_name: comparison.map(str::to_string),
+            keep_local_page_type: false,
+            page_before_candidate: 0,
+            ifc_root: None,
+            participates_in_margin_adjacency: false,
+            uses_positioned_coordinates,
+        }
+    };
+    let node_count = doc.nodes.len();
+    let meet = |doc: &mut Document, candidate: &PageCandidate, entry: &_| {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.flow_shift = 5.0;
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        state.begin_box(&mut session, &env, candidate, entry)
+    };
+
+    // A forced break in the middle of a page is a page transition, and the
+    // box starts after the shift of the flow.
+    let (page_break, position) = meet(
+        &mut doc,
+        &candidate(root, 30.0, None),
+        &entry(false, None, false),
+    );
+    assert_eq!(position.effective_y, 35.0);
+    assert!(!position.starts_after_forced_break);
+    assert!(page_break.forced_before && page_break.forced_transition);
+    assert!(page_break.is_page_transition());
+    assert_eq!(page_break.margin_top, 0.0);
+
+    // One that coincides with the start of the page describes the page edge
+    // that is already there.
+    let (page_break, position) = meet(
+        &mut doc,
+        &candidate(root, -5.0, None),
+        &entry(false, None, false),
+    );
+    assert_eq!(position.effective_y, 0.0);
+    assert!(page_break.forced_before && !page_break.forced_transition);
+    assert!(!page_break.is_page_transition());
+
+    // A box with no break before it meets none, unless it names another page
+    // type than the flow it follows.
+    let (page_break, _) = meet(
+        &mut doc,
+        &candidate(body, 30.0, None),
+        &entry(true, None, false),
+    );
+    assert!(!page_break.forced_before && !page_break.named_page_change);
+    assert!(!page_break.forced_transition && !page_break.pending_break_applies);
+    assert!(!page_break.is_page_transition());
+    let (page_break, _) = meet(
+        &mut doc,
+        &candidate(body, 30.0, Some("b")),
+        &entry(true, Some("a"), false),
+    );
+    assert!(!page_break.forced_before && page_break.named_page_change);
+    assert!(page_break.forced_transition && page_break.is_page_transition());
+
+    // A box that follows its containing box through positioned insets starts
+    // where that box put it, whatever the shift of the flow.
+    doc.nodes[body].unrounded_layout.location.y = 123.0;
+    let positioned_y = current_abs_y(&doc, body);
+    let (_, position) = meet(
+        &mut doc,
+        &candidate(body, 30.0, None),
+        &entry(false, None, true),
+    );
+    assert_eq!(position.effective_y, positioned_y);
+    assert_ne!(position.effective_y, 35.0);
+}
+
+#[test]
+fn a_box_is_recorded_among_the_siblings_whose_margins_adjoin_its_own() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = PageCandidate {
+        node_id: root,
+        raw_y: 20.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = |participates_in_margin_adjacency| pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency,
+        uses_positioned_coordinates: false,
+    };
+    let page_break = |collapses_with_previous_block| pagination_state::BoxBreak {
+        collapses_with_previous_block,
+        ..box_meeting_no_break()
+    };
+    let node_count = doc.nodes.len();
+    let record = |doc: &mut Document,
+                  state: &mut PaginationState,
+                  participates,
+                  collapses,
+                  starts_after_forced_break| {
+        let session = crate::layout::context::LayoutSession::new(doc);
+        state.record_box_among_siblings(
+            &session,
+            &env,
+            &candidate,
+            &entry(participates),
+            &page_break(collapses),
+            starts_after_forced_break,
+        );
+    };
+
+    // A box that takes part in the margin adjacency leaves its bottom for
+    // the sibling after it, and ends the forced break before it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.sibling_margins.forced_break_box = Some(99);
+    record(&mut doc, &mut state, true, true, false);
+    assert_eq!(
+        state.sibling_margins.previous_bottoms.get(&body),
+        Some(&(root, 30.0))
+    );
+    assert_eq!(state.sibling_margins.forced_break_box, None);
+
+    // One whose margins do not collapse with the block before it forgets the
+    // bottom of its parent's last child.
+    record(&mut doc, &mut state, true, false, false);
+    assert!(state.sibling_margins.previous_bottoms.is_empty());
+
+    // One that starts after a forced break leaves the break to the margin
+    // after it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.sibling_margins.forced_break_box = Some(99);
+    record(&mut doc, &mut state, true, true, true);
+    assert_eq!(state.sibling_margins.forced_break_box, Some(99));
+    assert_eq!(
+        state.sibling_margins.previous_bottoms.get(&body),
+        Some(&(root, 30.0))
+    );
+
+    // One in a parallel flow leaves its siblings alone.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.sibling_margins.forced_break_box = Some(99);
+    record(&mut doc, &mut state, false, true, false);
+    assert!(state.sibling_margins.previous_bottoms.is_empty());
+    assert_eq!(state.sibling_margins.forced_break_box, Some(99));
+}
+
+#[test]
+fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "height:30px");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
+    let node_count = doc.nodes.len();
+    let candidate = |context| PageCandidate {
+        node_id: root,
+        raw_y: 90.0,
+        height: 30.0,
+        context,
+        page_name: None,
+        named_flex_context: Some(7),
+        ifc_root: None,
+    };
+    let mut finish = |control: &PageLayoutControl<'_>,
+                      state: &mut PaginationState,
+                      candidate: &PageCandidate,
+                      insets| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots,
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets,
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        state.finish_box(&mut session, &env, candidate, 90.0)
+    };
+    let mut reach_after = |candidate: &PageCandidate, insets| {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        finish(&PageLayoutControl::new(None), &mut state, candidate, insets).unwrap();
+        (state.reach.max, state.reach.flow_max)
+    };
+    let direct = candidates::BoxContext {
+        is_direct_body_element: true,
+        ..Default::default()
+    };
+    let padded = PageContentInsets {
+        top: 5.0,
+        ..Default::default()
+    };
+
+    // A box that crosses the end of its page reaches the pages it runs
+    // through, in the normal flow.
+    assert_eq!(
+        reach_after(&candidate(Default::default()), Default::default()),
+        (1, 1)
+    );
+    // So does one outside it, in the pages outside the flow only.
+    let out_of_flow = candidates::BoxContext {
+        is_out_of_flow_descendant: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        reach_after(&candidate(out_of_flow), Default::default()),
+        (1, 0)
+    );
+    // A fixed-height direct block that fits on the paper inside the page
+    // decoration stays on its page, whereas one on a page with no decoration
+    // runs on.
+    assert_eq!(reach_after(&candidate(direct), padded), (0, 0));
+    assert_eq!(reach_after(&candidate(direct), Default::default()), (1, 1));
+
+    // A flex item is remembered for the box after it in its named flow.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let flex_item = candidates::BoxContext {
+        is_flex_item: true,
+        ..Default::default()
+    };
+    finish(
+        &PageLayoutControl::new(None),
+        &mut state,
+        &candidate(flex_item),
+        Default::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        state.preceding_flex_items.by_context.get(&7),
+        Some(&(30.0, 0))
+    );
+    let mut state = pagination_state_before_first_candidate(node_count);
+    finish(
+        &PageLayoutControl::new(None),
+        &mut state,
+        &candidate(Default::default()),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(state.preceding_flex_items.by_context.is_empty());
+
+    // A page past the page limit halts the placement.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.current_page = 1;
+    assert!(matches!(
+        finish(
+            &PageLayoutControl::for_geometry_discovery(Some(1)),
+            &mut state,
+            &candidate(Default::default()),
+            Default::default(),
+        ),
+        Err(pagination_state::Halt::PageLimit)
+    ));
+}
+
+#[test]
+fn the_first_box_starts_on_the_first_page_and_a_later_one_where_its_break_puts_it() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = PageCandidate {
+        node_id: root,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let node_count = doc.nodes.len();
+    let start = |doc: &mut Document, saw_child, forced_transition, effective_y| {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.saw_child = saw_child;
+        state.current_page = 3;
+        let page_break = pagination_state::BoxBreak {
+            forced_transition,
+            ..box_meeting_no_break()
+        };
+        let mut position = pagination_state::BoxPosition {
+            effective_y,
+            starts_after_forced_break: false,
+        };
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let met = state
+            .start_box_page(
+                &mut session,
+                &env,
+                &candidate,
+                &entry,
+                &page_break,
+                &mut position,
+            )
+            .unwrap();
+        (met, state.saw_child, state.current_page, position)
+    };
+
+    // The first box starts on the first page, whatever break it meets.
+    let (met, saw_child, page, position) = start(&mut doc, false, true, 50.0);
+    assert_eq!(
+        (met, saw_child, page, position.effective_y),
+        (false, true, 0, 50.0)
+    );
+    assert!(!position.starts_after_forced_break);
+
+    // A later box that meets a page transition opens the page after the one
+    // it follows.
+    let (met, _, page, position) = start(&mut doc, true, true, 50.0);
+    assert_eq!((met, page), (true, 4));
+    assert!(position.starts_after_forced_break);
+
+    // One that meets none starts on the page its position falls on, which
+    // never precedes the page the flow is on.
+    let (met, _, page, position) = start(&mut doc, true, false, 450.0);
+    assert_eq!((met, page, position.effective_y), (false, 4, 450.0));
+    let (met, _, page, _) = start(&mut doc, true, false, 250.0);
+    assert_eq!((met, page), (false, 3));
+
+    // One at a position that no page holds stays on the page of the flow.
+    for effective_y in [f32::INFINITY, -1.0] {
+        let (met, _, page, position) = start(&mut doc, true, false, effective_y);
+        assert_eq!((met, page, position.effective_y), (false, 3, effective_y));
+    }
+}
+
+#[test]
+fn a_box_that_avoids_a_break_inside_it_is_a_page_transition() {
+    let page_break = |forced_transition, page, flex_item| {
+        let mut page_break = box_meeting_no_break();
+        page_break.forced_transition = forced_transition;
+        page_break.overflow.page = page;
+        page_break.overflow.flex_item = flex_item;
+        page_break
+    };
+    assert!(!page_break(false, false, false).is_page_transition());
+    assert!(page_break(true, false, false).is_page_transition());
+    assert!(page_break(false, true, false).is_page_transition());
+    assert!(page_break(false, false, true).is_page_transition());
+}
+
+#[test]
+fn placement_halts_at_a_page_past_the_page_limit() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let text = doc.nodes[root].children[0];
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
+    let node_count = doc.nodes.len();
+    // A candidate on the third page, placed after another one.
+    let candidate = |node_id, is_text| PageCandidate {
+        node_id,
+        raw_y: 250.0,
+        height: 10.0,
+        context: candidates::BoxContext {
+            is_text,
+            ..Default::default()
+        },
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut place = |control: &PageLayoutControl<'_>, candidate: &PageCandidate| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots,
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.saw_child = true;
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        if candidate.context.is_text {
+            state.place_text(&mut session, &env, candidate, &entry)
+        } else {
+            state.place_box(&mut session, &env, candidate, &entry)
+        }
+    };
+
+    for (node_id, is_text) in [(text, true), (root, false)] {
+        let candidate = candidate(node_id, is_text);
+        // A control that truncates at two pages halts pagination there and
+        // records that it did.
+        let discovery = PageLayoutControl::for_geometry_discovery(Some(2));
+        assert!(matches!(
+            place(&discovery, &candidate),
+            Err(pagination_state::Halt::PageLimit)
+        ));
+        assert!(discovery.page_limit_reached());
+        // One that rejects excess pages fails layout.
+        assert!(matches!(
+            place(&PageLayoutControl::new(Some(2)), &candidate),
+            Err(pagination_state::Halt::Failed(
+                LayoutError::PageLimitExceeded {
+                    limit: 2,
+                    actual: 3
+                }
+            ))
+        ));
+        // Within the limit the candidate is placed.
+        assert!(place(&PageLayoutControl::new(Some(3)), &candidate).is_ok());
+    }
+}
+
+#[test]
+fn footnotes_stack_at_the_bottom_of_their_anchor_page_and_leave_the_flow() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
+    let node_count = doc.nodes.len();
+    // A footnote whose anchor is on the third page.
+    let note = PageCandidate {
+        node_id: root,
+        raw_y: 250.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let place =
+        |doc: &mut Document, control: &PageLayoutControl<'_>, state: &mut PaginationState| {
+            let env = FlowEnv {
+                cascade: &cascade,
+                body_id: body,
+                control,
+                page_origins: &pages,
+                text_lines: &lines,
+                roots,
+                root_flow_offset: 0.0,
+                content_width: 800.0,
+                avoided_breaks: &AvoidedBreaks::default(),
+                insets: PageContentInsets::default(),
+                page_box: page_box_800x600(),
+            };
+            let mut session = crate::layout::context::LayoutSession::new(doc);
+            state.place_footnote(&mut session, &env, &note)
+        };
+
+    // The first note sits at the bottom of the page, takes its height out of
+    // the flow, and reaches the page outside the normal flow.
+    let control = PageLayoutControl::new(None);
+    let mut state = pagination_state_before_first_candidate(node_count);
+    place(&mut doc, &control, &mut state).unwrap();
+    assert_eq!(current_abs_y(&doc, root), 290.0);
+    assert_eq!(state.flow_shift, -10.0);
+    assert_eq!((state.reach.max, state.reach.flow_max), (2, 0));
+    assert!(state.saw_child);
+    // The flow stays on the page it was on.
+    assert_eq!(state.current_page, 0);
+
+    // The next note of the page stacks above it.
+    place(&mut doc, &control, &mut state).unwrap();
+    assert_eq!(current_abs_y(&doc, root), 280.0);
+    assert_eq!(state.flow_shift, -20.0);
+
+    // A note whose page is past the page limit halts pagination and leaves
+    // the state as it was.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(2));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    assert!(matches!(
+        place(&mut doc, &discovery, &mut state),
+        Err(pagination_state::Halt::PageLimit)
+    ));
+    assert_eq!(state.flow_shift, 0.0);
+    assert!(!state.saw_child);
+}
+
+#[test]
+fn halting_pagination_at_the_page_limit_is_not_an_error() {
+    assert!(pagination_state::Halt::PageLimit.finish().is_ok());
+    assert!(matches!(
+        pagination_state::Halt::Failed(LayoutError::Aborted).finish(),
+        Err(LayoutError::Aborted)
+    ));
+}
+
+/// `html > body > (spacer, root > text)`, laid out on one page and not
+/// paginated: `text` is an Ahem paragraph with a line height of 10 in a root of
+/// width 40. Returns the document, its cascade, and the ids of the body, the
+/// root and the text.
+fn unpaginated_paragraph_after_a_spacer(
+    text: &str,
+    root_css: &str,
+    spacer_height: f32,
+) -> (Document, CascadeResult, usize, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let spacer_css = format!("display:block;height:{spacer_height}px");
+    doc.append_element(Some(body), "div", Style::default(), Some(&spacer_css));
+    let root_css = format!(
+        "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
+    );
+    let root = doc.append_element(Some(body), "div", Style::default(), Some(&root_css));
+    let text = doc.append_text(root, text);
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    doc.set_font_collection_with_limits(
+        crate::layout::test_support::ifc_ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    (doc, cascade, body, root, text)
+}
+
+#[test]
+fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_parent() {
+    let (mut doc, cascade, body, root, text) =
+        unpaginated_paragraph_after_a_spacer("aaaa bbbb", "", 0.0);
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = |ifc_root| PageCandidate {
+        node_id: text,
+        raw_y: 0.0,
+        height: 20.0,
+        context: candidates::BoxContext {
+            is_text: true,
+            ..Default::default()
+        },
+        page_name: None,
+        named_flex_context: None,
+        ifc_root,
+    };
+    let session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut checked = CheckedParagraphs::default();
+
+    // The text of a paragraph is held by the paragraph's root, a direct child
+    // of the flow's contents box.
+    let blocks = pagination_state::LineBlocks::find(
+        &session,
+        &env,
+        &candidate(Some((root, 0.0))),
+        false,
+        &checked,
+    );
+    assert_eq!(blocks.paragraph_root, Some(root));
+    assert_eq!(blocks.block, Some((root, false)));
+    assert_eq!(blocks.flex_line, None);
+
+    // Text placed by positioned insets has no block to move.
+    let positioned = pagination_state::LineBlocks::find(
+        &session,
+        &env,
+        &candidate(Some((root, 0.0))),
+        true,
+        &checked,
+    );
+    assert_eq!(positioned.paragraph_root, Some(root));
+    assert_eq!(positioned.block, None);
+
+    // Neither has a block whose checks have all run.
+    checked.block_text.insert(root);
+    checked.orphans_widows.insert(root);
+    let checked_blocks = pagination_state::LineBlocks::find(
+        &session,
+        &env,
+        &candidate(Some((root, 0.0))),
+        false,
+        &checked,
+    );
+    assert_eq!(checked_blocks.block, None);
+
+    // Text outside an inline layout root is held by its parent.
+    let bare = pagination_state::LineBlocks::find(
+        &session,
+        &env,
+        &candidate(None),
+        false,
+        &CheckedParagraphs::default(),
+    );
+    assert_eq!(bare.paragraph_root, None);
+    assert_eq!(bare.block, Some((root, false)));
+}
+
+#[test]
+fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_no_block() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let container = doc.append_element(Some(body), "div", Style::default(), Some("display:flex"));
+    let item = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;width:100%"),
+    );
+    let text = doc.append_text(item, "aaaa");
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = |context| PageCandidate {
+        node_id: text,
+        raw_y: 0.0,
+        height: 10.0,
+        context,
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: Some((item, 0.0)),
+    };
+    let session = crate::layout::context::LayoutSession::new(&mut doc);
+    let checked = CheckedParagraphs::default();
+
+    // The item is not a block that moves as a unit, but its later lines can
+    // move down inside it.
+    let blocks = pagination_state::LineBlocks::find(
+        &session,
+        &env,
+        &candidate(candidates::BoxContext::default()),
+        false,
+        &checked,
+    );
+    assert_eq!(blocks.paragraph_root, Some(item));
+    assert_eq!(blocks.block, None);
+    assert_eq!(blocks.flex_line, Some((item, container)));
+
+    // Not so for text inside a float or placed by positioned insets.
+    let in_float = candidates::BoxContext {
+        is_float_descendant: true,
+        ..Default::default()
+    };
+    let floated =
+        pagination_state::LineBlocks::find(&session, &env, &candidate(in_float), false, &checked);
+    assert_eq!(floated.flex_line, None);
+    let positioned = pagination_state::LineBlocks::find(
+        &session,
+        &env,
+        &candidate(candidates::BoxContext::default()),
+        true,
+        &checked,
+    );
+    assert_eq!(positioned.flex_line, None);
+}
+
+#[test]
+fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once() {
+    // The 20px root starts 95px down a 100px page: its first line ends at 105.
+    let (mut doc, cascade, body, root, text) =
+        unpaginated_paragraph_after_a_spacer("aaaa bbbb", "height:20px", 95.0);
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let node_count = doc.nodes.len();
+    let candidate = PageCandidate {
+        node_id: text,
+        raw_y: 95.0,
+        height: 10.0,
+        context: candidates::BoxContext {
+            is_text: true,
+            ..Default::default()
+        },
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: Some((root, 0.0)),
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let at_first_line = || pagination_state::TextPosition {
+        effective_y: 95.0,
+        height: 10.0,
+    };
+    let push = |doc: &mut Document,
+                state: &mut PaginationState,
+                control: &PageLayoutControl<'_>| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let blocks = pagination_state::LineBlocks::find(
+            &session,
+            &env,
+            &candidate,
+            false,
+            &state.checked_paragraphs,
+        );
+        let mut text = at_first_line();
+        let pushed =
+            state.push_first_line_block(&mut session, &env, &candidate, &entry, &blocks, &mut text);
+        (pushed, text)
+    };
+
+    // Pagination halts instead of pushing the block past the page limit.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (pushed, text_after) = push(&mut doc, &mut state, &discovery);
+    assert!(matches!(pushed, Err(pagination_state::Halt::PageLimit)));
+    assert!(discovery.page_limit_reached());
+    assert_eq!((state.flow_shift, text_after.effective_y), (0.0, 95.0));
+
+    // Within the limit the block moves to the top of the next page, and the
+    // flow and the text follow it.
+    let control = PageLayoutControl::new(None);
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (pushed, text_after) = push(&mut doc, &mut state, &control);
+    pushed.unwrap();
+    assert_eq!((state.flow_shift, text_after.effective_y), (5.0, 100.0));
+    assert_eq!(text_after.height, 10.0);
+    assert_eq!(doc.nodes[root].unrounded_layout.location.y, 100.0);
+    assert!(state.checked_paragraphs.block_text.contains(&root));
+
+    // The block is checked from its first text only: the next text of it
+    // stays where it is.
+    let (pushed, text_after) = push(&mut doc, &mut state, &control);
+    pushed.unwrap();
+    assert_eq!((state.flow_shift, text_after.effective_y), (5.0, 95.0));
+}
+
+#[test]
+fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once() {
+    // Paragraphs of 10px lines in a root that starts `spacer_height` down a
+    // page of `page_step`; the paragraph is placed as the candidate of its
+    // text, with the lines of the text indexed.
+    let keep = |text: &str, spacer_height: f32, page_step: f32| {
+        let (mut doc, cascade, body, root, text) =
+            unpaginated_paragraph_after_a_spacer(text, "", spacer_height);
+        let mut lines = TextLineIndex::default();
+        lines.prepare_for(&doc, text, || Ok(())).unwrap();
+        let line_count = lines.get(text).unwrap().lines.len() as f32;
+        let pages = PageOrigins::new(&[], page_step);
+        let candidate = PageCandidate {
+            node_id: text,
+            raw_y: spacer_height,
+            height: 10.0 * line_count,
+            context: candidates::BoxContext {
+                is_text: true,
+                ..Default::default()
+            },
+            page_name: None,
+            named_flex_context: None,
+            ifc_root: Some((root, 0.0)),
+        };
+        let entry = pagination_state::CandidateEntry {
+            name_context_seen: false,
+            comparison_page_name: None,
+            keep_local_page_type: false,
+            page_before_candidate: 0,
+            ifc_root: None,
+            participates_in_margin_adjacency: false,
+            uses_positioned_coordinates: false,
+        };
+        let node_count = doc.nodes.len();
+        let mut run = |control: &PageLayoutControl<'_>, state: &mut PaginationState| {
+            let env = FlowEnv {
+                cascade: &cascade,
+                body_id: body,
+                control,
+                page_origins: &pages,
+                text_lines: &lines,
+                roots: candidates::FlowRoots::new(&doc, body),
+                root_flow_offset: 0.0,
+                content_width: 800.0,
+                avoided_breaks: &AvoidedBreaks::default(),
+                insets: PageContentInsets::default(),
+                page_box: page_box_800x600(),
+            };
+            let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+            let blocks = pagination_state::LineBlocks::find(
+                &session,
+                &env,
+                &candidate,
+                false,
+                &state.checked_paragraphs,
+            );
+            let mut text = pagination_state::TextPosition {
+                effective_y: spacer_height,
+                height: candidate.height,
+            };
+            let kept = state.keep_lines_together(
+                &mut session,
+                &env,
+                &candidate,
+                &entry,
+                &blocks,
+                &mut text,
+            );
+            (kept, text)
+        };
+        let mut state = pagination_state_before_first_candidate(node_count);
+        let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+        let halted = run(&discovery, &mut state);
+        let mut state = pagination_state_before_first_candidate(node_count);
+        let moved = run(&PageLayoutControl::new(None), &mut state);
+        // The paragraph is checked once, from its first text.
+        let again = run(&PageLayoutControl::new(None), &mut state);
+        assert_eq!(again.1.effective_y, spacer_height);
+        (halted, moved, state, root, doc)
+    };
+
+    // One line of three stays on the page, fewer than the two orphans: the
+    // whole block moves to the next page, and the flow and the text with it.
+    let (halted, (moved, text), state, root, doc) = keep("aaaa bbbb cccc", 25.0, 40.0);
+    assert!(matches!(halted.0, Err(pagination_state::Halt::PageLimit)));
+    moved.unwrap();
+    assert_eq!((state.flow_shift, text.effective_y), (15.0, 40.0));
+    assert_eq!(text.height, 30.0);
+    assert_eq!(doc.nodes[root].unrounded_layout.location.y, 40.0);
+    assert!(state.checked_paragraphs.orphans_widows.contains(&root));
+
+    // The last line alone on the next page is fewer than the two widows: the
+    // break moves up a line, which the text grows by.
+    let (_, (moved, text), state, root, _) = keep("aaaa bbbb cccc dddd", 70.0, 100.0);
+    moved.unwrap();
+    assert_eq!(state.deferred_shifts.line_splits, [(root, 2, 10.0)]);
+    assert_eq!((state.flow_shift, text.effective_y), (0.0, 70.0));
+    assert_eq!(text.height, 50.0);
+
+    // A paragraph that breaks well stays as it is.
+    let (_, (moved, text), state, ..) = keep("aaaa bbbb", 10.0, 100.0);
+    moved.unwrap();
+    assert!(state.deferred_shifts.line_splits.is_empty());
+    assert_eq!((state.flow_shift, text.effective_y), (0.0, 10.0));
+}
+
+#[test]
+fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_opens_one() {
+    let (mut doc, cascade, body, _, text) =
+        unpaginated_paragraph_after_a_spacer("aaaa bbbb", "", 0.0);
+    let spacer = doc.nodes[body].children[0];
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let node_count = doc.nodes.len();
+    let candidate = |page_name: &str| PageCandidate {
+        node_id: text,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext {
+            is_text: true,
+            page_name_in_flow: true,
+            ..Default::default()
+        },
+        page_name: Some(page_name.to_string()),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = |comparison_page_name: &str| pagination_state::CandidateEntry {
+        name_context_seen: true,
+        comparison_page_name: Some(comparison_page_name.to_string()),
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut step = |state: &mut PaginationState,
+                    control: &PageLayoutControl<'_>,
+                    candidate: &PageCandidate,
+                    entry: &pagination_state::CandidateEntry,
+                    effective_y: f32| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(&doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut position = pagination_state::TextPosition {
+            effective_y,
+            height: 10.0,
+        };
+        let stepped = state.step_text_page(&mut session, &env, candidate, entry, &mut position);
+        (stepped, position.effective_y)
+    };
+    let unlimited = PageLayoutControl::new(None);
+
+    // The first text is on the first page, whatever its position, and names it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), 250.0);
+    let stepped = stepped.unwrap();
+    assert!(!stepped.named_page_change && !stepped.consumes_pending_break);
+    assert!(state.saw_child);
+    assert_eq!((state.current_page, y), (0, 250.0));
+    assert_eq!(state.page_names.current.as_deref(), Some("a"));
+
+    // Later text goes on from the page its position falls on.
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), 250.0);
+    let stepped = stepped.unwrap();
+    assert!(!stepped.named_page_change && !stepped.consumes_pending_break);
+    assert_eq!((state.current_page, state.flow_shift, y), (2, 0.0, 250.0));
+    // A position that is not on any page leaves it where it is.
+    let (stepped, _) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), -5.0);
+    stepped.unwrap();
+    assert_eq!(state.current_page, 2);
+
+    // A page type other than the one it follows opens a page for the text,
+    // which moves to the top of it together with the flow after it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("b"), &entry("a"), 50.0);
+    let stepped = stepped.unwrap();
+    assert!(stepped.named_page_change && !stepped.consumes_pending_break);
+    assert_eq!((state.current_page, state.flow_shift, y), (1, 50.0, 100.0));
+    assert_eq!(state.page_names.current.as_deref(), Some("b"));
+
+    // So does a break pending after the box before it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    state.current_page = 1;
+    state.pending_break.source = Some(spacer);
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), 120.0);
+    let stepped = stepped.unwrap();
+    assert!(!stepped.named_page_change && stepped.consumes_pending_break);
+    assert_eq!((state.current_page, state.flow_shift, y), (2, 80.0, 200.0));
+
+    // Neither is within a page limit it would pass.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    let (stepped, _) = step(&mut state, &discovery, &candidate("b"), &entry("a"), 50.0);
+    assert!(matches!(stepped, Err(pagination_state::Halt::PageLimit)));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    let (stepped, _) = step(&mut state, &discovery, &candidate("a"), &entry("a"), 150.0);
+    assert!(matches!(stepped, Err(pagination_state::Halt::PageLimit)));
+}
+
+/// `html > body > (first, second)`, laid out on one page and not paginated:
+/// blocks of height `first_height` and 20, the second with `second_margin_top`
+/// above it. Returns the document, its cascade and the ids of the body and the
+/// two blocks.
+fn unpaginated_blocks(
+    first_height: f32,
+    second_margin_top: f32,
+) -> (Document, CascadeResult, usize, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let first_css = format!("display:block;height:{first_height}px");
+    let first = doc.append_element(Some(body), "div", Style::default(), Some(&first_css));
+    let second_css = format!("display:block;height:20px;margin-top:{second_margin_top}px");
+    let second = doc.append_element(Some(body), "div", Style::default(), Some(&second_css));
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    (doc, cascade, body, first, second)
+}
+
+/// The break a box with no overflow meets, `forced` before it or not.
+fn box_break(forced: bool, margin_top: f32) -> pagination_state::BoxBreak {
+    pagination_state::BoxBreak {
+        margin_top,
+        relative_offset: 0.0,
+        overflow: BoxOverflow {
+            page: !forced,
+            avoided_run: false,
+            table_row: false,
+            table_row_lead: 0.0,
+            row_group_lead: None,
+            flex_item: false,
+            grid_item: false,
+        },
+        forced_before: forced,
+        forced_transition: forced,
+        named_page_change: false,
+        margins_collapse_through: true,
+        collapses_with_previous_block: true,
+        pending_break_applies: forced,
+    }
+}
+
+#[test]
+fn a_box_meeting_a_page_transition_moves_to_the_top_of_the_next_page() {
+    let (mut doc, cascade, body, first, second) = unpaginated_blocks(60.0, 0.0);
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let node_count = doc.nodes.len();
+    let candidate = PageCandidate {
+        node_id: second,
+        raw_y: 60.0,
+        height: 20.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut open = |state: &mut PaginationState,
+                    control: &PageLayoutControl<'_>,
+                    page_break: &pagination_state::BoxBreak,
+                    effective_y: f32| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(&doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut position = pagination_state::BoxPosition {
+            effective_y,
+            starts_after_forced_break: false,
+        };
+        let opened = state.open_page_for_box(
+            &mut session,
+            &env,
+            &candidate,
+            &entry,
+            page_break,
+            &mut position,
+        );
+        (opened, position)
+    };
+    let unlimited = PageLayoutControl::new(None);
+
+    // Pagination halts instead of opening a page past the page limit.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (opened, position) = open(&mut state, &discovery, &box_break(true, 0.0), 60.0);
+    assert!(matches!(opened, Err(pagination_state::Halt::PageLimit)));
+    assert_eq!((state.flow_shift, position.effective_y), (0.0, 60.0));
+
+    // A forced break moves the box, and the flow after it, to the top of the
+    // next page; the box owns the margins after the break, and the break that
+    // was pending is consumed.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.pending_break.source = Some(first);
+    let (opened, position) = open(&mut state, &unlimited, &box_break(true, 0.0), 60.0);
+    opened.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (40.0, 1, 100.0)
+    );
+    assert!(position.starts_after_forced_break);
+    assert_eq!(state.sibling_margins.forced_break_box, Some(second));
+    assert!(state.pending_break.source.is_none());
+
+    // A box that avoids a break inside it moves the same way, but owns
+    // nothing after the break and leaves a pending break alone.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.pending_break.source = Some(first);
+    let (opened, position) = open(&mut state, &unlimited, &box_break(false, 0.0), 100.0);
+    opened.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (0.0, 1, 100.0)
+    );
+    assert!(!position.starts_after_forced_break);
+    assert_eq!(state.sibling_margins.forced_break_box, None);
+    assert_eq!(state.pending_break.source, Some(first));
+
+    // A box with no position to move from only opens the page.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (opened, position) = open(&mut state, &unlimited, &box_break(true, 0.0), f32::INFINITY);
+    opened.unwrap();
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
+    assert_eq!(position.effective_y, f32::INFINITY);
+}
+
+#[test]
+fn a_box_meeting_no_page_transition_starts_on_the_page_its_position_falls_on() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    // The first block ends at 90 and the second starts at 120: the page edge
+    // at 100 falls in the 30px margin between them.
+    let (mut doc, cascade, body, first, second) = unpaginated_blocks(90.0, 30.0);
+    let node_count = doc.nodes.len();
+    let candidate = PageCandidate {
+        node_id: second,
+        raw_y: 120.0,
+        height: 20.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let mut start = |state: &mut PaginationState,
+                     control: &PageLayoutControl<'_>,
+                     page_break: &pagination_state::BoxBreak| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(&doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut position = pagination_state::BoxPosition {
+            effective_y: 120.0,
+            starts_after_forced_break: false,
+        };
+        let started = state.start_box_on_natural_page(
+            &mut session,
+            &env,
+            &candidate,
+            page_break,
+            &mut position,
+        );
+        (started, position)
+    };
+    let unlimited = PageLayoutControl::new(None);
+    let after_first = || {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.sibling_margins.record_bottom(body, first, true, 90.0);
+        state
+    };
+
+    // Pagination halts instead of starting the box on a page past the limit.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+    let (started, position) = start(&mut after_first(), &discovery, &box_break(false, 30.0));
+    assert!(matches!(started, Err(pagination_state::Halt::PageLimit)));
+    assert!(discovery.page_limit_reached());
+    assert!(!position.starts_after_forced_break);
+
+    // The page edge truncates the margin: the box moves up to the top of the
+    // page it falls on.
+    let mut state = after_first();
+    let (started, position) = start(&mut state, &unlimited, &box_break(false, 30.0));
+    started.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (-20.0, 1, 100.0)
+    );
+    assert!(state.sibling_margins.moved_boxes);
+    assert!(!position.starts_after_forced_break);
+
+    // With no margin to truncate the box stays where it is, and a forced break
+    // at the page edge makes it the owner of the margins after the break.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (started, position) = start(&mut state, &unlimited, &box_break(true, 30.0));
+    started.unwrap();
+    assert_eq!(
+        (state.flow_shift, state.current_page, position.effective_y),
+        (0.0, 1, 120.0)
+    );
+    assert!(!state.sibling_margins.moved_boxes);
+    assert!(position.starts_after_forced_break);
+    assert_eq!(state.sibling_margins.forced_break_box, Some(second));
+}
+
+#[test]
+fn boxes_outside_the_paginated_flow_reach_the_pages_they_paint_on() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    // The first block of the document ends at 250, on the third page.
+    let (mut doc, cascade, body, ..) = unpaginated_blocks(250.0, 0.0);
+    // The same document with a body that clips its overflow.
+    let (mut clipped, clipped_cascade, clipped_body, ..) = {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;overflow:hidden"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:250px"),
+        );
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        (doc, cascade, body, ())
+    };
+    let node_count = doc.nodes.len();
+    let reach = |doc: &mut Document,
+                 cascade: &CascadeResult,
+                 body: usize,
+                 control: &PageLayoutControl<'_>| {
+        let env = FlowEnv {
+            cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.page_names.current = Some("z".to_string());
+        let session = crate::layout::context::LayoutSession::new(doc);
+        let reached = state.reach_overflow_pages(&session, &env, 100.0);
+        (reached, state)
+    };
+
+    // The overflow reaches the third page. The pages after the last one of
+    // the flow take the page type the flow ended on, and the first keeps its
+    // own.
+    let (reached, state) = reach(&mut doc, &cascade, body, &PageLayoutControl::new(None));
+    reached.unwrap();
+    assert_eq!((state.reach.max, state.reach.flow_max), (2, 0));
+    assert_eq!(
+        state.page_names.by_page,
+        [None, Some("z".to_string()), Some("z".to_string())]
+    );
+
+    // A body that clips its overflow keeps it within the flow.
+    let (reached, state) = reach(
+        &mut clipped,
+        &clipped_cascade,
+        clipped_body,
+        &PageLayoutControl::new(None),
+    );
+    reached.unwrap();
+    assert_eq!(state.reach.max, 0);
+
+    // Once the page limit stopped pagination there are no pages to add.
+    let truncating = PageLayoutControl::for_geometry_discovery(Some(1));
+    assert!(!truncating.within_page_limit(3).unwrap());
+    let (reached, state) = reach(&mut doc, &cascade, body, &truncating);
+    reached.unwrap();
+    assert_eq!(state.reach.max, 0);
+
+    // A page past the limit fails a layout that rejects it.
+    let (reached, _) = reach(&mut doc, &cascade, body, &PageLayoutControl::new(Some(2)));
+    assert!(matches!(
+        reached,
+        Err(LayoutError::PageLimitExceeded {
+            limit: 2,
+            actual: 3
+        })
+    ));
 }

@@ -18,9 +18,13 @@ use raikiri_style::property::BreakInside;
 /// `out_of_flow`, holds an absolutely positioned box).
 ///
 /// Inline margins, generated content, forced or avoided breaks between
-/// boxes, positioned or floated boxes, scroll containers and replaced
-/// elements need their own handling at a break, so containers with them keep
-/// the other strategies.
+/// boxes, absolutely positioned or floated boxes, scroll containers and
+/// replaced elements need their own handling at a break, so containers with
+/// them keep the other strategies. A `position: relative` box with inline insets
+/// is sliced like any other: its column location carries no offset, which the
+/// painter adds. That holds only for a box with nothing rendered inside it, so
+/// one that holds blocks or absolutely positioned boxes keeps the other
+/// strategies when it has insets, and so does a box inside a wrapper.
 ///
 /// With `out_of_flow`, a child may also hold absolutely positioned boxes
 /// that it is the containing block of; [`layout`] breaks them across the
@@ -29,7 +33,6 @@ use raikiri_style::property::BreakInside;
 pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Option<Vec<usize>> {
     let container = &tree.layout_node_with_style(parent).unwrap();
     if container.ifc.is_some()
-        || container.style.direction != TaffyDirection::Ltr
         || !inherits_horizontal(tree, parent)
         || container.has_before_or_after_content
     {
@@ -39,7 +42,12 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
     let mut boxes = Vec::new();
     for child in rendered_elements(tree, parent) {
         let node = &tree.layout_node_with_style(child).unwrap();
-        if !is_plain_block(tree, child) {
+        let has_inset = node.style.inset != Rect::auto();
+        if !is_plain_block_ignoring_insets(tree, child)
+            || has_inset
+                && (!super::insets_are_a_relative_inline_offset(tree, child)
+                    || has_rendered_content(tree, child, false))
+        {
             return None;
         }
         if has_rendered_content(tree, child, out_of_flow && node.contains_absolute_boxes) {
@@ -108,10 +116,15 @@ pub(super) fn starts_the_outer_columns(tree: &Document, id: usize) -> bool {
 /// Whether `child` is a block that can be sliced at a column end, leaving
 /// aside what it contains.
 fn is_plain_block(tree: &Document, child: usize) -> bool {
+    tree.layout_node_with_style(child).unwrap().style.inset == Rect::auto()
+        && is_plain_block_ignoring_insets(tree, child)
+}
+
+/// [`is_plain_block`] for a box whose insets the caller accepts.
+fn is_plain_block_ignoring_insets(tree: &Document, child: usize) -> bool {
     let node = &tree.layout_node_with_style(child).unwrap();
     let defaults: taffy::Style = taffy::Style::default();
     !(node.display() != DisplayValue::Block
-        || node.style.direction != TaffyDirection::Ltr
         // An orthogonal flow is monolithic in the column's block axis.
         || !is_horizontal(node)
         // So is a box with size containment (CSS Contain 2, 3.1).
@@ -120,7 +133,6 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
             && node.taffy_position() != defaults.position
         || node.style.float.is_floated()
         || node.style.clear != defaults.clear
-        || node.style.inset != Rect::auto()
         || block_margins(node.style).is_none()
         || node.style.overflow != defaults.overflow
         || node.tag_name().is_some_and(|tag| {
@@ -132,7 +144,8 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
         || node.break_after != BreakBetween::Auto
         || node.has_before_or_after_content
         || node.multicol.is_some()
-        || node.ifc.is_some())
+        || node.ifc.is_some()
+        || is_right_aligned_in_parent(tree, child))
 }
 
 /// The in-flow children of `wrapper`, when they are plain blocks with no
@@ -1124,8 +1137,9 @@ pub(super) fn layout(
         tree.nodes[child].cache.clear();
         let output = tree.compute_child_layout(
             TaffyNodeId::from(child),
-            super::column_child_input(
-                super::column_child_known_width(tree, child, context.column_width),
+            super::column_child_layout_input(
+                tree,
+                child,
                 context.column_width,
                 definite_height,
                 AvailableSpace::MaxContent,

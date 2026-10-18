@@ -261,6 +261,16 @@ pub(crate) fn map_font_family(family: &FontFamilyName) -> Option<FontFamily> {
     Some(FontFamily::Generic(generic))
 }
 
+/// The line height the inline engine lays lines out with for a computed
+/// `line-height`.
+pub(crate) fn line_height_of(value: &ComputedLineHeight) -> LineHeight {
+    match value {
+        ComputedLineHeight::Normal => LineHeight::Normal,
+        ComputedLineHeight::Number(value) => LineHeight::Number(*value),
+        ComputedLineHeight::Length(value) => LineHeight::Px(value.0),
+    }
+}
+
 /// Text style of one element (or of the paragraph root).
 ///
 /// `lang` is left unset; the caller fills it from the document.
@@ -287,11 +297,7 @@ pub(crate) fn inline_style(
     // relative field uses the space advance, so resolve the percentage here.
     let word_spacing = word_spacing_absolute + cv.font_size.0 * word_spacing_percent / 100.0;
     let word_spacing_percent = 0.0;
-    let line_height = match cv.line_height {
-        ComputedLineHeight::Normal => LineHeight::Normal,
-        ComputedLineHeight::Number(value) => LineHeight::Number(value),
-        ComputedLineHeight::Length(value) => LineHeight::Px(value.0),
-    };
+    let line_height = line_height_of(&cv.line_height);
 
     // The effective values already follow the winning declaration, whether it
     // was the legacy `white-space` keyword or a longhand.

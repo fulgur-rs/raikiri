@@ -46,6 +46,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
         gap_percent,
         height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),
         horizontal: !cv.writing_mode.is_vertical(),
+        rtl: matches!(cv.direction, Direction::Rtl),
         orphans: cv.orphans.max(1) as usize,
         widows: cv.widows.max(1) as usize,
     })
@@ -394,6 +395,19 @@ fn apply_computed_to_style_in_session_inner(
             &mut doc.context.layout_warnings,
         );
         bridge_alignment(&mut style, cv);
+        // The container an `auto` self-alignment borrows from is the nearest
+        // ancestor that makes a box: `display: contents` ones are flattened
+        // away, except the document element, which is blockified.
+        let boxes = super::box_tree::BoxTree::for_cascade(doc, cascade);
+        let mut container = doc.nodes[idx].parent;
+        while let Some(ancestor) = container
+            && boxes.display(ancestor) == Some(DisplayValue::Contents)
+        {
+            container = doc.nodes[ancestor].parent;
+        }
+        if let Some(container) = container {
+            bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[container]);
+        }
         bridge_gap(
             &mut style,
             cv,
@@ -819,13 +833,20 @@ fn bridge_padding(
 ///   future work for the paint layer.
 /// - `border-image` and `border-radius` are out of scope.
 fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
-    let b = cv.border;
-    style.border = Rect {
-        top: computed_length_to_taffy_length_percentage(b.top.width(), diag),
-        right: computed_length_to_taffy_length_percentage(b.right.width(), diag),
-        bottom: computed_length_to_taffy_length_percentage(b.bottom.width(), diag),
-        left: computed_length_to_taffy_length_percentage(b.left.width(), diag),
-    };
+    style.border = taffy_border_widths(&cv.border, diag);
+}
+
+/// The taffy border widths of `border`, as [`bridge_border`] sets them.
+pub(super) fn taffy_border_widths(
+    border: &raikiri_style::property::Sides<raikiri_style::ComputedBorder>,
+    diag: &mut Vec<LayoutWarn>,
+) -> Rect<LengthPercentage> {
+    Rect {
+        top: computed_length_to_taffy_length_percentage(border.top.width(), diag),
+        right: computed_length_to_taffy_length_percentage(border.right.width(), diag),
+        bottom: computed_length_to_taffy_length_percentage(border.bottom.width(), diag),
+        left: computed_length_to_taffy_length_percentage(border.left.width(), diag),
+    }
 }
 
 fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
@@ -1273,10 +1294,54 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     style.align_content =
         content_alignment_to_taffy(cv.align_content).unwrap_or(TaffyAlignContent::NORMAL);
     style.align_items = self_alignment_to_taffy(cv.align_items).unwrap_or(TaffyAlignItems::NORMAL);
-    style.align_self = self_alignment_or_auto_to_taffy(cv.align_self);
     style.justify_items =
         self_alignment_to_taffy(cv.justify_items).unwrap_or(TaffyAlignItems::NORMAL);
-    style.justify_self = self_alignment_or_auto_to_taffy(cv.justify_self);
+    // An absolutely positioned box takes no part in baseline alignment, so
+    // `last baseline` falls back to `safe self-end` (CSS Box Alignment 3 §9.1).
+    let abspos = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+    let own = |value: AlignSelfValue| match value {
+        AlignSelfValue::Value(SelfAlignmentValue::LastBaseline) if abspos => {
+            Some(TaffyAlignItems::SAFE_SELF_END)
+        }
+        value => self_alignment_or_auto_to_taffy(value),
+    };
+    style.align_self = own(cv.align_self);
+    style.justify_self = own(cv.justify_self);
+}
+
+/// An absolutely positioned box whose `align-self` / `justify-self` is `auto`
+/// takes the container's `align-items` / `justify-items` for its static
+/// position, where both insets of the axis are `auto`. When that is
+/// `last baseline`, the box falls back to `safe self-end` like an explicit
+/// `last baseline` does (see [`bridge_alignment`]); taffy alone would
+/// inherit the container's plain baseline. With an inset specified, `auto`
+/// behaves as `normal` and the box stays at the start.
+// spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-auto
+fn bridge_inherited_last_baseline(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    parent: &ComputedValues,
+) {
+    if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
+        return;
+    }
+    let auto = |value: ComputedLengthPercentageOrAuto| {
+        matches!(value, ComputedLengthPercentageOrAuto::Auto)
+    };
+    if matches!(cv.align_self, AlignSelfValue::Auto)
+        && parent.align_items == SelfAlignmentValue::LastBaseline
+        && auto(cv.top)
+        && auto(cv.bottom)
+    {
+        style.align_self = Some(TaffyAlignItems::SAFE_SELF_END);
+    }
+    if matches!(cv.justify_self, AlignSelfValue::Auto)
+        && parent.justify_items == SelfAlignmentValue::LastBaseline
+        && auto(cv.left)
+        && auto(cv.right)
+    {
+        style.justify_self = Some(TaffyAlignItems::SAFE_SELF_END);
+    }
 }
 
 /// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by
@@ -1337,8 +1402,10 @@ fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
         SelfAlignmentValue::End => Some(TaffyAlignItems::END),
         SelfAlignmentValue::FlexStart => Some(TaffyAlignItems::FLEX_START),
         SelfAlignmentValue::FlexEnd => Some(TaffyAlignItems::FLEX_END),
-        SelfAlignmentValue::Baseline => Some(TaffyAlignItems::BASELINE),
-        // cov:ignore: unreachable while SelfAlignmentValue is the 8
+        SelfAlignmentValue::Baseline | SelfAlignmentValue::LastBaseline => {
+            Some(TaffyAlignItems::BASELINE)
+        }
+        // cov:ignore: unreachable while SelfAlignmentValue is the 9
         // variants matched above only; required for its #[non_exhaustive]
         // contract.
         _ => None,

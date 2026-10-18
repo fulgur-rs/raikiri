@@ -420,7 +420,7 @@ impl<'a> Page<'a> {
                 host_opacity: prepared.host_opacity,
             }));
         }
-        let Some(prepared) = self.prepare_inline_svg(fragment, id, viewport, computed)? else {
+        let Some(prepared) = self.prepare_inline_svg(id, viewport, computed)? else {
             return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
         };
         let svg = InlineSvg {
@@ -432,15 +432,13 @@ impl<'a> Page<'a> {
         Ok(Some(svg))
     }
 
-    /// Serializes, parses and restyles the SVG root of `fragment`.
+    /// Serializes, parses and restyles the SVG root `id`.
     fn prepare_inline_svg(
         &self,
-        fragment: &Fragment<'a>,
         id: usize,
         viewport: PaintRect,
         computed: &ComputedValues,
     ) -> Result<Option<PreparedSvg>, raikiri_svg::SvgError> {
-        let dom = self.dom();
         let Some(source) = self
             .document
             .serialize_svg_subtree(id)
@@ -457,37 +455,18 @@ impl<'a> Page<'a> {
             .unwrap_or(false)
             .then_some(computed.opacity);
         let color = computed.color;
-        let mut node_styles = Vec::new();
-        let mut remaining_style_bytes = 32 * 1024 * 1024usize;
-        let mut stack = vec![fragment.node()];
-        let mut element_index = 0;
-        while let Some(node) = stack.pop() {
-            if dom.kind(node) == Some(raikiri_traits::NodeKind::Element) {
-                if element_index != 0 {
-                    let properties = self
-                        .cascade
-                        .svg_style_properties(raikiri_style::StyleNodeId(node.0));
-                    if !properties.is_empty()
-                        && let Some(style) = self.computed(node)
-                    {
-                        let declarations =
-                            svg_node_declarations(style, properties, &mut remaining_style_bytes)?;
-                        node_styles.push((element_index, declarations));
-                    }
-                }
-                element_index += 1;
-            }
-            let children: Vec<_> = dom.children(node).collect();
-            stack.extend(children.into_iter().rev());
-        }
+        let node_styles = raikiri_dom::inline_svg_style::inline_svg_element_declarations(
+            self.document,
+            self.cascade,
+            id,
+        )
+        .map_err(raikiri_svg::SvgError::InvalidDocument)?;
         let element_styles: Vec<_> = node_styles
             .iter()
-            .map(
-                |(element_index, declarations)| raikiri_svg::SvgElementStyle {
-                    element_index: *element_index,
-                    declarations,
-                },
-            )
+            .map(|node| raikiri_svg::SvgElementStyle {
+                element_index: node.element_index,
+                declarations: &node.declarations,
+            })
             .collect();
         let source = document.styled_source_with_resolved_styles(
             raikiri_svg::SvgViewport {
@@ -511,7 +490,7 @@ impl<'a> Page<'a> {
                 size: computed.font_size.0,
                 weight: computed.font_weight,
                 style: computed.font_style.as_css_str(),
-                family: &svg_font_family(computed),
+                family: &raikiri_dom::inline_svg_style::svg_font_family(computed),
             },
             &element_styles,
         )?;
@@ -573,7 +552,11 @@ impl<'a> Page<'a> {
     /// follow the built-in painter: negative `z-index` first, then in-flow
     /// boxes, floats, and positioned boxes with `z-index: auto` or a
     /// non-negative `z-index`; flex and grid items use `order` within a
-    /// stacking level. A paragraph's inline boxes come before its text.
+    /// stacking level. A paragraph's inline boxes come before its text. An
+    /// inline element on the first line to which a `::first-line` gives a
+    /// color or font size other than its own is listed by
+    /// [`PaintEvent::LineBox`] pieces in place of its [`PaintEvent::Box`], as
+    /// [`Self::paint_order_for_text_runs`] describes.
     /// Clip rectangles are in the same space as [`Fragment::paint_rect`]; an
     /// overflow clip is built from the element's whole box, so it runs past
     /// the page where a page break cuts the box.
@@ -641,6 +624,10 @@ impl<'a> Page<'a> {
     /// first line carries the values the `::first-line` gives the element, in
     /// [`crate::LineBox::style`]. Floats and atomic inlines not on the first
     /// line stay with the other lines.
+    /// Whether or not the `::first-line` is translucent, an inline element
+    /// on the first line to which it gives a color or font size other than
+    /// the element's own is listed by [`PaintEvent::LineBox`] pieces in the
+    /// same way, also when it has no box on later lines.
     /// [`Self::text_run_opacity_group`] tells
     /// which line event draws a run: a run of no group belongs to the
     /// `TextLine` event of its line, and any other run to the `GroupTextLine`
@@ -945,109 +932,3 @@ fn checked_pixels(
         .checked_mul(4)?;
     (pixels.width != 0 && pixels.height != 0 && pixels.rgba.len() == bytes).then_some(pixels)
 }
-
-fn svg_font_family(style: &ComputedValues) -> String {
-    style
-        .font_family
-        .iter()
-        .map(|family| {
-            if family.1 == raikiri_style::property::FontFamilyKind::Generic {
-                family.as_str().to_owned()
-            } else {
-                // Writing to a `String` cannot fail.
-                let mut quoted = String::new();
-                let _ = cssparser::serialize_string(family.as_str(), &mut quoted);
-                quoted
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-fn svg_node_declarations(
-    style: &ComputedValues,
-    properties: &[raikiri_style::cascade::SvgStyleProperty],
-    remaining_bytes: &mut usize,
-) -> Result<String, raikiri_svg::SvgError> {
-    use raikiri_style::property::PropertyKey;
-    let mut css = String::new();
-    // Bound metadata before allocating repeated declarations from the host CSS.
-    let mut consume = |bytes: usize| {
-        *remaining_bytes = remaining_bytes.checked_sub(bytes).ok_or_else(|| {
-            raikiri_svg::SvgError::InvalidDocument(
-                "SVG descendant style source limit exceeded".into(),
-            )
-        })?;
-        Ok::<(), raikiri_svg::SvgError>(())
-    };
-    consume(128)?;
-    for property in properties {
-        let size = if property.property == PropertyKey::FontFamily && !property.inherited {
-            style.font_family.iter().fold(128usize, |size, name| {
-                size.saturating_add(name.as_str().len().saturating_mul(8))
-            })
-        } else {
-            128
-        };
-        consume(size)?;
-        let (name, value) = if property.inherited {
-            let name = match property.property {
-                PropertyKey::Color => "color",
-                PropertyKey::Display => "display",
-                PropertyKey::Opacity => "opacity",
-                PropertyKey::Visibility => "visibility",
-                PropertyKey::FontSize => "font-size",
-                PropertyKey::FontFamily => "font-family",
-                PropertyKey::FontStyle => "font-style",
-                PropertyKey::FontWeight => "font-weight",
-                _ => continue,
-            };
-            // SVG renderers such as usvg copy an ancestor's raw `font-size`
-            // for `inherit` and apply it again, compounding a relative size.
-            // `100%` has the same computed value without that copy.
-            let value = if property.property == PropertyKey::FontSize {
-                "100%"
-            } else {
-                "inherit"
-            };
-            (name, value.to_owned())
-        } else {
-            match property.property {
-                PropertyKey::Color => {
-                    let color = style.color;
-                    (
-                        "color",
-                        format!(
-                            "rgba({},{},{},{:.6})",
-                            color.r,
-                            color.g,
-                            color.b,
-                            f32::from(color.a) / 255.0
-                        ),
-                    )
-                }
-                PropertyKey::Display => ("display", style.display.as_css_str().to_owned()),
-                PropertyKey::Opacity => ("opacity", style.opacity.to_string()),
-                PropertyKey::Visibility => ("visibility", style.visibility.as_css_str().to_owned()),
-                PropertyKey::FontSize => ("font-size", format!("{}px", style.font_size.0)),
-                PropertyKey::FontFamily => ("font-family", svg_font_family(style)),
-                PropertyKey::FontStyle => ("font-style", style.font_style.as_css_str().to_owned()),
-                PropertyKey::FontWeight => ("font-weight", style.font_weight.to_string()),
-                _ => continue,
-            }
-        };
-        let value = property
-            .expression
-            .as_ref()
-            .filter(|_| !property.inherited)
-            .unwrap_or(&value);
-        css.push_str(name);
-        css.push(':');
-        css.push_str(value);
-        css.push_str("!important;");
-    }
-    Ok(css)
-}
-
-#[cfg(test)]
-mod tests;

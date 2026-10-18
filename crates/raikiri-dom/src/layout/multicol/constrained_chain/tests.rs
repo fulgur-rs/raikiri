@@ -80,6 +80,7 @@ fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
         .left = LengthPercentageAuto::calc(pointer);
     doc.fragment_tree.fragments.clear();
     let context = FragmentationContext {
+        rtl: false,
         available_width: 100.0,
         available_height: Some(40.0),
         column_fill: raikiri_style::property::ColumnFillValue::Auto,
@@ -168,6 +169,7 @@ fn column_clips_keep_overhanging_ruby_annotations() {
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
     doc.fragment_tree.fragments.clear();
     let context = FragmentationContext {
+        rtl: false,
         available_width: 100.0,
         available_height: Some(40.0),
         column_fill: raikiri_style::property::ColumnFillValue::Auto,

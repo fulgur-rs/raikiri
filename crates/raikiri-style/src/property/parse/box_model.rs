@@ -80,14 +80,26 @@ pub(crate) fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAu
 /// and drops the entire declaration. This matches the handling of [`parse_font_family`] and the
 /// `rejects_extra_length_after_font_size` test.
 pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAuto>> {
-    let v1 = parse_margin_side(input)?;
+    parse_sides_shorthand(input, parse_margin_side)
+}
+
+/// Expand the 1–4 values of a clockwise four-side shorthand whose every value is parsed by `side`
+/// (`margin: <'margin-top'>{1,4}`, `inset: <'top'>{1,4}`).
+///
+/// This is the expansion [`parse_margin_shorthand`] documents in full; the grammar differs between
+/// the properties only in `side`.
+fn parse_sides_shorthand<T: Copy>(
+    input: &mut Parser<'_, '_>,
+    side: fn(&mut Parser<'_, '_>) -> Option<T>,
+) -> Option<Sides<T>> {
+    let v1 = side(input)?;
     // Without a second value, apply the first to all four sides (§3.2: "If there is only one component
     // value, it applies to all sides").
-    let Some(v2) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+    let Some(v2) = input.try_parse(|i| side(i).ok_or(())).ok() else {
         return Some(Sides::all(v1));
     };
     // Without a third value: top/bottom = first, right/left = second.
-    let Some(v3) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+    let Some(v3) = input.try_parse(|i| side(i).ok_or(())).ok() else {
         return Some(Sides {
             top: v1,
             right: v2,
@@ -96,7 +108,7 @@ pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
         });
     };
     // Without a fourth value: top = first, right/left = second, bottom = third.
-    let Some(v4) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+    let Some(v4) = input.try_parse(|i| side(i).ok_or(())).ok() else {
         return Some(Sides {
             top: v1,
             right: v2,
@@ -135,10 +147,19 @@ pub(super) fn parse_margin_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
 pub(super) fn parse_margin_logical_shorthand(
     input: &mut Parser<'_, '_>,
 ) -> Option<StartEnd<LengthOrAuto>> {
-    let start = parse_margin_side(input)?;
+    parse_start_end_shorthand(input, parse_margin_side)
+}
+
+/// Expand the 1–2 values of a flow-relative shorthand whose every value is parsed by `side`
+/// (`margin-inline: <'margin-top'>{1,2}`, `inset-inline: <'top'>{1,2}`).
+fn parse_start_end_shorthand<T: Copy>(
+    input: &mut Parser<'_, '_>,
+    side: fn(&mut Parser<'_, '_>) -> Option<T>,
+) -> Option<StartEnd<T>> {
+    let start = side(input)?;
     // Without a second value, apply the first to both edges (spec: "If only one value is given, it
     // applies to both the start and end edges").
-    let Some(end) = input.try_parse(|i| parse_margin_side(i).ok_or(())).ok() else {
+    let Some(end) = input.try_parse(|i| side(i).ok_or(())).ok() else {
         return Some(StartEnd::both(start));
     };
     Some(StartEnd { start, end })
@@ -1254,6 +1275,24 @@ pub(super) fn parse_inset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     }
     let length = parse_length_value(input, true)?;
     Some(LengthOrAuto::Length(length))
+}
+
+/// Parse the `inset: <'top'>{1,4}` shorthand (CSS Positioned Layout Module Level 3 §3,
+/// <https://www.w3.org/TR/css-position-3/#propdef-inset>). The values expand like `margin`
+/// (see [`parse_margin_shorthand`]); a fifth value is left for the caller's `expect_exhausted`.
+/// `<'top'>` and `<'margin-top'>` accept the same `auto | <length-percentage>` values, so each side
+/// is read by [`parse_margin_side`], which also keeps a mixed-unit `calc()` whole.
+pub(super) fn parse_inset_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<LengthOrAuto>> {
+    parse_sides_shorthand(input, parse_margin_side)
+}
+
+/// Parse `inset-inline` / `inset-block: <'top'>{1,2}` (CSS Logical Properties and Values 1 §4.3,
+/// <https://www.w3.org/TR/css-logical-1/#propdef-inset-inline>). The first value is the start
+/// edge and the second the end edge; one value applies to both, as in [`parse_margin_logical_shorthand`].
+pub(super) fn parse_inset_logical_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<StartEnd<LengthOrAuto>> {
+    parse_start_end_shorthand(input, parse_margin_side)
 }
 
 /// Parse `z-index: auto | <integer>` (CSS2 §9.9.1

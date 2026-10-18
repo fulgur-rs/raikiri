@@ -27,11 +27,10 @@ struct Paragraph {
 
 pub(super) fn balance(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, has_empty, mut high) = collect(tree, parent, entries)?;
+    let (paragraphs, paragraph_count, has_empty, mut high) = collect(tree, entries)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
         || !high.is_finite()
@@ -60,12 +59,11 @@ pub(super) fn balance(
 /// 1, 8.2).
 pub(super) fn fill_definite(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) = collect(tree, parent, entries)?;
+    let (paragraphs, paragraph_count, _, _) = collect(tree, entries)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
     }
@@ -81,7 +79,6 @@ pub(super) fn fill_definite(
 
 fn collect(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
     let mut paragraphs = Vec::with_capacity(entries.len());
@@ -110,10 +107,10 @@ fn collect(
                 .is_none_or(|mode| !mode.is_vertical())
             && node.style.overflow.x == taffy::Overflow::Visible
             && node.style.overflow.y == taffy::Overflow::Visible;
-        if !can_balance_paragraph_box(tree, parent, child)
-            || (!empty && !can_balance_single_paragraph(tree, parent, child))
+        if !can_balance_paragraph_box(tree, child)
+            || (!empty && !can_balance_single_paragraph(tree, child))
             || node.display() != DisplayValue::Block
-            || node.style.direction != TaffyDirection::Ltr
+            || is_right_aligned_in_parent(tree, child)
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
             || node.has_before_or_after_content
@@ -378,36 +375,52 @@ pub(super) struct Rows {
     pub(super) heights: Vec<f32>,
 }
 
+/// Why [`fill_rows`] made no rows.
+#[derive(Debug, PartialEq)]
+pub(super) enum RowsStop {
+    /// The entries are not plain paragraphs or do not fit.
+    Unsupported,
+    /// The records of the rows outgrow the fragment budget.
+    Exhausted,
+}
+
 /// Fill the paragraphs of a nested column container into rows of its
 /// columns: the first row holds `first` of block size, every later row
-/// `later`, and at most `rows` rows exist. The last row is balanced unless
-/// the container fills its columns sequentially, and every row with
-/// `column-fill: balance-all`. `None` when the entries are
-/// not plain paragraphs or do not fit.
+/// `later`. The last row is balanced unless the container fills its columns
+/// sequentially, and every row with `column-fill: balance-all`. Fails when the
+/// entries are not plain paragraphs or do not fit.
+///
+/// Rows after the first need a box record each, and every fragment needs one;
+/// `budget` is the number of records left. Planning stops as soon as the rows
+/// outgrow it, so the work and memory of a plan stay within the budget and one
+/// row, however many lines follow. This reports exhaustion whether or not the
+/// rows past that point could have been placed, as telling the two apart
+/// would take the planning the budget is there to stop.
 pub(super) fn fill_rows(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
     first: f32,
     later: f32,
-    rows: usize,
-) -> Option<Rows> {
-    let (paragraphs, count, _, _) = collect(tree, parent, entries)?;
+    budget: usize,
+) -> Result<Rows, RowsStop> {
+    let (paragraphs, count, _, _) = collect(tree, entries).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
-        return None;
+        return Err(RowsStop::Unsupported);
     }
     let mut result = Rows {
         fragments: Vec::new(),
         heights: Vec::new(),
     };
     let mut resume = FlowCursor::default();
-    for row in 0..rows {
+    loop {
+        let row = result.heights.len();
         let capacity = if row == 0 { first } else { later };
         if !capacity.is_finite() || capacity <= 0.0 {
-            return None;
+            return Err(RowsStop::Unsupported);
         }
-        let mut chunk = fill_chunk(&paragraphs, context, capacity, resume)?;
+        let mut chunk =
+            fill_chunk(&paragraphs, context, capacity, resume).ok_or(RowsStop::Unsupported)?;
         // `balance` balances the last row only, `balance-all` every row; a
         // balanced row keeps the content the full row would hold.
         let balance = context.column_fill == ColumnFillValue::BalanceAll
@@ -461,13 +474,22 @@ pub(super) fn fill_rows(
             }
         }
         result.heights.push(height);
-        match chunk.next {
-            None => return Some(result),
-            Some(next) if next != resume => resume = next,
-            Some(_) => return None, // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
+        // One row needs no records, as the container keeps its own. Longer
+        // plans need a box record for each row after the first and one for
+        // each fragment, and at least one more fragment for every row still
+        // to come.
+        let still_to_come = usize::from(chunk.next.is_some());
+        let rows = result.heights.len() + still_to_come;
+        if rows > 1 && rows - 1 + result.fragments.len() + still_to_come > budget {
+            return Err(RowsStop::Exhausted);
         }
+        let Some(next) = chunk.next else {
+            return Ok(result);
+        };
+        // A continuation only follows an advanced line or paragraph.
+        debug_assert!(next != resume);
+        resume = next;
     }
-    None
 }
 
 pub(super) struct PagedFragment {
@@ -488,7 +510,6 @@ pub(super) struct PagedGroup {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paginate(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
     owner_y: f32,
@@ -506,7 +527,7 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let Some((paragraphs, count, _, _)) = collect(tree, parent, entries) else {
+    let Some((paragraphs, count, _, _)) = collect(tree, entries) else {
         return Ok(None);
     };
     if count == 0 || context.column_count == 0 {

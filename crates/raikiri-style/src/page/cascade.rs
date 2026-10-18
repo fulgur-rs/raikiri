@@ -15,7 +15,8 @@ use crate::media::MediaContext;
 use crate::property::{
     BackgroundImage, BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, CssColor,
     CustomProperty, Direction, Length, LengthPercentageOrCalc, OutlineStyle, OverflowValue,
-    OverflowXY, PropertyKey, PropertyValue, Sides, TextOrientation, WritingMode,
+    OverflowXY, PropertyKey, PropertyValue, Sides, TextAlign, TextOrientation, VerticalAlign,
+    WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -135,6 +136,11 @@ pub struct PageMarginBoxCascadeResult {
     pub specificity: (u32, u32, u32),
     /// Normal layer rank evaluated for the enclosing page media context.
     layer_order: u32,
+    /// Properties whose winning declaration was invalid at computed-value
+    /// time (a `var()` that failed to substitute) and was therefore left out
+    /// of [`Self::declarations`]. Such a declaration behaves as `unset`, so
+    /// the slot's default values must not stand in for it.
+    invalid_at_computed_value_time: Vec<PropertyKey>,
 }
 
 impl PageMarginBoxCascadeResult {
@@ -349,10 +355,16 @@ impl PageMarginBoxCascadeResult {
                 decl_index,
             )
         });
+        let mut invalid_at_computed_value_time = Vec::new();
         merged.declarations = winners
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
-                let value = margin_box_text_shadow_default(resolved_value(&decl.value)?)?;
+                let Some(resolved) = resolved_value(&decl.value) else {
+                    invalid_at_computed_value_time.push(decl.value.key());
+                    return None;
+                };
+                let value = margin_box_text_shadow_default(resolved)?;
+                let value = margin_box_font_size_default(value)?;
                 Some(Declaration::new(
                     resolve_css_wide_color_font(
                         value,
@@ -365,6 +377,7 @@ impl PageMarginBoxCascadeResult {
                 ))
             })
             .collect();
+        merged.invalid_at_computed_value_time = invalid_at_computed_value_time;
         let own_color = merged
             .declarations
             .iter()
@@ -404,6 +417,23 @@ fn margin_box_text_shadow_default(value: PropertyValue) -> Option<PropertyValue>
     {
         return (keyword == crate::property::CssWideKeyword::Initial)
             .then(|| PropertyValue::TextShadow(crate::property::empty_text_shadow_list()));
+    }
+    Some(value)
+}
+
+/// Settle a CSS-wide keyword on a margin box's `font-size`, other than
+/// `initial`. The property is inherited, so dropping the declaration leaves the
+/// page context's size in place together with the keyword it derives from; a
+/// pixel copy would lose it, and a margin box that changes `font-family` could
+/// not rescale it as a child element does.
+fn margin_box_font_size_default(value: PropertyValue) -> Option<PropertyValue> {
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.key == PropertyKey::FontSize
+        && marker
+            .css_wide_keyword()
+            .is_some_and(|keyword| keyword != crate::property::CssWideKeyword::Initial)
+    {
+        return None;
     }
     Some(value)
 }
@@ -498,7 +528,7 @@ impl PageCascadeResult {
     ///   root element's computed font-size, so **no relative font-size
     ///   sentinel** reaches the consumer either — same guarantee as the
     ///   `font-weight` bullet above.
-    /// - `text-align` — [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)
+    /// - `text-align` — [`TextAlign::MatchParent`]
     ///   is resolved against the inheritance parent's computed `text-align`
     ///   **and** `direction`. CSS Text 3 §6.1
     ///   `#valdef-text-align-match-parent`
@@ -858,6 +888,10 @@ impl PageCascadeResult {
     /// computed over the page context, which is the margin context's
     /// inheritance parent (CSS Paged Media 3 §6).
     ///
+    /// The box starts from the user agent's default `text-align` and
+    /// `vertical-align` for its slot, which the rule's own declarations
+    /// override.
+    ///
     /// `normal_line_height` measures `line-height: normal` for the `lh`
     /// unit; see [`crate::CascadeResult::margin_box_style`].
     pub fn margin_box_style(
@@ -870,11 +904,26 @@ impl PageCascadeResult {
             context: ResolveContext::new(ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)),
         });
         let page = self.page_style.as_deref().unwrap_or(&INITIAL_PAGE_STYLE);
+        let (text_align, vertical_align) = margin_box_default_alignment(rule.slot);
+        // The slot defaults stand in for rules of the UA default style sheet,
+        // so every declaration of the rule itself is applied after them. A
+        // declaration that lost to a failed `var()` substitution still beats
+        // the default, as `unset`, so the default is left out for it.
+        let slot_defaults = [
+            PropertyValue::TextAlign(text_align),
+            PropertyValue::VerticalAlign(vertical_align),
+        ];
         computed_over(
             &page.computed,
-            rule.declarations
-                .iter()
-                .map(|declaration| ComputedOverValue::Specified(declaration.value.clone())),
+            slot_defaults
+                .into_iter()
+                .filter(|value| !rule.invalid_at_computed_value_time.contains(&value.key()))
+                .chain(
+                    rule.declarations
+                        .iter()
+                        .map(|declaration| declaration.value.clone()),
+                )
+                .map(ComputedOverValue::Specified),
             &page.context,
             normal_line_height,
         )
@@ -1366,6 +1415,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
                     origin: rule.origin,
                     specificity: (spec.f, spec.g, spec.h),
                     layer_order: layers.rank(rule.layer, rule.origin),
+                    invalid_at_computed_value_time: Vec::new(),
                 });
             }
             for decl in &rule.declarations {
@@ -1659,15 +1709,24 @@ pub(crate) fn cascade_page_with_normal_line_height(
         })
         .collect();
     cascade_order.sort_unstable_by_key(|&(precedence, _)| precedence);
+    let substitute = |value: PropertyValue| match value {
+        PropertyValue::Deferred(deferred) => {
+            resolve_page_deferred_value(&deferred, custom_properties.as_ref())
+        }
+        value => Some(value),
+    };
+    // The winning `font-family` and `font-size` as declared, before phase 2
+    // turns the size into pixels: a keyword-derived size needs the family to
+    // pick the `medium` it scales (see `page_context_keyword_font_size`).
+    let font_winners: Vec<PropertyValue> = [PropertyKey::FontFamily, PropertyKey::FontSize]
+        .iter()
+        .filter_map(|key| best.get(key))
+        .filter_map(|(_, _, _, _, value)| substitute(value.clone()))
+        .collect();
     let mut resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
         .filter_map(|(k, (_, _, _, _, value))| {
-            let value = match value {
-                PropertyValue::Deferred(deferred) => {
-                    resolve_page_deferred_value(&deferred, custom_properties.as_ref())
-                }
-                value => Some(value),
-            }?;
+            let value = substitute(value)?;
             Some((k, resolve_against_inherited(value, inherited, &ctx)))
         })
         .collect();
@@ -1771,13 +1830,36 @@ pub(crate) fn cascade_page_with_normal_line_height(
         }
     }
 
+    // The page context's font as an element declaring these winners would
+    // compute it. A keyword-derived size picks its `medium` from the page
+    // context's own family, which phase 2 could not see.
+    let element_font =
+        page_context_element_font(&font_winners, inherited, &ctx, normal_line_height);
+    let phase2_font_size = page_context_font_size(&resolved, inherited);
+    let font_size = match &element_font {
+        Some(element) if element.font_size != phase2_font_size => {
+            // Keep the public declaration map on the one size; a size that was
+            // not declared, or was invalid at computed-value time, stays absent.
+            if resolved.contains_key(&PropertyKey::FontSize) {
+                resolved.insert(
+                    PropertyKey::FontSize,
+                    resolve_against_inherited(
+                        PropertyValue::FontSize(Length::Px(element.font_size.0)),
+                        inherited,
+                        &ctx,
+                    ),
+                );
+            }
+            element.font_size
+        }
+        _ => phase2_font_size,
+    };
     // Step 4 (phase 3): absolutize the remaining lengths against the page
     // context's own font-size and apply the border and column-rule width gates.
     // Splitting this out of step 3 is forced by the same constraint the element
     // path has: `padding: 2em` needs the page
     // context's font-size, which step 3 only finalises once *all* winners have
     // been seen — `best` iteration order is `HashMap`-random.
-    let font_size = page_context_font_size(&resolved, inherited);
     let page_ch_advance =
         page_context_ch_advance(&resolved, inherited, font_size, normal_line_height);
     let ctx = ctx.with_ch_advance(page_ch_advance);
@@ -1832,16 +1914,26 @@ pub(crate) fn cascade_page_with_normal_line_height(
     };
     // Only margin boxes inherit from the page context's computed values.
     let page_style = (!margin_boxes.is_empty()).then(|| {
+        let mut computed = computed_over(
+            inherited,
+            cascade_order
+                .iter()
+                .filter_map(|(_, key)| resolved.get(key).cloned())
+                .map(ComputedOverValue::Resolved),
+            &ctx,
+            normal_line_height,
+        );
+        // The resolved size is plain pixels. Keep the keyword it derives from,
+        // so a margin box that changes `font-family` rescales it against that
+        // family's `medium`, as a child element would.
+        if let Some(element) = &element_font
+            && element.font_size == computed.font_size
+        {
+            computed.font_size_keyword = element.font_size_keyword;
+            computed.font_size_keyword_basis = element.font_size_keyword_basis;
+        }
         Arc::new(PageStyle {
-            computed: computed_over(
-                inherited,
-                cascade_order
-                    .iter()
-                    .filter_map(|(_, key)| resolved.get(key).cloned())
-                    .map(ComputedOverValue::Resolved),
-                &ctx,
-                normal_line_height,
-            ),
+            computed,
             context: ctx,
         })
     });
@@ -1872,6 +1964,31 @@ pub(crate) fn cascade_page_with_normal_line_height(
         margin_boxes,
         margin_box_inheritance,
         page_style,
+    }
+}
+
+/// The `text-align` and `vertical-align` the user agent gives a margin box of
+/// `slot` before any author declaration applies.
+///
+/// CSS Paged Media 3 "Page-margin boxes and default values"
+/// (<https://www.w3.org/TR/css-page-3/#margin-text-alignment>), Table 2: user
+/// agents "must behave as though the values in the following table were
+/// established by rules in the UA default style sheet". The corner boxes
+/// align their text towards the page content (`right` in the left corners,
+/// `left` in the right ones), the top and bottom boxes left, centre and right
+/// align theirs, and the boxes on the left and right sides centre it,
+/// placing it at the top, middle or bottom of the strip.
+fn margin_box_default_alignment(slot: PageMarginBoxSlot) -> (TextAlign, VerticalAlign) {
+    use PageMarginBoxSlot::*;
+    match slot {
+        TopLeftCorner | BottomLeftCorner => (TextAlign::Right, VerticalAlign::Middle),
+        TopRightCorner | BottomRightCorner => (TextAlign::Left, VerticalAlign::Middle),
+        TopLeft | BottomLeft => (TextAlign::Left, VerticalAlign::Middle),
+        TopRight | BottomRight => (TextAlign::Right, VerticalAlign::Middle),
+        TopCenter | BottomCenter => (TextAlign::Center, VerticalAlign::Middle),
+        LeftTop | RightTop => (TextAlign::Center, VerticalAlign::Top),
+        LeftMiddle | RightMiddle => (TextAlign::Center, VerticalAlign::Middle),
+        LeftBottom | RightBottom => (TextAlign::Center, VerticalAlign::Bottom),
     }
 }
 
@@ -1927,6 +2044,39 @@ fn computed_over(
         }
     }
     specified.finalize_with(parent, ctx, normal_line_height)
+}
+
+/// The page context's `font-family` and `font-size` computed over the root
+/// element's style exactly as an element would, or `None` when neither is
+/// declared.
+///
+/// A keyword-derived `font-size` (`medium`, `em` or `%` of it, `larger`,
+/// `smaller`) is a multiple of the `medium` of the box's own family, and that
+/// `medium` is 13px for the generic `monospace` family and 16px otherwise (see
+/// [`crate::computed::FontSizeKeywordInfo`]). Phase 2 only sees the root's
+/// pixel size, so `@page { font-family: monospace; font-size: 0.7em }` would
+/// come out as 0.7 × 16 instead of 0.7 × 13, and `@page { font-size: medium }`
+/// under a monospace root as 16 instead of 13. Sharing the element path keeps
+/// the two from disagreeing. A size that is not keyword-derived (`20px`)
+/// computes to the same pixels either way.
+fn page_context_element_font(
+    font_winners: &[PropertyValue],
+    inherited: &ComputedValues,
+    ctx: &ResolveContext,
+    normal_line_height: Option<&dyn NormalLineHeight>,
+) -> Option<ComputedValues> {
+    if font_winners.is_empty() {
+        return None;
+    }
+    Some(computed_over(
+        inherited,
+        font_winners
+            .iter()
+            .cloned()
+            .map(ComputedOverValue::Specified),
+        ctx,
+        normal_line_height,
+    ))
 }
 
 /// The page context's own computed `font-size` — the `em` basis for phase 3.

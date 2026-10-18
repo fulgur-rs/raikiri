@@ -8,6 +8,7 @@ pub(super) mod spanning;
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
+use taffy::MaybeResolve;
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
@@ -111,7 +112,6 @@ pub(crate) fn compute_multicol_layout(
         && style.horizontal
         && available_height.is_some_and(|height| height > 0.0)
         && multicol_has_direct_block_child(tree, index)
-        && tree.layout_node_with_style(index).unwrap().style.direction == TaffyDirection::Ltr
         && multicol_has_only_paragraph_children(tree, index)
         && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
@@ -488,12 +488,102 @@ fn column_child_input(
     }
 }
 
+/// The left and right margins of `child` that are not auto, with
+/// percentages and `calc()` resolved against the column width.
+fn column_definite_margins(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+) -> (Option<f32>, Option<f32>) {
+    let node = tree.layout_node_with_style(child).unwrap();
+    let resolve = |value: LengthPercentageAuto| {
+        value.maybe_resolve(Some(column_width), crate::taffy_impl::resolve_calc)
+    };
+    (
+        resolve(node.style.margin.left),
+        resolve(node.style.margin.right),
+    )
+}
+
+/// The left and right margins of `child` when its border box is
+/// `child_width` wide in a column of `column_width`. Auto margins share the
+/// room the width and the other margin leave (CSS 2, 10.3.3), except on a
+/// float, where they are zero.
+fn column_horizontal_margins(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+    child_width: f32,
+) -> (f32, f32) {
+    let (left, right) = column_definite_margins(tree, child, column_width);
+    let free = if tree
+        .layout_node_with_style(child)
+        .unwrap()
+        .style
+        .float
+        .is_floated()
+    {
+        0.0
+    } else {
+        (column_width - child_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
+    };
+    match (left, right) {
+        (Some(left), Some(right)) => (left, right),
+        (Some(left), None) => (left, free),
+        (None, Some(right)) => (free, right),
+        (None, None) => (free / 2.0, free / 2.0),
+    }
+}
+
 /// The width a column imposes on a child it lays out, or `None` when an
-/// element's authored width resolves against the column width instead.
+/// element's authored width resolves against the column width instead, or a
+/// float fits its content within the column.
 fn column_child_known_width(tree: &Document, child: usize, column_width: f32) -> Option<f32> {
     let node = &tree.layout_node_with_style(child).unwrap();
-    (node.kind() != NodeKind::Element || node.style.size.width == Dimension::auto())
-        .then_some(column_width)
+    if node.kind() != NodeKind::Element {
+        return Some(column_width);
+    }
+    // A float with an auto width shrinks to fit its content within the column
+    // instead of filling it.
+    if node.style.size.width != Dimension::auto() || node.style.float.is_floated() {
+        return None;
+    }
+    // An auto width fills the column between the horizontal margins; an auto
+    // margin counts as zero.
+    let (left, right) = column_definite_margins(tree, child, column_width);
+    Some((column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0))
+}
+
+/// The input that lays `child` out in a column of `column_width`: at the
+/// width the column imposes on it, if any, and for a float with an auto width
+/// within the room its margins leave.
+fn column_child_layout_input(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+    parent_height: Option<f32>,
+    available_height: AvailableSpace,
+) -> LayoutInput {
+    let mut input = column_child_input(
+        column_child_known_width(tree, child, column_width),
+        column_width,
+        parent_height,
+        available_height,
+    );
+    if input.known_dimensions.width.is_none()
+        && tree
+            .layout_node_with_style(child)
+            .unwrap()
+            .style
+            .float
+            .is_floated()
+    {
+        let (left, right) = column_definite_margins(tree, child, column_width);
+        input.available_space.width = AvailableSpace::Definite(
+            (column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0),
+        );
+    }
+    input
 }
 
 pub(crate) fn multicol_definite_dimension(
@@ -652,21 +742,26 @@ fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool
                     .into_iter()
                     .all(|edge| edge == zero_margin)
                 && node.taffy_position() != TaffyPosition::Absolute
-                // A relative offset is applied after the columns place the
-                // box, so it must not be carried into its column location.
-                && [
-                    style.inset.left,
-                    style.inset.right,
-                    style.inset.top,
-                    style.inset.bottom,
-                ]
-                .iter()
-                .all(|inset| inset.is_auto())
+                && insets_are_a_relative_inline_offset(tree, child)
                 && !style.float.is_floated()
                 && style.size.height.is_auto()
                 && style.min_size.height.is_auto()
                 && style.max_size.height.is_auto()
         })
+}
+
+/// Whether the insets of `child` can be left to the painter once the columns
+/// place the box: it has none, or it is `position: relative` with only inline
+/// insets, whose offset the painter adds to the location the column strategy
+/// gives it. A block-axis inset moves the box across pages, which pagination
+/// measures from the location layout gave it, and the offset of any other
+/// positioned box is already part of that location.
+fn insets_are_a_relative_inline_offset(tree: &Document, child: usize) -> bool {
+    let inset = tree.layout_node_with_style(child).unwrap().style.inset;
+    inset.top.is_auto()
+        && inset.bottom.is_auto()
+        && (inset.left.is_auto() && inset.right.is_auto()
+            || tree.nodes[child].taffy_position() == TaffyPosition::Relative)
 }
 
 // A logical non-auto child minimum paired with break avoidance participates
@@ -689,20 +784,18 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
     })
 }
 
-fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) -> bool {
-    can_balance_paragraph_box(tree, parent, child)
+fn can_balance_single_paragraph(tree: &Document, child: usize) -> bool {
+    can_balance_paragraph_box(tree, child)
         && tree.nodes[child].ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
         && tree.nodes[child].ifc_boxes().is_empty()
 }
 
-fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bool {
-    let parent = &tree.layout_node_with_style(parent).unwrap();
+fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
     let child = &tree.layout_node_with_style(child).unwrap();
     let layout = child.unrounded_layout;
     // Child block-edge decoration needs slice/clone geometry; keep the existing
     // strategy until that geometry is carried by each fragment.
-    parent.style.direction == TaffyDirection::Ltr
-        && layout.padding.top == 0.0
+    layout.padding.top == 0.0
         && layout.padding.bottom == 0.0
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0
@@ -716,10 +809,23 @@ fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bo
         && child.style.max_size.height.is_auto()
 }
 
+/// Whether a right-to-left parent aligns `child` to its right edge, which
+/// happens to a block narrower than the parent's content box. The streams of
+/// pieces that cut a block at the column edges place it from the left, so
+/// they leave such a block to the placement of each child.
+fn is_right_aligned_in_parent(tree: &Document, child: usize) -> bool {
+    let rtl_parent = tree.nodes[child].parent.is_some_and(|parent| {
+        tree.layout_node_with_style(parent).unwrap().style.direction == TaffyDirection::Rtl
+    });
+    let node = &tree.layout_node_with_style(child).unwrap();
+    rtl_parent
+        && !(node.multicol_auto_width
+            && node.style.min_size.width.is_auto()
+            && node.style.max_size.width.is_auto())
+}
+
 fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
-    if tree.nodes[parent].ifc.is_some()
-        || tree.layout_node_with_style(parent).unwrap().style.direction != TaffyDirection::Ltr
-    {
+    if tree.nodes[parent].ifc.is_some() {
         return false;
     }
     let mut current = parent;
@@ -742,7 +848,6 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
         let node = &tree.layout_node_with_style(child).unwrap();
         let zero_margin = LengthPercentageAuto::length(0.0);
         if node.display() != DisplayValue::Block
-            || node.style.direction != TaffyDirection::Ltr
             || node.style.float.is_floated()
             || node.style.margin.top != zero_margin
             || node.style.margin.right != zero_margin
@@ -897,8 +1002,9 @@ fn layout_column_group(
     {
         let mut measurements = Vec::with_capacity(children.len());
         for &child in children {
-            let child_inputs = column_child_input(
-                column_child_known_width(tree, child, context.column_width),
+            let child_inputs = column_child_layout_input(
+                tree,
+                child,
                 context.column_width,
                 context.available_height,
                 AvailableSpace::MaxContent,
@@ -928,8 +1034,8 @@ fn layout_column_group(
     let group_balance = auto_measurements
         .as_ref()
         .and_then(|(entries, _)| match fragment_height {
-            Some(height) => paragraph_group::fill_definite(tree, index, entries, context, height),
-            None => paragraph_group::balance(tree, index, entries, context),
+            Some(height) => paragraph_group::fill_definite(tree, entries, context, height),
+            None => paragraph_group::balance(tree, entries, context),
         });
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
         if fragment_height.is_some() {
@@ -945,7 +1051,7 @@ fn layout_column_group(
             return None;
         }
         let node = &tree.layout_node_with_style(*child).unwrap();
-        if !can_balance_single_paragraph(tree, index, *child) {
+        if !can_balance_single_paragraph(tree, *child) {
             return None;
         }
         let lines = node.ifc.as_ref()?.lines.as_ref()?;
@@ -973,8 +1079,9 @@ fn layout_column_group(
                     Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
                     None => AvailableSpace::MaxContent,
                 };
-                let child_inputs = column_child_input(
-                    column_child_known_width(tree, child, context.column_width),
+                let child_inputs = column_child_layout_input(
+                    tree,
+                    child,
                     context.column_width,
                     context.available_height,
                     child_height,
@@ -1024,39 +1131,51 @@ fn layout_column_group(
                 tree,
                 child,
                 context,
-                column,
                 cursor,
                 height,
                 margin_top,
                 child_output.size,
                 !avoid_column_break,
             );
+            // Running out of fragments while planning from here ends the
+            // layout only if starting in the next column does not help, so
+            // it is held back until that has been tried. A container that
+            // fits a column whole needs no rows there, and moves below.
+            let mut exhausted = std::mem::take(&mut tree.fragment_tree.limit_exceeded);
+            let mut fits_next_column = false;
             if continuation.is_none()
                 && cursor > 0.0
                 && cursor + needed > height
                 && !avoid_column_break
-                && let Some(plan) = plan_nested_continuation(
+            {
+                fits_next_column = needed <= height;
+                let moved = plan_nested_continuation(
                     tree,
                     child,
                     context,
-                    column + 1,
                     0.0,
                     height,
                     margin_top,
                     child_output.size,
                     false,
-                )
-            {
-                maximum = maximum.max(cursor);
-                tree.fragment_tree
-                    .record_break(crate::fragment::BreakToken {
-                        node_id: index,
-                        child_index: order,
-                        line_index: 0,
-                    });
-                column += 1;
-                cursor = 0.0;
-                continuation = Some(plan);
+                );
+                exhausted |= std::mem::take(&mut tree.fragment_tree.limit_exceeded);
+                if let Some(plan) = moved {
+                    maximum = maximum.max(cursor);
+                    tree.fragment_tree
+                        .record_break(crate::fragment::BreakToken {
+                            node_id: index,
+                            child_index: order,
+                            line_index: 0,
+                        });
+                    column += 1;
+                    cursor = 0.0;
+                    continuation = Some(plan);
+                }
+            }
+            if exhausted && continuation.is_none() && !fits_next_column {
+                tree.fragment_tree.limit_exceeded = true;
+                return fallback_height;
             }
         }
         if let Some(plan) = &continuation {
@@ -1088,9 +1207,49 @@ fn layout_column_group(
             context.origin_x + context.column_offset_x(column),
             context.origin_y + cursor,
         );
-        let x = child_layout.location.x + context.column_offset_x(column);
+        // Block flow resolved the margins against the whole container; they
+        // resolve against the column the child ends up in.
+        let (margin_left, margin_right) =
+            column_horizontal_margins(tree, child, context.column_width, child_output.size.width);
+        // A right-to-left container aligns its blocks to the right edge of
+        // the column, leaving the room a narrower block does not use to its
+        // left. A float sits at the edge of its own side in either direction.
+        let flush_right = match tree.layout_node_with_style(child).unwrap().style.float {
+            taffy::Float::Left => false,
+            taffy::Float::Right => true,
+            taffy::Float::None => context.rtl,
+        };
+        let x = if flush_right {
+            content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
+                - margin_right
+        } else {
+            // Block flow placed the child with its `position: relative`
+            // inset. The painter adds that inset to the box and the lines of
+            // a paragraph placed in a column, so it is taken out of the
+            // location here. A float is placed without the inset, so its
+            // location has none to take out, and the fragments of the boxes
+            // inside any other child are placed from its location, so that
+            // keeps the inset.
+            let node = tree.layout_node_with_style(child).unwrap();
+            let inset = if node.ifc.is_some()
+                && node.multicol.is_none()
+                && !node.style.float.is_floated()
+            {
+                crate::taffy_impl::block_flow::relative_inline_offset(
+                    node.style,
+                    context.available_width,
+                )
+            } else {
+                0.0
+            };
+            child_layout.location.x - inset
+                + (margin_left - child_layout.margin.left)
+                + context.column_offset_x(column)
+        };
         let y = content_origin.y + cursor + margin_top;
         child_layout.order = order as u32;
+        child_layout.margin.left = margin_left;
+        child_layout.margin.right = margin_right;
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
@@ -1100,7 +1259,21 @@ fn layout_column_group(
                 root.multicol_fragment_origins_recorded = true;
             }
         } else {
-            refresh_nested_text_fragments(tree, child, column_context);
+            // A block measured as one item of the balance stays whole in its
+            // column, so no line of it may go to a later column.
+            let whole_in_column = fragment_height.is_none() && measured.is_some();
+            refresh_nested_text_fragments(
+                tree,
+                child,
+                if whole_in_column {
+                    FragmentationContext {
+                        column_count: column_context.column_index + 1,
+                        ..column_context
+                    }
+                } else {
+                    column_context
+                },
+            );
         }
         if let Some((balanced_child, fragments, _)) = &paragraph_balance
             && *balanced_child == child
@@ -1317,20 +1490,21 @@ impl NestedContinuation {
     }
 }
 
-/// Plan how the nested column container `child`, laid out at `cursor` in
-/// column `column` of `outer`, continues in the following outer columns.
-/// Children that hold no lines continue in outer overflow columns past the
-/// last one. `break_before` says a break before the container is allowed,
-/// which is preferred to cutting one of those children at the end of this
-/// column. `None` when it fits in the rest of the column, when its content
-/// is neither plain paragraphs nor children without lines, or when the
-/// outer columns run out for paragraphs.
+/// Plan how the nested column container `child`, laid out at `cursor` in a
+/// column of `outer`, continues in the following outer columns.
+/// Rows continue in outer overflow columns past the last one, as the outer
+/// container has a definite height (CSS Multi-column 1, 8.2). `break_before`
+/// says a break before the container is allowed, which is preferred to
+/// cutting a child that holds no lines at the end of this column. `None`
+/// when it fits in the rest of the column, or when its content is neither
+/// plain paragraphs nor children without lines, or when the fragment budget
+/// cannot hold the rows, which also sets `limit_exceeded` for the caller to
+/// weigh against another placement.
 #[allow(clippy::too_many_arguments)]
 fn plan_nested_continuation(
-    tree: &Document,
+    tree: &mut LayoutSession<'_>,
     child: usize,
     outer: FragmentationContext,
-    column: usize,
     cursor: f32,
     fragmentainer_height: f32,
     margin_top: f32,
@@ -1346,12 +1520,10 @@ fn plan_nested_continuation(
         .horizontal
         .then(|| lineless::supported(tree, child, false))
         .flatten();
-    let rows = outer.column_count.saturating_sub(column);
     // A box that avoids breaks inside, has a minimum height or generated
     // content keeps its previous layout: the rows below hold its paragraph
     // lines only.
-    if (lineless_children.is_none()
-        && (rows < 2 || style.height_definite || !node.style.size.height.is_auto()))
+    if (lineless_children.is_none() && (style.height_definite || !node.style.size.height.is_auto()))
         || !style.horizontal
         || !node.style.min_size.height.is_auto()
         || !node.style.max_size.height.is_auto()
@@ -1394,12 +1566,12 @@ fn plan_nested_continuation(
     }
     let context = FragmentationContext::resolve(content_width, None, style)?;
     let row_top = -(cursor + margin_top);
-    let row_step = outer.column_offset_x(1);
+    let row_step = outer.column_offset_x(1) - outer.column_offset_x(0);
+    let max_pieces = tree
+        .fragment_tree
+        .limit
+        .saturating_sub(tree.fragment_tree.fragments.len());
     if let Some(children) = lineless_children {
-        let max_pieces = tree
-            .fragment_tree
-            .limit
-            .saturating_sub(tree.fragment_tree.fragments.len());
         let rows = lineless::fill_rows(
             tree,
             &children,
@@ -1466,7 +1638,25 @@ fn plan_nested_continuation(
             )
         })
         .collect();
-    let rows = paragraph_group::fill_rows(tree, child, &entries, context, first, later, rows)?;
+    // The outer container has a definite height here, so the rows may also
+    // fill overflow columns past its last one. Rows whose records outgrow the
+    // fragment budget stop the planning, which reports the exhaustion. The
+    // container's own record in the outer column comes before the rows'.
+    let rows = match paragraph_group::fill_rows(
+        tree,
+        &entries,
+        context,
+        first,
+        later,
+        max_pieces.saturating_sub(1),
+    ) {
+        Ok(rows) => rows,
+        Err(paragraph_group::RowsStop::Unsupported) => return None,
+        Err(paragraph_group::RowsStop::Exhausted) => {
+            tree.fragment_tree.limit_exceeded = true;
+            return None;
+        }
+    };
     let columns = rows.heights.len().checked_sub(1).filter(|&n| n > 0)?;
     // The block-end padding and border must fit in the last outer column too.
     let end = continued_origin_y + rows.heights[columns] + block_end_inset;

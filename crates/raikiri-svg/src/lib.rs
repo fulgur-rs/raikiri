@@ -57,7 +57,9 @@ pub struct SvgRootStyle {
     /// The host controls the SVG root's `background-color`, including when it
     /// computes to transparent, so omit the source background from the raster.
     pub host_controls_root_background: bool,
-    /// Whether the host computed visibility permits painting.
+    /// Whether the host computed visibility permits painting the root. A root
+    /// that is not visible still lets a descendant that sets
+    /// `visibility: visible` itself paint when rasterized.
     pub visible: bool,
 }
 
@@ -96,6 +98,21 @@ pub struct SvgElementStyle<'a> {
     /// font size, family, weight or style. Preserve literal `inherit` when
     /// a declaration must inherit through an instantiated `use` subtree.
     pub declarations: &'a str,
+}
+
+/// Host-resolved root and descendant styles of an inline SVG.
+///
+/// Resolve presentation attributes and author CSS before building this value;
+/// see [`SvgDocument::styled_source_with_resolved_styles`] for how each part
+/// is applied.
+#[derive(Debug, Clone, Copy)]
+pub struct SvgResolvedStyles<'a> {
+    /// The root's resolved `color`, in straight RGBA8.
+    pub root_color: [u8; 4],
+    /// The root's resolved font.
+    pub font: SvgRootFont<'a>,
+    /// Resolved declarations of the descendants.
+    pub elements: &'a [SvgElementStyle<'a>],
 }
 
 #[derive(Clone, Copy, Default)]
@@ -416,28 +433,15 @@ impl SvgDocument {
         font: SvgRootFont<'_>,
         elements: &[SvgElementStyle<'_>],
     ) -> Result<String, SvgError> {
-        if !valid_root_font(font.size, font.family)
-            || !font.weight.is_finite()
-            || !(1.0..=1000.0).contains(&font.weight)
-            || !["normal", "italic", "oblique"]
-                .iter()
-                .any(|keyword| font.style.eq_ignore_ascii_case(keyword))
-        {
-            return Err(SvgError::InvalidDocument(
-                "invalid SVG root font style".into(),
-            ));
-        }
-        self.styled_source_impl(
-            viewport,
+        let source_style = resolved_source_style(
             root_style,
-            SourceRootStyle {
-                color: Some(root_color),
-                font: Some((font.size, font.family)),
-                font_face: Some((font.weight, font.style)),
-                visible: Some(root_style.visible),
+            SvgResolvedStyles {
+                root_color,
+                font,
                 elements,
             },
-        )
+        )?;
+        self.styled_source_impl(viewport, root_style, source_style)
     }
 
     fn styled_source_impl(
@@ -550,13 +554,15 @@ impl SvgDocument {
     /// multiplication overflow and allocating a pixmap.
     /// When `root_style.neutralize_root_opacity` is set, the output excludes
     /// the host opacity so the caller can composite it with the SVG's box.
+    /// When `root_style.visible` is false, the root is hidden and the raster
+    /// holds only the descendants that set `visibility: visible` themselves.
     pub fn rasterize(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
-        self.rasterize_inner(viewport, root_style, max_output_bytes, false)
+        self.rasterize_inner(viewport, root_style, None, max_output_bytes, false)
     }
 
     /// Rasterizes inline SVG on the CSS pixel grid without stretching the
@@ -570,13 +576,39 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
-        self.rasterize_inner(viewport, root_style, max_output_bytes, true)
+        self.rasterize_inner(viewport, root_style, None, max_output_bytes, true)
+    }
+
+    /// Rasterizes inline SVG like [`Self::rasterize_at_css_pixel_scale`] from
+    /// the source [`Self::styled_source_with_resolved_styles`] prepares.
+    ///
+    /// The host's resolved root color and font, its `visibility` and the
+    /// descendant declarations are applied exactly as that method does, so the
+    /// raster and the exported source agree. An invalid font or malformed
+    /// descendant declarations are returned before the output is allocated,
+    /// whatever the root's opacity or visibility.
+    pub fn rasterize_at_css_pixel_scale_with_resolved_styles(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        resolved: SvgResolvedStyles<'_>,
+        max_output_bytes: Option<u64>,
+    ) -> Result<DecodedImage, SvgError> {
+        let source_style = resolved_source_style(root_style, resolved)?;
+        self.rasterize_inner(
+            viewport,
+            root_style,
+            Some(source_style),
+            max_output_bytes,
+            true,
+        )
     }
 
     fn rasterize_inner(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
+        source_style: Option<SourceRootStyle<'_>>,
         max_output_bytes: Option<u64>,
         css_pixel_scale: bool,
     ) -> Result<DecodedImage, SvgError> {
@@ -585,7 +617,6 @@ impl SvgDocument {
         }
 
         let (width, height, byte_len) = checked_output_size(viewport, max_output_bytes)?;
-        let mut pixels = allocate_transparent_pixels(byte_len)?;
         let viewport = if css_pixel_scale {
             viewport
         } else {
@@ -594,30 +625,22 @@ impl SvgDocument {
                 height: height as f32,
             }
         };
+        // Malformed descendant styles are rejected whatever the root's
+        // opacity or visibility, and before the output is allocated, so the
+        // fallback below never hides them.
+        let prepared = source_style
+            .map(|style| self.prepare_source(viewport, root_style, style, false))
+            .transpose()?;
+        let mut pixels = allocate_transparent_pixels(byte_len)?;
 
-        if root_style.visible && root_style.opacity > 0.0 {
-            let source =
-                self.prepare_source(viewport, root_style, SourceRootStyle::default(), false)?;
-            let raster_opacity = if root_style.neutralize_root_opacity {
-                1.0
-            } else {
-                root_style.opacity
-            };
-            let parsed_tree = (source != self.source)
-                .then(|| parse_tree(&source))
-                .transpose()?;
-            let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
-            render_tree(
-                tree,
-                width,
-                height,
-                viewport,
-                raster_opacity,
-                root_style
-                    .neutralize_root_opacity
-                    .then_some(root_style.opacity),
-                &mut pixels,
-            )?;
+        if root_style.opacity > 0.0 {
+            let drawn = self.draw(viewport, root_style, prepared, (width, height), &mut pixels);
+            // A root that is not visible keeps the blank raster it always
+            // had when its descendants cannot be drawn.
+            match drawn {
+                Err(_) if !root_style.visible => pixels = allocate_transparent_pixels(byte_len)?,
+                other => other?,
+            }
         }
 
         Ok(DecodedImage {
@@ -626,6 +649,81 @@ impl SvgDocument {
             rgba: pixels,
         })
     }
+
+    /// Draws the SVG into `pixels`, a transparent buffer of `width` × `height`
+    /// pixels, from `prepared` or, without one, from the source prepared for
+    /// `root_style`.
+    ///
+    /// A root that is not visible is hidden in the source, so only the
+    /// descendants that set `visibility: visible` themselves are drawn.
+    fn draw(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        prepared: Option<String>,
+        (width, height): (u32, u32),
+        pixels: &mut Vec<u8>,
+    ) -> Result<(), SvgError> {
+        let source = match prepared {
+            Some(source) => source,
+            None => self.prepare_source(
+                viewport,
+                root_style,
+                SourceRootStyle {
+                    visible: (!root_style.visible).then_some(false),
+                    ..SourceRootStyle::default()
+                },
+                false,
+            )?,
+        };
+        let raster_opacity = if root_style.neutralize_root_opacity {
+            1.0
+        } else {
+            root_style.opacity
+        };
+        let parsed_tree = (source != self.source)
+            .then(|| parse_tree(&source))
+            .transpose()?;
+        let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
+        render_tree(
+            tree,
+            width,
+            height,
+            viewport,
+            raster_opacity,
+            root_style
+                .neutralize_root_opacity
+                .then_some(root_style.opacity),
+            pixels,
+        )
+    }
+}
+
+/// Checks the resolved font and returns the source preparation that applies
+/// `resolved` to the root and its descendants.
+fn resolved_source_style<'a>(
+    root_style: SvgRootStyle,
+    resolved: SvgResolvedStyles<'a>,
+) -> Result<SourceRootStyle<'a>, SvgError> {
+    let font = resolved.font;
+    if !valid_root_font(font.size, font.family)
+        || !font.weight.is_finite()
+        || !(1.0..=1000.0).contains(&font.weight)
+        || !["normal", "italic", "oblique"]
+            .iter()
+            .any(|keyword| font.style.eq_ignore_ascii_case(keyword))
+    {
+        return Err(SvgError::InvalidDocument(
+            "invalid SVG root font style".into(),
+        ));
+    }
+    Ok(SourceRootStyle {
+        color: Some(resolved.root_color),
+        font: Some((font.size, font.family)),
+        font_face: Some((font.weight, font.style)),
+        visible: Some(root_style.visible),
+        elements: resolved.elements,
+    })
 }
 
 fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {

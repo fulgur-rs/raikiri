@@ -302,9 +302,23 @@ pub fn marker_render_info_with_snapshots<'a>(
         return None;
     }
     let base = snapshots.get(node_id).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
-    let counters = CounterSnapshotView::new(base, marker_computed);
-    // Counter snapshots carry the implicit ordinal for ordinary list items.
-    // This fallback remains for callers that supply snapshots without one.
+    let fallback_snapshots = if base
+        .get(&raikiri_traits::Symbol::new("list-item"))
+        .is_none_or(Vec::is_empty)
+    {
+        document.shared_counter_snapshots(cascade).ok()
+    } else {
+        None
+    };
+    let fallback_list_item = fallback_snapshots
+        .as_ref()
+        .and_then(|shared| shared.get(node_id))
+        .and_then(|snapshot| snapshot.get(&raikiri_traits::Symbol::new("list-item")))
+        .map(Vec::as_slice);
+    let counters =
+        CounterSnapshotView::with_list_item_fallback(base, marker_computed, fallback_list_item);
+    // Use the shared counter walk when a caller's snapshot omits the list
+    // item counter, keeping repeated marker resolution linear for a list.
     let ordinal = if counters.values_for("list-item").is_empty() {
         list_item_ordinal(document, cascade, node_id)
     } else {

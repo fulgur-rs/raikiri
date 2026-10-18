@@ -3,14 +3,23 @@ use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
 mod footnotes;
+mod fragment_sources;
 mod leading_margins;
 mod link_events;
+mod pagination_state;
 mod sibling_shifts;
+mod source_walk;
 mod transposed_flow;
 use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant};
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use footnotes::FootnoteAreas;
+use fragment_sources::{
+    PageFragmentSource, drop_uncrossed_body, number_fragments, overflow_clip_sources,
+    place_sources, restore_crossing_tops,
+};
 pub(crate) use link_events::page_fragment_events_from_pages;
+use pagination_state::{FlowEnv, PaginationState};
+use source_walk::{WalkedSources, walk_sources};
 
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
@@ -932,6 +941,17 @@ fn has_fixed_height(document: &Document, node_id: usize) -> bool {
     .is_some_and(|value| value >= 0.0)
 }
 
+/// Whether a box that took its page position holds content in the columns
+/// around it: it takes part in the flow's page names and is named itself, or
+/// is a rendered leaf with a block size.
+fn box_occupies_column(
+    context: &candidates::BoxContext,
+    name_participates_in_flow: bool,
+    height: f32,
+) -> bool {
+    name_participates_in_flow && (context.is_named || (context.is_rendered_leaf && height > 0.0))
+}
+
 /// The flow end of a candidate box placed at `effective_y`, or `None` when
 /// the box has no height or no usable position and so cannot run on past
 /// its start page.
@@ -1292,14 +1312,22 @@ impl<'a> PageLayoutControl<'a> {
         }
     }
 
-    fn check_discovery_page_index(&self, page_index: u32) -> Result<(), LayoutError> {
+    /// Whether pagination may go on to `page_index`. A control that truncates
+    /// at the page limit records that it was reached and stops pagination
+    /// with `false` instead of failing.
+    fn within_page_limit(&self, page_index: u32) -> Result<bool, LayoutError> {
         match self.check_page_index(page_index) {
+            Ok(()) => Ok(true),
             Err(LayoutError::PageLimitExceeded { .. }) if self.truncate_at_page_limit => {
                 self.page_limit_reached.set(true);
-                Ok(())
+                Ok(false)
             }
-            result => result,
+            Err(error) => Err(error),
         }
+    }
+
+    fn check_discovery_page_index(&self, page_index: u32) -> Result<(), LayoutError> {
+        self.within_page_limit(page_index).map(|_| ())
     }
 }
 
@@ -1436,7 +1464,7 @@ impl PageOrigins {
         )
         .then(|| {
             let natural_page = self.page_index_for_y(text_y + text_height);
-            current_page.saturating_add(1).max(natural_page)
+            forced_target_page(current_page, natural_page)
         })
     }
 
@@ -1508,6 +1536,13 @@ impl PageOrigins {
         } else {
             page.saturating_add(1)
         }
+    }
+
+    /// The last page that a box of block size `height` whose top is at `y`
+    /// runs on, or `None` when it cannot run on past its start page (see
+    /// [`candidate_flow_end`]).
+    fn end_page(&self, y: f32, height: f32) -> Option<u32> {
+        candidate_flow_end(y, height).map(|end| self.page_index_for_end(end))
     }
 
     fn page_index_for_end(&self, end: f32) -> u32 {
@@ -1677,6 +1712,14 @@ pub(crate) fn resolve_page_fragment_geometry(
         content_box,
         orientation,
     )
+}
+
+/// Whether a text node with the lines `owned` has glyphs on `line` or on a
+/// later line of its paragraph.
+fn reaches_line(owned: Option<&IfcTextLines>, line: usize) -> bool {
+    owned
+        .and_then(|owned| owned.lines.last())
+        .is_some_and(|last| last.line >= line)
 }
 
 /// Block-start and block-end edges of every line of the ifc paragraph a text
@@ -2053,14 +2096,13 @@ fn flow_page_overlap(top: f32, height: f32, page_start: f32, page_end: f32) -> O
     ))
 }
 
-pub(crate) fn project_slices_with_control(
+fn build_page_fragments(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
     slices: &[PageSlice],
     page_geometries: &[PageFragmentPageGeometry],
-    control: &PageLayoutControl<'_>,
-) -> Result<ProjectedSlices, LayoutError> {
+) -> (Vec<PageFragment>, FlowAxis) {
     let fallback_geometry = resolve_page_fragment_geometry(cascade, page_box, 0);
     let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
     ordered_slices.sort_by(|left, right| {
@@ -2124,12 +2166,26 @@ pub(crate) fn project_slices_with_control(
             .then_some((page_start, page_end));
     }
 
+    (pages, flow_axis)
+}
+
+pub(crate) fn project_slices_with_control(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+    page_geometries: &[PageFragmentPageGeometry],
+    control: &PageLayoutControl<'_>,
+) -> Result<ProjectedSlices, LayoutError> {
+    let (mut pages, flow_axis) =
+        build_page_fragments(document, cascade, page_box, slices, page_geometries);
+
     let mut work = ProjectionWork::new(
         control,
         document.fragment_tree.work_limit(document.nodes.len()),
     );
     work.check()?;
-    let mut text_roots = Vec::new();
+    let text_roots = Vec::new();
     // A root with `display: none` generates no boxes, so its pages carry no
     // fragments, text, or links.
     let root_generates_box = BoxPropertiesRef::from_computed(cascade.root_element_computed())
@@ -2146,796 +2202,21 @@ pub(crate) fn project_slices_with_control(
         ));
     };
 
-    // Collect absolute post-pagination coordinates.  The arena index is the
-    // stable NodeId projection used by `raikiri_traits::Dom`; sorting by it
-    // reproduces fulgur's deterministic BTreeMap iteration order regardless of
-    // traversal implementation details.
-    #[derive(Clone)]
-    struct PageFragmentSource {
-        node_id: NodeId,
-        node_kind: NodeKind,
-        is_img: bool,
-        abs_x: f32,
-        abs_y: f32,
-        width: f32,
-        height: f32,
-        content_insets: Option<PageFragmentInsets>,
-        line_metrics: Option<Vec<(f32, f32)>>,
-        /// The lines of `line_metrics` stack along x, from the block-start
-        /// edge of their paragraph.
-        lines_along_x: bool,
-        line_start_offset: u32,
-        is_repeat: bool,
-        fragmentainer: u32,
-        fragment_clip: Option<PaintRect>,
-        overflow_chain: Option<usize>,
-        own_overflow_source: Option<usize>,
-    }
+    let WalkedSources {
+        mut nodes,
+        text_roots,
+        placement_overflow_clips,
+        paragraph_cache,
+        repeated_placement_nodes,
+    } = walk_sources(document, cascade, body_id, &mut work)?;
+    restore_crossing_tops(document, &mut nodes, &pages);
 
-    impl PageFragmentSource {
-        /// This source with its geometry in the flow space of `axis`.
-        fn in_flow_space(&self, axis: FlowAxis) -> Self {
-            let (abs_x, abs_y, width, height) =
-                axis.to_flow((self.abs_x, self.abs_y, self.width, self.height));
-            let along_flow = self.lines_along_x == matches!(axis, FlowAxis::X { .. });
-            Self {
-                abs_x,
-                abs_y,
-                width,
-                height,
-                content_insets: self.content_insets.map(|insets| axis.sides_to_flow(insets)),
-                // Lines that stack across the flow all share the source's
-                // extent along it.
-                line_metrics: self.line_metrics.as_ref().map(|metrics| {
-                    if along_flow {
-                        metrics.clone()
-                    } else {
-                        vec![(0.0, height); metrics.len()]
-                    }
-                }),
-                fragment_clip: self.fragment_clip.map(|clip| {
-                    let (x, y, width, height) =
-                        axis.to_flow((clip.x, clip.y, clip.width, clip.height));
-                    PaintRect::new(x, y, width, height)
-                }),
-                ..self.clone()
-            }
-        }
-    }
+    place_sources(document, &nodes, &mut pages, flow_axis, &mut work)?;
 
-    let mut nodes = Vec::new();
-    let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
-    // The content width of each paragraph whose lines stack along x, and
-    // whether they stack from right to left.
-    let mut ifc_vertical: HashMap<usize, (f32, bool)> = HashMap::new();
-    // Each inline element's rectangle is the union of its pieces after
-    // pagination moves their lines.
-    let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, Vec<(BoxRect, u32)>>> = HashMap::new();
-    let mut fragmented_inline_nodes = HashSet::new();
-    let mut ifc_text_lines = HashMap::new();
-    let mut paragraph_cache = HashMap::<usize, ParagraphProjection>::new();
-    let fragments = document.layout_fragments();
-    let mut fragments_by_parent_and_node = HashMap::<(Option<usize>, usize), Vec<usize>>::new();
-    let mut fragmented_nodes = HashSet::new();
-    let mut fragment_counts_by_node = HashMap::<usize, usize>::new();
-    for (index, fragment) in fragments.iter().enumerate() {
-        fragments_by_parent_and_node
-            .entry((fragment.parent, fragment.node_id))
-            .or_default()
-            .push(index);
-        fragmented_nodes.insert(fragment.node_id);
-        *fragment_counts_by_node.entry(fragment.node_id).or_default() += 1;
-    }
-    let mut repeated_placement_nodes = HashSet::new();
-    let mut pending: Vec<usize> = fragment_counts_by_node
-        .into_iter()
-        .filter_map(|(node, count)| (count > 1).then_some(node))
-        .collect();
-    while let Some(node) = pending.pop() {
-        if repeated_placement_nodes.insert(node) {
-            pending.extend(document.nodes[node].children.iter().copied());
-        }
-    }
-    let mut placement_overflow_clips = Vec::new();
-    struct ProjectionVisit {
-        node: usize,
-        parent_origin: (f32, f32),
-        repeat: bool,
-        fragment: Option<usize>,
-        fragment_origin: (f32, f32),
-        is_fragment_visit: bool,
-        fragment_clip: Option<PaintRect>,
-        overflow_chain: Option<usize>,
-        paragraph_column: Option<(usize, usize)>,
-    }
-    let mut stack = vec![ProjectionVisit {
-        node: super::initial_containing_block::root_element(document).unwrap_or(body_id),
-        parent_origin: (0.0, 0.0),
-        repeat: false,
-        fragment: None,
-        fragment_origin: (0.0, 0.0),
-        is_fragment_visit: false,
-        fragment_clip: None,
-        overflow_chain: None,
-        paragraph_column: None,
-    }];
-    while let Some(visit) = stack.pop() {
-        work.check()?;
-        let node_id = visit.node;
-        if repeated_placement_nodes.contains(&node_id) {
-            work.charge(1)?;
-        }
-        let (parent_abs_x, parent_abs_y) = visit.parent_origin;
-        let inherited_repeat = visit.repeat;
-        let Some(node) = document.get_node(node_id) else {
-            continue; // cov:ignore: document-owned child links are valid by construction.
-        };
-        if !node.is_in_document() || node.is_non_rendered_html_element() || node.is_display_none() {
-            continue;
-        }
-        let layout = node.unrounded_layout;
-        // A nested column container has a placement record and a retained
-        // container root for the same source node. Enter that root before
-        // visiting the node's DOM children, whose records belong to it.
-        if !visit.is_fragment_visit
-            || fragments_by_parent_and_node.contains_key(&(visit.fragment, node_id))
-        {
-            if let Some(indices) = fragments_by_parent_and_node.get(&(visit.fragment, node_id)) {
-                for &index in indices.iter().rev() {
-                    let origin = fragments[index].paint_origin(
-                        visit.parent_origin,
-                        (layout.location.x, layout.location.y),
-                        visit.fragment_origin,
-                    );
-                    let fragment_clip = fragments[index]
-                        .fragmentainer_clip
-                        .map(|clip| {
-                            let clip = PaintRect::new(
-                                origin.0 + clip.x - fragments[index].rect.x,
-                                origin.1 + clip.y - fragments[index].rect.y,
-                                clip.width,
-                                clip.height,
-                            );
-                            if let Some(parent) = visit.fragment_clip {
-                                let x = clip.x.max(parent.x);
-                                let y = clip.y.max(parent.y);
-                                PaintRect::new(
-                                    x,
-                                    y,
-                                    ((clip.x + clip.width).min(parent.x + parent.width) - x)
-                                        .max(0.0),
-                                    ((clip.y + clip.height).min(parent.y + parent.height) - y)
-                                        .max(0.0),
-                                )
-                            } else {
-                                clip
-                            }
-                        })
-                        .or(visit.fragment_clip);
-                    stack.push(ProjectionVisit {
-                        node: node_id,
-                        parent_origin: (origin.0 - layout.location.x, origin.1 - layout.location.y),
-                        repeat: inherited_repeat,
-                        fragment: Some(index),
-                        fragment_origin: origin,
-                        is_fragment_visit: true,
-                        fragment_clip,
-                        overflow_chain: visit.overflow_chain,
-                        paragraph_column: visit.paragraph_column,
-                    });
-                }
-                continue;
-            }
-            if fragmented_nodes.contains(&node_id) {
-                continue;
-            }
-        }
-        let abs_x = parent_abs_x + layout.location.x;
-        let abs_y = parent_abs_y + layout.location.y;
-        let own_fragment = visit
-            .is_fragment_visit
-            .then(|| fragments[visit.fragment.unwrap()]);
-        let width = finite_nonnegative(
-            own_fragment.map_or(layout.size.width, |fragment| fragment.rect.width),
-        );
-        let height = finite_nonnegative(
-            own_fragment.map_or(layout.size.height, |fragment| fragment.rect.height),
-        );
-        // A fixed-position subtree is painted in every committed page. The
-        // existing layout pass already computes one viewport-relative box;
-        // preserve that geometry and mark the records as complete repeats
-        // instead of clipping them as in-flow content.
-        let is_repeat = inherited_repeat || super::fixed::is_page_fixed(document, cascade, node_id);
-        let include = match node.kind() {
-            NodeKind::Text => node
-                .text_content()
-                .is_some_and(|text| !text.trim().is_empty()),
-            NodeKind::Element => true,
-            _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
-        };
-        let own_overflow_source = if repeated_placement_nodes.contains(&node_id)
-            && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
-        {
-            let border_box = PaintRect::new(
-                abs_x + node.table_grid_box.map_or(0.0, |rect| rect.x),
-                abs_y + node.table_grid_box.map_or(0.0, |rect| rect.y),
-                node.table_grid_box.map_or(width, |rect| rect.width),
-                node.table_grid_box.map_or(height, |rect| rect.height),
-            );
-            let border = layout.border;
-            let padding = layout.padding;
-            let index = placement_overflow_clips.len();
-            placement_overflow_clips.push(PlacementOverflowClipSource {
-                node: NodeId::new(node_id as u64),
-                parent: visit.overflow_chain,
-                source: OverflowClipSource {
-                    border_box,
-                    geometry: crate::paint_rules::OverflowClipGeometry::new(
-                        &cascade.computed[node_id],
-                        border_box,
-                        PaintInsets::new(border.top, border.right, border.bottom, border.left),
-                        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
-                        crate::paint_rules::is_replaced_element(document, node_id),
-                    ),
-                    is_repeat,
-                },
-            });
-            Some(index)
-        } else {
-            None
-        };
-        let content_overflow_chain = own_overflow_source.or(visit.overflow_chain);
-        if node.display() == DisplayValue::ListItem
-            && !(crate::generated_content::inside_marker_in_flow(cascade, node_id)
-                && node.is_ifc_root())
-            && own_fragment.is_none_or(|fragment| fragment.fragment_index == 0)
-        {
-            text_roots.push(ProjectedTextRoot {
-                node: crate::generated_content::generated_node_id(
-                    node_id,
-                    raikiri_style::PseudoElem::Marker,
-                ),
-                x: abs_x,
-                y: abs_y,
-                width: 0.0,
-                lines_along_x: false,
-                is_repeat,
-                fragmentainer: None,
-                fragment_clip: visit.fragment_clip,
-                overflow_chain: visit.overflow_chain,
-            });
-        }
-        for (root_id, root_node) in std::iter::once((node_id, node))
-            .filter(|(_, node)| node.is_ifc_root())
-            .chain(document.anonymous_table_cells(node_id))
-        {
-            let root_layout = root_node.unrounded_layout;
-            let (root_x, root_y) = if root_id == node_id {
-                (abs_x, abs_y)
-            } else {
-                (
-                    abs_x + root_layout.location.x,
-                    abs_y + root_layout.location.y,
-                )
-            };
-            // The content-box origin of a paragraph laid out by the inline
-            // engine: its text nodes have no layout of their own, and their
-            // lines are measured from here. A root is visited before its text.
-            let origin = (
-                root_x + root_layout.border.left + root_layout.padding.left,
-                root_y + root_layout.border.top + root_layout.padding.top,
-            );
-            ifc_origin.insert(root_id, origin);
-            if let Some(mode) = root_node.ifc_writing_mode()
-                && mode.is_vertical()
-            {
-                ifc_vertical.insert(
-                    root_id,
-                    (
-                        root_layout.content_box_width(),
-                        matches!(
-                            mode,
-                            shodo::geometry::WritingMode::VerticalRl
-                                | shodo::geometry::WritingMode::SidewaysRl
-                        ),
-                    ),
-                );
-            }
-            if origin.0.is_finite() && origin.1.is_finite() {
-                text_roots.push(ProjectedTextRoot {
-                    node: root_id,
-                    x: origin.0,
-                    y: origin.1,
-                    width: root_layout.content_box_width(),
-                    lines_along_x: ifc_vertical.contains_key(&root_id),
-                    is_repeat,
-                    fragmentainer: visit.fragment.map(|index| fragments[index].fragmentainer),
-                    fragment_clip: visit.fragment_clip,
-                    overflow_chain: content_overflow_chain,
-                });
-            }
-            let column = visit.fragment.map(|index| fragments[index].fragmentainer);
-            if let std::collections::hash_map::Entry::Vacant(entry) = paragraph_cache.entry(root_id)
-            {
-                entry.insert(ParagraphProjection::prepare(
-                    document,
-                    cascade,
-                    root_id,
-                    column.unwrap_or(0),
-                    &mut work,
-                )?);
-            }
-            let prepared = &paragraph_cache[&root_id];
-            let selected = if prepared.multicol
-                && let Some(column) = column
-            {
-                if let Some(data) = prepared.columns.get(&column) {
-                    work.charge(data.record_count)?;
-                    data.clone()
-                } else {
-                    Default::default()
-                }
-            } else {
-                if repeated_placement_nodes.contains(&root_id) {
-                    work.charge(prepared.combined.record_count)?;
-                }
-                let mut data = prepared.combined.clone();
-                if !prepared.multicol {
-                    for pieces in data.bounds.values_mut() {
-                        for (_, number) in pieces {
-                            *number = column.unwrap_or(0) as u32;
-                        }
-                    }
-                    for groups in data.owners.values_mut() {
-                        for (_, _, number, _) in groups {
-                            *number = column.unwrap_or(0) as u32;
-                        }
-                    }
-                }
-                data
-            };
-            fragmented_inline_nodes.extend(selected.fragmented);
-            ifc_piece_bounds.insert(root_id, selected.bounds);
-            ifc_text_lines.extend(selected.owners);
-        }
-        // An inline element of an inline engine paragraph is where its pieces
-        // are on the lines; its recorded location is relative to its nearest
-        // inline ancestor and does not follow lines that pagination moved.
-        let (abs_x, abs_y, width, height) = if node.kind() == NodeKind::Element
-            && node.in_ifc_subtree()
-            && let Some(root) = document.ifc_root_of(node_id)
-            && let (Some(&(root_x, root_y)), Some(bounds_by_node)) =
-                (ifc_origin.get(&root), ifc_piece_bounds.get(&root))
-            && let Some((rect, _)) = bounds_by_node
-                .get(&node_id)
-                .and_then(|pieces| pieces.first())
-        {
-            (
-                root_x + rect.x,
-                root_y + rect.y,
-                finite_nonnegative(rect.width),
-                finite_nonnegative(rect.height),
-            )
-        } else {
-            (abs_x, abs_y, width, height)
-        };
-        if include && abs_x.is_finite() && abs_y.is_finite() {
-            let ifc_lines = (node.kind() == NodeKind::Text)
-                .then(|| {
-                    ifc_text_lines.remove(&node_id).or_else(|| {
-                        document
-                            .ifc_root_of(node_id)
-                            .and_then(|root| paragraph_cache.get(&root))
-                            .filter(|prepared| prepared.combined.owners.contains_key(&node_id))
-                            .map(|_| Vec::new())
-                    })
-                })
-                .flatten();
-            let source = PageFragmentSource {
-                node_id: NodeId::new(node_id as u64),
-                node_kind: node.kind(),
-                is_img: node.tag_name() == Some("img"),
-                abs_x: abs_x + node.table_grid_box.map_or(0.0, |rect| rect.x),
-                abs_y: abs_y + node.table_grid_box.map_or(0.0, |rect| rect.y),
-                width: node.table_grid_box.map_or(width, |rect| rect.width),
-                height: node.table_grid_box.map_or(height, |rect| rect.height),
-                content_insets: (node.kind() == NodeKind::Element
-                    && !fragmented_inline_nodes.contains(&node_id))
-                .then(|| {
-                    PageFragmentInsets::new(
-                        layout.border.top + layout.padding.top,
-                        layout.border.right + layout.padding.right,
-                        layout.border.bottom + layout.padding.bottom,
-                        layout.border.left + layout.padding.left,
-                    )
-                }),
-                line_metrics: (node.kind() == NodeKind::Text).then(Vec::new),
-                lines_along_x: false,
-                line_start_offset: 0,
-                is_repeat,
-                fragmentainer: visit
-                    .fragment
-                    .map_or(0, |index| fragments[index].fragmentainer as u32),
-                fragment_clip: visit.fragment_clip,
-                overflow_chain: visit.overflow_chain,
-                own_overflow_source,
-            };
-            let inline_pieces = (node.kind() == NodeKind::Element && node.in_ifc_subtree())
-                .then(|| document.ifc_root_of(node_id))
-                .flatten()
-                .and_then(|root| {
-                    Some((
-                        ifc_origin.get(&root)?,
-                        ifc_piece_bounds.get(&root)?.get(&node_id),
-                    ))
-                });
-            if let Some(groups) = ifc_lines {
-                for (offset_x, start, column, owned) in groups {
-                    let (root_x, root_y) = ifc_origin
-                        .get(&owned.root)
-                        .copied()
-                        .unwrap_or((abs_x, abs_y));
-                    let first_top = owned.lines.first().map_or(0.0, |line| line.top);
-                    let last_bottom = owned.lines.last().map_or(0.0, |line| line.bottom);
-                    let block_extent = finite_nonnegative(last_bottom - first_top);
-                    let inline_extent = finite_nonnegative(owned.width);
-                    // Lines are measured along the paragraph's block axis,
-                    // from its block-start content edge.
-                    let (abs_x, abs_y, width, height) = match ifc_vertical.get(&owned.root) {
-                        Some(&(content_width, true)) => (
-                            root_x + content_width - last_bottom,
-                            root_y + offset_x,
-                            block_extent,
-                            inline_extent,
-                        ),
-                        Some(_) => (
-                            root_x + first_top,
-                            root_y + offset_x,
-                            block_extent,
-                            inline_extent,
-                        ),
-                        None => (
-                            root_x + offset_x,
-                            root_y + first_top,
-                            inline_extent,
-                            block_extent,
-                        ),
-                    };
-                    nodes.push(PageFragmentSource {
-                        abs_x,
-                        abs_y,
-                        width,
-                        height,
-                        lines_along_x: ifc_vertical.contains_key(&owned.root),
-                        line_metrics: Some(
-                            owned
-                                .lines
-                                .iter()
-                                .map(|line| (line.top - first_top, line.bottom - first_top))
-                                .collect(),
-                        ),
-                        line_start_offset: start as u32,
-                        fragmentainer: column,
-                        ..source.clone()
-                    });
-                }
-            } else if let Some((&(root_x, root_y), pieces)) = inline_pieces {
-                for (rect, column) in pieces.into_iter().flatten() {
-                    nodes.push(PageFragmentSource {
-                        abs_x: root_x + rect.x,
-                        abs_y: root_y + rect.y,
-                        width: finite_nonnegative(rect.width),
-                        height: finite_nonnegative(rect.height),
-                        fragmentainer: *column,
-                        ..source.clone()
-                    });
-                }
-            } else {
-                nodes.push(source);
-            }
-        } // cov:ignore: layout sanitization normally keeps source coordinates finite.
+    drop_uncrossed_body(document, &mut pages, body_id);
+    number_fragments(document, &mut pages);
 
-        if node.kind() == NodeKind::Element {
-            let paragraph_column = if node.is_ifc_root() {
-                visit.fragment.and_then(|index| {
-                    paragraph_cache
-                        .get(&node_id)
-                        .filter(|prepared| prepared.children.is_some())
-                        .map(|_| (node_id, fragments[index].fragmentainer))
-                })
-            } else {
-                visit.paragraph_column
-            };
-            let children = paragraph_column.map_or(node.children.as_slice(), |(root, column)| {
-                paragraph_cache[&root]
-                    .children
-                    .as_ref()
-                    .unwrap()
-                    .get(&(node_id, column))
-                    .map_or(&[], Vec::as_slice)
-            });
-            // The children of an inline element of an inline engine paragraph
-            // are located from the paragraph's root, not from the element.
-            let (base_x, base_y) = if document.contributes_layout_offset(node_id) {
-                (abs_x, abs_y)
-            } else {
-                (parent_abs_x, parent_abs_y)
-            };
-            for &child_id in children.iter().rev() {
-                stack.push(ProjectionVisit {
-                    node: child_id,
-                    parent_origin: (base_x, base_y),
-                    repeat: is_repeat,
-                    fragment: visit.fragment,
-                    fragment_origin: visit.fragment_origin,
-                    is_fragment_visit: false,
-                    fragment_clip: visit.fragment_clip,
-                    overflow_chain: content_overflow_chain,
-                    paragraph_column,
-                });
-            }
-        }
-    }
-    nodes.sort_by_key(|node| node.node_id);
-    // A relayout resumed at a page start lays the content before it out
-    // without the elements wholly before it, so a box crossing the start
-    // begins lower than in the earlier layout. It keeps the top the earlier
-    // layout gave it; its end, after the start, is the same in both. A box
-    // with no border or padding above the start begins at the start itself.
-    if let Some(earlier) = &document.earlier_fragments
-        && let Some((page_start, _)) = pages.first().and_then(|page| page.flow_range)
-    {
-        for source in &mut nodes {
-            if let Some(crossing) = earlier.get(&source.node_id)
-                && !source.is_repeat
-                && source.abs_y <= page_start + 0.01
-            {
-                let bottom = source.abs_y + source.height;
-                source.abs_y = page_start + crossing.top;
-                source.height = (bottom - source.abs_y).max(0.0);
-            }
-        }
-    }
-
-    // The pages with a flow range, in page order, and whether both ends of
-    // their ranges never decrease, so that a source's pages can be found by
-    // binary search instead of testing every page.
-    let flow_slots: Vec<(usize, f32, f32)> = pages
-        .iter()
-        .enumerate()
-        .filter_map(|(page_slot, page)| page.flow_range.map(|(start, end)| (page_slot, start, end)))
-        .collect();
-    let flow_slots_ordered = flow_slots
-        .windows(2)
-        .all(|pair| pair[0].1 <= pair[1].1 && pair[0].2 <= pair[1].2);
-    for source in &nodes {
-        work.check()?;
-        let source = &source.in_flow_space(flow_axis);
-        let header_placements = document
-            .table_objects
-            .headers
-            .placements_of(source.node_id.0 as usize);
-        let is_table_header = header_placements.is_some();
-        let kind = match source.node_kind {
-            NodeKind::Text => PageFragmentKind::Text,
-            NodeKind::Element if source.is_img => PageFragmentKind::Replaced,
-            _ => PageFragmentKind::Box,
-        };
-        let mut placements = Vec::new();
-        let repeat_line_range = source.line_metrics.as_deref().and_then(|metrics| {
-            (!metrics.is_empty()).then(|| {
-                PageFragmentLineRange::new(0, u32::try_from(metrics.len()).unwrap_or(u32::MAX))
-            })
-        });
-        if let Some(header_placements) = header_placements {
-            // Repeated header boxes visit only their own pages, and every copy
-            // is charged so header size times page count stays bounded.
-            for (page_index, origin, shift) in header_placements {
-                let start = pages.partition_point(|page| page.page_index < page_index);
-                for (page_slot, page) in pages.iter().enumerate().skip(start) {
-                    if page.page_index != page_index {
-                        break;
-                    }
-                    let Some((page_start, _)) = page
-                        .flow_range
-                        .filter(|&(page_start, _)| (page_start - origin).abs() <= 0.001)
-                    else {
-                        continue; // cov:ignore: layout schedules placements at the slices' own finite page origins.
-                    };
-                    work.charge(1)?;
-                    let y = source.abs_y + shift - page_start;
-                    placements.push((page_slot, y, source.height, repeat_line_range, y));
-                }
-            }
-        }
-        // A repeated source lands on every page. Any other source only
-        // intersects the pages whose flow range overlaps it, which form one
-        // run of `flow_slots` when the ranges are ordered.
-        let candidates = if is_table_header {
-            &flow_slots[..0]
-        } else if source.is_repeat || !flow_slots_ordered {
-            &flow_slots[..]
-        } else if source.height > 0.0 {
-            let bottom = source.abs_y + source.height;
-            let first = flow_slots.partition_point(|&(_, _, end)| end <= source.abs_y);
-            let last = first + flow_slots[first..].partition_point(|&(_, start, _)| start < bottom);
-            &flow_slots[first..last]
-        } else {
-            let first = flow_slots.partition_point(|&(_, _, end)| end < source.abs_y);
-            let last =
-                first + flow_slots[first..].partition_point(|&(_, start, _)| start <= source.abs_y);
-            &flow_slots[first..last]
-        };
-        for &(page_slot, page_start, page_end) in candidates {
-            if source.is_repeat {
-                placements.push((
-                    page_slot,
-                    source.abs_y,
-                    source.height,
-                    repeat_line_range,
-                    source.abs_y,
-                ));
-                continue;
-            }
-            let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
-                match flow_page_overlap(source.abs_y, source.height, page_start, page_end) {
-                    Some((y, height)) => (true, y, height),
-                    None => (false, 0.0, 0.0),
-                }
-            } else {
-                (
-                    source.abs_y >= page_start && source.abs_y <= page_end,
-                    (source.abs_y - page_start).max(0.0),
-                    0.0,
-                )
-            };
-            if intersects {
-                let line_range = source.line_metrics.as_deref().and_then(|metrics| {
-                    line_range_for_page(metrics, source.abs_y, page_start, page_end)
-                });
-                placements.push((
-                    page_slot,
-                    fragment_y,
-                    fragment_height,
-                    line_range,
-                    source.abs_y - page_start,
-                ));
-            }
-        }
-        let fragment_count = placements.len() as u32;
-        for (fragment_index, (page_slot, y, fragment_height, line_range, box_y)) in
-            placements.into_iter().enumerate()
-        {
-            let Some(page) = pages.get_mut(page_slot) else {
-                continue; // cov:ignore: placements are indexed from the same slices used to build pages.
-            };
-            let page_axis = page.flow_axis;
-            let to_page = |rect: (f32, f32, f32, f32)| {
-                let (x, y, width, height) = page_axis.to_layout(rect);
-                PageFragmentRect::new(x, y, width, height)
-            };
-            let rect = to_page((source.abs_x, y, source.width, fragment_height));
-            // A page cuts boxes only along the flow; across it, the whole box
-            // is the placed one.
-            let (item_box_y, item_box_height) = match flow_axis {
-                FlowAxis::Y => (box_y, source.height),
-                FlowAxis::X { .. } => (rect.y, rect.height),
-            };
-            let mut item = PageFragmentItem::new(
-                source.node_id,
-                rect,
-                kind,
-                fragment_index as u32,
-                fragment_count,
-                source.is_repeat || is_table_header,
-            )
-            .with_page_index(page.page_index)
-            .with_box_extent(item_box_y, item_box_height)
-            .with_flow_box_y(box_y)
-            .with_content_rect(source.content_insets.map(|insets| {
-                to_page((
-                    source.abs_x + insets.left,
-                    box_y + insets.top,
-                    (source.width - insets.left - insets.right).max(0.0),
-                    (source.height - insets.top - insets.bottom).max(0.0),
-                ))
-            }));
-            item.is_table_header_repeat = is_table_header;
-            item.fragmentainer = source.fragmentainer;
-            item.overflow_chain = source.overflow_chain;
-            item.own_overflow_source = source.own_overflow_source;
-            item.fragment_clip = source.fragment_clip.map(|clip| {
-                to_page((
-                    clip.x,
-                    clip.y + box_y - source.abs_y,
-                    clip.width,
-                    clip.height,
-                ))
-            });
-            page.items.push(match line_range {
-                Some(range) => item.with_line_range(PageFragmentLineRange::new(
-                    range.start.saturating_add(source.line_start_offset),
-                    range.end.saturating_add(source.line_start_offset),
-                )),
-                None => item,
-            });
-        }
-    }
-
-    // A relayout resumed at a page start continues the fragments the boxes
-    // crossing that start had before it. The body begins on the relayout's
-    // first page, which the relayout drops; when it did not cross the start
-    // in the earlier layout, it has no fragment after it.
-    if let Some(earlier) = &document.earlier_fragments
-        && let Some(first) = pages.first_mut()
-    {
-        let body = NodeId::new(body_id as u64);
-        first.items.retain(|item| {
-            item.node_id != body || item.flow_box_y >= -0.01 || earlier.contains_key(&body)
-        });
-    }
-    let earlier = document.earlier_fragments.as_ref();
-    let before = |node: &NodeId| {
-        earlier
-            .and_then(|earlier| earlier.get(node))
-            .map(|crossing| crossing.earlier_fragments)
-    };
-
-    // A source can have several column pieces on the same physical page.
-    // Count all committed pieces together so edge ownership remains stable.
-    let mut fragment_counts = HashMap::<NodeId, u32>::new();
-    for item in pages.iter().flat_map(|page| &page.items) {
-        *fragment_counts.entry(item.node_id).or_insert_with(|| {
-            before(&item.node_id).unwrap_or(0)
-                + document
-                    .later_fragments
-                    .get(&item.node_id)
-                    .copied()
-                    .unwrap_or(0)
-        }) += 1;
-    }
-    let mut fragment_indices = HashMap::<NodeId, u32>::new();
-    for item in pages.iter_mut().flat_map(|page| &mut page.items) {
-        let index = fragment_indices
-            .entry(item.node_id)
-            .or_insert_with(|| before(&item.node_id).unwrap_or(0));
-        item.fragment_index = *index;
-        item.fragment_count = fragment_counts[&item.node_id];
-        *index += 1;
-    }
-
-    // Retain each clipping source once. Page-local clips are resolved on access,
-    // so a deep open-axis chain cannot multiply storage by the page count.
-    let clip_sources = nodes
-        .iter()
-        .filter_map(|source| {
-            let id = source.node_id.0 as usize;
-            if repeated_placement_nodes.contains(&id) {
-                return None;
-            }
-            if !crate::paint_rules::clips_element_overflow(document, cascade, id) {
-                return None;
-            }
-            let border = document.nodes[id].unrounded_layout.border;
-            let padding = document.nodes[id].unrounded_layout.padding;
-            let border_box =
-                PaintRect::new(source.abs_x, source.abs_y, source.width, source.height);
-            Some((
-                source.node_id,
-                OverflowClipSource {
-                    border_box,
-                    geometry: crate::paint_rules::OverflowClipGeometry::new(
-                        &cascade.computed[id],
-                        border_box,
-                        PaintInsets::new(border.top, border.right, border.bottom, border.left),
-                        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
-                        crate::paint_rules::is_replaced_element(document, id),
-                    ),
-                    is_repeat: source.is_repeat,
-                },
-            ))
-        })
-        .collect();
+    let clip_sources = overflow_clip_sources(document, cascade, &nodes, &repeated_placement_nodes);
 
     Ok((
         pages,
@@ -4001,8 +3282,6 @@ fn paginate_flow(
     let page_step_at = |page_index: u32| page_origins.step_at(page_index);
     let page_origin = |page_index: u32| page_origins.origin(page_index);
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
-    let page_index_in_flow = |y: f32| page_origins.page_index_in_flow(y);
-    let page_index_for_end = |end: f32| page_origins.page_index_for_end(end);
     let leading_margins_moved =
         leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
     let root_flow_offset = 0.0;
@@ -4106,7 +3385,7 @@ fn paginate_flow(
         control,
     )
     .collect_flow(root_flow_offset)?;
-    let mut table_headers =
+    let table_headers =
         HeaderRepeats::prepare(document, cascade, roots.contents, page_step, |id| {
             root_flow_offset + current_abs_y(document, id)
         });
@@ -4119,765 +3398,53 @@ fn paginate_flow(
         content_width,
         root_flow_offset,
     );
-    let mut flow_shift = 0.0_f32;
-    let mut current_page = 0_u32;
-    let mut reach = PageReach::default();
-    let mut pending_break = PendingBreak::default();
-    let mut deferred_shifts = DeferredShifts::default();
     let table_row_origins = table_row_origins(document, &candidates);
-    let mut float_shifts = FloatShifts::default();
-    let mut subtree_shifts = SubtreeShifts::default();
-    let mut sibling_margins = SiblingMargins::default();
-    let mut last_named = LastNamedBox::default();
-    let mut saw_child = false;
-    let mut checked_paragraphs = CheckedParagraphs::default();
-    // Footnotes are collected in source order and stacked upward from the
-    // bottom edge of their anchor page. The normal-flow height is removed
-    // from `flow_shift`, leaving the box only in this page-local area.
-    let mut footnote_areas = FootnoteAreas::default();
-    let mut page_names = PageNames::new(selected_page_name(cascade, body_id).or_else(|| {
-        super::page::first_page_name_with_transposed_axes(
-            document,
-            cascade,
-            document.context.pagination_on_transposed_axes,
-        )
-    }));
-    let mut column_contexts = ColumnContexts::new(document.nodes.len());
-    let mut preceding_flex_items = PrecedingFlexItems::default();
-    let mut trailing_flex_children = TrailingFlexChildren::default();
-    let mut entered_paragraphs = EnteredParagraphs::default();
-    macro_rules! check_candidate_page {
-        ($label:lifetime, $page_index:expr) => {
-            match control.check_page_index($page_index) {
-                Ok(()) => {}
-                Err(LayoutError::PageLimitExceeded { .. }) if control.truncate_at_page_limit => {
-                    control.page_limit_reached.set(true);
-                    break $label;
-                }
-                Err(error) => return Err(error),
-            }
+    let mut state = PaginationState::new(
+        table_headers,
+        PageNames::new(selected_page_name(cascade, body_id).or_else(|| {
+            super::page::first_page_name_with_transposed_axes(
+                document,
+                cascade,
+                document.context.pagination_on_transposed_axes,
+            )
+        })),
+        ColumnContexts::new(document.nodes.len()),
+    );
+    let env = FlowEnv {
+        cascade,
+        body_id,
+        control,
+        page_origins: &page_origins,
+        text_lines: &text_lines,
+        roots,
+        root_flow_offset,
+        content_width,
+        avoided_breaks: &avoided_breaks,
+        insets,
+        page_box,
+    };
+    let mut candidates = candidates.into_iter();
+    // Each candidate is placed while the page limit lets pagination reach the
+    // page the flow is on.
+    while let Some(candidate) = candidates.next()
+        && control.within_page_limit(state.current_page)?
+    {
+        let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
+            continue;
         };
+        let placed = if candidate.context.is_text {
+            state.place_text(document, &env, &candidate, &entry)
+        } else {
+            state.place_box(document, &env, &candidate, &entry)
+        };
+        if let Err(halt) = placed {
+            halt.finish()?;
+            break;
+        }
     }
 
-    'candidate_loop: for candidate in candidates {
-        check_candidate_page!('candidate_loop, current_page);
-        let node_id = candidate.node_id;
-        // Header lines stay together and are placed from the table's rows,
-        // rather than acquiring independent text-page shifts.
-        if table_headers.owner(node_id).is_some() {
-            continue;
-        }
-        let name_participates_in_flow = candidate.context.page_name_in_flow;
-        if name_participates_in_flow
-            && candidate.context.is_flex_item
-            && let Some(context) = candidate.named_flex_context
-            && preceding_flex_items.record(context, candidate.height, current_page)
-        {
-            column_contexts.occupy(Some(context), current_page, document, cascade);
-        }
-        let (name_context_seen, comparison_page_name) = page_names.comparison(
-            &candidate,
-            saw_child,
-            &mut column_contexts,
-            document,
-            cascade,
-            current_page,
-        );
-        // Leaving a flex item's internal named flow keeps the last opened
-        // physical page until an outer boundary or natural overflow opens one.
-        let keep_local_page_type =
-            candidate.named_flex_context.is_none() && page_names.current != comparison_page_name;
-        let page_before_candidate = current_page;
-        let moves_ifc_root = entered_paragraphs.enter(document, candidate.ifc_root, node_id);
-        let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
-        deferred_shifts.apply_reached(
-            document,
-            &text_lines,
-            node_id,
-            candidate.ifc_root,
-            &mut flow_shift,
-        );
-        if let Some(page) = subtree_shifts.leave(document, node_id, &mut flow_shift) {
-            current_page = page;
-        }
-        if let Some((delta, flow_page)) = float_shifts.end_pending_outside(document, node_id) {
-            flow_shift -= delta;
-            current_page = flow_page;
-        }
-        if let Some(clearance) =
-            float_shifts.clearance_for(document, cascade, body_id, &candidate, flow_shift)
-        {
-            flow_shift += clearance.shift;
-            if clearance.floating {
-                float_shifts.hold_cleared_float(
-                    document,
-                    cascade,
-                    node_id,
-                    &clearance,
-                    flow_shift,
-                    current_page,
-                );
-            } else if !candidate.context.is_direct_body_element {
-                // The ancestors of a nested clearing box grow to hold it.
-                grow_ancestors_for_shift(
-                    document,
-                    cascade,
-                    node_id,
-                    clearance.shift,
-                    body_id,
-                    &mut subtree_shifts,
-                    current_page,
-                    &IfcBoxShifts::default(),
-                );
-            }
-            // The box may now start on a later page than the flow.
-            current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
-        }
-        if !document.is_source_node(node_id) {
-            continue;
-        }
-        let participates_in_margin_adjacency =
-            participates_in_margin_adjacency(document, cascade, &candidate);
-        // Explicit positioned insets follow their containing box, not margin
-        // changes in a parallel normal flow. Both-auto boxes keep static placement.
-        let uses_positioned_coordinates = candidate.context.is_out_of_flow_descendant
-            && has_explicit_positioned_block_ancestor(document, node_id);
-        if candidate.context.is_text {
-            // The inline layout root whose lines hold this text, if any.
-            let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
-            // In-flow text between two blocks separates them: the next block's
-            // gap is no longer a margin adjoining the previous block.
-            if participates_in_margin_adjacency {
-                sibling_margins.end_run_at_text(document, node_id, text_ifc_root);
-            }
-            // A footnote's descendants follow the moved footnote box. They are
-            // deliberately not paginated independently, otherwise the stale
-            // pre-pagination coordinates would move them back into normal flow.
-            if candidate.context.is_float_descendant
-                && has_footnote_ancestor(cascade, node_id, document)
-            {
-                continue;
-            }
-            // Text is not itself a class-A box, but non-empty text can be the
-            // content that follows a nested named box.  Carry the containing
-            // box's page type so that content after `page:b` inside a
-            // `page:a` box resumes on an `a` page rather than becoming an
-            // anonymous page.  Only direct body text consumes a pending
-            // break-after; descendants must wait until their containing box
-            // has finished.
-            let raw_y = candidate.raw_y;
-            let mut height = candidate.height;
-            let candidate_page_name = candidate.page_name.clone();
-            let mut effective_y = if uses_positioned_coordinates {
-                positioned_text_start_y(document, &text_lines, node_id, text_ifc_root)
-            } else {
-                raw_y + flow_shift
-            };
-            // A fixed-height block whose first line would straddle the
-            // current fragmentainer is pushed as a unit. This matches normal
-            // block fragmentation for monolithic content while leaving tall
-            // blocks and already-forced page transitions to the existing
-            // fragment logic.
-            // A block inside an inline element of an inline engine paragraph
-            // is laid out from the paragraph's root, as a direct child is.
-            // A block nested in plain block flow is moved the same way; its
-            // ancestors then grow to hold it.
-            // The block of text in an IFC paragraph is its root, including nested inline elements.
-            let paragraph_root = candidate
-                .ifc_root
-                .map(|(root, _)| root)
-                .filter(|&root| document.is_source_node(root) && root != node_id);
-            let line_block_parent = line_block_parent(
-                document,
-                cascade,
-                &roots,
-                &candidate,
-                paragraph_root,
-                &checked_paragraphs,
-                uses_positioned_coordinates,
-            );
-            if let Some((block_id, nested)) = line_block_parent
-                && checked_paragraphs.block_text.insert(block_id)
-                && has_fixed_height(document, block_id)
-            {
-                let block_height = document.nodes[block_id].unrounded_layout.size.height;
-                let block_effective_y = block_effective_y(
-                    document,
-                    block_id,
-                    raw_y,
-                    effective_y,
-                    root_flow_offset,
-                    flow_shift,
-                );
-                if let Some(target_page) = page_origins.first_line_push_page(
-                    effective_y,
-                    height,
-                    block_effective_y,
-                    block_height,
-                    current_page,
-                ) {
-                    check_candidate_page!('candidate_loop, target_page);
-                    let target_y = page_origin(target_page);
-                    let delta = move_line_block(
-                        document,
-                        cascade,
-                        body_id,
-                        block_id,
-                        nested,
-                        block_effective_y,
-                        target_y,
-                        &mut subtree_shifts,
-                        page_before_candidate,
-                    );
-                    flow_shift += delta;
-                    effective_y += delta;
-                }
-            }
-            // `orphans` and `widows` constrain breaks between line boxes, not
-            // breaks between block-level children.  When the paragraph has
-            // lines enough for both, a break that leaves too few widows moves
-            // up between earlier lines; otherwise a fitting block is moved as
-            // a unit when its natural split would violate either constraint.
-            // Oversized blocks that cannot break earlier keep their natural
-            // break.
-            // A paragraph that is a flex item alone on its line cannot move
-            // as a unit, but its later lines can move down inside it. It is
-            // looked for only when no line block parent was found.
-            let flex_line_paragraph = flex_line_paragraph(
-                document,
-                cascade,
-                body_id,
-                &candidate,
-                paragraph_root.filter(|_| line_block_parent.is_none()),
-                uses_positioned_coordinates,
-            );
-            if let Some((block_id, nested)) =
-                line_block_parent.or(flex_line_paragraph.map(|(root, _)| (root, true)))
-                && checked_paragraphs.orphans_widows.insert(block_id)
-                && let Some(line_metrics) = paragraph_line_bounds(document, node_id, &text_lines)
-            {
-                let page_start = page_origin(current_page);
-                let page_end = page_start + page_step_at(current_page);
-                let line_fit = ParagraphLineFit::measure(
-                    &line_metrics,
-                    effective_y,
-                    page_start,
-                    page_end,
-                    cascade.computed[block_id].orphans,
-                    cascade.computed[block_id].widows,
-                );
-                let block_height = document.nodes[block_id].unrounded_layout.size.height;
-                let can_move_block = line_block_parent.is_some()
-                    && block_fits_page_step(block_height, page_step_at(current_page));
-                let fix = line_fit.fix(
-                    &line_metrics,
-                    effective_y,
-                    current_page,
-                    &page_origins,
-                    can_move_block,
-                    // Lines move down inside the paragraph only when it is
-                    // its own inline layout root, has no earlier split
-                    // pending, and can shift its lines.
-                    || {
-                        paragraph_root == Some(block_id)
-                            && deferred_shifts.line_splits.is_empty()
-                            && lines_can_shift_inside(document, block_id)
-                    },
-                );
-                match fix {
-                    LineBreakFix::MoveLines(moves) => {
-                        for (line, shift, page) in moves.into_iter().flatten() {
-                            check_candidate_page!('candidate_loop, page);
-                            shift_ifc_lines_from(document, block_id, line, shift);
-                            if let Some((item, container)) = flex_line_paragraph {
-                                shift_later_flex_lines(document, container, item, shift);
-                            }
-                            grow_ancestors_for_shift(
-                                document,
-                                cascade,
-                                block_id,
-                                shift,
-                                body_id,
-                                &mut subtree_shifts,
-                                page_before_candidate,
-                                &IfcBoxShifts::default(),
-                            );
-                            if text_lines
-                                .get(node_id)
-                                .and_then(|owned| owned.lines.last())
-                                .is_some_and(|last| last.line >= line)
-                            {
-                                height += shift;
-                            }
-                            deferred_shifts.line_splits.push((block_id, line, shift));
-                        }
-                    }
-                    LineBreakFix::MoveBlock => {
-                        // The move is measured from where the block is now.
-                        let block_effective_y = block_effective_y(
-                            document,
-                            block_id,
-                            raw_y,
-                            effective_y,
-                            root_flow_offset,
-                            flow_shift,
-                        );
-                        let target_page = current_page.saturating_add(1);
-                        check_candidate_page!('candidate_loop, target_page);
-                        let delta = move_line_block(
-                            document,
-                            cascade,
-                            body_id,
-                            block_id,
-                            nested,
-                            block_effective_y,
-                            page_origin(target_page),
-                            &mut subtree_shifts,
-                            page_before_candidate,
-                        );
-                        flow_shift += delta;
-                        effective_y += delta;
-                    }
-                    LineBreakFix::Keep => {}
-                }
-            }
-            place_text_candidate(
-                document,
-                &text_lines,
-                node_id,
-                ifc_root,
-                text_ifc_root,
-                effective_y,
-            );
-            let named_page_change = text_changes_page_name(
-                name_context_seen,
-                name_participates_in_flow,
-                height,
-                &candidate_page_name,
-                &comparison_page_name,
-            );
-            let pending_break_applies = pending_break.applies_to(document, node_id);
-            let consumes_pending_break = pending_break_applies && name_participates_in_flow;
-            if saw_child {
-                if consumes_pending_break || named_page_change {
-                    let natural_page = page_index_in_flow(effective_y).unwrap_or(current_page);
-                    let target_page = current_page.saturating_add(1).max(natural_page);
-                    check_candidate_page!('candidate_loop, target_page);
-                    let target_y = page_origin(target_page);
-                    // The candidate was materialized to `effective_y` above,
-                    // so this is the additional movement for this boundary.
-                    // The same amount advances `flow_shift`, which also moves
-                    // later candidates whose ancestor is not moved here.
-                    let delta = target_y - effective_y;
-                    if delta.is_finite() {
-                        shift_text_candidate(
-                            document,
-                            &text_lines,
-                            node_id,
-                            ifc_root.map(|(root, _)| root),
-                            text_ifc_root,
-                            delta,
-                        );
-                        flow_shift += delta;
-                        effective_y += delta;
-                    }
-                    current_page = target_page;
-                    page_names.current = candidate_page_name.clone();
-                } else if let Some(natural_page) = page_index_in_flow(effective_y) {
-                    check_candidate_page!('candidate_loop, natural_page);
-                    current_page = current_page.max(natural_page);
-                }
-            } else {
-                saw_child = true;
-                current_page = 0;
-                if name_participates_in_flow {
-                    page_names.current = candidate_page_name.clone();
-                }
-            }
-            if text_sets_page_name(
-                height,
-                name_participates_in_flow,
-                named_page_change,
-                consumes_pending_break,
-                page_type_leaves_local_flow(
-                    keep_local_page_type,
-                    current_page,
-                    page_before_candidate,
-                ),
-            ) {
-                page_names.current = candidate_page_name;
-            }
-            check_candidate_page!('candidate_loop, current_page);
-            if name_participates_in_flow && height > 0.0 {
-                column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
-            }
-            let end_page = candidate_flow_end(effective_y, height).map(page_index_for_end);
-            let in_flow = !candidate.context.is_out_of_flow_descendant;
-            record_candidate_pages(
-                &mut reach,
-                &mut page_names,
-                control,
-                current_page,
-                end_page,
-                in_flow,
-            )?; // cov:ignore: LLVM coverage maps this multiline call's error exit to its own line.
-            if consumes_pending_break {
-                pending_break.clear();
-            }
-            pending_break.note_after(
-                document,
-                cascade,
-                node_id,
-                candidate.context.deferred_named_break_after,
-            );
-            continue;
-        }
-
-        let computed = &cascade.computed[node_id];
-        let candidate_page_name = candidate.page_name.clone();
-        // `float: footnote` is a page-local out-of-flow placement. Keep the
-        // anchor's page, stack multiple notes from the bottom, and remove the
-        // note's ordinary-flow footprint so following content can continue.
-        if matches!(computed.float, FloatValue::Footnote) {
-            let placement = footnote_areas.candidate(
-                candidate.raw_y,
-                candidate.height,
-                flow_shift,
-                current_page,
-                &page_origins,
-            );
-            check_candidate_page!('candidate_loop, placement.page);
-            footnote_areas.place(document, node_id, placement, &page_origins);
-            flow_shift -= placement.height;
-            reach.include(placement.page, false);
-            saw_child = true;
-            continue;
-        }
-        // Copy layout data before any break adjustment so the immutable node
-        // borrow does not overlap the in-place location update below.
-        let raw_y = candidate.raw_y;
-        let height = candidate.height;
-        place_first_table_header(
-            document,
-            &mut table_headers,
-            node_id,
-            flow_shift,
-            &page_origins,
-        );
-        let mut effective_y = if uses_positioned_coordinates {
-            current_abs_y(document, node_id)
-        } else {
-            raw_y + flow_shift
-        };
-        materialize_y(document, node_id, effective_y);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before);
-        // Set when a forced break starts this box's page, which makes the box
-        // the owner of the margins after the break.
-        let mut starts_after_forced_break = false;
-        // A block box with no block size and no in-flow content lets its
-        // block-start and block-end margins collapse through it.
-        let margins_collapse_through = collapses_through(document, cascade, node_id, height);
-        let (margin_top, trailing_margin) =
-            break_margins(document, cascade, node_id, content_width);
-        let page_start = page_origin(current_page);
-        let page_end = page_start + page_step_at(current_page);
-        // Whether the box fits is decided at its normal-flow position,
-        // before any relative offset.
-        let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
-        let overflow = avoided_breaks.measure(
-            document,
-            cascade,
-            &candidate,
-            &BoxFit {
-                effective_y,
-                flow_y: effective_y - relative_offset,
-                margin_top,
-                trailing_margin,
-                page_start,
-                page_end,
-                next_page_step: page_step_at(current_page.saturating_add(1)),
-            },
-            &table_headers,
-            &mut trailing_flex_children,
-        );
-        // A named page requested by a class-A box starts a new page when it
-        // differs from the current named page. `auto` leaves the current page
-        // type in place; it does not manufacture a second break boundary.
-        // Any non-empty class-A box with a different page name starts a new
-        // page.  `None` is the anonymous/unnamed page type, so an anonymous
-        // box after a named one is a transition too.  Named boxes that start
-        // at the coordinate of a preceding zero-height named box join its
-        // transition: no block-size has been consumed on that page yet, so a
-        // break there would only leave the zero-height boxes alone on a page.
-        // This matters for chains of empty named boxes with overflowing text,
-        // including the first non-empty box that follows the chain.
-        let named_page_change = box_changes_page_name(
-            name_context_seen,
-            &candidate_page_name,
-            &comparison_page_name,
-            last_named.joins_transition(&candidate),
-        );
-        // A forced break at the start of a page already opened by natural
-        // overflow describes the same boundary and must not create a blank
-        // page. The forced break sits before the box's margin box, so the
-        // test uses its block-start margin edge.
-        let forced_break_at_page_start = forced_before
-            && margin_box_starts_page(
-                &page_origins,
-                effective_y - margin_top.max(0.0),
-                current_page,
-                page_start,
-            );
-
-        let collapses_with_previous_block =
-            collapses_with_previous_block(document, &candidate, participates_in_margin_adjacency);
-        let pending_break_applies = pending_break.applies_to(document, node_id);
-        // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
-        // truncated, while a forced break keeps the block-start margin of the
-        // box after it.
-        let forced_transition = pending_break_applies
-            || (forced_before && !forced_break_at_page_start)
-            || named_page_change;
-        let page_transition = saw_child && (forced_transition || overflow.moves_box());
-        if saw_child {
-            // A break-after on the preceding box and a break-before (or named
-            // page transition) on this box describe the same boundary, not two
-            // blank pages.
-            if page_transition {
-                // Content kept on its page as monolithic (see
-                // `monolithic_paper_fit`) has not opened a later page.
-                let natural_page = page_origins.transition_natural_page(
-                    effective_y,
-                    margin_top,
-                    current_page,
-                    reach.flow_max,
-                    named_page_change,
-                );
-                let target_page = current_page.saturating_add(1).max(natural_page);
-                check_candidate_page!('candidate_loop, target_page);
-                // A negative block-start margin can pull a forced-break box
-                // back into the preceding page.  Keep the break boundary for
-                // following siblings (and for page count), but materialize
-                // this box at the underflowed coordinate.  This is the
-                // `underflow-from-next-page` case from CSS Break.
-                let landing = TransitionLanding::new(
-                    page_origin(target_page),
-                    effective_y,
-                    margin_top,
-                    relative_offset,
-                    forced_transition,
-                    &overflow,
-                );
-                let row_flex_break_before =
-                    forced_before && in_row_flex_container(document, cascade, node_id);
-                if landing.is_finite() {
-                    let moved_in_bounded_ancestor = move_box_for_transition(
-                        document,
-                        cascade,
-                        body_id,
-                        &candidate,
-                        &TransitionMove {
-                            node_delta: landing.node_delta,
-                            shift_delta: landing.shift_delta,
-                            page_overflow: overflow.page,
-                            forced_transition,
-                        },
-                        &mut subtree_shifts,
-                        page_before_candidate,
-                    );
-                    // A forced break on one wrapped row-flex item belongs to
-                    // its whole flex line. Move same-line siblings together;
-                    // other lines keep their existing flow coordinates.
-                    if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
-                        move_flex_line_siblings(
-                            document,
-                            parent_id,
-                            node_id,
-                            raw_y,
-                            landing.shift_delta,
-                        );
-                    }
-                    // A kept margin moves the box's descendants and its
-                    // later siblings along with the box.
-                    flow_shift += landing.node_delta;
-                    if let Some(correction) = landing.underflow_correction() {
-                        deferred_shifts.underflow = Some((node_id, correction));
-                    }
-                    float_shifts.settle_transition(
-                        document,
-                        cascade,
-                        body_id,
-                        &candidate,
-                        &FloatTransition {
-                            page_overflow: overflow.page,
-                            forced_transition,
-                            delta: landing.node_delta,
-                            target_y: landing.target_y,
-                            relative_offset,
-                            flow_page: page_before_candidate,
-                            height,
-                            margin_top,
-                            moved_in_bounded_ancestor,
-                        },
-                        &mut subtree_shifts,
-                    );
-                    effective_y += landing.node_delta;
-                }
-                current_page = target_page;
-                if forced_transition {
-                    sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
-                    starts_after_forced_break = true;
-                }
-                if pending_break_applies {
-                    pending_break.clear();
-                }
-            } else if effective_y.is_finite() && effective_y >= 0.0 {
-                let mut natural_page = page_origins.start_page(effective_y, height);
-                // A forced break that coincides with a page edge also starts
-                // that page.
-                if forced_before {
-                    sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
-                    starts_after_forced_break = true;
-                }
-                // An unforced break that falls inside the collapsed margin
-                // between this box and its preceding sibling truncates that
-                // margin (CSS Fragmentation 3 §5.2): the box starts at the
-                // top of the page instead of keeping the part of the margin
-                // that crossed the page edge.
-                let truncation = sibling_margins.truncation_at_break(
-                    document,
-                    cascade,
-                    &page_origins,
-                    &MarginBreak {
-                        node_id,
-                        raw_y,
-                        effective_y,
-                        natural_page,
-                        forced_before,
-                        margin_top,
-                        collapses_with_previous_block,
-                    },
-                );
-                if let Some(MarginTruncation { delta, underflow }) = truncation {
-                    sibling_margins.moved_boxes |= delta != 0.0;
-                    move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
-                    flow_shift += delta;
-                    effective_y += delta;
-                    if let Some(underflow) = underflow {
-                        // Descendants follow the negative margin; later
-                        // siblings still follow the forced break boundary.
-                        deferred_shifts.underflow = Some((node_id, underflow));
-                    } else {
-                        natural_page = page_index_for_y(effective_y);
-                    }
-                }
-                check_candidate_page!('candidate_loop, natural_page);
-                current_page = current_page.max(natural_page);
-            }
-            reset_inline_x_for_page_transition(
-                document,
-                node_id,
-                page_transition,
-                candidate.context.is_direct_body_element,
-            );
-        } else {
-            // A forced break before the first class-A box does not manufacture
-            // a leading blank page.
-            saw_child = true;
-            current_page = 0;
-        }
-        // Parallel flows do not interrupt adjoining normal-flow siblings.
-        if participates_in_margin_adjacency
-            && let Some(parent_id) =
-                BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
-        {
-            if !starts_after_forced_break {
-                sibling_margins.pass_on_forced_break(
-                    document,
-                    cascade,
-                    parent_id,
-                    node_id,
-                    collapses_with_previous_block && margins_collapse_through,
-                );
-            }
-            sibling_margins.record_bottom(
-                parent_id,
-                node_id,
-                collapses_with_previous_block,
-                raw_y + height,
-            );
-        }
-
-        let header_delta = make_room_for_table_header(
-            document,
-            &mut table_headers,
-            node_id,
-            effective_y,
-            height,
-            current_page,
-            &page_origins,
-        );
-        effective_y += header_delta;
-        flow_shift += header_delta;
-
-        if box_sets_page_name(
-            &candidate.context,
-            page_transition,
-            page_type_leaves_local_flow(keep_local_page_type, current_page, page_before_candidate),
-        ) {
-            page_names.current = candidate_page_name;
-            if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
-                last_named = LastNamedBox::new(document, &candidate, node_id, raw_y, height);
-            }
-        }
-        check_candidate_page!('candidate_loop, current_page);
-        // A fixed-height direct block that fits on the physical paper is
-        // monolithic in this minimal paginator.
-        let monolithic_paper_fit = || {
-            candidate.context.is_direct_body_element
-                && fits_decorated_paper(
-                    document,
-                    node_id,
-                    insets,
-                    page_origin(current_page),
-                    page_box.height,
-                    effective_y,
-                    height,
-                )
-        };
-        let end_page = candidate_flow_end(effective_y, height)
-            .filter(|_| !monolithic_paper_fit())
-            .map(page_index_for_end);
-        let in_flow = !candidate.context.is_out_of_flow_descendant;
-        record_candidate_pages(
-            &mut reach,
-            &mut page_names,
-            control,
-            current_page,
-            end_page,
-            in_flow,
-        )?;
-
-        if name_participates_in_flow
-            && (candidate.context.is_named || (candidate.context.is_rendered_leaf && height > 0.0))
-        {
-            column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
-        }
-        if candidate.context.is_flex_item
-            && let Some(context) = candidate.named_flex_context
-        {
-            preceding_flex_items.record(context, height, current_page);
-        }
-        pending_break.note_after(
-            document,
-            cascade,
-            node_id,
-            candidate.context.deferred_named_break_after,
-        );
-    }
-
-    follow_moved_table_rows(document, table_row_origins, &table_headers);
-    super::table::headers::finish_boxes(document, &table_headers);
+    follow_moved_table_rows(document, table_row_origins, &state.table_headers);
+    super::table::headers::finish_boxes(document, &state.table_headers);
     update_paginated_block_heights(
         document,
         cascade,
@@ -4885,32 +3452,14 @@ fn paginate_flow(
         content_height,
         &unpaginated_overflow,
     );
-    table_headers.index();
-    document.table_objects.headers = table_headers;
+    state.table_headers.index();
+    document.table_objects.headers = std::mem::take(&mut state.table_headers);
 
-    // The candidates above stand for the paginated flow only. Boxes outside
-    // it, such as a nested absolutely positioned box or the overflow of a
-    // monolithic box, still need pages to paint on, and so do table edges
-    // that `finish_boxes` grew over repeated headers.
-    if !control.page_limit_reached.get() {
-        // Pagination materialized the moved boxes in page coordinates, which
-        // already include `root_flow_offset`; boxes it left alone paint where
-        // their own coordinates put them.
-        let end =
-            content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
-        if end.is_finite() && end > 0.0 {
-            reach.include_checked(control, page_index_for_end(end), false)?;
-        }
-    }
-    // Pages past the last one the normal flow reached hold only boxes outside
-    // it, and keep the page type the flow ended on, whatever page type was
-    // active when one of those boxes first reached them.
-    let names_end = control.capped_page_index(reach.max);
-    page_names.continue_onto(reach.flow_max, names_end, true);
+    state.reach_overflow_pages(document, &env, content_height)?;
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
-    if sibling_margins.moved_boxes || leading_margins_moved {
+    if state.sibling_margins.moved_boxes || leading_margins_moved {
         let root = super::initial_containing_block::root_element(document).unwrap_or(body_id);
         super::fixed::restore_fixed_box_block_positions(document, cascade, root, content_height);
     }
@@ -4923,11 +3472,11 @@ fn paginate_flow(
         &page_origins,
         control,
     )
-    .and_then(|()| control.check_discovery_page_index(reach.max))?;
+    .and_then(|()| control.check_discovery_page_index(state.reach.max))?;
     Ok(page_slices(
-        control.last_page(reach.max),
+        control.last_page(state.reach.max),
         &page_origins,
-        &page_names,
+        &state.page_names,
     ))
 }
 
@@ -6593,6 +5142,13 @@ fn margin_box_starts_page(
         || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
 }
 
+/// The page that a box which has to start a new page lands on: the page after
+/// `current_page`, or `natural_page` when the box's position already falls on
+/// a later page.
+fn forced_target_page(current_page: u32, natural_page: u32) -> u32 {
+    current_page.saturating_add(1).max(natural_page)
+}
+
 /// Where a box that crosses a page transition is placed, given the
 /// `target_y` top of the page it moves to.
 ///
@@ -7644,6 +6200,48 @@ fn make_room_for_table_header(
     0.0
 }
 
+/// The lines of a paragraph that move down inside it, away from a break
+/// that would leave too few of them on one page.
+struct LineMove {
+    /// The paragraph root that holds the lines.
+    block_id: usize,
+    /// The paragraph's flex item and its container, when the paragraph is a
+    /// flex item alone on its line.
+    flex_line: Option<(usize, usize)>,
+    /// The first line that moves.
+    line: usize,
+    /// How far the lines move down.
+    shift: f32,
+}
+
+/// Moves the lines of a paragraph from `moved.line` on down by `moved.shift`
+/// and brings along what has to follow them: the flex lines after a flex
+/// item paragraph, and the ancestors that hold the paragraph, which grow to
+/// keep it.
+fn move_paragraph_lines(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    moved: &LineMove,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) {
+    shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift);
+    if let Some((item, container)) = moved.flex_line {
+        shift_later_flex_lines(document, container, item, moved.shift);
+    }
+    grow_ancestors_for_shift(
+        document,
+        cascade,
+        moved.block_id,
+        moved.shift,
+        body_id,
+        shifts,
+        flow_page,
+        &IfcBoxShifts::default(),
+    );
+}
+
 /// Moves `block_id`, which sits at `from_y`, so that its flow position starts
 /// at `target_y`, and returns how far it moved. Its relative offsets move
 /// along with it. A `nested` block that begins its ancestors, with no border
@@ -8489,7 +7087,7 @@ impl FloatShifts {
         let floor = if !floating && candidate.context.is_float_descendant {
             None
         } else {
-            float_floor(document, cascade, node_id, context, &edges, floating)
+            float_floor(document, cascade, node_id, context, edges, floating)
         };
         let margin_top = if floating {
             document.nodes[node_id].unrounded_layout.margin.top
@@ -8666,13 +7264,13 @@ impl FloatShifts {
         cascade: &CascadeResult,
         node_id: usize,
         body_id: usize,
-    ) -> Option<(usize, Vec<FloatEdge>)> {
+    ) -> Option<(usize, &[FloatEdge])> {
         (self.later != 0.0 && self.pending.is_none())
             .then(|| {
                 let context = float_context_root(document, cascade, node_id, body_id);
                 self.edges
                     .get(&context)
-                    .map(|edges| (context, edges.clone()))
+                    .map(|edges| (context, edges.as_slice()))
             })
             .flatten()
     }

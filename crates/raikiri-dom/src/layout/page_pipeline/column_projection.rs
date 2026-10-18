@@ -87,7 +87,7 @@ fn generated_kind(node: usize) -> Option<(usize, crate::GeneratedKind)> {
 /// its rectangle from the root's content-box origin.
 pub(crate) type PreparedContentImage = (f32, f32, usize, crate::PositionedContentImage);
 
-type TextGroups = Vec<(f32, usize, u32, IfcTextLines)>;
+pub(super) type TextGroups = Vec<(f32, usize, u32, IfcTextLines)>;
 
 #[derive(Clone, Default)]
 pub(super) struct ColumnProjection {
@@ -256,9 +256,11 @@ impl ParagraphProjection {
         };
         // A translucent `::first-line` composites the first line apart from
         // the others, so the paint order lists the line pieces of the inline
-        // elements on the first line and on later ones.
+        // elements on the first line and on later ones. An element on the
+        // first line that the `::first-line` gives other values is listed by
+        // its pieces too, so that the piece on the first line carries them.
         let pieces = node.ifc_inline_boxes().unwrap_or_default();
-        let split: HashSet<usize> =
+        let mut split: HashSet<usize> =
             if crate::paint_rules::first_line_opacity_layer(document, root).is_some() {
                 let first: HashSet<usize> = pieces
                     .iter()
@@ -273,6 +275,16 @@ impl ParagraphProjection {
             } else {
                 HashSet::new()
             };
+        split.extend(
+            pieces
+                .iter()
+                .filter(|piece| {
+                    piece.line == 0
+                        && crate::generated_content::generated_origin(piece.node).is_none()
+                        && first_line_restyles(node, cascade, piece.node)
+                })
+                .map(|piece| piece.node),
+        );
         // A block-level `::before` or `::after` paints its own box; its
         // pieces on the lines only hold its text.
         let blocks = node.ifc_generated_block_pieces();
@@ -584,6 +596,23 @@ impl ParagraphProjection {
         }
         Ok(result)
     }
+}
+
+/// Whether the `::first-line` around the inline element `element` of the
+/// paragraph `root` gives it a color or font size other than its own, which
+/// are the inherited values that change how its box paints (`currentColor`
+/// and lengths in `em`), so that its box on the first line is painted with
+/// other values than its box on later lines.
+pub(crate) fn first_line_restyles(
+    root: &crate::Node,
+    cascade: &CascadeResult,
+    element: usize,
+) -> bool {
+    root.ifc_first_line_element_style(element)
+        .is_some_and(|style| {
+            crate::generated_content::computed_for_id(cascade, element)
+                .is_some_and(|own| style.color != own.color || style.font_size != own.font_size)
+        })
 }
 
 /// The style of a generated inline box piece on paragraph line `line`: the

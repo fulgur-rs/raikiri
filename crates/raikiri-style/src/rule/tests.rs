@@ -1514,3 +1514,108 @@ fn invalid_border_image_declarations_are_dropped() {
         assert!(parse_block(source).is_empty(), "{source}");
     }
 }
+
+// ── inset shorthand expansion (CSS Positioned Layout 3 §3, CSS Logical Properties 1 §4.3) ──
+
+#[test]
+fn inset_shorthand_expands_into_four_offset_declarations() {
+    let decls = parse_block("inset: 1px 2px;");
+    let px = |v| LengthOrAuto::Length(Length::Px(v));
+    let values: Vec<_> = decls.iter().map(|d| d.value.clone()).collect();
+    assert_eq!(
+        values,
+        [
+            PropertyValue::Top(px(1.0)),
+            PropertyValue::Right(px(2.0)),
+            PropertyValue::Bottom(px(1.0)),
+            PropertyValue::Left(px(2.0)),
+        ]
+    );
+    // The physical shorthand is not flow-relative.
+    assert!(decls.iter().all(|d| d.logical.is_none()));
+}
+
+#[test]
+fn inset_inline_and_block_expand_into_declarations_tagged_with_their_side() {
+    use crate::logical::LogicalSide;
+    let px = |v| LengthOrAuto::Length(Length::Px(v));
+
+    let decls = parse_block("inset-inline: 1px 2px !important;");
+    assert_eq!(
+        decls
+            .iter()
+            .map(|d| (d.value.clone(), d.logical, d.important))
+            .collect::<Vec<_>>(),
+        [
+            (
+                PropertyValue::Left(px(1.0)),
+                Some(LogicalSide::InlineStart),
+                true
+            ),
+            (
+                PropertyValue::Right(px(2.0)),
+                Some(LogicalSide::InlineEnd),
+                true
+            ),
+        ]
+    );
+
+    let decls = parse_block("inset-block: auto 3px;");
+    assert_eq!(
+        decls
+            .iter()
+            .map(|d| (d.value.clone(), d.logical, d.important))
+            .collect::<Vec<_>>(),
+        [
+            (
+                PropertyValue::Top(LengthOrAuto::Auto),
+                Some(LogicalSide::BlockStart),
+                false
+            ),
+            (
+                PropertyValue::Bottom(px(3.0)),
+                Some(LogicalSide::BlockEnd),
+                false
+            ),
+        ]
+    );
+}
+
+#[test]
+fn inset_logical_longhand_declaration_carries_its_side() {
+    use crate::logical::LogicalSide;
+    let decls = parse_block("inset-block-end: 4px; inset-inline-start: 5px;");
+    assert_eq!(
+        decls
+            .iter()
+            .map(|d| (d.value.clone(), d.logical))
+            .collect::<Vec<_>>(),
+        [
+            (
+                PropertyValue::Bottom(LengthOrAuto::Length(Length::Px(4.0))),
+                Some(LogicalSide::BlockEnd)
+            ),
+            (
+                PropertyValue::Left(LengthOrAuto::Length(Length::Px(5.0))),
+                Some(LogicalSide::InlineStart)
+            ),
+        ]
+    );
+}
+
+#[test]
+fn inset_shorthand_with_too_many_values_declaration_dropped() {
+    for source in [
+        "inset: 1px 2px 3px 4px 5px;",
+        "inset-inline: 1px 2px 3px;",
+        "inset-block: 1px 2px 3px;",
+    ] {
+        let decls = parse_block(source);
+        // cov:ignore: the failure-message branch of this `assert!` only
+        // executes when the assertion fails.
+        assert!(
+            decls.is_empty(),
+            "{source} must be dropped by expect_exhausted, got {decls:?}"
+        );
+    }
+}

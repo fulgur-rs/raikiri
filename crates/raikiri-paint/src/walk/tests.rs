@@ -641,6 +641,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -652,6 +653,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_percent,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -663,6 +665,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         10.0,
         &end_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -674,6 +677,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         12.5,
         &end_percent,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -685,6 +689,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         6.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -696,6 +701,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         11.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -707,6 +713,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         1.0,
         &start_px,
         &repeat,
+        None,
     );
     assert!(!scene.commands.is_empty());
 
@@ -721,6 +728,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_px,
         &repeat,
+        None,
     );
     let zero = raikiri_traits::DecodedImage {
         width: 0,
@@ -737,6 +745,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -748,6 +757,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         10.0,
         &start_px,
         &repeat,
+        None,
     );
     assert_eq!(scene.commands.len(), before);
 }
@@ -1810,6 +1820,7 @@ fn background_repeat_tiles_cover_area_with_clipping() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     // 100 / 20 by 50 / 10 tiles, edge tiles fit exactly here, painted as one
     // repeating pattern.
@@ -1844,6 +1855,7 @@ fn background_repeat_tiles_cover_area_with_clipping() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_origins(&clipped).len(), 4);
     let origins = background_fill_origins(&clipped);
@@ -1869,6 +1881,7 @@ fn background_no_repeat_paints_single_origin_tile() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
     assert_eq!(background_fill_origins(&scene), vec![(0.0, 0.0)]);
@@ -1886,6 +1899,7 @@ fn background_no_repeat_paints_single_origin_tile() {
         10.0,
         &offset_position,
         &offset_repeat,
+        None,
     );
     assert_eq!(background_fill_count(&offset), 1);
     assert_eq!(background_fill_origins(&offset), vec![(3.0, 4.0)]);
@@ -1910,6 +1924,7 @@ fn background_repeat_x_and_y_tile_single_axis() {
         10.0,
         &repeat_x_position,
         &repeat_x,
+        None,
     );
     // One fill repeats the tile along the row.
     assert_eq!(background_fill_count(&scene), 1);
@@ -1930,6 +1945,7 @@ fn background_repeat_x_and_y_tile_single_axis() {
         10.0,
         &repeat_y_position,
         &repeat_y,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
     assert_eq!(background_fill_origins(&scene).len(), 5);
@@ -1959,6 +1975,7 @@ fn background_repeat_with_offset_covers_both_directions() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     let origins = background_fill_origins(&scene);
     assert_eq!(origins.len(), 30);
@@ -1986,6 +2003,7 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 25);
     let origins = background_fill_origins(&scene);
@@ -2005,6 +2023,7 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
         32.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&spaced), 9);
     let origins = background_fill_origins(&spaced);
@@ -2025,6 +2044,7 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
         10.0,
         &single_position,
         &single_repeat,
+        None,
     );
     assert_eq!(background_fill_count(&single), 1);
     assert_eq!(background_fill_origins(&single), vec![(3.0, 4.0)]);
@@ -2050,6 +2070,7 @@ fn background_round_rescales_to_whole_tiles() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_origins(&exact).len(), 25);
 
@@ -2065,6 +2086,7 @@ fn background_round_rescales_to_whole_tiles() {
         30.0,
         &position,
         &repeat,
+        None,
     );
     let origins = background_fill_origins(&rescaled);
     assert_eq!(origins.len(), 3);
@@ -2084,6 +2106,7 @@ fn background_round_rescales_to_whole_tiles() {
             10.0,
             &mixed_position,
             &mixed,
+            None,
         );
         assert_eq!(
             background_fill_origins(&mixed_scene).len(),
@@ -2118,6 +2141,7 @@ fn background_repeat_rejects_nonfinite_tile_geometry() {
             image_h,
             &position,
             &repeat,
+            None,
         );
         assert_eq!(background_fill_count(&scene), 0);
     }
@@ -2133,6 +2157,7 @@ fn background_repeat_rejects_nonfinite_tile_geometry() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 0);
 }
@@ -2156,6 +2181,7 @@ fn background_repeat_tiles_paint_contiguous_pixels() {
         2.0,
         &repeat_position,
         &repeat,
+        None,
     );
     let repeat_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(repeat_scene, Affine::IDENTITY),
@@ -2180,6 +2206,7 @@ fn background_repeat_tiles_paint_contiguous_pixels() {
         2.0,
         &single_position,
         &single,
+        None,
     );
     let single_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(single_scene, Affine::IDENTITY),
@@ -2216,6 +2243,7 @@ fn background_origin_positions_independently_from_clip() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
     assert_eq!(background_fill_origins(&scene), vec![(10.0, 10.0)]);
@@ -2234,6 +2262,7 @@ fn background_origin_positions_independently_from_clip() {
         10.0,
         &position,
         &repeat_all,
+        None,
     );
     let origins = background_fill_origins(&tiled);
     assert!(origins.contains(&(10.0, 10.0)));
@@ -2414,6 +2443,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &border,
             &padding,
+            BackgroundEnv::default(),
             Some(&source),
             &mut warnings,
         );
@@ -2463,6 +2493,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &ring_border,
         &padding,
+        BackgroundEnv::default(),
         Some(&source),
         &mut ring_warnings,
     );
@@ -2564,6 +2595,7 @@ fn background_space_and_round_paint_spec_correct_pixels() {
         2.0,
         &space_position,
         &space,
+        None,
     );
     let space_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(space_scene, kurbo::Affine::IDENTITY),
@@ -2590,6 +2622,7 @@ fn background_space_and_round_paint_spec_correct_pixels() {
         3.0,
         &round_position,
         &round,
+        None,
     );
     let round_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(round_scene, kurbo::Affine::IDENTITY),
@@ -2620,6 +2653,7 @@ fn background_origin_clip_pixel_separation() {
         20.0,
         &position,
         &repeat,
+        None,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
@@ -2667,6 +2701,7 @@ fn background_rounded_clip_pixel_corners() {
         20.0,
         &position,
         &repeat,
+        None,
     );
     scene.pop_layer();
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -2807,7 +2842,10 @@ fn background_page_images_ignore_clip_and_empty_area_skips() {
             &mut scene,
             &document,
             &cascade,
-            area,
+            PageBackgroundAreas {
+                paper: area,
+                border_box: area,
+            },
             Some(&source),
             &mut warnings,
         );
@@ -2837,12 +2875,129 @@ fn background_page_images_ignore_clip_and_empty_area_skips() {
         &mut empty_scene,
         &document,
         &empty_cascade,
-        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+        PageBackgroundAreas {
+            paper: kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+            border_box: kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+        },
         Some(&source),
         &mut empty_warnings,
     );
     assert!(empty_warnings.is_empty());
     assert_eq!(background_fill_count(&empty_scene), 0);
+}
+
+#[test]
+fn background_page_image_origin_starts_at_the_page_box_inside_the_margins() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                ],
+            }))
+        }
+    }
+    let paper = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    let page_box = kurbo::Rect::new(10.0, 10.0, 190.0, 90.0);
+    // The image starts at the edge its origin names, counted from the page
+    // box inside the margins, and still paints over the whole paper.
+    for (origin, expected) in [
+        ("border-box", (10.0, 10.0)),
+        ("padding-box", (14.0, 14.0)),
+        ("content-box", (17.0, 17.0)),
+    ] {
+        let (document, cascade) = canvas_fixture(
+            Some(&format!(
+                "@page {{ margin: 10px; border: 4px solid black; padding: 3px; background-image: url('https://example.test/red.png'); background-repeat: no-repeat; background-origin: {origin}; }}"
+            )),
+            None,
+        );
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_page_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            PageBackgroundAreas {
+                paper,
+                border_box: page_box,
+            },
+            Some(&RedPixels),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{origin}: {warnings:?}");
+        assert_eq!(background_fill_origins(&scene), vec![expected], "{origin}");
+    }
+
+    // A percentage size resolves against the page box too: half of its 180px
+    // by 80px is 90px by 40px, which scales the 2px image by 45 and 20.
+    let (document, cascade) = canvas_fixture(
+        Some(
+            "@page { margin: 10px; background-image: url('https://example.test/red.png'); background-repeat: no-repeat; background-origin: border-box; background-size: 50% 50%; }",
+        ),
+        None,
+    );
+    let mut scene = Scene::new();
+    paint_page_background_image(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        PageBackgroundAreas {
+            paper,
+            border_box: page_box,
+        },
+        Some(&RedPixels),
+        &mut Vec::new(),
+    );
+    let fill = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("the image is filled");
+    assert_eq!(
+        fill.transform.as_coeffs(),
+        [45.0, 0.0, 0.0, 20.0, 10.0, 10.0]
+    );
+
+    // A fixed layer is positioned in the page box with its margins, the whole
+    // paper, whatever its origin.
+    for origin in ["border-box", "padding-box", "content-box"] {
+        let (document, cascade) = canvas_fixture(
+            Some(&format!(
+                "@page {{ margin: 10px; border: 4px solid black; padding: 3px; background-image: url('https://example.test/red.png'); background-repeat: no-repeat; background-attachment: fixed; background-origin: {origin}; }}"
+            )),
+            None,
+        );
+        let mut scene = Scene::new();
+        paint_page_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            PageBackgroundAreas {
+                paper,
+                border_box: page_box,
+            },
+            Some(&RedPixels),
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            background_fill_origins(&scene),
+            vec![(0.0, 0.0)],
+            "fixed, {origin}"
+        );
+    }
 }
 
 #[test]
@@ -2917,6 +3072,576 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
             .collect();
         assert_eq!(clips, vec![area, area], "{clip}");
     }
+}
+
+#[test]
+fn background_rounded_color_and_image_are_clipped_to_the_curve_together() {
+    struct BluePixels;
+    impl raikiri_traits::ImagePixelSource for BluePixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: [0, 0, 255, 255].repeat(4),
+            }))
+        }
+    }
+    let border = resolve_border(
+        Border::new(),
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let sides = raikiri_style::property::Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    };
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let render = |color: CssColor| {
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &kurbo::Rect::new(0.0, 0.0, 20.0, 20.0),
+        );
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/blue.png".into());
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            color,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(8.0)),
+            &sides,
+            &padding,
+            BackgroundEnv::default(),
+            Some(&BluePixels),
+            &mut Vec::new(),
+        );
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
+            20,
+            20,
+        )
+    };
+    // The opaque blue image covers the red color, so the box looks the same
+    // with or without the color. Each clipped on its own, the antialiased
+    // edge would take the color and then the image over it, and show a red
+    // rim.
+    let image_only = render(CssColor::TRANSPARENT);
+    let with_color = render(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    assert!(
+        image_only
+            .chunks_exact(4)
+            .any(|pixel| pixel[0] > 0 && pixel[0] < 255),
+        "the curve antialiases some pixel"
+    );
+    for (index, (plain, colored)) in image_only.iter().zip(&with_color).enumerate() {
+        assert!(
+            plain.abs_diff(*colored) <= 1,
+            "byte {index}: {plain} vs {colored}"
+        );
+    }
+}
+
+fn bordered_sides(
+    width: f32,
+    style: BorderStyle,
+    color: BorderColor,
+) -> raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder> {
+    let mut authored = Border::new();
+    authored.width = Length::Px(width);
+    authored.style = style;
+    authored.color = color;
+    let border = resolve_border(
+        authored,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    raikiri_style::property::Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    }
+}
+
+#[test]
+fn fixed_background_viewport_is_the_page_area_outside_any_fixed_containing_block() {
+    let page_area = kurbo::Rect::new(10.0, 20.0, 110.0, 220.0);
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::IDENTITY, false),
+        Some(page_area)
+    );
+    // Inside or at a containing block for fixed boxes, a transformed box
+    // for one, the layer scrolls with its box.
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::IDENTITY, true),
+        None
+    );
+    // A transformed root carries the whole page with it.
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::scale(2.0), false),
+        None
+    );
+}
+
+#[test]
+fn fixed_background_layer_is_positioned_in_the_page_area_and_clipped_to_its_box() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: [255, 0, 0, 255].repeat(4),
+            }))
+        }
+    }
+    let border = bordered_sides(2.0, BorderStyle::Solid, BorderColor::CurrentColor);
+    let padding = taffy::Rect {
+        top: 3.0,
+        right: 3.0,
+        bottom: 3.0,
+        left: 3.0,
+    };
+    let page_area = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    let origins = |attachment, origin, fixed_viewport| {
+        let mut scene = Scene::new();
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+        layer.repeat = background_repeat_fixture("no-repeat", "0 0").1;
+        layer.attachment = attachment;
+        layer.origin = origin;
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            100.0,
+            50.0,
+            50.0,
+            30.0,
+            CssColor::TRANSPARENT,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            BackgroundEnv {
+                fixed_viewport,
+                ..BackgroundEnv::default()
+            },
+            Some(&RedPixels),
+            &mut Vec::new(),
+        );
+        background_fill_origins(&scene)
+    };
+    use raikiri_style::property::BackgroundAttachment::{Fixed, Scroll};
+    // A scroll layer starts at its padding box; a fixed one at the page area,
+    // whatever its origin.
+    assert_eq!(
+        origins(Scroll, VisualBox::PaddingBox, Some(page_area)),
+        vec![(52.0, 32.0)]
+    );
+    for origin in [
+        VisualBox::BorderBox,
+        VisualBox::PaddingBox,
+        VisualBox::ContentBox,
+    ] {
+        assert_eq!(
+            origins(Fixed, origin, Some(page_area)),
+            vec![(0.0, 0.0)],
+            "{origin:?}"
+        );
+    }
+    // Without a page area, as inside a transform, a fixed layer scrolls.
+    assert_eq!(
+        origins(Fixed, VisualBox::PaddingBox, None),
+        vec![(52.0, 32.0)]
+    );
+}
+
+#[test]
+fn tile_spans_snap_each_edge_to_the_device_grid() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat, Round, Space};
+    // Without a grid (a vector output) nothing moves.
+    assert_eq!(
+        tile_spans(&[68.25], 38.5, NoRepeat, None),
+        vec![(68.25, 38.5)]
+    );
+    // Each edge goes to its nearest device pixel, so the tile grows from the
+    // fractional 68.25..106.75 to the whole-pixel 68..107.
+    assert_eq!(
+        tile_spans(&[68.25], 38.5, NoRepeat, Some((1.0, 0.0))),
+        vec![(68.0, 39.0)]
+    );
+    // Two device pixels per CSS pixel snap to half pixels.
+    assert_eq!(
+        tile_spans(&[68.3], 38.5, NoRepeat, Some((2.0, 0.0))),
+        vec![(68.5, 38.5)]
+    );
+    // The grid offset shifts the pixel boundaries.
+    assert_eq!(
+        tile_spans(&[10.0], 4.0, NoRepeat, Some((1.0, 0.5))),
+        vec![(10.5, 4.0)]
+    );
+    // `space` tiles are snapped one by one, so their lengths may differ.
+    assert_eq!(
+        tile_spans(&[0.0, 10.5, 21.0], 5.5, Space, Some((1.0, 0.0))),
+        vec![(0.0, 6.0), (11.0, 5.0), (21.0, 6.0)]
+    );
+    // A `repeat` axis keeps its origin tile, with a whole-pixel pitch of at
+    // least one device pixel.
+    assert_eq!(
+        tile_spans(&[10.2, 11.0, 11.8], 0.8, Repeat, Some((1.0, 0.0))),
+        vec![(10.0, 1.0)]
+    );
+    assert_eq!(
+        tile_spans(&[10.0], 116.8, Repeat, Some((1.0, 0.0))),
+        vec![(10.0, 117.0)]
+    );
+    assert_eq!(
+        tile_spans(&[10.0], 0.1, Repeat, Some((2.0, 0.0))),
+        vec![(10.0, 0.5)]
+    );
+    assert_eq!(tile_spans(&[10.2], 0.8, Repeat, None), vec![(10.2, 0.8)]);
+    // A `round` axis keeps the pitch that fits its area.
+    assert_eq!(
+        tile_spans(&[10.2, 20.4], 10.2, Round, Some((1.0, 0.0))),
+        vec![(10.2, 10.2)]
+    );
+    assert!(tile_spans(&[], 1.0, Repeat, Some((1.0, 0.0))).is_empty());
+}
+
+#[test]
+fn tile_spans_keep_a_positive_length_on_a_mirrored_grid() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat};
+    // A reflection gives the grid a negative scale, but a tile is still as
+    // long as its device pixels, and its edges still go to the nearest pixel.
+    assert_eq!(
+        tile_spans(&[3.4], 10.0, Repeat, Some((-1.0, 0.0))),
+        vec![(3.0, 10.0)]
+    );
+    assert_eq!(
+        tile_spans(&[3.4], 0.2, Repeat, Some((-2.0, 0.0))),
+        vec![(3.5, 0.5)]
+    );
+    assert_eq!(
+        tile_spans(&[68.25], 38.5, NoRepeat, Some((-1.0, 0.0))),
+        vec![(68.0, 39.0)]
+    );
+    // A grid without a usable scale leaves the tiles where they are.
+    for scale in [0.0, f64::INFINITY, f64::NAN] {
+        assert_eq!(
+            tile_spans(&[3.4], 10.0, Repeat, Some((scale, 0.0))),
+            vec![(3.4, 10.0)]
+        );
+    }
+}
+
+#[test]
+fn tile_spans_keep_a_tile_thinner_than_a_device_pixel() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Space};
+    // Both edges of the tile round to the same device pixel boundary, which
+    // would leave it no length at all; it keeps its own span instead.
+    assert_eq!(
+        tile_spans(&[10.1], 0.2, NoRepeat, Some((1.0, 0.0))),
+        vec![(10.1, 0.2)]
+    );
+    assert_eq!(
+        tile_spans(&[10.1, 20.1], 0.2, Space, Some((1.0, 0.0))),
+        vec![(10.1, 0.2), (20.1, 0.2)]
+    );
+    assert_eq!(
+        tile_spans(&[10.1], 0.2, NoRepeat, Some((-1.0, 0.0))),
+        vec![(10.1, 0.2)]
+    );
+    // A tile whose edges land on different boundaries is still snapped.
+    assert_eq!(
+        tile_spans(&[10.4], 0.2, NoRepeat, Some((1.0, 0.0))),
+        vec![(10.0, 1.0)]
+    );
+    // When one tile of a `space` axis collapses, its neighbors stay unsnapped
+    // with it: the first tile would otherwise stay at 0.1..0.3 and overlap the
+    // second one, which snaps to 0..1.
+    assert_eq!(
+        tile_spans(&[0.1, 0.4], 0.2, Space, Some((1.0, 0.0))),
+        vec![(0.1, 0.2), (0.4, 0.2)]
+    );
+}
+
+#[test]
+fn a_snapped_repeat_keeps_the_phase_of_the_placed_tile() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat};
+    // A 1.6px tile placed at 0.2px repeats every 2 device pixels from device
+    // pixel 0, whichever tile covers the start of the painting area.
+    let grid = Some((1.0, 0.0));
+    for (painting_start, covering_start) in [(-1.0, -1.4), (0.0, 0.2), (3.5, 3.4)] {
+        let spans = axis_tile_spans(&[covering_start], 1.6, Repeat, (0.2, painting_start), grid);
+        let [(start, pitch)] = spans[..] else {
+            panic!("a repeat axis keeps one tile: {spans:?}");
+        };
+        assert_eq!(pitch, 2.0);
+        assert_eq!(start % 2.0, 0.0, "{spans:?} is off the lattice 0, 2, 4");
+        assert!(
+            start <= painting_start && painting_start < start + pitch,
+            "{spans:?} does not cover {painting_start}"
+        );
+    }
+    // Without a grid the tile that covers the painting start is kept as it is.
+    let unsnapped = axis_tile_spans(&[-1.4], 1.6, Repeat, (0.2, -1.0), None);
+    assert_eq!(unsnapped.len(), 1);
+    assert!((unsnapped[0].0 + 1.4).abs() < 1e-9 && unsnapped[0].1 == 1.6);
+    // Other keywords are snapped from their own tiles.
+    assert_eq!(
+        axis_tile_spans(&[10.4], 0.2, NoRepeat, (10.4, 0.0), grid),
+        vec![(10.0, 1.0)]
+    );
+}
+
+#[test]
+fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
+    struct BluePixels;
+    impl raikiri_traits::ImagePixelSource for BluePixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 4,
+                height: 4,
+                rgba: [0, 0, 255, 255].repeat(16),
+            }))
+        }
+    }
+    let (position, repeat) = background_repeat_fixture("no-repeat", "center");
+    let border = bordered_sides(0.0, BorderStyle::None, BorderColor::CurrentColor);
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    // The red channel of row 5 of a white 40x10 canvas holding a box that is
+    // `width` wide at x = 10.5 and centers a 4x4 blue image.
+    let row = |width: f32, device_grid: Option<DeviceGrid>| {
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &kurbo::Rect::new(0.0, 0.0, 40.0, 10.0),
+        );
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/blue.png".into());
+        layer.position = position;
+        layer.repeat = repeat;
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            width,
+            10.0,
+            10.5,
+            0.0,
+            CssColor::TRANSPARENT,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            BackgroundEnv {
+                device_grid,
+                ..BackgroundEnv::default()
+            },
+            Some(&BluePixels),
+            &mut Vec::new(),
+        );
+        let buffer = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
+            40,
+            10,
+        );
+        (0..40)
+            .map(|x| buffer[(5 * 40 + x) * 4])
+            .collect::<Vec<u8>>()
+    };
+    // The box is 21 wide at 10.5, so its center puts the image at 19..23. The
+    // painting box rounds to 11..32, but the image keeps the unsnapped
+    // position instead of moving to 19.5.
+    let snapped = row(21.0, Some(DeviceGrid::uniform(1.0)));
+    assert_eq!(snapped[18], 255, "left of the image");
+    assert!(snapped[19..23].iter().all(|red| *red == 0), "{snapped:?}");
+    assert_eq!(snapped[23], 255, "right of the image");
+    // Centered in 22, the image straddles half pixels at 19.5..23.5. A grid
+    // moves it onto whole pixels; without one it keeps the half pixels.
+    let on_grid = row(22.0, Some(DeviceGrid::uniform(1.0)));
+    assert_eq!(on_grid[19], 255);
+    assert!(on_grid[20..24].iter().all(|red| *red == 0), "{on_grid:?}");
+    assert_eq!(on_grid[24], 255);
+    let off_grid = row(22.0, None);
+    assert!(
+        (1..255).contains(&off_grid[19]) && (1..255).contains(&off_grid[23]),
+        "{off_grid:?}"
+    );
+}
+
+#[test]
+fn border_hides_background_edge_needs_an_opaque_continuous_border_on_every_side() {
+    let green = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 255,
+    });
+    let translucent = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 128,
+    });
+    let hides = |sides: &_| border_hides_background_edge(sides, CssColor::BLACK);
+    for style in [
+        BorderStyle::Solid,
+        BorderStyle::Groove,
+        BorderStyle::Ridge,
+        BorderStyle::Inset,
+        BorderStyle::Outset,
+    ] {
+        assert!(hides(&bordered_sides(4.0, style, green)), "{style:?}");
+    }
+    assert!(hides(&bordered_sides(
+        4.0,
+        BorderStyle::Solid,
+        BorderColor::CurrentColor
+    )));
+    assert!(
+        !border_hides_background_edge(
+            &bordered_sides(4.0, BorderStyle::Solid, BorderColor::CurrentColor),
+            CssColor {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 128,
+            },
+        ),
+        "currentcolor takes the translucent text color"
+    );
+    assert!(!hides(&bordered_sides(
+        4.0,
+        BorderStyle::Solid,
+        translucent
+    )));
+    assert!(!hides(&bordered_sides(0.0, BorderStyle::Solid, green)));
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::None, green)));
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::Dotted, green)));
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::Dashed, green)));
+    // A double border has a gap between its lines until it is wide enough.
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::Double, green)));
+    assert!(hides(&bordered_sides(6.0, BorderStyle::Double, green)));
+    let mut one_side_open = bordered_sides(4.0, BorderStyle::Solid, green);
+    one_side_open.left = bordered_sides(4.0, BorderStyle::Dashed, green).left;
+    assert!(!hides(&one_side_open));
+}
+
+#[test]
+fn background_is_pulled_in_from_a_rounded_edge_only_when_the_border_hides_it() {
+    let green = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 255,
+    });
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    // The red channel of the pixel at `(x, y)` of a 20x20 box painted over white.
+    let red_at = |sides: &_, radius: f32, border_hides_edge: bool, (x, y): (usize, usize)| {
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &kurbo::Rect::new(0.0, 0.0, 20.0, 20.0),
+        );
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            red,
+            &[raikiri_style::ComputedBackgroundLayer::initial()],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(radius)),
+            sides,
+            &padding,
+            BackgroundEnv {
+                border_hides_edge,
+                ..BackgroundEnv::default()
+            },
+            None,
+            &mut Vec::new(),
+        );
+        let buffer = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
+            20,
+            20,
+        );
+        // Blue drops from 255 to 0 as the red covers the white.
+        255 - buffer[(y * 20 + x) * 4 + 2]
+    };
+    let solid = bordered_sides(4.0, BorderStyle::Solid, green);
+    let double = bordered_sides(6.0, BorderStyle::Double, green);
+    // Along the straight top edge, the border covers the first four rows.
+    // Left alone, the background reaches the very edge.
+    assert_eq!(red_at(&solid, 8.0, false, (10, 0)), 255);
+    // Pulled in by half the border width, rows 0 and 1 stay clear and row 2
+    // is painted.
+    assert_eq!(red_at(&solid, 8.0, true, (10, 0)), 0);
+    assert_eq!(red_at(&solid, 8.0, true, (10, 1)), 0);
+    assert_eq!(red_at(&solid, 8.0, true, (10, 2)), 255);
+    // A double border pulls in by a sixth of its width: one row.
+    assert_eq!(red_at(&double, 8.0, true, (10, 0)), 0);
+    assert_eq!(red_at(&double, 8.0, true, (10, 1)), 255);
+    // Square corners have no antialiased fringe to avoid.
+    assert_eq!(red_at(&solid, 0.0, true, (10, 0)), 255);
 }
 
 #[test]
@@ -3008,6 +3733,7 @@ fn background_element_origins_clips_and_rounded_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &zero_sides,
             &content_padding,
+            BackgroundEnv::default(),
             Some(&source),
             &mut warnings,
         );
@@ -3043,6 +3769,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
+        BackgroundEnv::default(),
         Some(&source),
         &mut warn_warnings,
     );
@@ -3076,6 +3803,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
+        BackgroundEnv::default(),
         Some(&source),
         &mut fallback_warnings,
     );
@@ -3110,6 +3838,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(8.0)),
         &zero_sides,
         &padding,
+        BackgroundEnv::default(),
         Some(&source),
         &mut rounded_warnings,
     );
@@ -3416,6 +4145,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&nonfinite), 0);
     // Finite positioning with non-finite painting skips without crashing.
@@ -3430,6 +4160,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&nonfinite_paint), 0);
     // Round with zero positioning width keeps the natural tile width on that
@@ -3447,6 +4178,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &round_position,
         &round,
+        None,
     );
     assert_eq!(background_fill_origins(&zero_round).len(), 25);
     // Space with zero positioning width falls back to a single tile on that axis.
@@ -3462,6 +4194,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &zero_space_position,
         &zero_space,
+        None,
     );
     assert_eq!(background_fill_count(&zero_space_scene), 5);
     // Tiny tiles hitting the repeat fan-out bound skip without allocating.
@@ -3476,6 +4209,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         0.001,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&tiny), 0);
 }
@@ -3540,6 +4274,7 @@ fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
         0.001,
         &position,
         &space,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
 }
@@ -3847,9 +4582,9 @@ fn engine_margin_boxes_do_not_add_the_ahem_baseline_correction() {
     // Both boxes have the same height and the same resolved font, so the text
     // sits at the same y whatever the family was called.
     assert_eq!(boxes[0].1, boxes[1].1);
-    // The boxes are 10px tall at the top of the page: the baseline is the
-    // Ahem ascent, 8.
-    assert_eq!(boxes[0].1, 8.0);
+    // The boxes are 50px tall at the top of the page and centre their 10px
+    // line, which starts at 20: the baseline is the Ahem ascent, 8, below it.
+    assert_eq!(boxes[0].1, 28.0);
 }
 
 #[test]
@@ -4361,7 +5096,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
 }
 
 #[test]
-fn conic_paint_covers_empty_square_and_rounded_boxes() {
+fn conic_paint_covers_empty_and_square_boxes() {
     let mut document = Document::new();
     let square_id = document.append_element(
         Some(document.root_index()),
@@ -4369,16 +5104,9 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         taffy::Style::default(),
         Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
-    let round_id = document.append_element(
-        Some(document.root_index()),
-        "div",
-        taffy::Style::default(),
-        Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%); border-radius: 10px"),
-    );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let square = conic_of(&cascade.computed[square_id].background_layers()[0].image);
-    let round = conic_of(&cascade.computed[round_id].background_layers()[0].image);
     let current = CssColor {
         r: 0,
         g: 0,
@@ -4388,18 +5116,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
     let mut scene = Scene::new();
     let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
     let painting = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
-    let square_radius = cascade.computed[square_id].border_radius;
-    let round_radius = cascade.computed[round_id].border_radius;
-    paint_conic_gradient(
-        &mut scene,
-        &square,
-        positioning,
-        painting,
-        &square_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
-        current,
-    );
+    paint_conic_gradient(&mut scene, &square, positioning, painting, current);
     assert!(!scene.commands.is_empty());
     let before = scene.commands.len();
     paint_conic_gradient(
@@ -4407,23 +5124,9 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         &square,
         kurbo::Rect::new(0.0, 0.0, 0.0, 0.0),
         painting,
-        &square_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
         current,
     );
     assert_eq!(scene.commands.len(), before);
-    paint_conic_gradient(
-        &mut scene,
-        &round,
-        positioning,
-        painting,
-        &round_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
-        current,
-    );
-    assert!(scene.commands.len() > before);
 }
 
 #[test]
@@ -4503,6 +5206,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -4527,6 +5231,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
+        BackgroundEnv::default(),
         None,
         &mut transparent_warnings,
     );
@@ -5922,16 +6627,30 @@ fn a_gradient_border_image_fills_each_part_with_its_first_color() {
 /// The image brushes of the fills that painting the root element's border
 /// with `style` records over a 3×3 image.
 fn root_border_brush_sizes(style: &str) -> Vec<(u32, u32)> {
+    border_brush_sizes(
+        style,
+        &crate::walk::ImageBrushCache::default(),
+        &BorderImagePixels::opaque(),
+    )
+}
+
+/// The image brushes of the fills that painting the root element's border
+/// with `style` records, through `cache` over `pixels`.
+fn border_brush_sizes(
+    style: &str,
+    cache: &crate::walk::ImageBrushCache,
+    pixels: &BorderImagePixels,
+) -> Vec<(u32, u32)> {
     let mut document = root_border_document(style);
     let cascade = cascade(&document, &build_rule_tree(&document)).expect("cascade Ok");
     let mut scene = Scene::new();
     paint_laid_out_document_decorations(
-        &crate::walk::ImageBrushCache::default(),
+        cache,
         &mut scene,
         &mut document,
         &cascade,
         PageBox::A4,
-        Some(&BorderImagePixels::opaque()),
+        Some(pixels),
         &mut Vec::new(),
     );
     scene
@@ -5962,6 +6681,122 @@ fn overlapping_slices_share_the_whole_image() {
         "border: 5px solid red; border-image: url(https://images.test/border.png) 2",
     );
     assert_eq!(sizes, [(3, 3); 4]);
+}
+
+/// An opaque 30×30 image with natural size 30×30.
+fn large_border_image_pixels() -> BorderImagePixels {
+    BorderImagePixels {
+        natural: Some(raikiri_traits::ImageIntrinsicSize {
+            width: Some(30.0),
+            height: Some(30.0),
+            aspect_ratio: Some(1.0),
+        }),
+        decoded: Some(raikiri_traits::DecodedImage {
+            width: 30,
+            height: 30,
+            rgba: [0, 255, 0, 255].repeat(900),
+        }),
+    }
+}
+
+#[test]
+fn border_image_parts_that_shrink_are_averaged_to_device_pixels() {
+    let style = |border: u32| {
+        format!(
+            "border: {border}px solid red; border-image: url(https://images.test/border.png) 10"
+        )
+    };
+    let raster = crate::walk::ImageBrushCache::default().with_device_scale(Some(1.0));
+    // 10-unit slices drawn into 5px borders: the corners shrink on both axes
+    // and the edges, which stretch along their length, on the thin one.
+    assert_eq!(
+        border_brush_sizes(&style(5), &raster, &large_border_image_pixels()),
+        [
+            (5, 5),
+            (10, 5),
+            (5, 5),
+            (5, 10),
+            (5, 10),
+            (5, 5),
+            (10, 5),
+            (5, 5)
+        ]
+    );
+    // A part that shrinks by less than one and a half keeps its pixels.
+    assert_eq!(
+        border_brush_sizes(&style(8), &raster, &large_border_image_pixels()),
+        [(10, 10); 8]
+    );
+    // So does a vector output, which has no device pixels to average to.
+    assert_eq!(
+        border_brush_sizes(
+            &style(5),
+            &crate::walk::ImageBrushCache::default(),
+            &large_border_image_pixels()
+        ),
+        [(10, 10); 8]
+    );
+    // The size follows the device pixels of a scaled output.
+    let doubled = crate::walk::ImageBrushCache::default().with_device_scale(Some(2.0));
+    assert_eq!(
+        border_brush_sizes(&style(5), &doubled, &large_border_image_pixels()),
+        [(10, 10); 8]
+    );
+}
+
+#[test]
+fn an_averaged_part_keeps_whole_pixels_along_an_axis_that_does_not_shrink() {
+    // 21 rows, each a red of its own.
+    let decoded = std::sync::Arc::new(raikiri_traits::DecodedImage {
+        width: 40,
+        height: 21,
+        rgba: (0..21u8)
+            .flat_map(|row| [row * 10, 0, 0, 255].repeat(40))
+            .collect(),
+    });
+    let part = raikiri_dom::image_geometry::BorderImagePart {
+        source: (0.0, 0.0, 40.0, 10.5),
+        area: (0.0, 0.0, 10.0, 10.5),
+        tile_width: 10.0,
+        tile_height: 10.5,
+        x: vec![0.0],
+        y: vec![0.0],
+    };
+    let crop = pixel_crop(&decoded, (0.0, 0.0), (40.0, 10.5)).unwrap();
+    // A mirrored output counts its device pixels the same.
+    let mirrored = DeviceGrid {
+        scale_x: -1.0,
+        offset_x: 10.0,
+        scale_y: 1.0,
+        offset_y: 0.0,
+    };
+    let cache = crate::walk::ImageBrushCache::default();
+    let averaged =
+        |part: &_, grid| averaged_part_brush(&cache, &decoded, part, crop, (1.0, 1.0), grid);
+    let (brush, to_image) = averaged(&part, Some(mirrored)).unwrap();
+    // The width shrinks to the 10 device pixels; the height of 10.5 pixels
+    // is no more than one and a half times the device pixels, so it keeps
+    // the 11 whole rows the part rounds to.
+    assert_eq!((brush.image.width, brush.image.height), (10, 11));
+    for (row, pixels) in brush.image.data.data().chunks(10 * 4).enumerate() {
+        assert!(
+            pixels
+                .chunks(4)
+                .all(|pixel| pixel == [row as u8 * 10, 0, 0, 255]),
+            "row {row}"
+        );
+    }
+    assert_eq!(
+        to_image.as_coeffs(),
+        (Affine::scale_non_uniform(4.0, 10.5 / 11.0)).as_coeffs()
+    );
+    // Nothing to average on a vector output, or when no axis shrinks enough.
+    assert!(averaged(&part, None).is_none());
+    let wide = raikiri_dom::image_geometry::BorderImagePart {
+        tile_width: 30.0,
+        ..part
+    };
+    assert!(averaged(&wide, Some(mirrored)).is_none());
 }
 
 #[test]
@@ -6660,6 +7495,7 @@ fn inline_border_image_tile_ends(
         None,
         &mut Vec::new(),
         Affine::IDENTITY,
+        None,
     );
     scene
         .commands

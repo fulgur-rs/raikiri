@@ -1312,6 +1312,10 @@ fn self_alignment_to_taffy_maps_every_keyword() {
             SelfAlignmentValue::Baseline,
             Some(TaffyAlignItems::BASELINE),
         ),
+        (
+            SelfAlignmentValue::LastBaseline,
+            Some(TaffyAlignItems::BASELINE),
+        ),
     ] {
         assert_eq!(self_alignment_to_taffy(value), expected, "value: {value:?}");
     }
@@ -1341,6 +1345,124 @@ fn bridge_alignment_align_self_value_delegates_to_self_alignment_to_taffy() {
     let mut style = Style::default();
     bridge_alignment(&mut style, &cv);
     assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
+}
+
+#[test]
+fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
+    // An absolutely positioned box takes no part in baseline alignment, so
+    // `last baseline` falls back to `safe self-end` on both axes. A box in the
+    // flow keeps aligning to the baseline.
+    for (position, expected) in [
+        (PositionValue::Absolute, TaffyAlignItems::SAFE_SELF_END),
+        (PositionValue::Fixed, TaffyAlignItems::SAFE_SELF_END),
+        (PositionValue::Static, TaffyAlignItems::BASELINE),
+    ] {
+        let label = format!("{position:?}");
+        let mut cv = ComputedValues::initial();
+        cv.position = position;
+        cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::LastBaseline);
+        cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::LastBaseline);
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.align_self, Some(expected), "position: {label}");
+        assert_eq!(style.justify_self, Some(expected), "position: {label}");
+    }
+}
+
+#[test]
+fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
+    let mut parent = ComputedValues::initial();
+    parent.align_items = SelfAlignmentValue::LastBaseline;
+    parent.justify_items = SelfAlignmentValue::LastBaseline;
+    for (position, expected) in [
+        (
+            PositionValue::Absolute,
+            Some(TaffyAlignItems::SAFE_SELF_END),
+        ),
+        (PositionValue::Fixed, Some(TaffyAlignItems::SAFE_SELF_END)),
+        (PositionValue::Static, None),
+    ] {
+        let label = format!("{position:?}");
+        let mut cv = ComputedValues::initial();
+        cv.position = position;
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        bridge_inherited_last_baseline(&mut style, &cv, &parent);
+        assert_eq!(style.align_self, expected, "position: {label}");
+        assert_eq!(style.justify_self, expected, "position: {label}");
+    }
+}
+
+#[test]
+fn abspos_auto_alignment_takes_the_containers_last_baseline_only_for_the_static_position() {
+    // `auto` borrows the container's `last baseline` only in an axis whose
+    // insets are both `auto`; with one specified it behaves as `normal`.
+    let mut parent = ComputedValues::initial();
+    parent.align_items = SelfAlignmentValue::LastBaseline;
+    parent.justify_items = SelfAlignmentValue::LastBaseline;
+    let mut cv = ComputedValues::initial();
+    cv.position = PositionValue::Absolute;
+    cv.left = ComputedLengthPercentageOrAuto::Px(0.0);
+    cv.bottom = ComputedLengthPercentageOrAuto::Px(0.0);
+    let mut style = Style::default();
+    bridge_alignment(&mut style, &cv);
+    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    assert_eq!(style.align_self, None);
+    assert_eq!(style.justify_self, None);
+
+    cv.left = ComputedLengthPercentageOrAuto::Auto;
+    cv.bottom = ComputedLengthPercentageOrAuto::Auto;
+    cv.top = ComputedLengthPercentageOrAuto::Px(0.0);
+    let mut style = Style::default();
+    bridge_alignment(&mut style, &cv);
+    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    assert_eq!(style.align_self, None);
+    assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
+}
+
+#[test]
+fn abspos_own_alignment_overrides_the_containers_last_baseline() {
+    let mut parent = ComputedValues::initial();
+    parent.align_items = SelfAlignmentValue::LastBaseline;
+    let mut cv = ComputedValues::initial();
+    cv.position = PositionValue::Absolute;
+    cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
+    let mut style = Style::default();
+    bridge_alignment(&mut style, &cv);
+    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
+    assert_eq!(style.justify_self, None);
+}
+
+#[test]
+fn abspos_takes_last_baseline_from_a_display_contents_document_element() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // A `display: contents` document element is blockified, so it still makes
+    // the box its children's `auto` alignment borrows from; the document node
+    // above it does not.
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:contents;align-items:last baseline;justify-items:last baseline"),
+    );
+    doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let child = doc.append_element(
+        Some(html),
+        "div",
+        Style::default(),
+        Some("position:absolute"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
+
+    let style = &doc.layout_node_with_style(child).unwrap().style;
+    assert_eq!(style.align_self, Some(TaffyAlignItems::SAFE_SELF_END));
+    assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
 }
 
 #[test]
