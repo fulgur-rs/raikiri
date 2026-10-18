@@ -664,6 +664,28 @@ fn a_cell_beside_a_collapsed_column_breaks_its_lines_at_the_borders_it_keeps() {
 }
 
 #[test]
+fn a_border_only_a_collapsed_column_gives_the_rows_is_not_counted_twice() {
+    // While the column is in place its cell's bottom border is the line
+    // between the rows, and the cell below takes it as its top border. The
+    // rows that remain overlap no such line, so measuring both cells with it
+    // would leave the table a border taller than before the collapse.
+    let rows: [Row; 2] = [
+        (
+            "",
+            &[
+                ("", "X"),
+                ("border-bottom:20px solid black", "X"),
+                ("", "X"),
+            ],
+        ),
+        ("", &[("", "X"), ("", "X"), ("", "X")]),
+    ];
+    let measured = rows_height(120, &[COL, COLLAPSED_COL, COL], &rows);
+    assert_eq!(measured, rows_height(120, &[COL, COL, COL], &rows));
+    assert_eq!(measured, 40.0);
+}
+
+#[test]
 fn a_collapsed_row_stays_out_of_the_borders_measured_with_the_columns_in_place() {
     // The collapsed row's wide border never takes part in resolution, so it
     // does not narrow the widths the other rows are measured at.

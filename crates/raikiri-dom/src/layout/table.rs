@@ -501,11 +501,13 @@ fn compute_table_layout_checked(
             resolve_collapsed_borders(doc, resolved, index, table_idx);
         }
     }
-    let columns_in_place = borders_in_place.map(|(border_width, in_place)| ColumnsInPlace {
-        border_width,
-        in_place,
-        remaining: snapshot_borders(doc, &grid),
-    });
+    let columns_in_place =
+        shown
+            .as_ref()
+            .zip(borders_in_place)
+            .map(|(shown, (border_width, in_place))| {
+                ColumnsInPlace::new(doc, &grid, shown, border_width, in_place)
+            });
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
     let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
@@ -3709,16 +3711,25 @@ fn resolve_collapsed_borders(
 /// resolution of another grid left on them.
 fn reset_collapsed_borders(doc: &mut Document, grid: &TableGrid) {
     for cell in &grid.cells {
-        let node = doc.table_layout_node_mut(cell.node_id);
-        node.collapsed_border = None;
-        let border = node.computed_border.expect("table cell computed border");
+        doc.table_layout_node_mut(cell.node_id).collapsed_border = None;
+        let border = authored_border(doc, cell.node_id);
         doc.layout_style_for_key_mut(cell.node_id)
             .expect("table cell layout style")
-            .border = super::bridge::taffy_border_widths(&border, &mut Vec::new());
+            .border = border;
     }
     for &row in &grid.rows {
         doc.nodes[row].collapsed_border = None;
     }
+}
+
+/// The layout widths of `cell`'s computed border, as the bridge sets them (it
+/// has already reported any warning for those widths).
+fn authored_border(doc: &mut Document, cell: usize) -> Rect<LengthPercentage> {
+    let border = doc
+        .table_layout_node_mut(cell)
+        .computed_border
+        .expect("table cell computed border");
+    super::bridge::taffy_border_widths(&border, &mut Vec::new())
 }
 
 /// The borders the cells and rows of a grid have at one point of border
@@ -3737,13 +3748,58 @@ struct BorderState {
 struct ColumnsInPlace {
     /// [`CollapsedLines::inline_border_width`] with every column in place.
     border_width: f32,
-    /// The borders with every column in place.
+    /// The borders the cells are measured with: the inline sides they have
+    /// with every column in place, and the block sides the rest of the layout
+    /// counts, which are those of the grid that remains. A row line is shared
+    /// by two rows only as far as that grid overlaps them, so a border that
+    /// only a collapsed column gave the rows would count twice.
     in_place: BorderState,
     /// The borders with the collapsed columns left out.
     remaining: BorderState,
 }
 
 impl ColumnsInPlace {
+    /// `in_place` and `border_width` are what the grid with every column of
+    /// `grid` resolved to ([`border_width_with_columns_in_place`]); `shown`
+    /// has been resolved since, so the cells now have the borders of the grid
+    /// that remains.
+    fn new(
+        doc: &mut Document,
+        grid: &TableGrid,
+        shown: &TableGrid,
+        border_width: f32,
+        in_place: BorderState,
+    ) -> Self {
+        let remaining = snapshot_borders(doc, grid);
+        let remains: std::collections::HashSet<usize> =
+            shown.cells.iter().map(|cell| cell.node_id).collect();
+        let cells = in_place
+            .cells
+            .into_iter()
+            .zip(&remaining.cells)
+            .map(|((cell, mut border, painted), kept)| {
+                // The cells of the collapsed columns are not part of the grid
+                // that remains, which resolves nothing for them.
+                let block = if remains.contains(&cell) {
+                    kept.1
+                } else {
+                    authored_border(doc, cell)
+                };
+                border.top = block.top;
+                border.bottom = block.bottom;
+                (cell, border, painted)
+            })
+            .collect();
+        Self {
+            border_width,
+            in_place: BorderState {
+                cells,
+                rows: in_place.rows,
+            },
+            remaining,
+        }
+    }
+
     /// Forget the row-pass layout of each cell whose borders differ between
     /// the two states: its lines were broken at borders it no longer has.
     fn forget_stale_row_passes(&self, grid: &mut TableGrid) {
