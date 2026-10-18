@@ -102,7 +102,7 @@ pub mod image_geometry {
     pub use raikiri_dom::image_geometry::{
         BackgroundTiles, BorderImageGeometry, BorderImagePart, DeviceGrid,
         background_image_dimensions, background_tiles, border_image_geometry,
-        border_image_geometry_on_device_pixels,
+        border_image_geometry_on_device_pixels, rounded_background_tile_size,
     };
 }
 

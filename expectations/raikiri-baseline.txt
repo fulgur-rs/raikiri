@@ -283,6 +283,7 @@ css/css-backgrounds/background-repeat-round-1b.html
 css/css-backgrounds/background-repeat-round-1c.html
 css/css-backgrounds/background-repeat-round-1d.html
 css/css-backgrounds/background-repeat-round-1e.html
+css/css-backgrounds/background-repeat-round-2.html
 css/css-backgrounds/background-repeat-round-3.html
 css/css-backgrounds/background-repeat-round-4.html
 css/css-backgrounds/background-repeat-space-2.html

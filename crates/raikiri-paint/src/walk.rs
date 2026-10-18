@@ -21,7 +21,7 @@ use peniko::color::{
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
     DeviceGrid, background_image_dimensions, background_tiles, border_image_geometry,
-    border_image_geometry_on_device_pixels, position_offset,
+    border_image_geometry_on_device_pixels, position_offset, rounded_background_tile_size,
 };
 use raikiri_dom::{CounterSnapshots, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
@@ -5771,11 +5771,17 @@ fn paint_background_from_source(
     let Some(intrinsic) = pixel_source.intrinsic_size(url) else {
         return;
     };
-    let Some((image_w, image_h)) =
+    let Some(image) =
         background_image_dimensions(size, positioning.width(), positioning.height(), intrinsic)
     else {
         return;
     };
+    let (image_w, image_h) = rounded_background_tile_size(
+        size,
+        image,
+        (positioning.width(), positioning.height()),
+        repeat,
+    );
     let raster_size = ImageRasterSize {
         width: image_w as f32,
         height: image_h as f32,
