@@ -1697,6 +1697,14 @@ pub(crate) fn resolve_page_fragment_geometry(
     )
 }
 
+/// Whether a text node with the lines `owned` has glyphs on `line` or on a
+/// later line of its paragraph.
+fn reaches_line(owned: Option<&IfcTextLines>, line: usize) -> bool {
+    owned
+        .and_then(|owned| owned.lines.last())
+        .is_some_and(|last| last.line >= line)
+}
+
 /// Block-start and block-end edges of every line of the ifc paragraph a text
 /// node belongs to, from the text node's own first line. A paragraph whose
 /// text sits in inline elements, or in several text nodes, has lines that no
@@ -4405,25 +4413,20 @@ fn paginate_flow(
                     LineBreakFix::MoveLines(moves) => {
                         for (line, shift, page) in moves.into_iter().flatten() {
                             check_candidate_page!('candidate_loop, page);
-                            shift_ifc_lines_from(document, block_id, line, shift);
-                            if let Some((item, container)) = flex_line_paragraph {
-                                shift_later_flex_lines(document, container, item, shift);
-                            }
-                            grow_ancestors_for_shift(
+                            move_paragraph_lines(
                                 document,
                                 cascade,
-                                block_id,
-                                shift,
                                 body_id,
+                                &LineMove {
+                                    block_id,
+                                    flex_line: flex_line_paragraph,
+                                    line,
+                                    shift,
+                                },
                                 &mut subtree_shifts,
                                 page_before_candidate,
-                                &IfcBoxShifts::default(),
                             );
-                            if text_lines
-                                .get(node_id)
-                                .and_then(|owned| owned.lines.last())
-                                .is_some_and(|last| last.line >= line)
-                            {
+                            if reaches_line(text_lines.get(node_id), line) {
                                 height += shift;
                             }
                             deferred_shifts.line_splits.push((block_id, line, shift));
@@ -7664,6 +7667,48 @@ fn make_room_for_table_header(
         return delta;
     }
     0.0
+}
+
+/// The lines of a paragraph that move down inside it, away from a break
+/// that would leave too few of them on one page.
+struct LineMove {
+    /// The paragraph root that holds the lines.
+    block_id: usize,
+    /// The paragraph's flex item and its container, when the paragraph is a
+    /// flex item alone on its line.
+    flex_line: Option<(usize, usize)>,
+    /// The first line that moves.
+    line: usize,
+    /// How far the lines move down.
+    shift: f32,
+}
+
+/// Moves the lines of a paragraph from `moved.line` on down by `moved.shift`
+/// and brings along what has to follow them: the flex lines after a flex
+/// item paragraph, and the ancestors that hold the paragraph, which grow to
+/// keep it.
+fn move_paragraph_lines(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    moved: &LineMove,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) {
+    shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift);
+    if let Some((item, container)) = moved.flex_line {
+        shift_later_flex_lines(document, container, item, moved.shift);
+    }
+    grow_ancestors_for_shift(
+        document,
+        cascade,
+        moved.block_id,
+        moved.shift,
+        body_id,
+        shifts,
+        flow_page,
+        &IfcBoxShifts::default(),
+    );
 }
 
 /// Moves `block_id`, which sits at `from_y`, so that its flow position starts

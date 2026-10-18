@@ -16934,6 +16934,38 @@ fn a_block_fits_a_page_step_within_a_thousandth() {
 }
 
 #[test]
+fn a_text_reaches_a_line_when_its_last_line_is_that_line_or_later() {
+    let owned = IfcTextLines {
+        root: 1,
+        width: 100.0,
+        lines: vec![
+            IfcTextLine {
+                line: 1,
+                top: 10.0,
+                bottom: 20.0,
+            },
+            IfcTextLine {
+                line: 2,
+                top: 20.0,
+                bottom: 30.0,
+            },
+        ],
+    };
+    // The text ends on or after the line, so a move from that line grows it.
+    assert!(reaches_line(Some(&owned), 0));
+    assert!(reaches_line(Some(&owned), 2));
+    // The text ends before the line, so the move leaves it alone.
+    assert!(!reaches_line(Some(&owned), 3));
+    // Text without lines of its own is never reached.
+    assert!(!reaches_line(None, 0));
+    let empty = IfcTextLines {
+        lines: Vec::new(),
+        ..owned
+    };
+    assert!(!reaches_line(Some(&empty), 0));
+}
+
+#[test]
 fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let pages = PageOrigins::new(&[], 100.0);
     // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
