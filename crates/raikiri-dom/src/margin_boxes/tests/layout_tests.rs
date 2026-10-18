@@ -46,9 +46,9 @@ fn auto_side_boxes_share_a_column_like_the_ac_track() {
     assert_eq!(
         rects(&boxes),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 73.33]),
-            (PageMarginBoxSlot::LeftMiddle, [0.0, 113.33, 40.0, 73.33]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 186.67, 40.0, 73.33]),
+            (PageMarginBoxSlot::LeftMiddle, [0.0, 113.33, 40.0, 73.33]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 73.33]),
         ]
     );
 }
@@ -67,15 +67,15 @@ fn auto_side_boxes_share_a_column_by_the_height_of_their_lines() {
     assert_eq!(
         rects_with("line-height: 3"),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 188.57]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 228.57, 40.0, 31.43]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 188.57]),
         ]
     );
     assert_eq!(
         rects_with("line-height: 25px"),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 183.33]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 223.33, 40.0, 36.67]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 183.33]),
         ]
     );
 }
@@ -92,8 +92,8 @@ fn auto_side_boxes_share_a_column_by_the_lines_their_text_wraps_into() {
     assert_eq!(
         rects(&wrapped),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 165.0]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 205.0, 40.0, 55.0]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 165.0]),
         ]
     );
     // 'aaaa' is exactly as wide as the column and stays on one line, so
@@ -105,8 +105,8 @@ fn auto_side_boxes_share_a_column_by_the_lines_their_text_wraps_into() {
     assert_eq!(
         rects(&fitting),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 110.0]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 150.0, 40.0, 110.0]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 110.0]),
         ]
     );
 }
@@ -133,8 +133,8 @@ fn an_empty_box_counts_its_padding_along_horizontal_and_vertical_edges() {
     assert_eq!(
         rects(&column),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 146.67]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 186.67, 40.0, 73.33]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 146.67]),
         ]
     );
 }
@@ -428,8 +428,8 @@ fn fixed_height_side_boxes_sit_at_the_start_and_the_end_of_the_column() {
     assert_eq!(
         rects(&both),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 20.0]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 230.0, 40.0, 30.0]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 20.0]),
         ]
     );
     let end = boxes_for("@page { margin: 40px; @right-bottom { content: 'x'; height: 20px } }");
@@ -474,8 +474,8 @@ fn fixed_width_left_boxes_hug_the_page_area_unless_centered() {
     assert_eq!(
         rects(&boxes),
         [
-            (PageMarginBoxSlot::LeftTop, [20.0, 40.0, 20.0, 20.0]),
             (PageMarginBoxSlot::LeftBottom, [10.0, 240.0, 20.0, 20.0]),
+            (PageMarginBoxSlot::LeftTop, [20.0, 40.0, 20.0, 20.0]),
         ]
     );
 }
@@ -596,8 +596,8 @@ fn vertical_text_in_side_boxes_wraps_at_the_column_like_text_in_top_boxes() {
     assert_eq!(
         rects(&boxes),
         [
-            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 60.0]),
             (PageMarginBoxSlot::LeftBottom, [0.0, 100.0, 40.0, 160.0]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 60.0]),
         ]
     );
 }
@@ -901,10 +901,10 @@ fn side_boxes_centre_their_text_and_stack_it_from_top_to_bottom_by_default() {
     assert_eq!(
         runs,
         [
-            (PageMarginBoxSlot::LeftTop, (15.0, 48.0)),
-            (PageMarginBoxSlot::LeftMiddle, (15.0, 145.0 + 8.0)),
-            (PageMarginBoxSlot::LeftBottom, (15.0, 250.0 + 8.0)),
             (PageMarginBoxSlot::RightTop, (375.0, 48.0)),
+            (PageMarginBoxSlot::LeftBottom, (15.0, 250.0 + 8.0)),
+            (PageMarginBoxSlot::LeftMiddle, (15.0, 145.0 + 8.0)),
+            (PageMarginBoxSlot::LeftTop, (15.0, 48.0)),
         ]
     );
 }

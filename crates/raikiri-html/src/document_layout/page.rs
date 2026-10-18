@@ -665,9 +665,13 @@ impl<'a> Page<'a> {
     }
 
     /// Page-margin boxes of this page (CSS Paged Media 3 §4.2) in drawing
-    /// order: the top row, the bottom row, the left and right columns, then
-    /// the corners. Draw them after the page background and border and
-    /// before [`Self::paint_order`].
+    /// order (§3.1): by ascending [`MarginBox::z_index`], and among boxes
+    /// of one level clockwise from the top-left corner.
+    ///
+    /// The canvas background, the page border and the document contents
+    /// form a single layer at level zero. Draw the boxes with a negative
+    /// `z_index` after the page background and behind that layer, and the
+    /// others after [`Self::paint_order`], in front of it.
     ///
     /// Generated content is resolved for this page: `counter(page)`,
     /// `counter(pages)`, quotes, and the document-wide values of `string()`

@@ -991,19 +991,60 @@ fn canvas_fixture(page_css: Option<&str>, body_style: Option<&str>) -> (Document
     (document, cascade)
 }
 
+/// Lay out and paint the margin boxes of a single-page document, as the
+/// page painter does for its first page.
+fn paint_margin_boxes_of_first_page(
+    scene: &mut Scene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let margin_boxes = layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None);
+    paint_page_margin_boxes(
+        &crate::walk::ImageBrushCache::default(),
+        scene,
+        &margin_boxes,
+        page_box,
+        None,
+        warnings,
+    );
+}
+
+/// Paint the page background and the canvas background of one page, which
+/// the page painter separates by the margin boxes behind the canvas.
+fn paint_page_and_canvas_background(
+    scene: &mut Scene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    paint_page_background(
+        &crate::walk::ImageBrushCache::default(),
+        scene,
+        document,
+        cascade,
+        page_box,
+        None,
+        warnings,
+    );
+    paint_canvas_background(
+        &crate::walk::ImageBrushCache::default(),
+        scene,
+        document,
+        cascade,
+        page_box,
+        None,
+        None,
+        warnings,
+    );
+}
+
 fn fill_count(document: &Document, cascade: &CascadeResult) -> usize {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_canvas_background(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        document,
-        cascade,
-        PageBox::A4,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_page_and_canvas_background(&mut scene, document, cascade, PageBox::A4, &mut warnings);
     assert!(warnings.is_empty());
     scene
         .commands
@@ -4220,19 +4261,7 @@ fn visible_margin_box_overflow_keeps_text_shadow_bounds() {
 
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        page_box,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, page_box, &mut warnings);
     assert!(warnings.is_empty());
     assert!(
         !scene
@@ -4309,19 +4338,7 @@ fn aligned_margin_box_text_shadows_include_positioned_glyphs() {
 
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        page_box,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, page_box, &mut warnings);
     assert!(warnings.is_empty());
 
     let glyph_x = scene
@@ -4662,19 +4679,7 @@ fn a_vertical_margin_box_is_drawn_down_its_column() {
     let cascade = cascade(&doc, &rules).unwrap();
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        PageBox::A4,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, PageBox::A4, &mut warnings);
     assert!(warnings.is_empty());
     let glyphs: Vec<_> = scene
         .commands
@@ -4704,19 +4709,7 @@ fn margin_box_text_shadows_are_drawn_below_the_text() {
     let cascade = cascade(&doc, &rules).unwrap();
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        PageBox::A4,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, PageBox::A4, &mut warnings);
     assert!(warnings.is_empty());
     let runs: Vec<_> = scene
         .commands

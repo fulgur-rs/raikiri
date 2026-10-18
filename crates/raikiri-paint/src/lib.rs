@@ -57,9 +57,15 @@ mod walk;
 /// Paint Document + CascadeResult onto one A4 (or specified PageBox) page.
 ///
 /// # Call order
-/// 1. `walk::paint_canvas_background` — fill the canvas background.
-/// 2. `walk::paint_document` — walk from the body in DFS order, painting element
+/// 1. `walk::paint_page_background` — fill the paper with the page background.
+/// 2. `walk::paint_page_margin_boxes` — the page-margin boxes with a negative
+///    `z-index`, which go behind the document canvas (CSS Page 3 §3.1).
+/// 3. `walk::paint_canvas_background` — fill the canvas background.
+/// 4. The page border and outline.
+/// 5. `walk::paint_document` — walk from the body in DFS order, painting element
 ///    backgrounds/borders and text-node glyphs/decorations.
+/// 6. `walk::paint_page_margin_boxes` — the remaining page-margin boxes, in
+///    front of the document.
 ///
 /// # Non-goals (current scope)
 /// - Multi-page pagination
@@ -419,6 +425,36 @@ fn paint_single_page_with_origin_and_page_context_impl(
         .with_device_scale(cascade.border_width_device_scale());
     let root = raikiri_dom::root_box(document, cascade, page_box, content_origin_y, page_count);
     let mut warnings = Vec::new();
+    let margin_boxes = walk::layout_page_margin_boxes(
+        document,
+        cascade,
+        page_box,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+    );
+    // The canvas, the page border and the document contents are one layer at
+    // level zero. The margin boxes below it go right after the page
+    // background, and the others after the document (CSS Page 3 §3.1).
+    let (behind, in_front) = walk::split_margin_boxes_by_layer(&margin_boxes);
+    walk::paint_page_background(
+        &image_cache,
+        scene,
+        document,
+        cascade,
+        page_box,
+        pixel_source,
+        &mut warnings,
+    );
+    walk::paint_page_margin_boxes(
+        &image_cache,
+        scene,
+        behind,
+        page_box,
+        pixel_source,
+        &mut warnings,
+    );
     walk::paint_canvas_background(
         &image_cache,
         scene,
@@ -439,54 +475,48 @@ fn paint_single_page_with_origin_and_page_context_impl(
         &mut warnings,
     );
     walk::paint_page_outline(scene, cascade, page_box);
+    if let Some(transform) = root_content_transform(root.as_ref()) {
+        let scene = &mut transform::TransformScene { scene, transform };
+        if let Some(pixel_source) = pixel_source {
+            walk::paint_document_with_images_and_warnings(
+                &image_cache,
+                scene,
+                document,
+                cascade,
+                &counter_snapshots,
+                page_box,
+                content_origin_y,
+                active_page_name,
+                fixed_page_width,
+                pixel_source,
+                &mut warnings,
+                custom_highlights,
+                transform,
+            );
+        } else {
+            walk::paint_document(
+                &image_cache,
+                scene,
+                document,
+                cascade,
+                &counter_snapshots,
+                page_box,
+                content_origin_y,
+                active_page_name,
+                fixed_page_width,
+                custom_highlights,
+                transform,
+            );
+        }
+    }
     walk::paint_page_margin_boxes(
         &image_cache,
         scene,
-        document,
-        cascade,
+        in_front,
         page_box,
-        page_index,
-        page_count,
-        page_is_left,
-        paired_page_increment,
         pixel_source,
         &mut warnings,
     );
-    let Some(transform) = root_content_transform(root.as_ref()) else {
-        return Ok(());
-    };
-    let scene = &mut transform::TransformScene { scene, transform };
-    if let Some(pixel_source) = pixel_source {
-        walk::paint_document_with_images_and_warnings(
-            &image_cache,
-            scene,
-            document,
-            cascade,
-            &counter_snapshots,
-            page_box,
-            content_origin_y,
-            active_page_name,
-            fixed_page_width,
-            pixel_source,
-            &mut warnings,
-            custom_highlights,
-            transform,
-        );
-    } else {
-        walk::paint_document(
-            &image_cache,
-            scene,
-            document,
-            cascade,
-            &counter_snapshots,
-            page_box,
-            content_origin_y,
-            active_page_name,
-            fixed_page_width,
-            custom_highlights,
-            transform,
-        );
-    }
     Ok(())
 }
 
@@ -610,6 +640,28 @@ pub fn paint_single_page_with_images_and_warnings(
         .with_device_scale(cascade.border_width_device_scale());
     let root = raikiri_dom::root_box(document, cascade, page_box, 0.0, 1);
     let mut warnings = Vec::new();
+    // The margin boxes are laid out for page 0 of 1 and layered as in
+    // `paint_single_page_with_origin_and_page_context_impl`.
+    let margin_boxes =
+        walk::layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None);
+    let (behind, in_front) = walk::split_margin_boxes_by_layer(&margin_boxes);
+    walk::paint_page_background(
+        &image_cache,
+        scene,
+        document,
+        cascade,
+        page_box,
+        Some(pixel_source),
+        &mut warnings,
+    );
+    walk::paint_page_margin_boxes(
+        &image_cache,
+        scene,
+        behind,
+        page_box,
+        Some(pixel_source),
+        &mut warnings,
+    );
     walk::paint_canvas_background(
         &image_cache,
         scene,
@@ -630,38 +682,32 @@ pub fn paint_single_page_with_images_and_warnings(
         &mut warnings,
     );
     walk::paint_page_outline(scene, cascade, page_box);
+    if let Some(transform) = root_content_transform(root.as_ref()) {
+        walk::paint_document_with_images_and_warnings(
+            &image_cache,
+            &mut transform::TransformScene { scene, transform },
+            document,
+            cascade,
+            &counter_snapshots,
+            page_box,
+            0.0,
+            None,
+            // No explicit width: fixed boxes resolve against this page's
+            // page area, the containing block layout uses.
+            f32::NAN,
+            pixel_source,
+            &mut warnings,
+            &[],
+            transform,
+        );
+    }
     walk::paint_page_margin_boxes(
         &image_cache,
         scene,
-        document,
-        cascade,
+        in_front,
         page_box,
-        0,
-        1,
-        false,
-        None,
         Some(pixel_source),
         &mut warnings,
-    );
-    let Some(transform) = root_content_transform(root.as_ref()) else {
-        return Ok(warnings);
-    };
-    walk::paint_document_with_images_and_warnings(
-        &image_cache,
-        &mut transform::TransformScene { scene, transform },
-        document,
-        cascade,
-        &counter_snapshots,
-        page_box,
-        0.0,
-        None,
-        // No explicit width: fixed boxes resolve against this page's
-        // page area, the containing block layout uses.
-        f32::NAN,
-        pixel_source,
-        &mut warnings,
-        &[],
-        transform,
     );
     Ok(warnings)
 }
