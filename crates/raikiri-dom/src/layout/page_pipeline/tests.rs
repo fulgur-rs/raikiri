@@ -19526,3 +19526,94 @@ fn a_box_meeting_no_page_transition_starts_on_the_page_its_position_falls_on() {
     assert!(position.starts_after_forced_break);
     assert_eq!(state.sibling_margins.forced_break_box, Some(second));
 }
+
+#[test]
+fn boxes_outside_the_paginated_flow_reach_the_pages_they_paint_on() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    // The first block of the document ends at 250, on the third page.
+    let (mut doc, cascade, body, ..) = unpaginated_blocks(250.0, 0.0);
+    // The same document with a body that clips its overflow.
+    let (mut clipped, clipped_cascade, clipped_body, ..) = {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;overflow:hidden"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:250px"),
+        );
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        (doc, cascade, body, ())
+    };
+    let node_count = doc.nodes.len();
+    let reach = |doc: &mut Document,
+                 cascade: &CascadeResult,
+                 body: usize,
+                 control: &PageLayoutControl<'_>| {
+        let env = FlowEnv {
+            cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.page_names.current = Some("z".to_string());
+        let session = crate::layout::context::LayoutSession::new(doc);
+        let reached = state.reach_overflow_pages(&session, &env, 100.0);
+        (reached, state)
+    };
+
+    // The overflow reaches the third page. The pages after the last one of
+    // the flow take the page type the flow ended on, and the first keeps its
+    // own.
+    let (reached, state) = reach(&mut doc, &cascade, body, &PageLayoutControl::new(None));
+    reached.unwrap();
+    assert_eq!((state.reach.max, state.reach.flow_max), (2, 0));
+    assert_eq!(
+        state.page_names.by_page,
+        [None, Some("z".to_string()), Some("z".to_string())]
+    );
+
+    // A body that clips its overflow keeps it within the flow.
+    let (reached, state) = reach(
+        &mut clipped,
+        &clipped_cascade,
+        clipped_body,
+        &PageLayoutControl::new(None),
+    );
+    reached.unwrap();
+    assert_eq!(state.reach.max, 0);
+
+    // Once the page limit stopped pagination there are no pages to add.
+    let truncating = PageLayoutControl::for_geometry_discovery(Some(1));
+    assert!(!truncating.within_page_limit(3).unwrap());
+    let (reached, state) = reach(&mut doc, &cascade, body, &truncating);
+    reached.unwrap();
+    assert_eq!(state.reach.max, 0);
+
+    // A page past the limit fails a layout that rejects it.
+    let (reached, _) = reach(&mut doc, &cascade, body, &PageLayoutControl::new(Some(2)));
+    assert!(matches!(
+        reached,
+        Err(LayoutError::PageLimitExceeded {
+            limit: 2,
+            actual: 3
+        })
+    ));
+}

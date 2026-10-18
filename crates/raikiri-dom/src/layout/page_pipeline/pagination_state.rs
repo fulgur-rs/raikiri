@@ -10,8 +10,8 @@ use super::{
     SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
     TransitionMove, accumulated_relative_offset_y, block_effective_y, block_fits_page_step,
     box_changes_page_name, box_occupies_column, box_sets_page_name, break_margins,
-    collapses_through, collapses_with_previous_block, current_abs_y, fits_decorated_paper,
-    flex_line_paragraph, forced_target_page, grow_ancestors_for_shift,
+    collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
+    fits_decorated_paper, flex_line_paragraph, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, line_block_parent, lines_can_shift_inside, make_room_for_table_header,
     margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
@@ -475,8 +475,6 @@ impl PaginationState {
         } = *entry;
         let node_id = candidate.node_id;
         let name_participates_in_flow = candidate.context.page_name_in_flow;
-        let page_origin = |page_index: u32| page_origins.origin(page_index);
-        let page_step_at = |page_index: u32| page_origins.step_at(page_index);
 
         let computed = &cascade.computed[node_id];
         let candidate_page_name = candidate.page_name.clone();
@@ -522,8 +520,8 @@ impl PaginationState {
         let margins_collapse_through = collapses_through(document, cascade, node_id, height);
         let (margin_top, trailing_margin) =
             break_margins(document, cascade, node_id, content_width);
-        let page_start = page_origin(self.current_page);
-        let page_end = page_start + page_step_at(self.current_page);
+        let page_start = page_origins.origin(self.current_page);
+        let page_end = page_start + page_origins.step_at(self.current_page);
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
         let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
@@ -538,7 +536,7 @@ impl PaginationState {
                 trailing_margin,
                 page_start,
                 page_end,
-                next_page_step: page_step_at(self.current_page.saturating_add(1)),
+                next_page_step: page_origins.step_at(self.current_page.saturating_add(1)),
             },
             &self.table_headers,
             &mut self.trailing_flex_children,
@@ -692,7 +690,7 @@ impl PaginationState {
                     document,
                     node_id,
                     insets,
-                    page_origin(self.current_page),
+                    page_origins.origin(self.current_page),
                     page_box.height,
                     effective_y,
                     height,
@@ -1183,6 +1181,46 @@ impl PaginationState {
             named_page_change,
             consumes_pending_break,
         })
+    }
+
+    /// Gives the boxes outside the paginated flow the pages to paint on. The
+    /// candidates stand for the paginated flow only; boxes outside it, such
+    /// as a nested absolutely positioned box or the overflow of a monolithic
+    /// box, still need pages, and so do table edges that were grown over
+    /// repeated headers. The pages past the last one the normal flow reached
+    /// keep the page type the flow ended on.
+    pub(super) fn reach_overflow_pages(
+        &mut self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        content_height: f32,
+    ) -> Result<(), LayoutError> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            page_origins,
+            root_flow_offset,
+            ..
+        } = *env;
+        if !control.page_limit_reached.get() {
+            // Pagination materialized the moved boxes in page coordinates,
+            // which already include `root_flow_offset`; boxes it left alone
+            // paint where their own coordinates put them.
+            let end =
+                content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
+            if end.is_finite() && end > 0.0 {
+                self.reach
+                    .include_checked(control, page_origins.page_index_for_end(end), false)?;
+            }
+        }
+        // Pages past the last one the normal flow reached hold only boxes
+        // outside it, whatever page type was active when one of those boxes
+        // first reached them.
+        let names_end = control.capped_page_index(self.reach.max);
+        self.page_names
+            .continue_onto(self.reach.flow_max, names_end, true);
+        Ok(())
     }
 
     /// Records the pages the candidate placed on the current page occupies,
