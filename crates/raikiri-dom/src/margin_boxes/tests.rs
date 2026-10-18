@@ -192,6 +192,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         text_color: CssColor::BLACK,
         text_shadows: Vec::new(),
         overflow: OverflowXY::both(OverflowValue::Visible),
+        overflow_clip_margin: raikiri_style::resolve::ComputedOverflowClipMargin::INITIAL,
         text_style: text_style(16.0, &[]),
         alignment: StandaloneAlign::Start,
         vertical_align: MarginTextVerticalAlign::Top,

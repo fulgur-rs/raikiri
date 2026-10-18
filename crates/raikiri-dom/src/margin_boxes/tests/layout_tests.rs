@@ -1296,3 +1296,20 @@ fn margin_box_clips_its_content_only_when_overflow_clips() {
     let clip = clip_of("overflow-x: clip").expect("clip on x");
     assert!(clip.clip_x && !clip.clip_y);
 }
+
+#[test]
+fn margin_box_overflow_clip_margin_moves_the_clip_edge() {
+    let boxes = boxes_for(
+        "@page { margin: 40px; @top-left-corner { content: 'x'; border: 2px solid; \
+         overflow: clip; overflow-clip-margin: border-box 3px } }",
+    );
+    let [margin_box] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let clip = margin_box.overflow_clip.expect("clip overflow");
+
+    assert_eq!(
+        [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
+        [-3.0, -3.0, 46.0, 46.0]
+    );
+}

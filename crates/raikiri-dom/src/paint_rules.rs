@@ -8,6 +8,7 @@ use raikiri_style::property::{
     FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, VisualBox,
     WhiteSpaceCollapse, WillChange, ZIndexValue,
 };
+use raikiri_style::resolve::ComputedOverflowClipMargin;
 use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
 use std::cmp::Reverse;
@@ -282,50 +283,12 @@ impl OverflowClipGeometry {
         padding: PaintInsets,
         replaced: bool,
     ) -> Self {
-        let used = |overflow| {
-            if replaced && overflow != OverflowValue::Visible {
-                OverflowValue::Clip
-            } else {
-                overflow
-            }
-        };
-        let overflow = OverflowXY {
-            x: used(cv.overflow.x),
-            y: used(cv.overflow.y),
-        };
-        let margin = cv.overflow_clip_margin;
-        // An omitted box is the content box on a replaced element and the
-        // padding box otherwise (CSS Overflow 4 §3.2).
-        let visual_box = margin.visual_box.unwrap_or(if replaced {
-            VisualBox::ContentBox
-        } else {
-            VisualBox::PaddingBox
-        });
-        let margin_edge = |border: f32, padding: f32| {
-            let inset = match visual_box {
-                VisualBox::BorderBox => 0.0,
-                VisualBox::ContentBox => border + padding,
-                _ => border,
-            };
-            // Keep an extreme or infinite offset finite, so the clip
-            // rectangle built from these insets stays finite.
-            (inset - margin.offset.px()).clamp(-MAX_CLIP_MARGIN, MAX_CLIP_MARGIN)
-        };
-        // A `clip` axis uses the overflow clip edge as is. A scroll container
-        // axis keeps it within the padding box: a `border-box` value is
-        // ignored with its offset, and an outward offset stops at the padding
-        // box (CSS Overflow 3 §3.2).
-        let edge = |overflow, border: f32, padding: f32| match overflow {
-            OverflowValue::Clip => margin_edge(border, padding),
-            OverflowValue::Visible => border,
-            _ if visual_box == VisualBox::BorderBox => border,
-            _ => margin_edge(border, padding).max(border),
-        };
-        let edges = PaintInsets::new(
-            edge(overflow.y, border.top, padding.top),
-            edge(overflow.x, border.right, padding.right),
-            edge(overflow.y, border.bottom, padding.bottom),
-            edge(overflow.x, border.left, padding.left),
+        let (overflow, edges) = resolve_overflow_clip_edges(
+            cv.overflow,
+            cv.overflow_clip_margin,
+            border,
+            padding,
+            replaced,
         );
         let corner_radii =
             if overflow.x != OverflowValue::Visible && overflow.y != OverflowValue::Visible {
@@ -355,11 +318,18 @@ impl OverflowClipGeometry {
         }
     }
 
-    /// Clip geometry with square padding-edge corners, for boxes whose
-    /// painter draws no `border-radius` (page-margin boxes).
-    pub(crate) fn square(overflow: OverflowXY, border: PaintInsets) -> Self {
+    /// Clip geometry with square corners, for boxes whose painter draws no
+    /// `border-radius` (page-margin boxes).
+    pub(crate) fn square(
+        overflow: OverflowXY,
+        margin: ComputedOverflowClipMargin,
+        border: PaintInsets,
+        padding: PaintInsets,
+    ) -> Self {
+        let (overflow, edges) =
+            resolve_overflow_clip_edges(overflow, margin, border, padding, false);
         Self {
-            edges: border,
+            edges,
             overflow,
             corner_radii: None,
         }
@@ -392,6 +362,59 @@ impl OverflowClipGeometry {
         clip.corner_radii = self.corner_radii;
         clip
     }
+}
+
+fn resolve_overflow_clip_edges(
+    overflow: OverflowXY,
+    margin: ComputedOverflowClipMargin,
+    border: PaintInsets,
+    padding: PaintInsets,
+    replaced: bool,
+) -> (OverflowXY, PaintInsets) {
+    let used = |overflow| {
+        if replaced && overflow != OverflowValue::Visible {
+            OverflowValue::Clip
+        } else {
+            overflow
+        }
+    };
+    let overflow = OverflowXY {
+        x: used(overflow.x),
+        y: used(overflow.y),
+    };
+    // An omitted box is the content box on a replaced element and the
+    // padding box otherwise (CSS Overflow 4 §3.2).
+    let visual_box = margin.visual_box.unwrap_or(if replaced {
+        VisualBox::ContentBox
+    } else {
+        VisualBox::PaddingBox
+    });
+    let margin_edge = |border: f32, padding: f32| {
+        let inset = match visual_box {
+            VisualBox::BorderBox => 0.0,
+            VisualBox::ContentBox => border + padding,
+            _ => border,
+        };
+        // Keep an extreme or infinite offset finite, so the clip
+        // rectangle built from these insets stays finite.
+        (inset - margin.offset.px()).clamp(-MAX_CLIP_MARGIN, MAX_CLIP_MARGIN)
+    };
+    // A `clip` axis uses the overflow clip edge as is. A scroll container
+    // axis keeps it within the padding box: a `border-box` value is ignored
+    // with its offset, and an outward offset stops at the padding box.
+    let edge = |overflow, border: f32, padding: f32| match overflow {
+        OverflowValue::Clip => margin_edge(border, padding),
+        OverflowValue::Visible => border,
+        _ if visual_box == VisualBox::BorderBox => border,
+        _ => margin_edge(border, padding).max(border),
+    };
+    let edges = PaintInsets::new(
+        edge(overflow.y, border.top, padding.top),
+        edge(overflow.x, border.right, padding.right),
+        edge(overflow.y, border.bottom, padding.bottom),
+        edge(overflow.x, border.left, padding.left),
+    );
+    (overflow, edges)
 }
 
 /// A border-edge corner radius moved `inset` inside the border edge, or
