@@ -1278,12 +1278,12 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     let abspos = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
     let own = |value: AlignSelfValue| match value {
         AlignSelfValue::Value(SelfAlignmentValue::LastBaseline) if abspos => {
-            AlignSelfValue::Value(SelfAlignmentValue::End)
+            Some(TaffyAlignItems::SAFE_END)
         }
-        value => value,
+        value => self_alignment_or_auto_to_taffy(value),
     };
-    style.align_self = self_alignment_or_auto_to_taffy(own(cv.align_self));
-    style.justify_self = self_alignment_or_auto_to_taffy(own(cv.justify_self));
+    style.align_self = own(cv.align_self);
+    style.justify_self = own(cv.justify_self);
 }
 
 /// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by

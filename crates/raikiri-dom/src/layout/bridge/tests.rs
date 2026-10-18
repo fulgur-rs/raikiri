@@ -1353,8 +1353,8 @@ fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
     // `last baseline` falls back to `safe end` on both axes. A box in the
     // flow keeps aligning to the baseline.
     for (position, expected) in [
-        (PositionValue::Absolute, TaffyAlignItems::END),
-        (PositionValue::Fixed, TaffyAlignItems::END),
+        (PositionValue::Absolute, TaffyAlignItems::SAFE_END),
+        (PositionValue::Fixed, TaffyAlignItems::SAFE_END),
         (PositionValue::Static, TaffyAlignItems::BASELINE),
     ] {
         let label = format!("{position:?}");
