@@ -12,7 +12,7 @@ use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant}
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use footnotes::FootnoteAreas;
 pub(crate) use link_events::page_fragment_events_from_pages;
-use pagination_state::PaginationState;
+use pagination_state::{CandidateEntry, FlowEnv, PaginationState};
 
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
@@ -4174,60 +4174,32 @@ fn paginate_flow(
         };
     }
 
-    'candidate_loop: for candidate in candidates {
-        check_candidate_page!('candidate_loop, state.current_page);
+    let env = FlowEnv {
+        cascade,
+        body_id,
+        page_origins: &page_origins,
+        text_lines: &text_lines,
+    };
+    let mut candidates = candidates.into_iter();
+    // Each candidate is placed while the page limit lets pagination reach the
+    // page the flow is on.
+    'candidate_loop: while let Some(candidate) = candidates.next()
+        && control.within_page_limit(state.current_page)?
+    {
+        let CandidateEntry {
+            name_context_seen,
+            comparison_page_name,
+            keep_local_page_type,
+            page_before_candidate,
+            ifc_root,
+            participates_in_margin_adjacency,
+            uses_positioned_coordinates,
+        } = match state.begin_candidate(document, &env, &candidate)? {
+            Some(entry) => entry,
+            None => continue,
+        };
         let node_id = candidate.node_id;
-        // Header lines stay together and are placed from the table's rows,
-        // rather than acquiring independent text-page shifts.
-        if state.table_headers.owner(node_id).is_some() {
-            continue;
-        }
         let name_participates_in_flow = candidate.context.page_name_in_flow;
-        if name_participates_in_flow
-            && candidate.context.is_flex_item
-            && let Some(context) = candidate.named_flex_context
-            && state
-                .preceding_flex_items
-                .record(context, candidate.height, state.current_page)
-        {
-            state
-                .column_contexts
-                .occupy(Some(context), state.current_page, document, cascade);
-        }
-        let (name_context_seen, comparison_page_name) = state.page_names.comparison(
-            &candidate,
-            state.saw_child,
-            &mut state.column_contexts,
-            document,
-            cascade,
-            state.current_page,
-        );
-        // Leaving a flex item's internal named flow keeps the last opened
-        // physical page until an outer boundary or natural overflow opens one.
-        let keep_local_page_type = candidate.named_flex_context.is_none()
-            && state.page_names.current != comparison_page_name;
-        let page_before_candidate = state.current_page;
-        let moves_ifc_root = state
-            .entered_paragraphs
-            .enter(document, candidate.ifc_root, node_id);
-        let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
-        state.settle_shifts(
-            document,
-            cascade,
-            body_id,
-            &candidate,
-            &text_lines,
-            &page_origins,
-        );
-        if !document.is_source_node(node_id) {
-            continue;
-        }
-        let participates_in_margin_adjacency =
-            participates_in_margin_adjacency(document, cascade, &candidate);
-        // Explicit positioned insets follow their containing box, not margin
-        // changes in a parallel normal flow. Both-auto boxes keep static placement.
-        let uses_positioned_coordinates = candidate.context.is_out_of_flow_descendant
-            && has_explicit_positioned_block_ancestor(document, node_id);
         if candidate.context.is_text {
             // The inline layout root whose lines hold this text, if any.
             let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);

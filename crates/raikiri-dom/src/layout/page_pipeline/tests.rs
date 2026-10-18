@@ -18212,8 +18212,18 @@ fn only_a_named_box_or_a_sized_leaf_holds_content_in_its_columns() {
     assert!(!box_occupies_column(&leaf, false, 10.0));
 }
 
+/// The state of a flow over a document of `node_count` nodes before its first
+/// candidate.
+fn pagination_state_before_first_candidate(node_count: usize) -> PaginationState {
+    PaginationState::new(
+        HeaderRepeats::default(),
+        PageNames::new(None),
+        ColumnContexts::new(node_count),
+    )
+}
+
 #[test]
-fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_moved_floats() {
+fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_floats() {
     // `body > clearing, floater, wrapper > nested`, after a float moved to
     // 100..140 on the left of `body`.
     let mut doc = Document::new();
@@ -18238,14 +18248,15 @@ fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_move
     doc.nodes[floater].unrounded_layout.margin.top = 4.0;
     doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
     let pages = PageOrigins::new(&[], 100.0);
-    let node_count = doc.nodes.len();
-    let new_state = || {
-        PaginationState::new(
-            HeaderRepeats::default(),
-            PageNames::new(None),
-            ColumnContexts::new(node_count),
-        )
+    let lines = TextLineIndex::default();
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        page_origins: &pages,
+        text_lines: &lines,
     };
+    let node_count = doc.nodes.len();
+    let new_state = || pagination_state_before_first_candidate(node_count);
     let moved_floats = || {
         let mut floats = FloatShifts {
             later: 20.0,
@@ -18277,14 +18288,10 @@ fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_move
     };
     let settle = |doc: &mut Document, state: &mut PaginationState, candidate: &PageCandidate| {
         let mut session = crate::layout::context::LayoutSession::new(doc);
-        state.settle_shifts(
-            &mut session,
-            &cascade,
-            body,
-            candidate,
-            &TextLineIndex::default(),
-            &pages,
-        );
+        let start = state
+            .begin_candidate(&mut session, &env, candidate)
+            .unwrap();
+        assert!(start.is_some());
     };
 
     // A box before the candidate that underflowed into the preceding page
@@ -18377,4 +18384,121 @@ fn pagination_goes_on_within_the_page_limit_and_stops_or_fails_at_it() {
             .within_page_limit(u32::MAX)
             .unwrap()
     );
+}
+
+#[test]
+fn the_start_of_a_candidate_skips_what_is_not_placed() {
+    // `body > table > thead > tr > td` and a table holding only text, whose
+    // anonymous cell is not a node of the source tree.
+    let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    let body = doc.parent_of(root).unwrap();
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px"),
+    );
+    let header = doc.append_element(
+        Some(table),
+        "thead",
+        Style::default(),
+        Some("display:table-header-group"),
+    );
+    let row = doc.append_element(
+        Some(header),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let header_cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;height:20px"),
+    );
+    let body_row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(body_row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;height:20px"),
+    );
+    let text_table = doc.append_element(Some(body), "div", Style::default(), Some("display:table"));
+    doc.append_text(text_table, "aaaa bbbb");
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let anonymous_cell = doc.anonymous_table_cells(text_table).next().unwrap().0;
+    let headers =
+        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    assert!(headers.owner(header_cell).is_some());
+
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let candidate = |node_id, ifc_root| PageCandidate {
+        node_id,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root,
+    };
+    let start = |doc: &mut Document, state: &mut PaginationState, candidate: &PageCandidate| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            page_origins: &pages,
+            text_lines: &lines,
+        };
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        state.begin_candidate(&mut session, &env, candidate)
+    };
+    let node_count = doc.nodes.len();
+
+    // The lines of a repeated header are placed from the table's rows.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.table_headers = headers;
+    let skipped = start(&mut doc, &mut state, &candidate(header_cell, None));
+    assert!(matches!(skipped, Ok(None)));
+
+    // So is a candidate that is not a node of the source tree.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let skipped = start(&mut doc, &mut state, &candidate(anonymous_cell, None));
+    assert!(matches!(skipped, Ok(None)));
+
+    // Any other candidate is placed with what its start settled.
+    let place = |start: Result<Option<CandidateEntry>, LayoutError>| match start {
+        Ok(Some(entry)) => entry,
+        _ => panic!("the candidate is placed"),
+    };
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.current_page = 3;
+    state.saw_child = true;
+    state.page_names = PageNames::new(Some("a".to_string()));
+    let mut named = candidate(table, Some((anonymous_cell, 5.0)));
+    named.page_name = Some("b".to_string());
+    named.context.page_name_in_flow = true;
+    let entry = place(start(&mut doc, &mut state, &named));
+    assert_eq!(entry.page_before_candidate, 3);
+    // The candidate compares its page type against the enclosing flow's.
+    assert!(entry.name_context_seen);
+    assert_eq!(entry.comparison_page_name.as_deref(), Some("a"));
+    assert!(!entry.keep_local_page_type);
+    assert_eq!(state.page_names.outer.as_deref(), Some("b"));
+    // It is the first inside its paragraph, which it moves.
+    assert_eq!(entry.ifc_root, Some((anonymous_cell, 5.0)));
+    assert!(!entry.uses_positioned_coordinates);
+    // A later candidate of the same paragraph leaves the root where it is.
+    let again = place(start(&mut doc, &mut state, &named));
+    assert_eq!(again.ifc_root, None);
+    // Leaving the page type the flow last opened keeps its physical page.
+    state.page_names.current = Some("c".to_string());
+    let leaving = place(start(&mut doc, &mut state, &named));
+    assert!(leaving.keep_local_page_type);
 }
