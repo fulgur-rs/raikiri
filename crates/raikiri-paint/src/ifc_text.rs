@@ -26,6 +26,9 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
+mod line_paint;
+mod line_text;
+use line_paint::{LineGroups, LinePaint, PiecesByLine, block_pieces, kept_whole_box};
 mod typographic;
 pub(crate) use typographic::{BackgroundSlice, Paragraph, enclosing_inline_opacities};
 
@@ -290,44 +293,8 @@ pub(crate) fn hold_ifc_lines<'a>(
     let vertical = writing_mode != WritingMode::HorizontalTb;
     // Pages never cut a paragraph across its lines: each of its lines goes
     // with the paragraph's content box.
-    let paragraph_box = page_lines
-        .filter(|lines| lines.keeps_paragraph_whole(vertical))
-        .and_then(|_| document.ifc_layout_node(root_id))
-        .map(|node| {
-            kurbo::Rect::from_origin_size(
-                (f64::from(base.x), f64::from(base.y + base.shift_y)),
-                (
-                    f64::from(node.unrounded_layout.content_box_width()),
-                    f64::from(node.unrounded_layout.content_box_height()),
-                ),
-            )
-        });
-    let pieces = document
-        .ifc_layout_node(root_id)
-        .and_then(|node| node.ifc_inline_boxes())
-        .unwrap_or_default();
-    // A box split across lines is sliced from one joined box, which spans
-    // every line of the paragraph, including those on other pages, along
-    // the paragraph's inline axis.
-    let progression = |node| {
-        crate::walk::InlineProgression::new(
-            writing_mode,
-            computed_for_id(cascade, node)
-                .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl),
-        )
-    };
-    let all_slices = typographic::background_slices(&pieces, progression);
-    let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
-    let mut slices_by_line = vec![Vec::new(); positioned.all_lines().len()];
-    for (piece, slice) in pieces.into_iter().zip(all_slices) {
-        if let (Some(line_pieces), Some(line_slices)) = (
-            pieces_by_line.get_mut(piece.line),
-            slices_by_line.get_mut(piece.line),
-        ) {
-            line_pieces.push(piece);
-            line_slices.push(slice);
-        }
-    }
+    let paragraph_box = kept_whole_box(document, root_id, page_lines, vertical, base);
+    let pieces = PiecesByLine::new(&positioned, document, cascade, root_id);
     let offsets = positioned.offsets;
     let hit_layout =
         (!custom_highlights.is_empty()).then(|| LineLayout::new(positioned.all_lines()));
@@ -339,500 +306,45 @@ pub(crate) fn hold_ifc_lines<'a>(
         cascade,
         root_id,
     };
-    // A translucent `::first-line` composites the paint of the first line
-    // as one group. It splits the inline elements on that line from their
-    // other lines (CSS Pseudo 4 §2.1.1), so the first line has groups of its
-    // own.
-    let first_line_opacity = raikiri_dom::paint_rules::first_line_opacity_layer(document, root_id);
     // A page holds a paragraph it keeps whole as it holds its lines.
     let off_band = page_lines
         .zip(paragraph_box)
         .is_some_and(|(lines, rect)| !lines.holds_line(paint_transform, rect));
-    // A block-level `::before` or `::after` paints its own box, cut along
-    // the block axis where pagination cuts its lines. Its pieces on the
-    // lines hold only its text. Like other block boxes, it is sliced even
-    // under `box-decoration-break: clone`, as pagination reserves no room
-    // for cloned edges.
-    let blocks: Vec<_> = root_node
-        .ifc_generated_block_pieces()
-        .into_iter()
-        .filter(|_| !off_band)
-        .map(|block| {
-            (
-                raikiri_dom::InlineBoxPiece {
-                    node: block.node,
-                    line: block.line,
-                    border_box: block.border_box,
-                    content_box: block.content_box,
-                    has_start_edge: block.has_block_start_edge,
-                    has_end_edge: block.has_block_end_edge,
-                    parent: None,
-                    source_container: None,
-                    source_owner: None,
-                },
-                typographic::BackgroundSlice {
-                    outer: block.joined_border_box,
-                    content: block.joined_content_box,
-                },
-            )
-        })
-        .collect();
+    let blocks = block_pieces(root_node, off_band);
     let block_nodes: std::collections::HashSet<usize> =
         blocks.iter().map(|(piece, _)| piece.node).collect();
-    // A box goes with the paint of its first line, below the text of the
-    // lines after it.
-    let on_first_line =
-        |piece: &raikiri_dom::InlineBoxPiece| first_line_opacity.is_some() && piece.line == 0;
-    let mut first_line = first_line_opacity.map(|opacity| {
-        let mut pieces = pieces_by_line.first().cloned().unwrap_or_default();
-        pieces.extend(blocks.iter().map(|(piece, _)| *piece).filter(on_first_line));
-        (
-            typographic::TypographicPaint::new(paragraph, root_node, &pieces),
-            opacity,
-        )
-    });
-    // One set of groups serves every other line, so an element or
-    // pseudo-element split over lines composites its complete paint at once
-    // (CSS Color 4 §3.3).
-    let mut rest_pieces: Vec<_> = pieces_by_line
-        .iter()
-        .skip(usize::from(first_line.is_some()))
-        .flatten()
-        .cloned()
-        .collect();
-    rest_pieces.extend(
-        blocks
-            .iter()
-            .map(|(piece, _)| *piece)
-            .filter(|piece| !on_first_line(piece)),
-    );
-    let mut rest = typographic::TypographicPaint::new(paragraph, root_node, &rest_pieces);
-    for (piece, joined) in &blocks {
-        let Some(cv) = computed_for_id(cascade, piece.node)
-            .filter(|cv| cv.visibility == raikiri_style::property::Visibility::Visible)
-        else {
-            continue;
-        };
-        let outer = piece.border_box;
-        if outer.width <= 0.0 || outer.height <= 0.0 {
-            continue;
-        }
-        let (dx, dy) = cumulative_offset(document, root_id, positioned.offsets, piece.node);
-        let (x, y) = (base.x + dx, base.y + base.shift_y + dy);
-        let paint = match first_line.as_mut() {
-            Some((first, _)) if on_first_line(piece) => first,
-            _ => &mut rest,
-        };
-        let group = paint.piece_group(piece);
-        // The piece's edges are along the block axis: its progression runs
-        // down the page.
-        crate::walk::paint_inline_box(
-            image_cache,
-            paint.box_target(group, piece),
-            cv,
-            piece,
-            Some(joined),
-            crate::walk::InlineProgression {
-                vertical: true,
-                reversed: false,
-            },
-            transform_applies(document, cascade, piece.node, cv),
-            x,
-            y,
-            pixel_source,
-            warnings,
-            paint_transform,
-            piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
-        );
-    }
+    let mut groups = LineGroups::new(paragraph, root_node, &pieces.pieces, &blocks);
+    let mut lines = LinePaint {
+        image_cache,
+        paragraph,
+        offsets,
+        base,
+        writing_mode,
+        vertical,
+        size,
+        base_decorations,
+        shifts,
+        root_node,
+        pieces,
+        block_nodes,
+        page_lines,
+        paragraph_box,
+        hit_layout,
+        custom_highlights,
+        paint_transform,
+        fixed_viewport,
+        pixel_source,
+        warnings,
+    };
+    lines.paint_block_pieces(&mut groups, &blocks);
     for positioned_line in positioned.lines() {
-        let line_index = positioned_line.index;
-        let paint = match first_line.as_mut() {
-            Some((first, _)) if line_index == 0 => first,
-            _ => &mut rest,
-        };
-        let line = positioned_line.line;
-        let (column_x, column_y) = positioned_line.offset;
-        let position = IfcPosition {
-            x: base.x + column_x,
-            y: base.y + column_y,
-            shift_y: base.shift_y,
-        };
-        if let Some(lines) = page_lines
-            && !lines.holds_line(
-                paint_transform,
-                paragraph_box.unwrap_or_else(|| line_rect(&positioned_line, position)),
-            )
-        {
-            continue;
-        }
-        let transform = Affine::translate((
-            f64::from(position.x),
-            f64::from(position.y + position.shift_y),
-        ));
-        let background_slices = &slices_by_line[line_index];
-        for marker in &positioned_line.markers {
-            let Some(image) = document.list_marker_image_shared(marker.owner) else {
-                continue;
-            };
-            let rect = marker.rect;
-            let brush = image_cache.whole(image);
-            paint.target(None).fill(
-                Fill::NonZero,
-                Affine::translate((
-                    f64::from(position.x + rect.x),
-                    f64::from(position.y + position.shift_y + rect.y),
-                )) * Affine::scale_non_uniform(
-                    f64::from(rect.width) / f64::from(image.width),
-                    f64::from(rect.height) / f64::from(image.height),
-                ),
-                brush.as_ref(),
-                None,
-                &Rect::new(0.0, 0.0, f64::from(image.width), f64::from(image.height)),
-            );
-        }
-        // The boxes of the inline elements on this line go below its text
-        // (CSS 2.1 Appendix E: an inline box's background and borders, then
-        // its text).
-        for (piece_index, piece) in pieces_by_line[line_index].iter().enumerate() {
-            if block_nodes.contains(&piece.node)
-                || generated_origin(piece.node)
-                    .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker)
-            {
-                continue;
-            }
-            let retained = root_node.ifc_typographic_fragment(
-                piece.node,
-                piece.source_container,
-                piece.source_owner,
-            );
-            let Some(cv) = retained
-                .map(|(style, _)| style)
-                .or_else(|| {
-                    // The first line's boxes take their values from the
-                    // `::first-line` around them.
-                    root_node
-                        .ifc_first_line_element_style(piece.node)
-                        .filter(|_| line_index == 0)
-                })
-                .or_else(|| computed_for_id(cascade, piece.node))
-            else {
-                continue;
-            };
-            let source = retained.map(|(_, owner)| owner).unwrap_or(piece.node);
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, source);
-            // The pieces already carry the line's pagination shift, which
-            // `position` holds too.
-            let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
-            let group = paint.piece_group(piece);
-            // An atomic `::before` or `::after` turns about its own box, as
-            // painted here (CSS Transforms 1 §6).
-            let mut piece_transform = paint_transform;
-            if let Some(turned) = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node) {
-                let outer = piece.border_box;
-                let turn = crate::walk::element_transform(
-                    turned,
-                    position.x + dx + outer.x,
-                    position.y + position.shift_y + dy - line_shift + outer.y,
-                    outer.width,
-                    outer.height,
-                );
-                piece_transform *= turn;
-                paint.turn(group, piece, turn);
-            }
-            if raikiri_dom::paint_rules::hides_own_box(cv) {
-                continue;
-            }
-            crate::walk::paint_inline_box(
-                image_cache,
-                paint.box_target(group, piece),
-                cv,
-                piece,
-                background_slices[piece_index].as_ref(),
-                crate::walk::InlineProgression::new(
-                    writing_mode,
-                    cv.direction == raikiri_style::property::Direction::Rtl,
-                ),
-                transform_applies(document, cascade, piece.node, cv),
-                position.x + dx,
-                position.y + position.shift_y + dy - line_shift,
-                pixel_source,
-                warnings,
-                piece_transform,
-                piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
-            );
-        }
-        // Images of `::before` and `::after` content are replaced content
-        // inside their pseudo-element's inline box: above its background,
-        // below the line's text. They move with the pseudo-element's
-        // relatively positioned inline ancestors.
-        for image in &positioned_line.content_images {
-            let Some(pixels) =
-                document.content_image_shared(image.owner, image.pseudo, image.index)
-            else {
-                continue; // cov:ignore: positioned lines list only the content images whose pixels the document holds
-            };
-            let pseudo_node =
-                raikiri_dom::generated_content::generated_node_id(image.owner, image.pseudo);
-            let group = pieces_by_line[line_index]
-                .iter()
-                .find(|piece| piece.node == pseudo_node)
-                .and_then(|piece| paint.piece_group(piece));
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, pseudo_node);
-            let rect = image.rect;
-            let (left, top) = (
-                f64::from(position.x + dx + rect.x),
-                f64::from(position.y + position.shift_y + dy + rect.y),
-            );
-            // An image that replaces its pseudo-element is drawn at its
-            // `object-fit` rectangle, clipped to its box.
-            let object = document
-                .content_image_object_rect(image.owner, image.pseudo, image.index)
-                .unwrap_or(raikiri_traits::PaintRect::new(
-                    0.0,
-                    0.0,
-                    rect.width,
-                    rect.height,
-                ));
-            let clipped = object.x < 0.0
-                || object.y < 0.0
-                || object.x + object.width > rect.width
-                || object.y + object.height > rect.height;
-            let target = paint.target(group);
-            if clipped {
-                target.push_clip_layer(
-                    Affine::IDENTITY,
-                    &Rect::new(
-                        left,
-                        top,
-                        left + f64::from(rect.width),
-                        top + f64::from(rect.height),
-                    ),
-                );
-            }
-            let brush = image_cache.whole(pixels);
-            target.fill(
-                Fill::NonZero,
-                Affine::translate((left + f64::from(object.x), top + f64::from(object.y)))
-                    * Affine::scale_non_uniform(
-                        f64::from(object.width) / f64::from(pixels.width),
-                        f64::from(object.height) / f64::from(pixels.height),
-                    ),
-                brush.as_ref(),
-                None,
-                &Rect::new(0.0, 0.0, f64::from(pixels.width), f64::from(pixels.height)),
-            );
-            if clipped {
-                target.pop_layer();
-            }
-        }
-        if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
-            draw_custom_highlights(
-                paint,
-                paragraph,
-                line_index,
-                line,
-                hit_layout,
-                position,
-                offsets,
-                custom_highlights,
-                &positioned_line.runs,
-                &positioned_line.converter,
-            );
-        }
-        let resolved_decorations = raikiri_dom::text_decoration::positioned_line_decorations(
-            document,
-            cascade,
-            root_id,
-            base_decorations,
-            &positioned_line,
-            (position.x, position.y + position.shift_y),
-        );
-        let mut runs: Vec<RunDraw<'_>> = Vec::new();
-        let converter = positioned_line.converter;
-        for (mut positioned_run, decorations) in
-            positioned_line.runs.into_iter().zip(resolved_decorations)
-        {
-            let run = positioned_run.run;
-            let cv = positioned_run.style;
-            let glyphs = std::mem::take(&mut positioned_run.glyphs);
-            let offset = positioned_run.offset;
-            let paint_box = paint_box(
-                document,
-                cascade,
-                positioned_run.owner,
-                positioned_run.style_owner,
-            );
-            // Text outside every typographic box is in the groups of the
-            // inline elements around it.
-            let group = paint
-                .nearest(positioned_run.style_owner, positioned_run.owner)
-                .or_else(|| paint.element_group(paragraph, paint_box));
-            runs.push(RunDraw {
-                run,
-                glyph_transform: positioned_run.glyph_transform(),
-                turned: positioned_run
-                    .annotation
-                    .is_some_and(|annotation| annotation.turned),
-                style: cv,
-                color: css_color_to_peniko(cv.color),
-                glyphs,
-                decorations,
-                offset,
-                group,
-                paint_box,
-                annotation_baseline: positioned_run
-                    .annotation
-                    .map(|annotation| annotation.baseline),
-            });
-        }
-        // Consecutive runs of one box paint in phases: every shadow, then
-        // every underline and overline, then the glyphs, then every
-        // line-through (CSS 2.2 Appendix E; CSS Text Decoration 3 §4).
-        // Different boxes keep their tree order, so a later box's shadow
-        // still covers an earlier box's text.
-        for segment in runs.chunk_by(|a, b| a.paint_box == b.paint_box) {
-            if !vertical {
-                // Each shadow layer covers every run of the box before the
-                // next one up, so the first declared shadow stays on top.
-                let layers = segment
-                    .iter()
-                    .map(|draw| draw.style.text_shadow.len())
-                    .max()
-                    .unwrap_or(0);
-                for layer in (0..layers).rev() {
-                    for draw in segment {
-                        let Some(font) = draw.run.font_data() else {
-                            continue;
-                        };
-                        let Some(shadow) = draw.style.text_shadow.get(layer) else {
-                            continue;
-                        };
-                        let coords = normalized_coords(&draw.run);
-                        let glyph_transform = physical_glyph_transform(
-                            &converter,
-                            draw.glyph_transform,
-                            draw.run.skew(),
-                        );
-                        draw_shadow(
-                            paint.target(draw.group),
-                            &ShadowRun {
-                                draw,
-                                font: &font,
-                                coords: &coords,
-                                glyph_transform,
-                                document,
-                                missing_glyph_boxes: !vertical && !draw.turned,
-                                emphasis_origin: emphasis_origin(
-                                    position,
-                                    line.block_offset(),
-                                    draw,
-                                ),
-                            },
-                            shadow,
-                            draw.style,
-                            run_transform(transform, draw),
-                            IfcPosition {
-                                x: position.x + draw.offset.0,
-                                y: position.y + draw.offset.1,
-                                shift_y: position.shift_y,
-                            },
-                            size,
-                        );
-                    }
-                }
-                for draw in segment {
-                    draw_resolved_decoration_phase(
-                        paint.target(draw.group),
-                        &draw.decorations,
-                        DecorationPhase::BeforeGlyphs,
-                    );
-                }
-            }
-            for draw in segment {
-                let Some(font) = draw.run.font_data() else {
-                    continue;
-                };
-                let owner_style = draw.style;
-                let font_size = draw.run.font_size();
-                let coords = normalized_coords(&draw.run);
-                let glyph_transform =
-                    physical_glyph_transform(&converter, draw.glyph_transform, draw.run.skew());
-                let run_transform = run_transform(transform, draw);
-                let scene = paint.target(draw.group);
-                if crate::text::has_glyph_outlines(&font) {
-                    scene.draw_glyphs(
-                        &font,
-                        font_size,
-                        true,
-                        &coords,
-                        synthetic_embolden(draw.run.embolden(), font_size),
-                        Fill::NonZero,
-                        draw.color,
-                        1.0,
-                        run_transform,
-                        glyph_transform,
-                        draw.glyphs.iter().map(anyrender_glyph),
-                    );
-                } else if !vertical && !draw.turned {
-                    // Horizontal runs only: a vertical run's advances run
-                    // down the line, which the boxes do not follow yet.
-                    crate::text::draw_missing_glyph_boxes(
-                        scene,
-                        crate::text::missing_glyph_origins(
-                            &draw.run,
-                            draw.glyphs
-                                .iter()
-                                .map(|glyph| (glyph.cluster, glyph.x, glyph.y)),
-                        ),
-                        font_size,
-                        draw.color,
-                        run_transform,
-                    );
-                }
-                // Emphasis marks sit over or under their characters. A
-                // vertical annotation run's clusters are laid out on its own
-                // line, whose inline axis the marks are not placed along yet.
-                if !vertical && !draw.turned {
-                    crate::emphasis::draw_marks(
-                        scene,
-                        document,
-                        &draw.run,
-                        &draw.glyphs,
-                        emphasis_origin(position, line.block_offset(), draw),
-                        owner_style,
-                        draw.color,
-                    );
-                } else if vertical && draw.annotation_baseline.is_none() {
-                    crate::emphasis::draw_vertical_marks(
-                        scene,
-                        document,
-                        (line, &draw.run),
-                        (writing_mode, &converter),
-                        (
-                            position.x + draw.offset.0,
-                            position.y + position.shift_y + draw.offset.1,
-                        ),
-                        owner_style,
-                        draw.color,
-                    );
-                }
-            }
-            if !vertical {
-                for draw in segment {
-                    draw_resolved_decoration_phase(
-                        paint.target(draw.group),
-                        &draw.decorations,
-                        DecorationPhase::AfterGlyphs,
-                    );
-                }
-            }
-        }
+        let paint = groups.for_line(positioned_line.index);
+        lines.paint_line(paint, positioned_line);
     }
     Some(HeldLines {
         paragraph,
-        rest,
-        first_line,
+        rest: groups.rest,
+        first_line: groups.first_line,
         clip: Rect::new(
             0.0,
             0.0,
