@@ -290,7 +290,7 @@ fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
         "div",
         Style::default(),
         Some(
-            "display:grid;width:100px;height:100px;border:2px solid;padding:10px;justify-items:center;align-items:center",
+            "display:grid;width:100px;height:100px;border:2px solid;padding:0;padding-left:10%;padding-top:10%;justify-items:center;align-items:center",
         ),
     );
     let child = doc.append_element(
@@ -320,7 +320,7 @@ fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
                 height: true,
             },
             parent_size: Size {
-                width: Some(100.0),
+                width: Some(200.0),
                 height: Some(100.0),
             },
             available_space: Size {
@@ -333,5 +333,5 @@ fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
     drop(session);
 
     let layout = doc.nodes[child].unrounded_layout;
-    assert_eq!((layout.location.x, layout.location.y), (40.0, 40.0));
+    assert_eq!((layout.location.x, layout.location.y), (50.0, 50.0));
 }

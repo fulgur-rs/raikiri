@@ -2018,7 +2018,13 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     if let Some(taffy::DetailedLayoutInfo::Grid(grid)) = grid {
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(&grid));
     }
-    align_auto_grid_abspos_children(tree, idx, inputs.run_mode, output.size);
+    align_auto_grid_abspos_children(
+        tree,
+        idx,
+        inputs.run_mode,
+        inputs.parent_size.width,
+        output.size,
+    );
     output
 }
 
@@ -2072,6 +2078,7 @@ fn align_auto_grid_abspos_children(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     run_mode: RunMode,
+    percent_basis: Option<f32>,
     size: Size<f32>,
 ) {
     use taffy::ResolveOrZero;
@@ -2081,15 +2088,14 @@ fn align_auto_grid_abspos_children(
     }
 
     let parent_style = &tree.layout_node_with_style(idx).unwrap().style;
-    let (border, padding) = {
-        let style = parent_style;
-        (
-            style.border.resolve_or_zero(Some(size.width), resolve_calc),
-            style
-                .padding
-                .resolve_or_zero(Some(size.width), resolve_calc),
-        )
-    };
+    // Percentage padding resolves against the containing block's width, not
+    // this grid's used width.
+    let border = parent_style
+        .border
+        .resolve_or_zero(percent_basis, resolve_calc);
+    let padding = parent_style
+        .padding
+        .resolve_or_zero(percent_basis, resolve_calc);
     let content_width =
         (size.width - border.left - border.right - padding.left - padding.right).max(0.0);
     let content_height =
