@@ -605,6 +605,46 @@ fn grid_static_positions_follow_justify_self_without_a_relayout() {
 }
 
 #[test]
+fn grid_static_position_alignment_uses_grid_self_and_content_box() {
+    let (doc, abspos) = laid_out(
+        "width:200px;height:100px",
+        "display:grid;position:relative;width:200px;height:100px;border:2px solid;padding:10px;justify-items:center;align-items:end",
+        "position:absolute;width:50px;height:10px",
+    );
+    let (alignment, space) = static_position_alignment(
+        &doc,
+        abspos,
+        Size {
+            width: 50.0,
+            height: 10.0,
+        },
+    );
+
+    assert_eq!((alignment.width, alignment.height), (0.5, 1.0));
+    assert_eq!((space.width, space.height), (200.0, 100.0));
+}
+
+#[test]
+fn grid_static_position_alignment_ignores_explicit_insets() {
+    let (doc, abspos) = laid_out(
+        "width:200px;height:100px",
+        "display:grid;position:relative;width:200px;height:100px",
+        "position:absolute;left:0;width:50px;height:10px",
+    );
+    let (alignment, space) = static_position_alignment(
+        &doc,
+        abspos,
+        Size {
+            width: 50.0,
+            height: 10.0,
+        },
+    );
+
+    assert_eq!((alignment.width, alignment.height), (0.0, 0.0));
+    assert_eq!(space, Size::ZERO);
+}
+
+#[test]
 fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
     for (wrapper_css, fixed_css, expected_y) in [
         ("", "top:5px", 5.0),

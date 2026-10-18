@@ -980,116 +980,6 @@ pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult,
     crate::layout::ifc::flow::rebreak_roots(&mut session, cascade, max_advance);
 }
 
-/// Correct the static position of grid abspos items whose placement is `auto`.
-/// Taffy handles explicit grid-area placement, but its static-position fallback
-/// uses the border edge instead of the grid content box.
-///
-/// The margin box is aligned in the content box by the item's `justify-self`
-/// and `align-self`, whose `auto` takes the container's `justify-items` and
-/// `align-items` (CSS Grid 2 §10.2).
-// spec: https://www.w3.org/TR/css-grid-2/#static-position
-fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &CascadeResult) {
-    fn align_offset(value: AlignSelfValue, parent: SelfAlignmentValue, free: f32) -> f32 {
-        let value = match value {
-            AlignSelfValue::Auto => parent,
-            AlignSelfValue::Value(value) => value,
-            _ => SelfAlignmentValue::Start,
-        };
-        match value {
-            SelfAlignmentValue::Center => free / 2.0,
-            SelfAlignmentValue::End | SelfAlignmentValue::FlexEnd => free,
-            _ => 0.0,
-        }
-    }
-    for child_id in 0..document.nodes.len() {
-        let child = &cascade.computed[child_id];
-        if !matches!(
-            document.nodes[child_id].position(),
-            PositionValue::Absolute | PositionValue::Fixed
-        ) || !matches!(child.top, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(child.right, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(child.bottom, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(child.left, ComputedLengthPercentageOrAuto::Auto)
-        {
-            continue;
-        }
-        #[cfg(all(test, debug_assertions))]
-        crate::layout::test_support::GRID_PARENT_LOOKUP_STEPS
-            .with(|steps| steps.set(steps.get() + 1));
-        let Some(parent_id) = document.parent_of(child_id) else {
-            continue;
-        };
-        if document.nodes[parent_id].formatting_context != FormattingContext::Grid
-            || !matches!(child.grid_row_start, GridLineValue::Auto)
-            || !matches!(child.grid_row_end, GridLineValue::Auto)
-            || !matches!(child.grid_column_start, GridLineValue::Auto)
-            || !matches!(child.grid_column_end, GridLineValue::Auto)
-        {
-            continue;
-        }
-        let parent = &cascade.computed[parent_id];
-        let parent_size = document.nodes[parent_id].unrounded_layout.size;
-        let border_left = parent.border.left.width().px();
-        let border_right = parent.border.right.width().px();
-        let border_top = parent.border.top.width().px();
-        let border_bottom = parent.border.bottom.width().px();
-        let parent_style = &document.layout_node_with_style(parent_id).unwrap().style;
-        let padding_left =
-            used_style_length_percentage(parent_style.padding.left, parent_size.width)
-                .unwrap_or(0.0);
-        let padding_right =
-            used_style_length_percentage(parent_style.padding.right, parent_size.width)
-                .unwrap_or(0.0);
-        let padding_top = used_style_length_percentage(parent_style.padding.top, parent_size.width)
-            .unwrap_or(0.0);
-        let padding_bottom =
-            used_style_length_percentage(parent_style.padding.bottom, parent_size.width)
-                .unwrap_or(0.0);
-        let content_width =
-            (parent_size.width - border_left - border_right - padding_left - padding_right)
-                .max(0.0);
-        let content_height =
-            (parent_size.height - border_top - border_bottom - padding_top - padding_bottom)
-                .max(0.0);
-        let child_layout = document.nodes[child_id].unrounded_layout;
-        // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
-        // §10.6.4).
-        let auto = |side: &ComputedLengthPercentageOrAuto, used: f32| {
-            if matches!(side, ComputedLengthPercentageOrAuto::Auto) {
-                0.0
-            } else {
-                used
-            }
-        };
-        let margin = taffy::Rect {
-            left: auto(&child.margin.left, child_layout.margin.left),
-            right: auto(&child.margin.right, child_layout.margin.right),
-            top: auto(&child.margin.top, child_layout.margin.top),
-            bottom: auto(&child.margin.bottom, child_layout.margin.bottom),
-        };
-        let free_width = content_width - child_layout.size.width - margin.left - margin.right;
-        let justify = align_offset(child.justify_self, parent.justify_items, free_width);
-        // The inline start of a right-to-left container is its right edge.
-        let justify = if parent.direction == Direction::Rtl {
-            free_width - justify
-        } else {
-            justify
-        };
-        let x = border_left + padding_left + margin.left + justify;
-        let y = border_top
-            + padding_top
-            + margin.top
-            + align_offset(
-                child.align_self,
-                parent.align_items,
-                content_height - child_layout.size.height - margin.top - margin.bottom,
-            );
-        let child_layout = &mut document.nodes[child_id].unrounded_layout;
-        child_layout.location.x = x;
-        child_layout.location.y = y;
-    }
-}
-
 /// Lay out a Document on one A4 page (or the specified PageBox).
 ///
 /// Text is laid out by the inline engine with the fonts the Document holds
@@ -1239,9 +1129,9 @@ fn layout_single_page_with_table_projection(
     };
     taffy::compute_root_layout(document, TaffyNodeId::from(icb), available_space);
     take_layout_failure(document)?;
-    // Step 5a: post-layout corrections taffy does not make: the static
-    // position of auto-placed grid abspos items, the containing block of
-    // nested fixed boxes, and auto-height ancestors of floats.
+    // Step 5a: post-layout corrections taffy does not make: the containing
+    // block of nested fixed boxes and auto-height ancestors of floats. Grid
+    // abspos static positions are aligned within the grid dispatch.
     // Taffy places fixed boxes against their parents, not the page area,
     // their containing block.
     let page_area = taffy::Size {
@@ -1255,9 +1145,6 @@ fn layout_single_page_with_table_projection(
     // Laying those boxes out again can fail a table or exhaust the
     // fragment budget like the root layout above.
     take_layout_failure(document)?;
-    // After the fixed boxes, whose relayout lays out the grids inside them
-    // again with taffy's static positions.
-    realign_grid_abspos_static_positions(document, cascade);
     // Again for the boxes inside fixed boxes that relayout put back; the
     // pass is idempotent, so the boxes placed above stay where they are.
     super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
