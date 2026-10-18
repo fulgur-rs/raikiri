@@ -3339,6 +3339,32 @@ fn tile_spans_snap_each_edge_to_the_device_grid() {
 }
 
 #[test]
+fn tile_spans_keep_a_positive_length_on_a_mirrored_grid() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat};
+    // A reflection gives the grid a negative scale, but a tile is still as
+    // long as its device pixels, and its edges still go to the nearest pixel.
+    assert_eq!(
+        tile_spans(&[3.4], 10.0, Repeat, Some((-1.0, 0.0))),
+        vec![(3.0, 10.0)]
+    );
+    assert_eq!(
+        tile_spans(&[3.4], 0.2, Repeat, Some((-2.0, 0.0))),
+        vec![(3.5, 0.5)]
+    );
+    assert_eq!(
+        tile_spans(&[68.25], 38.5, NoRepeat, Some((-1.0, 0.0))),
+        vec![(68.0, 39.0)]
+    );
+    // A grid without a usable scale leaves the tiles where they are.
+    for scale in [0.0, f64::INFINITY, f64::NAN] {
+        assert_eq!(
+            tile_spans(&[3.4], 10.0, Repeat, Some((scale, 0.0))),
+            vec![(3.4, 10.0)]
+        );
+    }
+}
+
+#[test]
 fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
     struct BluePixels;
     impl raikiri_traits::ImagePixelSource for BluePixels {

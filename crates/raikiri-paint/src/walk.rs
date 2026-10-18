@@ -6154,7 +6154,8 @@ fn paint_background_image(
 /// being stretched over a partial pixel. A `repeat` axis keeps only its origin
 /// tile, whose length is the pitch of the repetition: a whole number of
 /// device pixels, at least one, so the copies stay on the grid however small
-/// the unsnapped tile is. A `round` axis keeps the pitch that fits its area.
+/// the unsnapped tile is, and positive on a mirrored grid. A `round` axis
+/// keeps the pitch that fits its area.
 fn tile_spans(
     starts: &[f64],
     length: f64,
@@ -6162,6 +6163,10 @@ fn tile_spans(
     grid: Option<(f64, f64)>,
 ) -> Vec<(f64, f64)> {
     use raikiri_style::property::BackgroundRepeatKeyword::{Repeat, Round};
+    // A grid that cannot place a pixel edge (no scale, or an overflowed one)
+    // leaves the tiles where they are.
+    let grid =
+        grid.filter(|(scale, offset)| scale.is_finite() && *scale != 0.0 && offset.is_finite());
     let snap = |value: f64| match grid {
         Some((scale, offset)) => ((value * scale + offset).round() - offset) / scale,
         None => value,
@@ -6175,7 +6180,12 @@ fn tile_spans(
         Repeat => starts
             .first()
             .map(|start| match grid {
-                Some((scale, _)) => (snap(*start), (length * scale).round().max(1.0) / scale),
+                // A mirrored grid has a negative scale; the pitch is a count
+                // of device pixels, so it takes the magnitude.
+                Some((scale, _)) => (
+                    snap(*start),
+                    (length * scale.abs()).round().max(1.0) / scale.abs(),
+                ),
                 None => (*start, length),
             })
             .into_iter()
