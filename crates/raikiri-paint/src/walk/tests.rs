@@ -3936,6 +3936,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &margin_box,
+        &PageBox::new(),
         Some(&source),
         &mut warnings,
     );
@@ -3958,6 +3959,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
         &crate::walk::ImageBrushCache::default(),
         &mut unsupported_scene,
         &unsupported,
+        &PageBox::new(),
         Some(&source),
         &mut unsupported_warnings,
     );
@@ -3976,6 +3978,7 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &margin_box,
+        &PageBox::new(),
         None,
         &mut warnings,
     );
@@ -3999,6 +4002,7 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
         &crate::walk::ImageBrushCache::default(),
         &mut empty_scene,
         &empty,
+        &PageBox::new(),
         None,
         &mut Vec::new(),
     );
@@ -4014,6 +4018,7 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
         &crate::walk::ImageBrushCache::default(),
         &mut ring_scene,
         &ring,
+        &PageBox::new(),
         None,
         &mut ring_warnings,
     );
@@ -4038,6 +4043,7 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
         &crate::walk::ImageBrushCache::default(),
         &mut solid_scene,
         &solid,
+        &PageBox::new(),
         None,
         &mut Vec::new(),
     );
@@ -4060,6 +4066,7 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
         &crate::walk::ImageBrushCache::default(),
         &mut text_scene,
         &text,
+        &PageBox::new(),
         None,
         &mut text_warnings,
     );
@@ -4077,6 +4084,7 @@ fn margin_box_warns_about_layers_under_the_painted_ones() {
             &crate::walk::ImageBrushCache::default(),
             &mut Scene::new(),
             &margin_box,
+            &PageBox::new(),
             None,
             &mut warnings,
         );
@@ -4097,6 +4105,7 @@ fn margin_box_without_area_paints_nothing() {
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &margin_box,
+        &PageBox::new(),
         None,
         &mut Vec::new(),
     );
@@ -4114,6 +4123,7 @@ fn lime_margin_box_placeholders_fill_inside_the_box() {
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &margin_box,
+        &PageBox::new(),
         None,
         &mut Vec::new(),
     );
@@ -4123,6 +4133,151 @@ fn lime_margin_box_placeholders_fill_inside_the_box() {
         .filter(|command| matches!(command, RenderCommand::Fill(_)))
         .count();
     assert_eq!(fills, 2, "the lime background and the lime content image");
+}
+
+#[test]
+fn margin_box_content_overflows_unless_overflow_clips() {
+    let clip_bounds = |overflow_clip| {
+        let mut margin_box = fixed_margin_box();
+        margin_box.background_color = None;
+        margin_box.lime_content_image = Some(PaintRect::new(10.0, 0.0, 200.0, 20.0));
+        margin_box.overflow_clip = overflow_clip;
+        let mut scene = Scene::new();
+        paint_margin_box(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &margin_box,
+            &PageBox::new(),
+            None,
+            &mut Vec::new(),
+        );
+        let pushes = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushClipLayer(clip) => Some(kurbo::Shape::bounding_box(&clip.clip)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let pops = scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::PopLayer))
+            .count();
+        assert_eq!(pushes.len(), pops, "every clip is popped");
+        pushes
+    };
+
+    // `overflow: visible` (no clip) draws the content past the box edge.
+    assert!(clip_bounds(None).is_empty());
+
+    let mut clip = raikiri_traits::PaintClip::new(PaintRect::new(2.0, 2.0, 96.0, 46.0));
+    clip.clip_x = true;
+    clip.clip_y = true;
+    assert_eq!(
+        clip_bounds(Some(clip)),
+        [kurbo::Rect::new(2.0, 2.0, 98.0, 48.0)]
+    );
+}
+
+#[test]
+fn visible_margin_box_overflow_keeps_text_shadow_bounds() {
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        style,
+        "@page { margin: 20px; @top-left-corner { content: 'abcdefghij'; \
+           font-family: Ahem; font-size: 10px; width: 10px; height: 10px; \
+           text-shadow: 30px 0 4px red } }",
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let page_box = PageBox::A4;
+    let margin_box = raikiri_dom::page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        page_box,
+        raikiri_dom::MarginBoxPageContext::new(0, 1, false),
+    )
+    .into_iter()
+    .find(|margin_box| margin_box.slot == raikiri_style::PageMarginBoxSlot::TopLeftCorner)
+    .expect("the top-left corner margin box");
+    let text = margin_box.text.as_ref().expect("text");
+    let (text_x, text_y) = text.origin();
+    let text_bounds = Rect::new(
+        f64::from(text_x),
+        f64::from(text_y),
+        f64::from(text_x + text.shaped().width()),
+        f64::from(text_y + text.shaped().height()),
+    );
+    assert!(
+        text_bounds.width() > f64::from(margin_box.rect.width),
+        "the unbreakable text overflows the 10px box: {text_bounds:?} vs {:?}",
+        margin_box.rect
+    );
+
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_page_margin_boxes(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &doc,
+        &cascade,
+        page_box,
+        0,
+        1,
+        false,
+        None,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    assert!(
+        !scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::PushClipLayer(_))),
+        "overflow: visible must not clip to the margin box"
+    );
+    let furthest_text_glyph_x = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run)
+                if run.brush == anyrender::Paint::Solid(Color::from_rgba8(0, 0, 0, 255)) =>
+            {
+                run.glyphs
+                    .iter()
+                    .map(|glyph| run.transform.translation().x + f64::from(glyph.x))
+                    .max_by(f64::total_cmp)
+            }
+            _ => None,
+        })
+        .max_by(f64::total_cmp)
+        .expect("text glyphs");
+    assert!(
+        furthest_text_glyph_x > f64::from(margin_box.rect.x + margin_box.rect.width),
+        "unclipped text glyphs should extend beyond the box: x={furthest_text_glyph_x}, box={:?}",
+        margin_box.rect
+    );
+
+    let shadow_layer = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::PushLayer(layer) if layer.filter.is_some() => {
+                Some(kurbo::Shape::bounding_box(&layer.clip))
+            }
+            _ => None,
+        })
+        .expect("the blurred text shadow layer");
+    let expected_right = text_bounds.x1 + 30.0 + 12.0;
+    assert!(
+        shadow_layer.x1 >= expected_right,
+        "shadow layer must include overflowing text and blur: {shadow_layer:?}, expected right >= {expected_right}"
+    );
 }
 
 #[test]

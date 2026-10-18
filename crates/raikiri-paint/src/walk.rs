@@ -1587,11 +1587,12 @@ fn paint_list_marker_with_snapshots(
 }
 
 /// Paint one laid-out page-margin box: background color, background image,
-/// borders, then its text clipped to the border box.
+/// borders, then its text and shadows clipped when its overflow clips.
 fn paint_margin_box(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     margin_box: &raikiri_dom::MarginBox,
+    page_box: &PageBox,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -1759,25 +1760,37 @@ fn paint_margin_box(
             &border_rect,
         );
     }
+    // Text and its shadows overflow the box unless `overflow` clips them
+    // (CSS Overflow 3 §3: the initial `visible` does not clip).
+    let clipped = margin_box.overflow_clip.is_some_and(|clip| {
+        push_overflow_clip(
+            &mut crate::transform::TransformScene {
+                scene: &mut *scene,
+                transform: Affine::IDENTITY,
+            },
+            clip,
+            page_box,
+        );
+        true
+    });
     if let Some(text) = &margin_box.text {
-        scene.push_clip_layer(Affine::IDENTITY, &rect);
         let (text_x, text_y) = text.origin();
+        let shaped = text.shaped();
+        let text_bounds = Rect::new(
+            f64::from(text_x),
+            f64::from(text_y),
+            f64::from(text_x + shaped.width()),
+            f64::from(text_y + shaped.height()),
+        );
         crate::standalone_text::draw_shadows(
             scene,
-            text.shaped(),
+            shaped,
             text_x,
             text_y,
             &margin_box.text_shadows,
-            rect,
+            text_bounds,
         );
-        crate::standalone_text::draw(
-            scene,
-            text.shaped(),
-            text_x,
-            text_y,
-            css_color(margin_box.color),
-        );
-        scene.pop_layer();
+        crate::standalone_text::draw(scene, shaped, text_x, text_y, css_color(margin_box.color));
     }
     if let Some(image) = margin_box.lime_content_image {
         let image_rect = Rect::new(
@@ -1786,7 +1799,6 @@ fn paint_margin_box(
             (image.x + image.width) as f64,
             (image.y + image.height) as f64,
         );
-        scene.push_clip_layer(Affine::IDENTITY, &rect);
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
@@ -1794,6 +1806,8 @@ fn paint_margin_box(
             None,
             &image_rect,
         );
+    }
+    if clipped {
         scene.pop_layer();
     }
 }
@@ -1819,7 +1833,14 @@ pub(crate) fn paint_page_margin_boxes(
     for margin_box in
         raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
     {
-        paint_margin_box(image_cache, scene, &margin_box, pixel_source, warnings);
+        paint_margin_box(
+            image_cache,
+            scene,
+            &margin_box,
+            &page_box,
+            pixel_source,
+            warnings,
+        );
     }
 }
 

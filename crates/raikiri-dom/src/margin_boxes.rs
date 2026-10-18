@@ -11,6 +11,7 @@
 use crate::generated_content::format_counter;
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
+use crate::paint_rules::OverflowClipGeometry;
 use crate::running::element_string_value;
 use crate::{
     Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneStyle, StandaloneText,
@@ -18,8 +19,8 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
-    CssColor, FontFamilyName, PropertyKey, PropertyValue, QuoteKeyword, StringFetchMode, TextAlign,
-    TextShadowColor, VerticalAlign, VisualBox, WritingMode,
+    CssColor, FontFamilyName, OverflowValue, OverflowXY, PropertyKey, PropertyValue, QuoteKeyword,
+    StringFetchMode, TextAlign, TextShadowColor, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorder, ComputedCssPosition,
@@ -27,7 +28,7 @@ use raikiri_style::{
     MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult, PageMarginBoxCascadeResult,
     PageMarginBoxSlot,
 };
-use raikiri_traits::{NodeId, PageBox, PaintInsets, PaintRect};
+use raikiri_traits::{NodeId, PageBox, PaintClip, PaintInsets, PaintRect};
 use smol_str::SmolStr;
 use std::ops::Range;
 use std::sync::Arc;
@@ -243,7 +244,8 @@ pub struct MarginBoxRunning {
 ///
 /// Positions are in CSS px with the origin at the top-left of the page box
 /// and y growing downwards. A box is drawn in this order: background color,
-/// background image, borders, then its text clipped to [`Self::rect`].
+/// background image, borders, then its text, clipped by
+/// [`Self::overflow_clip`] when the box clips its overflow.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct MarginBox {
@@ -277,6 +279,11 @@ pub struct MarginBox {
     /// Shaped content, `None` when the content is empty or the content box
     /// has no area.
     pub text: Option<MarginBoxText>,
+    /// Padding-box clip of the box's text and content image, `None` when
+    /// `overflow` is `visible` on both axes. Margin boxes follow the usual
+    /// property rules (CSS Paged Media 3 §4.2), so their content overflows
+    /// the box by default.
+    pub overflow_clip: Option<PaintClip>,
     /// Placeholders in [`Self::content`] for values not known yet, in
     /// content order. Empty unless the page context defers the page count.
     pub deferred: Vec<DeferredSlot>,
@@ -312,6 +319,7 @@ impl MarginBox {
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
+            overflow_clip: None,
             deferred: Vec::new(),
             running: None,
             lime_background: false,
@@ -326,7 +334,9 @@ impl MarginBox {
     }
 
     /// Positioned glyph runs of the box text, in the same form as the body
-    /// text runs of a page. Draw them clipped to [`Self::rect`].
+    /// text runs of a page. Consumers should clip them to
+    /// [`Self::overflow_clip`] when it is `Some`; otherwise the text may
+    /// extend beyond [`Self::rect`].
     ///
     /// Vertical writing modes are not represented by glyph runs and return
     /// no runs; [`Self::text`] still carries their shaped lines.
@@ -455,6 +465,7 @@ struct MarginBoxSpec {
     height: Option<f32>,
     text_color: CssColor,
     text_shadows: Vec<TextShadow>,
+    overflow: OverflowXY,
     text_style: StandaloneStyle,
     alignment: StandaloneAlign,
     vertical_align: MarginTextVerticalAlign,
@@ -1158,6 +1169,7 @@ fn margin_box_spec(
         height,
         text_color,
         text_shadows: margin_box_text_shadows(&style),
+        overflow: style.overflow,
         text_style,
         alignment,
         vertical_align,
@@ -1228,6 +1240,15 @@ fn place_margin_box(
             MarginBoxBorder::new(width.min(rect.width).min(rect.height), color)
         })
     };
+    let borders = spec.border.map(border);
+    let overflow_clip = (spec.overflow.x != OverflowValue::Visible
+        || spec.overflow.y != OverflowValue::Visible)
+        .then(|| {
+            let [top, right, bottom, left] =
+                borders.map(|side| side.map_or(0.0, |side| side.width));
+            OverflowClipGeometry::square(spec.overflow, PaintInsets::new(top, right, bottom, left))
+                .at(rect)
+        });
     Some(MarginBox {
         slot: spec.slot,
         rect,
@@ -1239,7 +1260,7 @@ fn place_margin_box(
         background_clip: spec.background_clip,
         background_layers: spec.background_layers.clone(),
         background_layer_count: spec.background_layer_count,
-        borders: spec.border.map(border),
+        borders,
         padding: PaintInsets::new(
             spec.padding[0],
             spec.padding[1],
@@ -1247,6 +1268,7 @@ fn place_margin_box(
             spec.padding[3],
         ),
         text,
+        overflow_clip,
         running,
         lime_background: spec.background_image_lime,
         lime_content_image,

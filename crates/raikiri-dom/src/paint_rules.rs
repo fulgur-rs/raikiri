@@ -355,6 +355,16 @@ impl OverflowClipGeometry {
         }
     }
 
+    /// Clip geometry with square padding-edge corners, for boxes whose
+    /// painter draws no `border-radius` (page-margin boxes).
+    pub(crate) fn square(overflow: OverflowXY, border: PaintInsets) -> Self {
+        Self {
+            edges: border,
+            overflow,
+            corner_radii: None,
+        }
+    }
+
     /// Snap edges only after translating the whole border box to its page.
     pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
         let x0 = (border_box.x + self.edges.left).floor();
