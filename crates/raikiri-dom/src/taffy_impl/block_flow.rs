@@ -16,6 +16,25 @@ use taffy::{
     RunMode, Size, SizingMode, Style, TraversePartialTree,
 };
 
+/// How far block flow moves a child of a left-to-right container to the
+/// right for its `position: relative` insets, when the container's content
+/// box is `width` wide. A sticky box is moved alike, but its offset is not
+/// one that a painter applies again, so it has none here.
+pub(crate) fn relative_inline_offset(style: &Style, width: f32) -> f32 {
+    if style.position != Position::Relative {
+        return 0.0;
+    }
+    children::relative(
+        style,
+        Size {
+            width: Some(width),
+            height: None,
+        },
+        taffy::Direction::Ltr,
+    )
+    .x
+}
+
 /// Whether a block child's normal flow shares its parent's float context.
 fn shares_context(style: &Style) -> bool {
     style.is_block()

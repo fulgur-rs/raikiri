@@ -581,3 +581,78 @@ fn an_unfinished_paragraph_background_fills_its_column_extent() {
         "<div style='position:absolute;left:0;top:0;width:40px;height:100px;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:60px;background:lime'></div>",
     );
 }
+
+#[test]
+fn a_relative_paragraph_in_a_column_is_painted_shifted_once() {
+    for inset in ["left:5px", "right:5px", "left:10%", "left:5px;top:3px"] {
+        let paragraph = format!("<p style='position:relative;{inset};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_relative_paragraph_in_a_later_column_is_painted_shifted_once() {
+    for inset in ["left:5px", "right:5px"] {
+        compare(
+            &format!(
+                "<div class=mc><p>A<br>B</p><p style='position:relative;{inset};background:lime'>C<br>D</p></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='position:relative;{inset};background:lime'>C<br>D</p></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn relative_paragraphs_of_balanced_columns_are_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;background:lime'>A</p><p>B</p><p style='position:relative;left:3px;background:lime'>C</p><p>D</p></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p style='position:relative;left:5px;background:lime'>A</p><p>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='position:relative;left:3px;background:lime'>C</p><p>D</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_block_holding_paragraphs_keeps_its_inset_across_columns() {
+    let wrapper = |style: &str| {
+        format!(
+            "<div class=mc><div style='{style};background:lime'><p>A<br>B</p><p>C<br>D</p></div></div>"
+        )
+    };
+    let css = ".mc{height:40px;column-fill:auto}";
+    let relative = raster(&wrapper("position:relative;left:5px"), css);
+    let margin = raster(&wrapper("margin-left:5px;margin-right:-5px"), css);
+    assert_eq!(
+        relative
+            .chunks_exact(4)
+            .zip(margin.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn a_sticky_paragraph_in_a_column_keeps_its_layout_offset() {
+    let paragraph = "<p style='position:sticky;left:5px;background:lime'>A<br>B</p>";
+    compare(
+        &format!("<div class=mc>{paragraph}</div>"),
+        ".mc{height:40px;column-fill:auto}",
+        &format!("<div style='width:40px'>{paragraph}</div>"),
+    );
+}
+
+#[test]
+fn a_relative_paragraph_in_a_padded_container_resolves_its_inset_against_the_column() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='position:relative;left:10%;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto;padding:0 20px}",
+        "<div style='position:absolute;left:20px;top:0;width:40px'><p>A<br>B</p></div><div style='position:absolute;left:80px;top:0;width:40px'><p style='position:relative;left:10%;background:lime'>C<br>D</p></div>",
+    );
+}
