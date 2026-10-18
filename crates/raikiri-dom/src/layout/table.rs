@@ -452,7 +452,7 @@ fn compute_table_layout_checked(
     let collapsed_cols = if vertical_writing {
         vec![false; usize::from(grid.n_cols)]
     } else {
-        collapsed_columns(doc, table_idx, grid.n_cols)?
+        collapsed_columns(doc, table_idx, grid.n_cols)
     };
     let columns_collapse = collapsed_cols.contains(&true);
     // Collapsed rows and columns take no part in border conflict resolution:
@@ -830,12 +830,8 @@ fn compute_table_layout_checked(
     });
 
     // Row heights
-    let mut row_heights = resolve_row_heights(
-        doc,
-        &mut grid,
-        natural_widths.as_deref().unwrap_or(&column_widths),
-        border_spacing,
-    )?; // cov:ignore: failure is defensive; the column ranges were validated when the grid was built.
+    let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
+    let mut row_heights = resolve_row_heights(doc, &mut grid, height_widths, border_spacing)?;
     for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
         if *hidden {
             *height = 0.0;
@@ -1423,6 +1419,7 @@ fn collect_col_widths(
     table_idx: usize,
 ) -> Result<Vec<ColSizing>, raikiri_traits::LayoutError> {
     let mut out = Vec::new();
+    let mut too_many = false;
     each_column_run(doc, table_idx, |sizing_node, _, span| {
         let st = &doc.layout_node_with_style(sizing_node).unwrap().style;
         let sizing = ColSizing {
@@ -1431,30 +1428,28 @@ fn collect_col_widths(
             max_width: st.max_size.width.into(),
         };
         if span > usize::from(u16::MAX) - out.len() {
-            return Err(table_column_error());
+            too_many = true;
+        } else {
+            out.extend(std::iter::repeat_n(sizing, span));
         }
-        out.extend(std::iter::repeat_n(sizing, span));
-        Ok(())
-    })?;
+    });
+    if too_many {
+        return Err(table_column_error());
+    }
     Ok(out)
 }
 
 /// Columns removed by `visibility: collapse` on the `<col>` or its
 /// `<colgroup>` (CSS Tables 3, "Visibility-collapse rendering"), one entry
 /// per grid column.
-fn collapsed_columns(
-    doc: &Document,
-    table_idx: usize,
-    n_cols: u16,
-) -> Result<Vec<bool>, raikiri_traits::LayoutError> {
+fn collapsed_columns(doc: &Document, table_idx: usize, n_cols: u16) -> Vec<bool> {
     let mut out = Vec::new();
     // `collect_col_widths` has already rejected a column count past `u16`.
     each_column_run(doc, table_idx, |_, collapsed, span| {
         out.extend(std::iter::repeat_n(collapsed, span));
-        Ok(())
-    })?; // cov:ignore: the closure never fails.
+    });
     out.resize(usize::from(n_cols), false);
-    Ok(out)
+    out
 }
 
 /// Walks the table's `<col>` and `<colgroup>` children in grid order and
@@ -1463,11 +1458,7 @@ fn collapsed_columns(
 /// length; a `<colgroup>` without `<col>` children stands for its own `span`
 /// columns and sizes them itself. Direct `<col>` children (anonymous
 /// colgroup) are included in DOM order.
-fn each_column_run(
-    doc: &Document,
-    table_idx: usize,
-    mut each: impl FnMut(usize, bool, usize) -> Result<(), raikiri_traits::LayoutError>,
-) -> Result<(), raikiri_traits::LayoutError> {
+fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize, bool, usize)) {
     fn col_span(doc: &Document, node_id: usize) -> usize {
         doc.ifc_layout_node(node_id)
             .expect("table box layout view")
@@ -1502,10 +1493,10 @@ fn each_column_run(
                         col_id,
                         group_collapsed || doc.nodes[col_id].collapses_table_columns,
                         col_span(doc, col_id),
-                    )?; // cov:ignore: only the column-count check fails, in `collect_col_widths`.
+                    );
                 }
                 if !has_columns {
-                    each(child_id, group_collapsed, col_span(doc, child_id))?;
+                    each(child_id, group_collapsed, col_span(doc, child_id));
                 }
             }
             DisplayValue::TableColumn => {
@@ -1513,12 +1504,11 @@ fn each_column_run(
                     child_id,
                     doc.nodes[child_id].collapses_table_columns,
                     col_span(doc, child_id),
-                )?;
+                );
             }
             _ => {}
         }
     }
-    Ok(())
 }
 
 /// Visual section ordering for a table's direct children.
