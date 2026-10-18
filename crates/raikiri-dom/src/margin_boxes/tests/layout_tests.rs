@@ -1216,8 +1216,26 @@ fn a_lime_content_image_is_placed_after_the_text() {
     assert_eq!(margin_box.content, "ab");
     assert_eq!(
         margin_box.lime_content_image,
-        Some(PaintRect::new(60.0, 0.0, 100.0, 40.0))
+        Some(PaintRect::new(60.0, 0.0, 100.0, 50.0))
     );
+}
+
+#[test]
+fn an_overflowing_lime_content_image_keeps_its_intrinsic_extent() {
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'abcdefghij' url(green.png); \
+           {AHEM} width: 20px; height: 20px }} }}"
+    ));
+    let [margin_box] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert!(margin_box.overflow_clip.is_none());
+
+    let image = margin_box
+        .lime_content_image
+        .expect("the image remains after text overflows the box");
+    assert!(image.x >= margin_box.rect.x + margin_box.rect.width);
+    assert_eq!((image.width, image.height), (100.0, 50.0));
 }
 
 #[test]
@@ -1264,5 +1282,52 @@ fn named_values_follow_document_order_after_the_tree_changes() {
             (PageMarginBoxSlot::TopLeft, "Last".to_owned()),
             (PageMarginBoxSlot::TopRight, "Last head".to_owned()),
         ]
+    );
+}
+
+#[test]
+fn margin_box_clips_its_content_only_when_overflow_clips() {
+    let clip_of = |declarations: &str| {
+        let boxes = boxes_for(&format!(
+            "@page {{ margin: 40px; @top-left-corner {{ content: 'x'; \
+               border: 2px solid; {declarations} }} }}"
+        ));
+        let [margin_box] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        margin_box.overflow_clip
+    };
+
+    // The initial `overflow: visible` lets text and shadows overflow the box.
+    assert_eq!(clip_of(""), None);
+
+    // A clipping value clips to the padding box: inside the borders.
+    let clip = clip_of("overflow: hidden").expect("hidden clips");
+    assert_eq!(
+        [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
+        [2.0, 2.0, 36.0, 36.0]
+    );
+    assert!(clip.clip_x && clip.clip_y);
+    assert_eq!(clip.corner_radii, None);
+
+    // Each axis clips on its own.
+    let clip = clip_of("overflow-x: clip").expect("clip on x");
+    assert!(clip.clip_x && !clip.clip_y);
+}
+
+#[test]
+fn margin_box_overflow_clip_margin_moves_the_clip_edge() {
+    let boxes = boxes_for(
+        "@page { margin: 40px; @top-left-corner { content: 'x'; border: 2px solid; \
+         overflow: clip; overflow-clip-margin: border-box 3px } }",
+    );
+    let [margin_box] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let clip = margin_box.overflow_clip.expect("clip overflow");
+
+    assert_eq!(
+        [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
+        [-3.0, -3.0, 46.0, 46.0]
     );
 }
