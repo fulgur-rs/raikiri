@@ -7,8 +7,8 @@ use super::{
 };
 use crate::page_projection::paint_transform::{self, Motion, MotionCache};
 use crate::page_projection::records::{PageFragmentItem, PageFragmentKind};
-use crate::{Document, paint_rules};
-use raikiri_style::{CascadeResult, PseudoElem};
+use crate::{Document, Fragment, Node, paint_rules};
+use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::collections::HashSet;
 
@@ -462,9 +462,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     /// Visit node `node_id`: list its own events and push the frames of what
     /// is inside it.
     fn visit(&mut self, node_id: usize) {
-        let (document, cascade, items, lines) =
-            (self.document, self.cascade, self.items, self.lines);
-        let page_index = self.page_index;
+        let document = self.document;
         // A subtree with nothing on this page lists no events.
         if self
             .entered
@@ -480,258 +478,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             return;
         }
         match node.kind() {
-            NodeKind::Element => {
-                if node.is_display_none() || node.is_hidden_by_text_overflow() {
-                    return;
-                }
-                let Some(cv) = cascade.computed.get(node_id) else {
-                    return; // cov:ignore: the cascade has a value for every arena node
-                };
-                // The transform stays in effect, like the group, until the
-                // element's whole subtree has been listed.
-                let space = self.space();
-                // The painter places a fixed box in the page area apart from
-                // the relative offsets around it; any transform around it
-                // would contain it instead.
-                if space != PaintTransform::IDENTITY
-                    && self.motion.viewport_fixed(document, cascade, node_id)
-                {
-                    self.push_transform(PaintTransform::translate(-space.e, -space.f));
-                }
-                match paint_transform::element_motion(
-                    document,
-                    cascade,
-                    &document.page_projection.run_context,
-                    &mut self.motion,
-                    items.page,
-                    node_id,
-                    cv,
-                ) {
-                    Motion::Still => {}
-                    Motion::Moved(transform) => self.push_transform(transform),
-                    Motion::Hidden => return,
-                }
-                // The group stays open until the element's whole subtree has
-                // been listed.
-                if let Some(alpha) = paint_rules::opacity_layer(cv) {
-                    self.push_opacity(alpha);
-                }
-                let own: Vec<&PageFragmentItem> = items
-                    .of(node_id)
-                    .iter()
-                    .copied()
-                    .filter(|item| item.kind != PageFragmentKind::Text)
-                    .collect();
-                if paint_rules::generates_box(cv)
-                    && !paint_rules::is_visibility_hidden_table(cv)
-                    && !node.hides_empty_table_cell
-                {
-                    let replaced_content =
-                        node.is_inline_svg_root() || document.is_canvas_element(node_id);
-                    for &item in &own {
-                        let fragment = items.fragment(item);
-                        if let Some(cells) = document
-                            .anonymous_table_part_background_cells(node_id)
-                            // A part that is not visible has no cell
-                            // backgrounds to clip; its box is dropped with
-                            // the others below.
-                            .filter(|_| !paint_rules::hides_own_box(cv))
-                            .filter(|_| paint_rules::paints_table_part_decoration(cv))
-                        {
-                            // Box shadows are ignored on internal table
-                            // elements only in the collapsing borders model
-                            // (CSS Backgrounds 3 §7.1).
-                            if cv.border_collapse
-                                == raikiri_style::property::BorderCollapseValue::Separate
-                                && cv.box_shadow.iter().any(|shadow| !shadow.inset)
-                            {
-                                self.events.push(PaintEvent::OuterBoxShadow(fragment));
-                            }
-                            let rect = fragment.paint_rect();
-                            let top = rect.y - item.rect.y + item.box_y;
-                            // The cells cover the whole part, but this
-                            // fragment paints only inside its own slice: a
-                            // cell outside it would clip away everything, and
-                            // on a long table most cells are outside.
-                            let in_slice = |clip: &PaintRect| {
-                                clip.x < rect.x + rect.width
-                                    && clip.y < rect.y + rect.height
-                                    && clip.x + clip.width > rect.x
-                                    && clip.y + clip.height > rect.y
-                            };
-                            for cell in cells {
-                                let clip = PaintRect::new(
-                                    rect.x + cell.x,
-                                    top + cell.y,
-                                    cell.width,
-                                    cell.height,
-                                );
-                                if !in_slice(&clip) {
-                                    continue;
-                                }
-                                self.events.push(PaintEvent::PushClip(
-                                    PaintClip::new(clip),
-                                    ClipKind::TableCell,
-                                ));
-                                self.events.push(PaintEvent::Box(fragment));
-                                self.events.push(PaintEvent::PopClip);
-                            }
-                        } else {
-                            self.events.push(PaintEvent::Box(fragment));
-                        }
-                        if item.kind == PageFragmentKind::Replaced || replaced_content {
-                            if let Some(clip) = fragment.overflow_clip() {
-                                self.events
-                                    .push(PaintEvent::PushClip(clip, ClipKind::Overflow));
-                            }
-                            self.events.push(PaintEvent::Replaced(fragment));
-                            if fragment.overflow_clip().is_some() {
-                                self.events.push(PaintEvent::PopClip);
-                            }
-                        }
-                    }
-                }
-                if let Some(rules) = document
-                    .page_projection
-                    .column_rules
-                    .get(&page_index)
-                    .and_then(|rules| rules.get(&NodeId::new(node_id as u64)))
-                {
-                    let clip = items.overflow_clips.get(&NodeId::new(node_id as u64));
-                    if let Some(entry) = clip {
-                        self.events
-                            .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
-                    }
-                    self.events
-                        .extend(rules.iter().copied().map(PaintEvent::ColumnRule));
-                    if clip.is_some() {
-                        self.events.push(PaintEvent::PopClip);
-                    }
-                }
-                let image_marker = document
-                    .page_marker_image(page_index, NodeId::new(node_id as u64))
-                    .is_some();
-                let inline_marker =
-                    crate::generated_content::inside_marker_in_flow(cascade, node_id)
-                        && node.is_ifc_root();
-                if image_marker && !inline_marker {
-                    self.events
-                        .push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
-                }
-                let mut clipped = false;
-                if let Some(lines) = lines {
-                    let marker = crate::generated_content::generated_node_id(
-                        node_id,
-                        raikiri_style::PseudoElem::Marker,
-                    );
-                    self.events.extend(
-                        lines
-                            .paragraphs
-                            .get(&NodeId::new(marker as u64))
-                            .into_iter()
-                            .flatten()
-                            .copied()
-                            .map(PaintEvent::TextLine),
-                    );
-                }
-                // The clip is the padding box of the element's whole box
-                // resolved from shared source geometry. It opens after the
-                // element's own box and closes after its subtree.
-                if let Some(entry) = items.overflow_clips.get(&NodeId::new(node_id as u64)) {
-                    // A closed vertical axis hides descendants on pages the
-                    // box does not reach. An open vertical axis still admits
-                    // them and must preserve the horizontal clip.
-                    if own.is_empty() && entry.clip.clip_y {
-                        return;
-                    }
-                    self.events
-                        .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
-                    self.stack.push(Frame::PopClip);
-                    clipped = true;
-                }
-                // A plain block in a block container leaves its inline
-                // content to the end of the layer (CSS 2.1 Appendix E), after
-                // the backgrounds of the blocks that follow it.
-                let deferring = self.layers.last().is_some_and(|layer| layer.allowed);
-                let defers = deferring
-                    && !clipped
-                    && paint_rules::defers_inline_content(document, cascade, node_id);
-                // A plain block that clips collects its inline content in a
-                // layer of its own, which it hands to the enclosing layer
-                // inside its clip.
-                let merges = deferring
-                    && clipped
-                    && paint_rules::merges_clipped_inline_content(document, cascade, node_id);
-                // In-flow blocks inside a paragraph's inline content paint
-                // their backgrounds before its lines. With content positioned
-                // below them, the paragraph's content lists them after that
-                // content.
-                let blocks: Vec<usize> = if node.is_ifc_root()
-                    && !paint_rules::holds_negative_stack_level(document, cascade, node_id)
-                {
-                    document.paragraph_blocks(cascade, node_id)
-                } else {
-                    Vec::new()
-                };
-                if defers && node.is_ifc_root() {
-                    if let Some(layer) = self.layers.last_mut() {
-                        layer.pending.push(Frame::Content(node_id));
-                    }
-                    self.stack
-                        .extend(blocks.into_iter().rev().map(Frame::Visit));
-                    return;
-                }
-                if node.is_inline_svg_root()
-                    || document.anonymous_table_contents_paint_only(node_id)
-                {
-                    self.stack
-                        .extend(node.is_ifc_root().then_some(Frame::Content(node_id)));
-                    return;
-                }
-                // A `display: contents` element has no box, so its children
-                // share the enclosing layer.
-                if !defers && paint_rules::generates_box(cv) {
-                    let columns = node.is_multicol_container();
-                    let close = if merges {
-                        LayerClose::Merge(node_id)
-                    } else if paint_rules::hoists_positioned_content(document, cascade, node_id) {
-                        LayerClose::Hoist
-                    } else {
-                        LayerClose::Paint
-                    };
-                    self.layers.push(Layer::new(deferring && !columns, close));
-                    self.stack.push(Frame::EndDeferral);
-                }
-                if node.is_ifc_root() {
-                    // The paragraph's own text and inline elements are listed
-                    // first; only the boxes laid out beside its lines are
-                    // visited like ordinary children. Those in an inline
-                    // opacity group are visited in the group.
-                    if merges {
-                        if let Some(layer) = self.layers.last_mut() {
-                            layer.pending.push(Frame::Content(node_id));
-                        }
-                    } else {
-                        self.stack.push(Frame::Content(node_id));
-                    }
-                    self.stack
-                        .extend(blocks.into_iter().rev().map(Frame::Visit));
-                    return;
-                }
-                let mut children =
-                    if let Some(children) = document.anonymous_table_paint_sequence(node_id) {
-                        children
-                    } else {
-                        node.children.clone()
-                    };
-                paint_rules::sort_paint_children(&mut children, node.display(), cascade);
-                self.stack.extend(children.into_iter().rev().map(|key| {
-                    match document.child_frame(key) {
-                        Frame::Paragraph(key) if defers => Frame::DeferredParagraph(key),
-                        frame => frame,
-                    }
-                }));
-            }
+            NodeKind::Element => self.visit_element(node_id, node),
             // A text node laid out as an anonymous flex or grid item is a
             // paragraph of its own. Any other text node outside a paragraph
             // has no lines to draw.
@@ -739,15 +486,347 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
                 // A lone text node has no inline elements, so no groups.
                 push_paragraph(
                     document,
-                    items,
+                    self.items,
                     node_id,
                     None,
-                    lines,
+                    self.lines,
                     LinePart::All,
                     &mut self.events,
                 );
             }
             _ => {} // cov:ignore: comments and other node kinds are out of the document
         }
+    }
+
+    /// Visit element `node_id`: open the transform, opacity group and clip
+    /// around its subtree, list its own boxes, and push the frames of its
+    /// children.
+    fn visit_element(&mut self, node_id: usize, node: &'a Node) {
+        let (cascade, items) = (self.cascade, self.items);
+        if node.is_display_none() || node.is_hidden_by_text_overflow() {
+            return;
+        }
+        let Some(cv) = cascade.computed.get(node_id) else {
+            return; // cov:ignore: the cascade has a value for every arena node
+        };
+        if !self.open_motion(node_id, cv) {
+            return;
+        }
+        // The group stays open until the element's whole subtree has been
+        // listed.
+        if let Some(alpha) = paint_rules::opacity_layer(cv) {
+            self.push_opacity(alpha);
+        }
+        let own: Vec<&PageFragmentItem> = items
+            .of(node_id)
+            .iter()
+            .copied()
+            .filter(|item| item.kind != PageFragmentKind::Text)
+            .collect();
+        if paint_rules::generates_box(cv)
+            && !paint_rules::is_visibility_hidden_table(cv)
+            && !node.hides_empty_table_cell
+        {
+            self.list_boxes(node_id, node, cv, &own);
+        }
+        self.list_column_rules(node_id);
+        self.list_marker(node_id, node);
+        // The clip is the padding box of the element's whole box resolved from
+        // shared source geometry. It opens after the element's own box and
+        // closes after its subtree.
+        let clip = items.overflow_clips.get(&NodeId::new(node_id as u64));
+        // A closed vertical axis hides descendants on pages the box does not
+        // reach. An open vertical axis still admits them and must preserve the
+        // horizontal clip.
+        if own.is_empty() && clip.is_some_and(|entry| entry.clip.clip_y) {
+            return;
+        }
+        if let Some(entry) = clip {
+            self.events
+                .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+            self.stack.push(Frame::PopClip);
+        }
+        self.enter_subtree(node_id, node, cv, clip.is_some());
+    }
+
+    /// Open the transforms around element `node_id`, and report whether it
+    /// is painted at all: a singular transform hides it and its subtree.
+    ///
+    /// A transform stays in effect, like an opacity group, until the
+    /// element's whole subtree has been listed.
+    fn open_motion(&mut self, node_id: usize, cv: &ComputedValues) -> bool {
+        let (document, cascade) = (self.document, self.cascade);
+        let space = self.space();
+        // The painter places a fixed box in the page area apart from the
+        // relative offsets around it; any transform around it would contain
+        // it instead.
+        if space != PaintTransform::IDENTITY
+            && self.motion.viewport_fixed(document, cascade, node_id)
+        {
+            self.push_transform(PaintTransform::translate(-space.e, -space.f));
+        }
+        match paint_transform::element_motion(
+            document,
+            cascade,
+            &document.page_projection.run_context,
+            &mut self.motion,
+            self.items.page,
+            node_id,
+            cv,
+        ) {
+            Motion::Still => {}
+            Motion::Moved(transform) => self.push_transform(transform),
+            Motion::Hidden => return false,
+        }
+        true
+    }
+
+    /// List the box of each fragment `own` of element `node_id`, and the
+    /// content of a replaced element after it.
+    fn list_boxes(
+        &mut self,
+        node_id: usize,
+        node: &Node,
+        cv: &ComputedValues,
+        own: &[&'a PageFragmentItem],
+    ) {
+        let (document, items) = (self.document, self.items);
+        let replaced_content = node.is_inline_svg_root() || document.is_canvas_element(node_id);
+        for &item in own {
+            let fragment = items.fragment(item);
+            if let Some(cells) = document
+                .anonymous_table_part_background_cells(node_id)
+                // A part that is not visible has no cell backgrounds to clip;
+                // its box is dropped with the others below.
+                .filter(|_| !paint_rules::hides_own_box(cv))
+                .filter(|_| paint_rules::paints_table_part_decoration(cv))
+            {
+                self.list_table_part_box(cv, item, fragment, cells);
+            } else {
+                self.events.push(PaintEvent::Box(fragment));
+            }
+            if item.kind == PageFragmentKind::Replaced || replaced_content {
+                self.list_replaced(fragment);
+            }
+        }
+    }
+
+    /// List the box of a table row or row group fragment through the areas
+    /// of the `cells` it covers.
+    fn list_table_part_box(
+        &mut self,
+        cv: &ComputedValues,
+        item: &PageFragmentItem,
+        fragment: Fragment<'a>,
+        cells: &[PaintRect],
+    ) {
+        // Box shadows are ignored on internal table elements only in the
+        // collapsing borders model (CSS Backgrounds 3 §7.1).
+        if cv.border_collapse == raikiri_style::property::BorderCollapseValue::Separate
+            && cv.box_shadow.iter().any(|shadow| !shadow.inset)
+        {
+            self.events.push(PaintEvent::OuterBoxShadow(fragment));
+        }
+        let rect = fragment.paint_rect();
+        let top = rect.y - item.rect.y + item.box_y;
+        // The cells cover the whole part, but this fragment paints only inside
+        // its own slice: a cell outside it would clip away everything, and on
+        // a long table most cells are outside.
+        let in_slice = |clip: &PaintRect| {
+            clip.x < rect.x + rect.width
+                && clip.y < rect.y + rect.height
+                && clip.x + clip.width > rect.x
+                && clip.y + clip.height > rect.y
+        };
+        for cell in cells {
+            let clip = PaintRect::new(rect.x + cell.x, top + cell.y, cell.width, cell.height);
+            if !in_slice(&clip) {
+                continue;
+            }
+            self.events.push(PaintEvent::PushClip(
+                PaintClip::new(clip),
+                ClipKind::TableCell,
+            ));
+            self.events.push(PaintEvent::Box(fragment));
+            self.events.push(PaintEvent::PopClip);
+        }
+    }
+
+    /// List the content of the replaced element of `fragment`, inside its
+    /// overflow clip.
+    fn list_replaced(&mut self, fragment: Fragment<'a>) {
+        if let Some(clip) = fragment.overflow_clip() {
+            self.events
+                .push(PaintEvent::PushClip(clip, ClipKind::Overflow));
+        }
+        self.events.push(PaintEvent::Replaced(fragment));
+        if fragment.overflow_clip().is_some() {
+            self.events.push(PaintEvent::PopClip);
+        }
+    }
+
+    /// List the column rules element `node_id` owns on this page, inside its
+    /// overflow clip.
+    fn list_column_rules(&mut self, node_id: usize) {
+        let Some(rules) = self
+            .document
+            .page_projection
+            .column_rules
+            .get(&self.page_index)
+            .and_then(|rules| rules.get(&NodeId::new(node_id as u64)))
+        else {
+            return;
+        };
+        let clip = self.items.overflow_clips.get(&NodeId::new(node_id as u64));
+        if let Some(entry) = clip {
+            self.events
+                .push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+        }
+        self.events
+            .extend(rules.iter().copied().map(PaintEvent::ColumnRule));
+        if clip.is_some() {
+            self.events.push(PaintEvent::PopClip);
+        }
+    }
+
+    /// List the marker of element `node_id`: its raster image, unless the
+    /// marker is inside the first line and listed with it, and the supplied
+    /// lines of its marker text.
+    fn list_marker(&mut self, node_id: usize, node: &Node) {
+        let image_marker = self
+            .document
+            .page_marker_image(self.page_index, NodeId::new(node_id as u64))
+            .is_some();
+        let inline_marker = crate::generated_content::inside_marker_in_flow(self.cascade, node_id)
+            && node.is_ifc_root();
+        if image_marker && !inline_marker {
+            self.events
+                .push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
+        }
+        if let Some(lines) = self.lines {
+            let marker = crate::generated_content::generated_node_id(
+                node_id,
+                raikiri_style::PseudoElem::Marker,
+            );
+            self.events.extend(
+                lines
+                    .paragraphs
+                    .get(&NodeId::new(marker as u64))
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .map(PaintEvent::TextLine),
+            );
+        }
+    }
+
+    /// Push the frames of what is inside element `node_id`, whose own events
+    /// are listed. `clipped` says it opened an overflow clip.
+    fn enter_subtree(&mut self, node_id: usize, node: &Node, cv: &ComputedValues, clipped: bool) {
+        let (document, cascade) = (self.document, self.cascade);
+        // A plain block in a block container leaves its inline content to the
+        // end of the layer (CSS 2.1 Appendix E), after the backgrounds of the
+        // blocks that follow it.
+        let deferring = self.layers.last().is_some_and(|layer| layer.allowed);
+        let defers =
+            deferring && !clipped && paint_rules::defers_inline_content(document, cascade, node_id);
+        // A plain block that clips collects its inline content in a layer of
+        // its own, which it hands to the enclosing layer inside its clip.
+        let merges = deferring
+            && clipped
+            && paint_rules::merges_clipped_inline_content(document, cascade, node_id);
+        // In-flow blocks inside a paragraph's inline content paint their
+        // backgrounds before its lines. With content positioned below them,
+        // the paragraph's content lists them after that content.
+        let blocks: Vec<usize> = if node.is_ifc_root()
+            && !paint_rules::holds_negative_stack_level(document, cascade, node_id)
+        {
+            document.paragraph_blocks(cascade, node_id)
+        } else {
+            Vec::new()
+        };
+        if defers && node.is_ifc_root() {
+            self.defer_content(node_id);
+            self.push_blocks(blocks);
+            return;
+        }
+        if node.is_inline_svg_root() || document.anonymous_table_contents_paint_only(node_id) {
+            self.stack
+                .extend(node.is_ifc_root().then_some(Frame::Content(node_id)));
+            return;
+        }
+        // A `display: contents` element has no box, so its children share the
+        // enclosing layer.
+        if !defers && paint_rules::generates_box(cv) {
+            self.open_layer(node_id, node, deferring, merges);
+        }
+        if node.is_ifc_root() {
+            // The paragraph's own text and inline elements are listed first;
+            // only the boxes laid out beside its lines are visited like
+            // ordinary children. Those in an inline opacity group are visited
+            // in the group.
+            if merges {
+                self.defer_content(node_id);
+            } else {
+                self.stack.push(Frame::Content(node_id));
+            }
+            self.push_blocks(blocks);
+            return;
+        }
+        self.push_children(node_id, node, defers);
+    }
+
+    /// Leave the inline content of paragraph root `node_id` to the end of the
+    /// layer on top.
+    fn defer_content(&mut self, node_id: usize) {
+        if let Some(layer) = self.layers.last_mut() {
+            layer.pending.push(Frame::Content(node_id));
+        }
+    }
+
+    /// Visit the in-flow `blocks` inside a paragraph, in order.
+    fn push_blocks(&mut self, blocks: Vec<usize>) {
+        self.stack
+            .extend(blocks.into_iter().rev().map(Frame::Visit));
+    }
+
+    /// Open the layer of element `node_id`, which collects the content its
+    /// blocks defer. It may defer when `deferring` says the layer around it
+    /// does, except in columns; `merges` says it hands what it collects to
+    /// the layer around it.
+    fn open_layer(&mut self, node_id: usize, node: &Node, deferring: bool, merges: bool) {
+        let columns = node.is_multicol_container();
+        let close = if merges {
+            LayerClose::Merge(node_id)
+        } else if paint_rules::hoists_positioned_content(self.document, self.cascade, node_id) {
+            LayerClose::Hoist
+        } else {
+            LayerClose::Paint
+        };
+        self.layers.push(Layer::new(deferring && !columns, close));
+        self.stack.push(Frame::EndDeferral);
+    }
+
+    /// Push the frames of the children of element `node_id`, in paint order.
+    /// With `defers`, an anonymous cell's paragraph waits for the end of the
+    /// layer.
+    fn push_children(&mut self, node_id: usize, node: &Node, defers: bool) {
+        let (document, cascade) = (self.document, self.cascade);
+        let mut children = if let Some(children) = document.anonymous_table_paint_sequence(node_id)
+        {
+            children
+        } else {
+            node.children.clone()
+        };
+        paint_rules::sort_paint_children(&mut children, node.display(), cascade);
+        self.stack.extend(
+            children
+                .into_iter()
+                .rev()
+                .map(|key| match document.child_frame(key) {
+                    Frame::Paragraph(key) if defers => Frame::DeferredParagraph(key),
+                    frame => frame,
+                }),
+        );
     }
 }
