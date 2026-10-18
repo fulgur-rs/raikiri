@@ -439,6 +439,7 @@ fn apply_computed_to_style_in_session_inner(
         let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
+        doc.nodes[idx].text_group_align = shodo_group_align(cv.text_group_align);
         // Replaced content with size containment has no natural size or
         // aspect ratio to stand in for an `auto` size.
         if containment.width || containment.height {
@@ -1892,3 +1893,20 @@ fn computed_length_to_taffy_length_percentage(
 
 #[cfg(test)]
 mod tests;
+
+/// The engine's `text-group-align` for the cascade's value.
+fn shodo_group_align(
+    value: raikiri_style::property::TextGroupAlign,
+) -> shodo::style::TextGroupAlign {
+    use raikiri_style::property::TextGroupAlign as P;
+    use shodo::style::TextGroupAlign as S;
+    match value {
+        P::Start => S::Start,
+        P::End => S::End,
+        P::Left => S::Left,
+        P::Right => S::Right,
+        P::Center => S::Center,
+        // `none`, and any value the cascade does not produce.
+        _ => S::None,
+    }
+}

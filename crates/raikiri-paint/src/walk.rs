@@ -20,7 +20,7 @@ use peniko::color::{
 };
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
-    background_image_dimensions, background_tiles, border_image_geometry,
+    DeviceGrid, background_image_dimensions, background_tiles, border_image_geometry,
     border_image_geometry_on_device_pixels, position_offset,
 };
 use raikiri_dom::{CounterSnapshots, Document, FragmentRect, StandaloneAlign};
@@ -3393,11 +3393,14 @@ pub(crate) fn paint_document_impl(
                     paint_height = paint_height.min(clip_height);
                     paint_background_height = paint_background_height.min(clip_height);
                     let clip_origin_y = paint_y.floor();
-                    let clip = Rect::new(
-                        paint_x as f64,
-                        clip_origin_y as f64,
-                        (paint_x + layout.size.width) as f64,
-                        (clip_origin_y + clip_height) as f64,
+                    let clip = snap_column_clip_outward(
+                        Rect::new(
+                            paint_x as f64,
+                            clip_origin_y as f64,
+                            (paint_x + layout.size.width) as f64,
+                            (clip_origin_y + clip_height) as f64,
+                        ),
+                        image_cache.device_grid(scene.transform),
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     multicol_clip_pushed = true;
@@ -3406,11 +3409,14 @@ pub(crate) fn paint_document_impl(
                     }
                 }
                 if let Some(clip) = fragment_clip {
-                    let clip = Rect::new(
-                        (paint_x + clip.x) as f64,
-                        (paint_y + clip.y) as f64,
-                        (paint_x + clip.x + clip.width) as f64,
-                        (paint_y + clip.y + clip.height) as f64,
+                    let clip = snap_column_clip_outward(
+                        Rect::new(
+                            (paint_x + clip.x) as f64,
+                            (paint_y + clip.y) as f64,
+                            (paint_x + clip.x + clip.width) as f64,
+                            (paint_y + clip.y + clip.height) as f64,
+                        ),
+                        image_cache.device_grid(scene.transform),
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     fragmentainer_clip_pushed = true;
@@ -7930,6 +7936,45 @@ mod tests;
 
 #[cfg(test)]
 use raikiri_style::CounterStyleRegistry;
+
+/// The clip of a column fragment, with the vertical edges that separate it
+/// from its neighbour columns grown outward to whole device pixels of the
+/// raster output on `grid`.
+///
+/// Only a multicol container in a horizontal writing mode fragments its
+/// content into column clips, so the columns are always side by side whatever
+/// writing mode the clipped box has itself: an orthogonal flow inside a
+/// column is clipped by the same left and right edges.
+///
+/// A clip edge inside a pixel scales the coverage of whatever is drawn there,
+/// so ink that begins exactly on a fractional column edge (the stem of the
+/// first glyph of a line, in columns whose width is not a whole number of
+/// pixels) would be attenuated twice, once by its own antialiasing and once
+/// by the clip's. The same ink drawn without a fragment clip keeps only its
+/// own coverage. The top and bottom edges, where the flow breaks into the
+/// next column, stay exact, as the next fragment's content starts right
+/// behind them.
+///
+/// The edges move in device space, so a scaled ancestor grows the clip by
+/// less than one device pixel, not one CSS pixel. A vector output, or a
+/// transform that rotates or skews, has no grid (`None`) and keeps the clip
+/// exact.
+fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>) -> Rect {
+    let Some(grid) = grid.filter(|grid| {
+        grid.scale_x.is_finite() && grid.scale_x != 0.0 && grid.offset_x.is_finite()
+    }) else {
+        return clip;
+    };
+    let device = |x: f64| x * grid.scale_x + grid.offset_x;
+    let css = |x: f64| (x - grid.offset_x) / grid.scale_x;
+    // A mirrored grid reverses the edges, so order them in device space.
+    let (first, second) = (device(clip.x0), device(clip.x1));
+    let (near, far) = (
+        css(first.min(second).floor()),
+        css(first.max(second).ceil()),
+    );
+    Rect::new(near.min(far), clip.y0, near.max(far), clip.y1)
+}
 
 fn push_overflow_clip(
     scene: &mut crate::transform::TransformScene<'_, impl PaintScene>,
