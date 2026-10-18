@@ -8,23 +8,16 @@ use super::frames::{
 use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
-    BackgroundEnv, border_hides_background_edge, box_intersects_page, color_only_background_layer,
-    first_text_descendant, fixed_background_viewport, generated_flow_height,
-    generated_pseudo_text_advance, generated_pseudo_text_height, ifc_paint_extent, img_src_url,
-    infer_url_color, paint_canvas, paint_element_background, paint_element_border_image,
-    paint_element_border_rounded, paint_element_border_with_top, paint_element_box_shadows,
-    paint_element_outline, paint_generated_pseudo, paint_image, paint_inline_svg,
-    paint_list_marker_with_snapshots, push_overflow_clip,
+    box_intersects_page, first_text_descendant, fixed_background_viewport, generated_flow_height,
+    generated_pseudo_text_advance, generated_pseudo_text_height, ifc_paint_extent,
+    paint_generated_pseudo, push_overflow_clip,
 };
 use crate::text;
 use anyrender::PaintScene;
-use kurbo::{Affine, BezPath, Rect};
+use kurbo::{Affine, Rect};
 use peniko::Mix;
 use raikiri_dom::FragmentRect;
-use raikiri_style::property::{
-    BackgroundImage, BorderColor, BorderStyle, ColumnCountValue, DisplayValue, PositionValue,
-    ZIndexValue,
-};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, ZIndexValue};
 use raikiri_traits::{NodeId, NodeKind, PaintInsets, PaintRect};
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
@@ -40,18 +33,17 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         );
         let (image_cache, pixel_source, custom_highlights) =
             (self.image_cache, self.pixel_source, self.custom_highlights);
-        let (content_origin_y, root_transform, canvas_owner, layout_fragments) = (
+        let (content_origin_y, root_transform, layout_fragments) = (
             self.content_origin_y,
             self.root_transform,
-            self.canvas_owner,
             self.layout_fragments,
         );
         let geometry = self.geometry;
         let PageGeometry {
-            margins,
-            insets,
+            margins: _,
+            insets: _,
             content_width: _,
-            content_height,
+            content_height: _,
             page_area,
             fixed_rtl: _,
             fixed_content_width: _,
@@ -63,7 +55,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fixed_flow_shift_x: _,
             fixed_origin_y: _,
             page_clip_transform,
-            page_content_clip,
+            page_content_clip: _,
             flow_band: _,
             page_lines,
         } = geometry;
@@ -188,12 +180,31 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 }
                 let layout = node_layout;
                 let cv = &cascade.computed[node_id];
-                let Some(ElementBox {
+                let Some(element) = self.element_box(
+                    BoxInputs {
+                        node_id,
+                        parent_abs_x,
+                        parent_abs_y,
+                        parent_font_size,
+                        shift_y,
+                        transform_x,
+                        transform_y,
+                        fragment_clip_height,
+                        fragment_id,
+                        fragment_clip,
+                        is_fragment_visit,
+                        inside_fixed,
+                        inside_fixed_containing_block,
+                    },
+                    node,
+                    layout,
+                ) else {
+                    return;
+                };
+                let ElementBox {
                     abs_x,
                     abs_y,
                     generates_box,
-                    paint_padding,
-                    paint_border_radius,
                     child_shift_y,
                     pos_dx,
                     pos_dy,
@@ -206,44 +217,18 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     paint_x,
                     paint_y,
                     paint_height,
-                    paint_background_height,
                     multicol_clip_pushed,
                     fragmentainer_clip_pushed,
-                    painted_border,
                     paints_on_page,
                     paints_as_absolute_continuation,
-                    unfragmented_top,
                     generated_x,
                     generated_y,
                     generated_content_advance,
-                }) = self.element_box(
-                    BoxInputs {
-                        node_id,
-                        parent_abs_x,
-                        parent_abs_y,
-                        parent_font_size,
-                        shift_y,
-                        transform_x,
-                        transform_y,
-                        fragment_clip_height,
-                        fragment_clip,
-                        is_fragment_visit,
-                        inside_fixed,
-                        inside_fixed_containing_block,
-                    },
-                    node,
-                    layout,
-                )
-                else {
-                    return;
-                };
+                    ..
+                } = element;
                 let scene = &mut *self.scene;
                 let trace = &mut self.trace;
-                let deferral_scopes = &mut self.deferral_scopes;
                 let stack = &mut self.stack;
-                let warnings = &mut *self.warnings;
-                let generated_flow_heights = &mut self.generated_flow_heights;
-                let fragmented_nodes = &self.fragmented_nodes;
                 // CSS Color 4 §3.3: opacity applies to the complete
                 // element group, including its background, border, text,
                 // generated content, and descendants. Keep this layer open
@@ -273,552 +258,24 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                         t.push(crate::PaintTraceEvent::PushOpacity(node_id, cv.opacity));
                     }
                 }
-                let mut before_advance = 0.0;
                 let has_column_rules = document.column_rules(cascade, node_id).next().is_some();
-                if paints_on_page
+                let mut before_advance = if paints_on_page
                     && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
                 {
-                    if let Some(t) = trace.as_deref_mut()
-                        && generates_box
-                        && !raikiri_dom::paint_rules::hides_own_box(cv)
-                    {
-                        t.push(crate::PaintTraceEvent::Box(node_id));
-                    }
-                    let grid = node.table_grid_box();
-                    let own_paint_x = paint_x + grid.map_or(0.0, |rect| rect.x);
-                    let own_paint_width = grid.map_or(layout.size.width, |rect| rect.width);
-                    let own_paint_y = paint_y + grid.map_or(0.0, |rect| rect.y);
-                    let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
-                    let own_background_height =
-                        grid.map_or(paint_background_height, |rect| rect.height);
-                    // The box's own geometry, which its outline follows.
-                    let (fragment_paint_y, fragment_paint_height) = (own_paint_y, own_paint_height);
-                    // A box that is one slice of a box broken across outer
-                    // columns paints the whole box's decorations, cut at the
-                    // breaks (CSS Fragmentation 3 §5.4).
-                    let block_slice = (cv.box_decoration_break
-                        == raikiri_style::property::BoxDecorationBreak::Slice)
-                        .then(|| document.fragment_block_slice(node_id, fragment_id))
-                        .flatten();
-                    let (own_paint_y, own_paint_height, own_background_height) = match block_slice {
-                        Some((start, total)) => {
-                            const UNBOUNDED: f64 = 1.0e7;
-                            let top = if start > 0.0 {
-                                f64::from(own_paint_y)
-                            } else {
-                                -UNBOUNDED
-                            };
-                            let bottom = if start + own_paint_height < total - 0.01 {
-                                f64::from(own_paint_y + own_paint_height)
-                            } else {
-                                UNBOUNDED
-                            };
-                            scene.push_clip_layer(
-                                Affine::IDENTITY,
-                                &Rect::new(-UNBOUNDED, top, UNBOUNDED, bottom),
-                            );
-                            (own_paint_y - start, total, total)
-                        }
-                        None => (own_paint_y, own_paint_height, own_background_height),
-                    };
-                    // A `display: contents` element has no box whose
-                    // background, borders or outline could paint; its
-                    // generated content still does. Neither does a box that
-                    // is not visible, whose descendants may still be.
-                    let paints_own_box =
-                        generates_box && !raikiri_dom::paint_rules::hides_own_box(cv);
-                    if paints_own_box {
-                        // Paint element background (CSS Backgrounds 3 §2.2).
-                        // Shift applies to the box itself per CSS 2.1 §10.8.1.
-                        let clip_background = page_content_clip.filter(|_| {
-                            !inside_fixed
-                                && !fixed_in_viewport
-                                && matches!(
-                                    cv.position,
-                                    PositionValue::Static
-                                        | PositionValue::Relative
-                                        | PositionValue::Sticky
-                                )
-                        });
-                        if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(page_clip_transform, &clip);
-                        }
-                        paint_element_box_shadows(
-                            scene,
-                            own_paint_width,
-                            own_paint_height,
-                            own_paint_x,
-                            own_paint_y,
-                            &paint_border_radius,
-                            &cv.box_shadow,
-                            cv.color,
-                        );
-                        let table_part_clip =
-                            document.anonymous_table_part_background_cells(node_id);
-                        if let Some(cells) = table_part_clip {
-                            let mut path = BezPath::new();
-                            for cell in cells {
-                                let x = f64::from(cell.x);
-                                let y = f64::from(cell.y);
-                                let right = x + f64::from(cell.width);
-                                let bottom = y + f64::from(cell.height);
-                                path.move_to((x, y));
-                                path.line_to((right, y));
-                                path.line_to((right, bottom));
-                                path.line_to((x, bottom));
-                                path.close_path();
-                            }
-                            scene.scene.push_clip_layer(
-                                Affine::translate((f64::from(own_paint_x), f64::from(own_paint_y))),
-                                &path,
-                            );
-                        }
-                        // Propagation transfers only the background to the canvas;
-                        // shadows and borders still belong to the element's box.
-                        if canvas_owner != Some(node_id) {
-                            paint_element_background(
-                                image_cache,
-                                scene,
-                                own_paint_width,
-                                own_background_height,
-                                own_paint_x,
-                                own_paint_y,
-                                cv.background_color,
-                                cv.background_layers(),
-                                cv.color,
-                                &paint_border_radius,
-                                painted_border,
-                                &paint_padding,
-                                BackgroundEnv {
-                                    border_hides_edge: matches!(
-                                        cv.border_image.source,
-                                        BackgroundImage::None
-                                    ) && border_hides_background_edge(
-                                        painted_border,
-                                        cv.color,
-                                    ),
-                                    device_grid: image_cache.device_grid(scene.transform),
-                                    fixed_viewport: fixed_background_viewport(
-                                        page_area,
-                                        root_transform,
-                                        inside_fixed_containing_block
-                                            || establishes_fixed_containing_block,
-                                    ),
-                                },
-                                pixel_source,
-                                warnings,
-                            );
-                        }
-                        if table_part_clip.is_some() {
-                            scene.pop_layer();
-                        }
-                        if clip_background.is_some() {
-                            scene.pop_layer();
-                        }
-                    }
-                    // An opaque background that uses the same solid color as
-                    // every border side already paints the complete visible
-                    // union in `paint_element_background`; avoid compositing
-                    // the same anti-aliased rounded edge a second time.
-                    let border_covered_by_background = !cv.has_background_image()
-                        && cv.background_color.a == 255
-                        && matches!(
-                            cv.final_background_clip(),
-                            raikiri_style::property::VisualBox::PaddingBox
-                                | raikiri_style::property::VisualBox::ContentBox
-                        )
-                        && [
-                            &painted_border.top,
-                            &painted_border.right,
-                            &painted_border.bottom,
-                            &painted_border.left,
-                        ]
-                        .iter()
-                        .all(|side| {
-                            side.style() == BorderStyle::Solid
-                                && side.width().px() > 0.0
-                                && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
-                        });
-                    // A border image replaces the border styles (CSS
-                    // Backgrounds 3 §6).
-                    // In the collapsing border model, border images do not
-                    // apply to internal table boxes (CSS Backgrounds 3 §6.1).
-                    let collapsed_internal_table_box = matches!(
-                        cv.border_collapse,
-                        raikiri_style::property::BorderCollapseValue::Collapse
-                    ) && matches!(
-                        cv.display,
-                        DisplayValue::TableRowGroup
-                            | DisplayValue::TableHeaderGroup
-                            | DisplayValue::TableFooterGroup
-                            | DisplayValue::TableRow
-                            | DisplayValue::TableColumnGroup
-                            | DisplayValue::TableColumn
-                            | DisplayValue::TableCell
-                    );
-                    let border_image_drawn = paints_own_box
-                        && !collapsed_internal_table_box
-                        && if paints_as_absolute_continuation && unfragmented_top < own_paint_y {
-                            // A continuation fragment slices the image laid
-                            // out over the whole box, so it shows no top edge
-                            // at the break (CSS Fragmentation 3 §5.4).
-                            const UNBOUNDED: f64 = 1.0e7;
-                            scene.push_clip_layer(
-                                Affine::IDENTITY,
-                                &Rect::new(
-                                    -UNBOUNDED,
-                                    f64::from(own_paint_y),
-                                    UNBOUNDED,
-                                    UNBOUNDED,
-                                ),
-                            );
-                            let drawn = paint_element_border_image(
-                                image_cache,
-                                scene,
-                                own_paint_width,
-                                own_paint_y + own_paint_height - unfragmented_top,
-                                own_paint_x,
-                                unfragmented_top,
-                                cv,
-                                &cv.border_image,
-                                painted_border,
-                                pixel_source,
-                                warnings,
-                                scene.transform,
-                            );
-                            scene.pop_layer();
-                            drawn
-                        } else {
-                            paint_element_border_image(
-                                image_cache,
-                                scene,
-                                own_paint_width,
-                                own_paint_height,
-                                own_paint_x,
-                                own_paint_y,
-                                cv,
-                                &cv.border_image,
-                                painted_border,
-                                pixel_source,
-                                warnings,
-                                scene.transform,
-                            )
-                        };
-                    let border_covered_by_background =
-                        border_covered_by_background || border_image_drawn;
-                    // Paint border on top of background (CSS Backgrounds 3 §5).
-                    let paints_continuation_border =
-                        paints_own_box && paints_as_absolute_continuation;
-                    if !border_covered_by_background && paints_continuation_border {
-                        paint_element_border_with_top(
-                            scene,
-                            own_paint_width, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                            own_paint_height, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                            own_paint_x, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                            own_paint_y, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                            painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                            cv.color,
-                            false,
-                        );
-                    } else if paints_own_box && !border_covered_by_background {
-                        paint_element_border_rounded(
-                            scene,
-                            own_paint_width,
-                            own_paint_height,
-                            own_paint_x,
-                            own_paint_y,
-                            painted_border,
-                            cv.color,
-                            &paint_border_radius,
-                        );
-                    }
-                    if block_slice.is_some() {
-                        scene.pop_layer();
-                    }
-                    // Outlines do not consume box-model space and are painted
-                    // outside the border edge (CSS Basic UI §4). Each box of a
-                    // sliced box draws a whole outline around itself, like the
-                    // pieces of an inline box.
-                    if paints_own_box {
-                        paint_element_outline(
-                            scene,
-                            own_paint_width,
-                            fragment_paint_height,
-                            own_paint_x,
-                            fragment_paint_y,
-                            &cv.outline,
-                            cv.outline_offset,
-                            cv.color,
-                        );
-                    }
-                    // Resolve the source's natural dimensions first. SVG
-                    // sources use the resulting concrete object dimensions
-                    // for a bounded, size-specific raster request.
-                    let is_replaced = node.is_inline_svg_root()
-                        || document.is_canvas_element(node_id)
-                        || node.tag_name() == Some("img");
-                    // The replaced content paints inside its overflow clip,
-                    // the same clip the page paint order puts around it.
-                    let content_clip = is_replaced
-                        .then(|| {
-                            raikiri_dom::paint_rules::replaced_content_clip(
-                                cv,
-                                PaintRect::new(
-                                    paint_x,
-                                    paint_y,
-                                    layout.size.width,
-                                    layout.size.height,
-                                ),
-                                PaintInsets::new(
-                                    layout.border.top,
-                                    layout.border.right,
-                                    layout.border.bottom,
-                                    layout.border.left,
-                                ),
-                                PaintInsets::new(
-                                    layout.padding.top,
-                                    layout.padding.right,
-                                    layout.padding.bottom,
-                                    layout.padding.left,
-                                ),
-                            )
-                        })
-                        .flatten();
-                    if let Some(clip) = content_clip {
-                        let rect = push_overflow_clip(scene, clip, &page_box);
-                        if let Some(t) = trace.as_deref_mut() {
-                            t.push(crate::PaintTraceEvent::PushOverflowClip(
-                                node_id,
-                                [rect.x0, rect.y0, rect.x1, rect.y1],
-                            ));
-                        }
-                    }
-                    if is_replaced && let Some(t) = trace.as_deref_mut() {
-                        t.push(crate::PaintTraceEvent::Replaced(node_id));
-                    }
-                    let painted_image = if node.is_inline_svg_root() {
-                        paint_inline_svg(
-                            scene,
-                            document,
-                            cascade,
-                            cv,
-                            node_id,
-                            layout.size.width,
-                            layout.size.height,
-                            paint_x,
-                            paint_y,
-                            &paint_padding,
-                            warnings,
-                        )
-                    } else if document.is_canvas_element(node_id) {
-                        let fallback_bitmap;
-                        let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
-                            bitmap
-                        } else {
-                            let (w, h) = document
-                                .canvas_size(node_id)
-                                .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
-                            fallback_bitmap = raikiri_dom::CanvasBitmap::transparent(w, h);
-                            &fallback_bitmap
-                        };
-                        paint_canvas(
-                            scene,
-                            bitmap,
-                            layout.size.width,
-                            layout.size.height,
-                            paint_x,
-                            paint_y,
-                            &cv.border,
-                            &paint_padding,
-                            cv.object_fit,
-                            &cv.object_position,
-                            !raikiri_dom::paint_rules::hides_own_box(cv),
-                        )
-                    } else if let Some(source) = pixel_source
-                        && let Some(src_url) = img_src_url(document, node_id)
-                        && let Some(intrinsic) = source.intrinsic_size(&src_url)
-                    {
-                        paint_image(
-                            image_cache,
-                            scene,
-                            source,
-                            &src_url,
-                            intrinsic,
-                            layout.size.width,
-                            layout.size.height,
-                            paint_x,
-                            paint_y,
-                            &cv.border,
-                            &layout.padding,
-                            cv.object_fit,
-                            &cv.object_position,
-                            !raikiri_dom::paint_rules::hides_own_box(cv),
-                            node_id,
-                            warnings,
-                        )
-                    } else {
-                        false
-                    };
-                    if !painted_image
-                        && paints_own_box
-                        && pixel_source.is_none()
-                        && node.tag_name() == Some("img")
-                        && let Some(src) = node.attribute("src")
-                        && let Some(color) = infer_url_color(src)
-                    {
-                        // Use the same background paint path as a normal
-                        // block so the fallback has identical raster edges.
-                        let clip_background = page_content_clip.filter(|_| {
-                            !inside_fixed
-                                && !fixed_in_viewport
-                                && matches!(
-                                    cv.position,
-                                    PositionValue::Static
-                                        | PositionValue::Relative
-                                        | PositionValue::Sticky
-                                )
-                        });
-                        if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(page_clip_transform, &clip);
-                        }
-                        paint_element_background(
-                            image_cache,
-                            scene,
-                            layout.size.width,
-                            layout.size.height,
-                            paint_x,
-                            paint_y,
-                            color,
-                            std::slice::from_ref(&color_only_background_layer(cv)),
-                            cv.color,
-                            &paint_border_radius,
-                            &cv.border,
-                            &paint_padding,
-                            BackgroundEnv {
-                                device_grid: image_cache.device_grid(scene.transform),
-                                ..BackgroundEnv::default()
-                            },
-                            pixel_source,
-                            warnings,
-                        );
-                        if clip_background.is_some() {
-                            scene.pop_layer();
-                        }
-                    }
-                    // The fallback stands in for the image content, so it
-                    // stays inside the same clip.
-                    if content_clip.is_some() {
-                        if let Some(t) = trace.as_deref_mut() {
-                            t.push(crate::PaintTraceEvent::PopClip);
-                        }
-                        scene.pop_layer();
-                    }
-                    if has_column_rules && !raikiri_dom::paint_rules::hides_own_box(cv) {
-                        // Rules obey the owner's overflow, while an outside marker
-                        // remains outside that clip and paints above the rule.
-                        let rule_clip = raikiri_dom::paint_rules::overflow_clip(
-                            document,
-                            cascade,
-                            node_id,
-                            PaintRect::new(paint_x, paint_y, layout.size.width, paint_height),
-                            PaintInsets::new(
-                                layout.border.top,
-                                layout.border.right,
-                                layout.border.bottom,
-                                layout.border.left,
-                            ),
-                        );
-                        if let Some(resolved) = rule_clip {
-                            push_overflow_clip(scene, resolved, &page_box);
-                        }
-                        for mut rule in
-                            document.fragment_column_rules(cascade, node_id, fragment_id)
-                        {
-                            rule.rect.x += paint_x;
-                            rule.rect.y += paint_y;
-                            rule.pattern_origin += paint_y;
-                            let content_top = margins.top + insets.top;
-                            let start = rule.rect.y.max(content_top);
-                            let end =
-                                (rule.rect.y + rule.rect.height).min(content_top + content_height);
-                            rule.rect.y = start;
-                            rule.rect.height = (end - start).max(0.0);
-                            crate::column_rules::paint(scene, rule);
-                        }
-                        if rule_clip.is_some() {
-                            scene.pop_layer();
-                        }
-                    }
-                    // A generated list marker belongs to the first principal
-                    // fragment; inherited ancestor fragment state is unrelated.
-                    if !paints_as_absolute_continuation
-                        && cv.display == DisplayValue::ListItem
-                        && fragment_id.is_none_or(|id| {
-                            layout_fragments[id].node_id != node_id
-                                || layout_fragments[id].fragment_index == 0
-                        })
-                    {
-                        // An empty list item still owns a generated marker.
-                        // Its principal box has zero width/height, which the
-                        // marker helper intentionally rejects for ordinary
-                        // zero-sized fragments. Give this empty-item marker a
-                        // minimal paint extent without changing that helper's
-                        // defensive behavior for other callers.
-                        let empty_item_marker = node.children.is_empty();
-                        let marker_width = if empty_item_marker {
-                            layout.size.width.max(1.0)
-                        } else {
-                            layout.size.width
-                        };
-                        let marker_height = if empty_item_marker {
-                            layout.size.height.max(cv.font_size.px().max(1.0))
-                        } else {
-                            layout.size.height
-                        };
-                        paint_list_marker_with_snapshots(
-                            image_cache,
-                            scene,
-                            document,
-                            cascade,
-                            node_id,
-                            paint_x,
-                            paint_y,
-                            marker_width,
-                            marker_height,
-                            layout.padding.left,
-                            (
-                                content_origin_y,
-                                page_offset_y + page_bottom,
-                                inside_fixed || fixed_in_viewport,
-                            ),
-                            counter_snapshots,
-                            pixel_source,
-                        );
-                    }
-                    // Generated content is an immediate child of its
-                    // originating box.  The minimal layout engine does not
-                    // allocate an arena node for it, so paint literal
-                    // `::before` content at the content-box inline start.
-                    // The returned advance is used by the deferred `::after`
-                    // frame below to preserve source order for an empty or
-                    // otherwise unlaid-out originating box.
-                    before_advance = if !paints_as_absolute_continuation && !has_column_rules {
-                        paint_generated_pseudo(
-                            scene,
-                            document,
-                            cascade,
-                            node_id,
-                            raikiri_style::PseudoElem::Before,
-                            generated_x,
-                            generated_y,
-                            layout.size.width,
-                            paint_height,
-                            counter_snapshots,
-                        )
-                    } else {
-                        0.0
-                    };
-                }
+                    self.paint_box_decorations(&element);
+                    self.paint_replaced_content(&element);
+                    self.paint_column_rules(&element, has_column_rules);
+                    self.paint_list_marker(&element);
+                    self.paint_generated_before(&element, has_column_rules)
+                } else {
+                    0.0
+                };
+                let scene = &mut *self.scene;
+                let trace = &mut self.trace;
+                let deferral_scopes = &mut self.deferral_scopes;
+                let stack = &mut self.stack;
+                let generated_flow_heights = &mut self.generated_flow_heights;
+                let fragmented_nodes = &self.fragmented_nodes;
                 // The fragmentainer clip encloses the element and its children;
                 // close it after any element-local overflow clip.
                 if multicol_clip_pushed {

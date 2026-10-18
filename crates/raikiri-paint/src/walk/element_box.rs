@@ -12,7 +12,9 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use raikiri_dom::{FragmentRect, Node};
 use raikiri_style::property::{BorderStyle, PositionValue};
-use raikiri_style::{ComputedBorder, ComputedBorderRadius, ComputedLengthPercentageOrAuto, Sides};
+use raikiri_style::{
+    ComputedBorder, ComputedBorderRadius, ComputedLengthPercentageOrAuto, ComputedValues, Sides,
+};
 use raikiri_traits::NodeKind;
 
 /// What the visit of a node reads of its frame to find the box of an element.
@@ -26,6 +28,7 @@ pub(super) struct BoxInputs {
     pub(super) transform_x: f32,
     pub(super) transform_y: f32,
     pub(super) fragment_clip_height: Option<f32>,
+    pub(super) fragment_id: Option<usize>,
     pub(super) fragment_clip: Option<FragmentRect>,
     pub(super) is_fragment_visit: bool,
     pub(super) inside_fixed: bool,
@@ -33,7 +36,15 @@ pub(super) struct BoxInputs {
 }
 
 /// Where the box of an element lies and which of its parts paint on this page.
+#[derive(Clone, Copy)]
 pub(super) struct ElementBox<'w> {
+    pub(super) node: &'w Node,
+    pub(super) node_id: usize,
+    pub(super) cv: &'w ComputedValues,
+    pub(super) layout: taffy::Layout,
+    pub(super) fragment_id: Option<usize>,
+    pub(super) inside_fixed: bool,
+    pub(super) inside_fixed_containing_block: bool,
     pub(super) abs_x: f32,
     pub(super) abs_y: f32,
     pub(super) generates_box: bool,
@@ -83,6 +94,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             transform_x,
             transform_y,
             fragment_clip_height,
+            fragment_id,
             fragment_clip,
             is_fragment_visit,
             inside_fixed,
@@ -456,6 +468,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             })
             .fold(0.0, f32::max);
         Some(ElementBox {
+            node,
+            node_id,
+            cv,
+            layout,
+            fragment_id,
+            inside_fixed,
+            inside_fixed_containing_block,
             abs_x,
             abs_y,
             generates_box,
