@@ -932,6 +932,17 @@ fn has_fixed_height(document: &Document, node_id: usize) -> bool {
     .is_some_and(|value| value >= 0.0)
 }
 
+/// Whether a box that took its page position holds content in the columns
+/// around it: it takes part in the flow's page names and is named itself, or
+/// is a rendered leaf with a block size.
+fn box_occupies_column(
+    context: &candidates::BoxContext,
+    name_participates_in_flow: bool,
+    height: f32,
+) -> bool {
+    name_participates_in_flow && (context.is_named || (context.is_rendered_leaf && height > 0.0))
+}
+
 /// The flow end of a candidate box placed at `effective_y`, or `None` when
 /// the box has no height or no usable position and so cannot run on past
 /// its start page.
@@ -1508,6 +1519,13 @@ impl PageOrigins {
         } else {
             page.saturating_add(1)
         }
+    }
+
+    /// The last page that a box of block size `height` whose top is at `y`
+    /// runs on, or `None` when it cannot run on past its start page (see
+    /// [`candidate_flow_end`]).
+    fn end_page(&self, y: f32, height: f32) -> Option<u32> {
+        candidate_flow_end(y, height).map(|end| self.page_index_for_end(end))
     }
 
     fn page_index_for_end(&self, end: f32) -> u32 {
@@ -4002,7 +4020,6 @@ fn paginate_flow(
     let page_origin = |page_index: u32| page_origins.origin(page_index);
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
     let page_index_in_flow = |y: f32| page_origins.page_index_in_flow(y);
-    let page_index_for_end = |end: f32| page_origins.page_index_for_end(end);
     let leading_margins_moved =
         leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
     let root_flow_offset = 0.0;
@@ -4511,7 +4528,7 @@ fn paginate_flow(
             if name_participates_in_flow && height > 0.0 {
                 column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
             }
-            let end_page = candidate_flow_end(effective_y, height).map(page_index_for_end);
+            let end_page = page_origins.end_page(effective_y, height);
             let in_flow = !candidate.context.is_out_of_flow_descendant;
             record_candidate_pages(
                 &mut reach,
@@ -4845,9 +4862,9 @@ fn paginate_flow(
                     height,
                 )
         };
-        let end_page = candidate_flow_end(effective_y, height)
-            .filter(|_| !monolithic_paper_fit())
-            .map(page_index_for_end);
+        let end_page = page_origins
+            .end_page(effective_y, height)
+            .filter(|_| !monolithic_paper_fit());
         let in_flow = !candidate.context.is_out_of_flow_descendant;
         record_candidate_pages(
             &mut reach,
@@ -4858,9 +4875,7 @@ fn paginate_flow(
             in_flow,
         )?;
 
-        if name_participates_in_flow
-            && (candidate.context.is_named || (candidate.context.is_rendered_leaf && height > 0.0))
-        {
+        if box_occupies_column(&candidate.context, name_participates_in_flow, height) {
             column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
         }
         if candidate.context.is_flex_item
@@ -4899,7 +4914,7 @@ fn paginate_flow(
         let end =
             content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
         if end.is_finite() && end > 0.0 {
-            reach.include_checked(control, page_index_for_end(end), false)?;
+            reach.include_checked(control, page_origins.page_index_for_end(end), false)?;
         }
     }
     // Pages past the last one the normal flow reached hold only boxes outside
