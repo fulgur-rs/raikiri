@@ -422,7 +422,7 @@ fn rounded_box_color_and_gradient_are_clipped_to_the_curve_together() {
                 top: 0.0,
                 bottom: 0.0,
             },
-            false,
+            BackgroundEnv::default(),
             None,
             &mut Vec::new(),
         );
