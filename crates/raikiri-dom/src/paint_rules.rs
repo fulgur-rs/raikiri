@@ -487,17 +487,21 @@ pub fn pseudo_establishes_fixed_containing_block(cascade: &CascadeResult, id: us
     let filter = !cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER);
     let contain = cv.contain.contains_positioned_descendants()
         || cv.will_change.contains(WillChange::CONTAIN);
-    let containable = !cv.display.is_inline_flow()
-        && !matches!(
-            cv.display,
-            DisplayValue::Contents
-                | DisplayValue::TableRow
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-                | DisplayValue::TableColumn
-                | DisplayValue::TableColumnGroup
-        );
+    // An image alone in `content` replaces the box, which makes it atomic
+    // however its `display` reads (CSS Content 3 §2.1).
+    let replaced = matches!(cv.content.as_slice(), [ContentComponent::Image { .. }]);
+    let containable = replaced
+        || (!cv.display.is_inline_flow()
+            && !matches!(
+                cv.display,
+                DisplayValue::Contents
+                    | DisplayValue::TableRow
+                    | DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+                    | DisplayValue::TableColumn
+                    | DisplayValue::TableColumnGroup
+            ));
     filter || (transform && transformable_pseudo(cascade, id).is_some()) || (contain && containable)
 }
 

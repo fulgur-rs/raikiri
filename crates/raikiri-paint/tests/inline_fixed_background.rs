@@ -13,17 +13,24 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
 
-/// A 2×1 image, red on the left and blue on the right.
+/// A 2×1 image, red on the left and blue on the right, and a 1×1 image that
+/// is fully transparent.
 struct TwoColor;
 impl ImagePixelSource for TwoColor {
     fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
-        (url.as_str() == "file:///two-color.png").then(|| {
-            Arc::new(DecodedImage {
+        match url.as_str() {
+            "file:///two-color.png" => Some(Arc::new(DecodedImage {
                 width: 2,
                 height: 1,
                 rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
-            })
-        })
+            })),
+            "file:///clear.png" => Some(Arc::new(DecodedImage {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 0, 0],
+            })),
+            _ => None,
+        }
     }
 }
 
@@ -267,6 +274,7 @@ fn paint_sheet(css: &str, build: impl FnOnce(&mut Document, usize)) -> Vec<u8> {
     build(&mut doc, div);
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    doc.prepare_list_marker_images(&computed, &TwoColor, None);
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 80.0;
@@ -384,6 +392,30 @@ fn a_fixed_layer_of_a_transformed_atomic_pseudo_element_stays_in_the_pseudo_elem
     for transform in ["transform: translateX(0px)", "will-change: transform"] {
         let pixels = paint_pseudo(&format!("display: inline-block; {transform}"));
         assert_wide_box_positioned(&pixels, 10);
+    }
+}
+
+#[test]
+fn a_fixed_layer_of_an_image_replaced_pseudo_element_honors_containment_and_transforms() {
+    // An image alone in `content` makes the inline pseudo-element atomic, so
+    // containment and transforms apply to it even though it reads `inline`.
+    for style in [
+        "contain: layout",
+        "contain: paint",
+        "will-change: contain",
+        "transform: translateX(0px)",
+    ] {
+        let pixels = paint_sheet(
+            &format!(
+                "div::before {{ content: url(file:///clear.png); width: 40px; height: 20px; \
+                 {style}; {} }}",
+                wide_fixed()
+            ),
+            |_, _| {},
+        );
+        // The inline box's background covers the 10px content area of its
+        // font, which lies at y = 12..22 under the 20px-tall image.
+        assert_wide_box_positioned(&pixels, 16);
     }
 }
 
