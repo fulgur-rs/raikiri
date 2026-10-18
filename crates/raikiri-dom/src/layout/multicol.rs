@@ -8,6 +8,7 @@ pub(super) mod spanning;
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
+use taffy::MaybeResolve;
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
@@ -487,12 +488,67 @@ fn column_child_input(
     }
 }
 
+/// The left and right margins of `child` that are not auto, with
+/// percentages and `calc()` resolved against the column width.
+fn column_definite_margins(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+) -> (Option<f32>, Option<f32>) {
+    let node = tree.layout_node_with_style(child).unwrap();
+    let resolve = |value: LengthPercentageAuto| {
+        value.maybe_resolve(Some(column_width), crate::taffy_impl::resolve_calc)
+    };
+    (
+        resolve(node.style.margin.left),
+        resolve(node.style.margin.right),
+    )
+}
+
+/// The left and right margins of `child` when its border box is
+/// `child_width` wide in a column of `column_width`. Auto margins share the
+/// room the width and the other margin leave (CSS 2, 10.3.3), except on a
+/// float, where they are zero.
+fn column_horizontal_margins(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+    child_width: f32,
+) -> (f32, f32) {
+    let (left, right) = column_definite_margins(tree, child, column_width);
+    let free = if tree
+        .layout_node_with_style(child)
+        .unwrap()
+        .style
+        .float
+        .is_floated()
+    {
+        0.0
+    } else {
+        (column_width - child_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
+    };
+    match (left, right) {
+        (Some(left), Some(right)) => (left, right),
+        (Some(left), None) => (left, free),
+        (None, Some(right)) => (free, right),
+        (None, None) => (free / 2.0, free / 2.0),
+    }
+}
+
 /// The width a column imposes on a child it lays out, or `None` when an
 /// element's authored width resolves against the column width instead.
 fn column_child_known_width(tree: &Document, child: usize, column_width: f32) -> Option<f32> {
     let node = &tree.layout_node_with_style(child).unwrap();
-    (node.kind() != NodeKind::Element || node.style.size.width == Dimension::auto())
-        .then_some(column_width)
+    if node.kind() != NodeKind::Element {
+        return Some(column_width);
+    }
+    if node.style.size.width != Dimension::auto() {
+        return None;
+    }
+    // An auto width fills the column between the horizontal margins; an auto
+    // margin counts as zero.
+    let (left, right) = column_definite_margins(tree, child, column_width);
+    Some((column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0))
 }
 
 pub(crate) fn multicol_definite_dimension(
@@ -1109,12 +1165,16 @@ fn layout_column_group(
             context.origin_x + context.column_offset_x(column),
             context.origin_y + cursor,
         );
+        // Block flow resolved the margins against the whole container; they
+        // resolve against the column the child ends up in.
+        let (margin_left, margin_right) =
+            column_horizontal_margins(tree, child, context.column_width, child_output.size.width);
         // A right-to-left container aligns its blocks to the right edge of
         // the column, leaving the room a narrower block does not use to its
         // left.
         let x = if context.rtl {
             content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
-                - child_layout.margin.right
+                - margin_right
         } else {
             // Block flow placed the child with its `position: relative`
             // inset. The painter adds that inset to the box and the lines of
@@ -1135,10 +1195,14 @@ fn layout_column_group(
             } else {
                 0.0
             };
-            child_layout.location.x - inset + context.column_offset_x(column)
+            child_layout.location.x - inset
+                + (margin_left - child_layout.margin.left)
+                + context.column_offset_x(column)
         };
         let y = content_origin.y + cursor + margin_top;
         child_layout.order = order as u32;
+        child_layout.margin.left = margin_left;
+        child_layout.margin.right = margin_right;
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
