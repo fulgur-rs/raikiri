@@ -489,6 +489,12 @@ impl IfcRoot {
         self.first_line_styles.element(id)
     }
 
+    /// The `::first-line` boxes with a text decoration whose decorations reach
+    /// the first formatted line, outermost first.
+    pub(crate) fn first_line_decorating(&self) -> &[(usize, raikiri_style::ComputedValues)] {
+        self.first_line_styles.decorating()
+    }
+
     pub(crate) fn typographic_fragment(
         &self,
         box_id: usize,

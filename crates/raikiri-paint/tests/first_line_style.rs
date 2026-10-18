@@ -270,3 +270,50 @@ fn a_block_before_pseudo_holds_the_first_line_away_from_the_text() {
     assert_eq!(count(&rgba, BLUE), 0);
     assert_eq!(count(&rgba, RED), 100);
 }
+
+/// The rows that hold a pixel `tint` is the strongest channel of, which is how
+/// a thin line shows once it is anti-aliased.
+fn tinted_rows(rgba: &[u8], tint: usize) -> Vec<usize> {
+    let mut rows: Vec<usize> = rgba
+        .chunks_exact(4)
+        .enumerate()
+        .filter(|(_, px)| (0..3).all(|channel| channel == tint || px[tint] > px[channel]))
+        .map(|(at, _)| at / SIZE as usize)
+        .collect();
+    rows.dedup();
+    rows
+}
+
+#[test]
+fn a_decoration_on_the_first_line_of_the_block_itself_is_drawn() {
+    // The underline sits 12px below the baseline of its line, so below the
+    // first line when it is drawn on that line and below the second when it
+    // is drawn on both.
+    let rgba = raster(
+        "<p>X<br>X</p>",
+        "p{color:red} p::first-line{text-decoration:underline green;text-underline-offset:12px}",
+    );
+    let rows = tinted_rows(&rgba, 1);
+    assert!(!rows.is_empty(), "the first line is underlined");
+    assert!(
+        rows.iter().all(|&y| (19..24).contains(&y)),
+        "only the first line is underlined: {rows:?}"
+    );
+}
+
+#[test]
+fn a_decoration_of_the_block_and_one_of_its_first_line_both_reach_the_first_line() {
+    let rgba = raster(
+        "<p>X<br>X</p>",
+        "p{color:red;text-decoration:underline blue;text-underline-offset:12px} \
+         p::first-line{text-decoration:underline green}",
+    );
+    let green = tinted_rows(&rgba, 1);
+    let blue = tinted_rows(&rgba, 2);
+    assert!(green.iter().all(|&y| (19..24).contains(&y)), "{green:?}");
+    assert!(!green.is_empty(), "the first line has the green underline");
+    assert!(
+        blue.iter().any(|&y| (29..34).contains(&y)),
+        "the second line keeps the block's underline: {blue:?}"
+    );
+}

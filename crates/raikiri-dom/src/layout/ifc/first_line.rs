@@ -3,6 +3,7 @@
 use super::{boxes::IfcBoxKind, projection::box_kind};
 use crate::Document;
 use crate::generated_content::is_in_flow_generated_text;
+use crate::text_decoration::has_paintable_line;
 use raikiri_style::property::{DisplayValue, WhiteSpaceCollapse};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
@@ -26,6 +27,9 @@ pub(crate) struct FirstLineStyles {
     texts: HashMap<usize, ComputedValues>,
     /// The values of the inline elements and generated boxes of the line.
     elements: HashMap<usize, ComputedValues>,
+    /// The `::first-line` boxes that decorate the line, by the block they
+    /// belong to, outermost first.
+    decorating: Vec<(usize, ComputedValues)>,
 }
 
 impl FirstLineStyles {
@@ -39,6 +43,13 @@ impl FirstLineStyles {
     /// line.
     pub(crate) fn element(&self, id: usize) -> Option<&ComputedValues> {
         self.elements.get(&id)
+    }
+
+    /// The `::first-line` boxes with a text decoration, by the block they
+    /// belong to, outermost first. Their decorations reach all the text of
+    /// the first line.
+    pub(crate) fn decorating(&self) -> &[(usize, ComputedValues)] {
+        &self.decorating
     }
 }
 
@@ -60,13 +71,25 @@ impl FirstLine {
         {
             return None;
         }
+        let decorating = line_origins
+            .iter()
+            .filter_map(|&id| {
+                let style = cascade
+                    .pseudo
+                    .get(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))?;
+                has_paintable_line(style.text_decoration_line).then(|| (id, style.as_ref().clone()))
+            })
+            .collect();
         Some(Self {
             root: StyleNodeId::new(root as u64),
             origins: line_origins
                 .iter()
                 .map(|&id| StyleNodeId::new(id as u64))
                 .collect(),
-            styles: FirstLineStyles::default(),
+            styles: FirstLineStyles {
+                decorating,
+                ..FirstLineStyles::default()
+            },
         })
     }
 

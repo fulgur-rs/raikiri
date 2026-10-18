@@ -254,7 +254,7 @@ pub fn decorations_for_element(
     }
 }
 
-fn has_paintable_line(line: TextDecorationLine) -> bool {
+pub(crate) fn has_paintable_line(line: TextDecorationLine) -> bool {
     line.underline || line.overline || line.line_through
 }
 
@@ -440,6 +440,18 @@ fn context_for_text(
     on_first_line: bool,
 ) -> DecorationContext {
     let first_line = on_first_line.then(|| document.get_node(root_id)).flatten();
+    // The decorations of the `::first-line` boxes come after those of the
+    // blocks they belong to.
+    let base = &first_line.map_or_else(
+        || base.clone(),
+        |node| {
+            node.ifc_first_line_decorating()
+                .iter()
+                .fold(base.clone(), |context, (id, style)| {
+                    decorations_for_element(&context, NodeId::new(*id as u64), style, 0.0)
+                })
+        },
+    );
     let root_id = document.ifc_source_owner(root_id);
     // Anonymous flex/grid text roots already carry their complete ancestor
     // context. Starting at their parent would fold those ancestors twice.
