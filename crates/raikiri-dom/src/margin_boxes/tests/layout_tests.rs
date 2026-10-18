@@ -81,6 +81,22 @@ fn auto_side_boxes_share_a_column_by_the_height_of_their_lines() {
 }
 
 #[test]
+fn a_unitless_line_height_multiplies_a_zero_font_size() {
+    // A zero font size is shaped at a size too small to see, but a unitless
+    // line height still multiplies the zero, so the upper box has no height
+    // and the lower one takes the whole column.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @left-top {{ content: 'a'; font-size: 0; line-height: 3 }} \
+           @left-bottom {{ content: 'c' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::LeftBottom, [0.0, 40.0, 40.0, 220.0])]
+    );
+}
+
+#[test]
 fn auto_top_boxes_share_a_row_by_the_width_of_their_vertical_lines() {
     // The upright lines of the left box are 20px wide each, the right box is
     // one 10px character wide, so they share the row in the ratio of 40 to 10.
