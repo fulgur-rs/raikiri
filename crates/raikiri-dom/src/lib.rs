@@ -50,6 +50,8 @@ mod fragment;
 pub mod generated_content;
 pub mod image_geometry;
 mod image_resolve;
+#[doc(hidden)]
+pub mod inline_svg_style;
 mod margin_boxes;
 mod node;
 mod normal_line_height;

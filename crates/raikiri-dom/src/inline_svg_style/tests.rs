@@ -12,7 +12,7 @@ fn descendant_declarations_ignore_properties_outside_the_svg_contract() {
         }];
         let mut budget = 1024;
         assert_eq!(
-            svg_node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap(),
+            node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap(),
             ""
         );
     }
@@ -26,9 +26,7 @@ fn descendant_declaration_budget_rejects_before_serializing() {
         expression: None,
     }];
     let mut remaining = 128;
-    assert!(
-        svg_node_declarations(&ComputedValues::initial(), &properties, &mut remaining).is_err()
-    );
+    assert!(node_declarations(&ComputedValues::initial(), &properties, &mut remaining).is_err());
 }
 
 #[test]
@@ -47,7 +45,7 @@ fn descendant_declarations_keep_relative_expressions_and_literal_inherit() {
     ];
     let mut remaining = 1024;
     assert_eq!(
-        svg_node_declarations(&ComputedValues::initial(), &properties, &mut remaining).unwrap(),
+        node_declarations(&ComputedValues::initial(), &properties, &mut remaining).unwrap(),
         "font-size:2em!important;color:inherit!important;"
     );
 }
@@ -73,7 +71,7 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
         })
         .collect();
     let mut budget = 4096;
-    let css = svg_node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap();
+    let css = node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap();
     for declaration in [
         "color:rgba(0,0,0,1.000000)!important;",
         "display:inline!important;",
@@ -95,7 +93,7 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
         })
         .collect();
     let mut budget = 4096;
-    let css = svg_node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap();
+    let css = node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap();
     // Inherited font sizes use `100%` so renderers do not reapply a relative
     // ancestor size.
     assert_eq!(css.matches(":inherit!important;").count(), 7, "{css}");

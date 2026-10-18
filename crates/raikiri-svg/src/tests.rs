@@ -2843,3 +2843,88 @@ fn css_reference_validation_trims_only_c0_and_space() {
         Err(SvgError::ExternalReference)
     ));
 }
+
+#[test]
+fn rasterizing_with_resolved_styles_applies_them_like_the_exported_source() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><rect width='20' height='10' fill='currentColor'/><rect width='20' height='10' fill='red' visibility='hidden'/></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let viewport = SvgViewport {
+        width: 20.0,
+        height: 10.0,
+    };
+    let elements = [
+        super::SvgElementStyle {
+            element_index: 1,
+            declarations: "color:rgba(0,0,255,1)!important",
+        },
+        super::SvgElementStyle {
+            element_index: 2,
+            declarations: "display:none!important",
+        },
+    ];
+    let font = super::SvgRootFont {
+        size: 12.0,
+        family: "sans-serif",
+        weight: 400.0,
+        style: "normal",
+    };
+    let resolved = super::SvgResolvedStyles {
+        root_color: [0, 0, 0, 255],
+        font,
+        elements: &elements,
+    };
+    let raster = svg
+        .rasterize_at_css_pixel_scale_with_resolved_styles(
+            viewport,
+            SvgRootStyle::default(),
+            resolved,
+            None,
+        )
+        .unwrap();
+    assert_eq!(&raster.rgba[..4], &[0, 0, 255, 255]);
+    // The exported source and the raster come from the same preparation.
+    let exported = svg
+        .styled_source_with_resolved_styles(
+            viewport,
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+            font,
+            &elements,
+        )
+        .unwrap();
+    let exported = SvgDocument::parse(exported.as_bytes())
+        .unwrap()
+        .rasterize_at_css_pixel_scale(viewport, SvgRootStyle::default(), None)
+        .unwrap();
+    assert_eq!(exported.rgba, raster.rgba);
+}
+
+#[test]
+fn rasterizing_with_resolved_styles_rejects_an_invalid_font() {
+    let source = format!("<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'/>");
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let resolved = super::SvgResolvedStyles {
+        root_color: [0, 0, 0, 255],
+        font: super::SvgRootFont {
+            size: 12.0,
+            family: "sans-serif",
+            weight: 0.0,
+            style: "normal",
+        },
+        elements: &[],
+    };
+    assert!(matches!(
+        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
+            SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            resolved,
+            None,
+        ),
+        Err(SvgError::InvalidDocument(_))
+    ));
+}

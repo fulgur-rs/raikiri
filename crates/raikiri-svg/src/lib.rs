@@ -100,6 +100,21 @@ pub struct SvgElementStyle<'a> {
     pub declarations: &'a str,
 }
 
+/// Host-resolved root and descendant styles of an inline SVG.
+///
+/// Resolve presentation attributes and author CSS before building this value;
+/// see [`SvgDocument::styled_source_with_resolved_styles`] for how each part
+/// is applied.
+#[derive(Debug, Clone, Copy)]
+pub struct SvgResolvedStyles<'a> {
+    /// The root's resolved `color`, in straight RGBA8.
+    pub root_color: [u8; 4],
+    /// The root's resolved font.
+    pub font: SvgRootFont<'a>,
+    /// Resolved declarations of the descendants.
+    pub elements: &'a [SvgElementStyle<'a>],
+}
+
 #[derive(Clone, Copy, Default)]
 struct SourceRootStyle<'a> {
     color: Option<[u8; 4]>,
@@ -418,28 +433,15 @@ impl SvgDocument {
         font: SvgRootFont<'_>,
         elements: &[SvgElementStyle<'_>],
     ) -> Result<String, SvgError> {
-        if !valid_root_font(font.size, font.family)
-            || !font.weight.is_finite()
-            || !(1.0..=1000.0).contains(&font.weight)
-            || !["normal", "italic", "oblique"]
-                .iter()
-                .any(|keyword| font.style.eq_ignore_ascii_case(keyword))
-        {
-            return Err(SvgError::InvalidDocument(
-                "invalid SVG root font style".into(),
-            ));
-        }
-        self.styled_source_impl(
-            viewport,
+        let source_style = resolved_source_style(
             root_style,
-            SourceRootStyle {
-                color: Some(root_color),
-                font: Some((font.size, font.family)),
-                font_face: Some((font.weight, font.style)),
-                visible: Some(root_style.visible),
+            SvgResolvedStyles {
+                root_color,
+                font,
                 elements,
             },
-        )
+        )?;
+        self.styled_source_impl(viewport, root_style, source_style)
     }
 
     fn styled_source_impl(
@@ -560,7 +562,7 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
-        self.rasterize_inner(viewport, root_style, max_output_bytes, false)
+        self.rasterize_inner(viewport, root_style, None, max_output_bytes, false)
     }
 
     /// Rasterizes inline SVG on the CSS pixel grid without stretching the
@@ -574,13 +576,38 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
-        self.rasterize_inner(viewport, root_style, max_output_bytes, true)
+        self.rasterize_inner(viewport, root_style, None, max_output_bytes, true)
+    }
+
+    /// Rasterizes inline SVG like [`Self::rasterize_at_css_pixel_scale`] from
+    /// the source [`Self::styled_source_with_resolved_styles`] prepares.
+    ///
+    /// The host's resolved root color and font, its `visibility` and the
+    /// descendant declarations are applied exactly as that method does, so the
+    /// raster and the exported source agree. Errors from the font and element
+    /// checks of that method are returned before anything is allocated.
+    pub fn rasterize_at_css_pixel_scale_with_resolved_styles(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        resolved: SvgResolvedStyles<'_>,
+        max_output_bytes: Option<u64>,
+    ) -> Result<DecodedImage, SvgError> {
+        let source_style = resolved_source_style(root_style, resolved)?;
+        self.rasterize_inner(
+            viewport,
+            root_style,
+            Some(source_style),
+            max_output_bytes,
+            true,
+        )
     }
 
     fn rasterize_inner(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
+        source_style: Option<SourceRootStyle<'_>>,
         max_output_bytes: Option<u64>,
         css_pixel_scale: bool,
     ) -> Result<DecodedImage, SvgError> {
@@ -600,7 +627,13 @@ impl SvgDocument {
         };
 
         if root_style.opacity > 0.0 {
-            let drawn = self.draw(viewport, root_style, (width, height), &mut pixels);
+            let drawn = self.draw(
+                viewport,
+                root_style,
+                source_style,
+                (width, height),
+                &mut pixels,
+            );
             // A root that is not visible keeps the blank raster it always
             // had when its descendants cannot be drawn.
             match drawn {
@@ -625,13 +658,14 @@ impl SvgDocument {
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
+        source_style: Option<SourceRootStyle<'_>>,
         (width, height): (u32, u32),
         pixels: &mut Vec<u8>,
     ) -> Result<(), SvgError> {
-        let source_style = SourceRootStyle {
+        let source_style = source_style.unwrap_or(SourceRootStyle {
             visible: (!root_style.visible).then_some(false),
             ..SourceRootStyle::default()
-        };
+        });
         let source = self.prepare_source(viewport, root_style, source_style, false)?;
         let raster_opacity = if root_style.neutralize_root_opacity {
             1.0
@@ -654,6 +688,33 @@ impl SvgDocument {
             pixels,
         )
     }
+}
+
+/// Checks the resolved font and returns the source preparation that applies
+/// `resolved` to the root and its descendants.
+fn resolved_source_style<'a>(
+    root_style: SvgRootStyle,
+    resolved: SvgResolvedStyles<'a>,
+) -> Result<SourceRootStyle<'a>, SvgError> {
+    let font = resolved.font;
+    if !valid_root_font(font.size, font.family)
+        || !font.weight.is_finite()
+        || !(1.0..=1000.0).contains(&font.weight)
+        || !["normal", "italic", "oblique"]
+            .iter()
+            .any(|keyword| font.style.eq_ignore_ascii_case(keyword))
+    {
+        return Err(SvgError::InvalidDocument(
+            "invalid SVG root font style".into(),
+        ));
+    }
+    Ok(SourceRootStyle {
+        color: Some(resolved.root_color),
+        font: Some((font.size, font.family)),
+        font_face: Some((font.weight, font.style)),
+        visible: Some(root_style.visible),
+        elements: resolved.elements,
+    })
 }
 
 fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {
