@@ -749,3 +749,50 @@ fn a_column_child_with_auto_margins_matches_block_flow() {
         );
     }
 }
+
+#[test]
+fn a_column_child_with_a_width_and_auto_margins_is_placed_within_the_column() {
+    for margin in [
+        "margin:0 auto",
+        "margin-left:auto",
+        "margin-right:auto",
+        "margin:0 auto 0 4px",
+        "margin:0 4px 0 auto",
+    ] {
+        let paragraph = format!("<p style='width:20px;{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_right_to_left_column_child_with_a_width_and_auto_margins_is_placed_within_the_column() {
+    for margin in [
+        "margin:0 auto",
+        "margin-left:auto",
+        "margin-right:auto",
+        "margin:0 auto 0 4px",
+        "margin:0 4px 0 auto",
+    ] {
+        let paragraph = format!("<p style='width:20px;{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;left:60px;top:0;width:40px;direction:rtl'>{paragraph}</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_floated_column_child_with_auto_margins_keeps_zero_margins() {
+    compare(
+        "<div class=mc><p style='float:left;width:20px;margin:0 auto;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;width:20px;background:lime'>A<br>B</p>",
+    );
+}

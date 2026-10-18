@@ -488,22 +488,51 @@ fn column_child_input(
     }
 }
 
-/// The left and right margins of `child` in a column of `column_width`,
-/// with percentages resolved against the column. An auto margin keeps the
-/// value `flow` block flow gave it.
+/// The left and right margins of `child` that are not auto, with
+/// percentages and `calc()` resolved against the column width.
+fn column_definite_margins(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+) -> (Option<f32>, Option<f32>) {
+    let node = tree.layout_node_with_style(child).unwrap();
+    let resolve = |value: LengthPercentageAuto| {
+        value.maybe_resolve(Some(column_width), crate::taffy_impl::resolve_calc)
+    };
+    (
+        resolve(node.style.margin.left),
+        resolve(node.style.margin.right),
+    )
+}
+
+/// The left and right margins of `child` when its border box is
+/// `child_width` wide in a column of `column_width`. Auto margins share the
+/// room the width and the other margin leave (CSS 2, 10.3.3), except on a
+/// float, where they are zero.
 fn column_horizontal_margins(
     tree: &Document,
     child: usize,
     column_width: f32,
-    flow: (f32, f32),
+    child_width: f32,
 ) -> (f32, f32) {
-    let margin = tree.layout_node_with_style(child).unwrap().style.margin;
-    let resolve = |value: LengthPercentageAuto, flow: f32| {
-        value
-            .maybe_resolve(Some(column_width), crate::taffy_impl::resolve_calc)
-            .unwrap_or(flow)
+    let (left, right) = column_definite_margins(tree, child, column_width);
+    let free = if tree
+        .layout_node_with_style(child)
+        .unwrap()
+        .style
+        .float
+        .is_floated()
+    {
+        0.0
+    } else {
+        (column_width - child_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0)
     };
-    (resolve(margin.left, flow.0), resolve(margin.right, flow.1))
+    match (left, right) {
+        (Some(left), Some(right)) => (left, right),
+        (Some(left), None) => (left, free),
+        (None, Some(right)) => (free, right),
+        (None, None) => (free / 2.0, free / 2.0),
+    }
 }
 
 /// The width a column imposes on a child it lays out, or `None` when an
@@ -518,8 +547,8 @@ fn column_child_known_width(tree: &Document, child: usize, column_width: f32) ->
     }
     // An auto width fills the column between the horizontal margins; an auto
     // margin counts as zero.
-    let (left, right) = column_horizontal_margins(tree, child, column_width, (0.0, 0.0));
-    Some((column_width - left - right).max(0.0))
+    let (left, right) = column_definite_margins(tree, child, column_width);
+    Some((column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0))
 }
 
 pub(crate) fn multicol_definite_dimension(
@@ -1136,14 +1165,10 @@ fn layout_column_group(
             context.origin_x + context.column_offset_x(column),
             context.origin_y + cursor,
         );
-        // Percentage margins resolve against the column, not against the
-        // container block flow resolved them against.
-        let (margin_left, margin_right) = column_horizontal_margins(
-            tree,
-            child,
-            context.column_width,
-            (child_layout.margin.left, child_layout.margin.right),
-        );
+        // Block flow resolved the margins against the whole container; they
+        // resolve against the column the child ends up in.
+        let (margin_left, margin_right) =
+            column_horizontal_margins(tree, child, context.column_width, child_output.size.width);
         // A right-to-left container aligns its blocks to the right edge of
         // the column, leaving the room a narrower block does not use to its
         // left.
