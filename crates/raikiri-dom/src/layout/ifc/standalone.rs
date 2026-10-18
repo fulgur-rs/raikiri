@@ -143,6 +143,12 @@ impl StandaloneText {
 /// How many shaped runs a [`StandaloneMemo`] keeps.
 const MEMO_CAPACITY: usize = 64;
 
+/// The longest text, in bytes, a [`StandaloneMemo`] keeps a run of. The runs
+/// it is for are headers and footers; a longer text that is new on every page
+/// would pin as many copies of it and of its shaped lines as the memo holds
+/// runs, which is the document's own memory many times over.
+const MEMO_MAX_TEXT_BYTES: usize = 4096;
+
 /// Runs shaped by [`Document::shape_standalone_text_shared`], the least
 /// recently used first.
 ///
@@ -369,7 +375,8 @@ impl Document {
     /// document that gets another font collection shapes anew, and so does
     /// one whose collection changes under it (a font is registered, or a
     /// generic or fallback family list is set). A document that was never
-    /// laid out has none to tie them to and shapes every time.
+    /// laid out has none to tie them to and shapes every time, and so does a
+    /// text of more than 4 KiB.
     #[doc(hidden)]
     pub fn shape_standalone_text_shared(
         &self,
@@ -378,7 +385,11 @@ impl Document {
         width: Option<f32>,
         align: StandaloneAlign,
     ) -> Option<Arc<StandaloneText>> {
-        let Some(state) = &self.ifc else {
+        let remembered = self
+            .ifc
+            .as_ref()
+            .filter(|_| text.len() <= MEMO_MAX_TEXT_BYTES);
+        let Some(state) = remembered else {
             return self
                 .shape_standalone_text(text, style, width, align)
                 .map(Arc::new);

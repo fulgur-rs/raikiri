@@ -298,6 +298,28 @@ fn shared_runs_are_shaped_again_when_the_fonts_change_under_the_document() {
 }
 
 #[test]
+fn a_shared_run_of_a_long_text_is_not_remembered() {
+    // A text that is new on every page would otherwise be pinned once per
+    // remembered run.
+    let doc = enabled();
+    let style = ahem(10.0);
+    let start = StandaloneAlign::Start;
+    let longest = "a".repeat(MEMO_MAX_TEXT_BYTES);
+    let kept = shared(&doc, &longest, &style, None, start);
+    assert!(Arc::ptr_eq(
+        &kept,
+        &shared(&doc, &longest, &style, None, start)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 1);
+    let too_long = "a".repeat(MEMO_MAX_TEXT_BYTES + 1);
+    let first = shared(&doc, &too_long, &style, None, start);
+    let second = shared(&doc, &too_long, &style, None, start);
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert_eq!(first.width(), second.width());
+    assert_eq!(doc.standalone_text_calls(), 3);
+}
+
+#[test]
 fn a_document_that_was_never_laid_out_shares_no_runs() {
     let doc = Document::new();
     let style = ahem(10.0);
