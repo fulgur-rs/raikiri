@@ -12,7 +12,7 @@ use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant}
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use footnotes::FootnoteAreas;
 pub(crate) use link_events::page_fragment_events_from_pages;
-use pagination_state::{CandidateEntry, FlowEnv, PaginationState};
+use pagination_state::{CandidateEntry, Flow, FlowEnv, PaginationState};
 
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
@@ -4037,7 +4037,6 @@ fn paginate_flow(
     let page_step_at = |page_index: u32| page_origins.step_at(page_index);
     let page_origin = |page_index: u32| page_origins.origin(page_index);
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
-    let page_index_in_flow = |y: f32| page_origins.page_index_in_flow(y);
     let leading_margins_moved =
         leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
     let root_flow_offset = 0.0;
@@ -4177,8 +4176,11 @@ fn paginate_flow(
     let env = FlowEnv {
         cascade,
         body_id,
+        control,
         page_origins: &page_origins,
         text_lines: &text_lines,
+        roots,
+        root_flow_offset,
     };
     let mut candidates = candidates.into_iter();
     // Each candidate is placed while the page limit lets pagination reach the
@@ -4186,316 +4188,26 @@ fn paginate_flow(
     'candidate_loop: while let Some(candidate) = candidates.next()
         && control.within_page_limit(state.current_page)?
     {
+        let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
+            continue;
+        };
+        if candidate.context.is_text {
+            match state.place_text(document, &env, &candidate, &entry)? {
+                Flow::Next => continue,
+                Flow::Stop => break 'candidate_loop,
+            }
+        }
         let CandidateEntry {
             name_context_seen,
             comparison_page_name,
             keep_local_page_type,
             page_before_candidate,
-            ifc_root,
             participates_in_margin_adjacency,
             uses_positioned_coordinates,
-        } = match state.begin_candidate(document, &env, &candidate)? {
-            Some(entry) => entry,
-            None => continue,
-        };
+            ..
+        } = entry;
         let node_id = candidate.node_id;
         let name_participates_in_flow = candidate.context.page_name_in_flow;
-        if candidate.context.is_text {
-            // The inline layout root whose lines hold this text, if any.
-            let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
-            // In-flow text between two blocks separates them: the next block's
-            // gap is no longer a margin adjoining the previous block.
-            if participates_in_margin_adjacency {
-                state
-                    .sibling_margins
-                    .end_run_at_text(document, node_id, text_ifc_root);
-            }
-            // A footnote's descendants follow the moved footnote box. They are
-            // deliberately not paginated independently, otherwise the stale
-            // pre-pagination coordinates would move them back into normal flow.
-            if candidate.context.is_float_descendant
-                && has_footnote_ancestor(cascade, node_id, document)
-            {
-                continue;
-            }
-            // Text is not itself a class-A box, but non-empty text can be the
-            // content that follows a nested named box.  Carry the containing
-            // box's page type so that content after `page:b` inside a
-            // `page:a` box resumes on an `a` page rather than becoming an
-            // anonymous page.  Only direct body text consumes a pending
-            // break-after; descendants must wait until their containing box
-            // has finished.
-            let raw_y = candidate.raw_y;
-            let mut height = candidate.height;
-            let candidate_page_name = candidate.page_name.clone();
-            let mut effective_y = if uses_positioned_coordinates {
-                positioned_text_start_y(document, &text_lines, node_id, text_ifc_root)
-            } else {
-                raw_y + state.flow_shift
-            };
-            // A fixed-height block whose first line would straddle the
-            // current fragmentainer is pushed as a unit. This matches normal
-            // block fragmentation for monolithic content while leaving tall
-            // blocks and already-forced page transitions to the existing
-            // fragment logic.
-            // A block inside an inline element of an inline engine paragraph
-            // is laid out from the paragraph's root, as a direct child is.
-            // A block nested in plain block flow is moved the same way; its
-            // ancestors then grow to hold it.
-            // The block of text in an IFC paragraph is its root, including nested inline elements.
-            let paragraph_root = candidate
-                .ifc_root
-                .map(|(root, _)| root)
-                .filter(|&root| document.is_source_node(root) && root != node_id);
-            let line_block_parent = line_block_parent(
-                document,
-                cascade,
-                &roots,
-                &candidate,
-                paragraph_root,
-                &state.checked_paragraphs,
-                uses_positioned_coordinates,
-            );
-            if let Some((block_id, nested)) = line_block_parent
-                && state.checked_paragraphs.block_text.insert(block_id)
-                && has_fixed_height(document, block_id)
-            {
-                let block_height = document.nodes[block_id].unrounded_layout.size.height;
-                let block_effective_y = block_effective_y(
-                    document,
-                    block_id,
-                    raw_y,
-                    effective_y,
-                    root_flow_offset,
-                    state.flow_shift,
-                );
-                if let Some(target_page) = page_origins.first_line_push_page(
-                    effective_y,
-                    height,
-                    block_effective_y,
-                    block_height,
-                    state.current_page,
-                ) {
-                    check_candidate_page!('candidate_loop, target_page);
-                    let target_y = page_origin(target_page);
-                    let delta = move_line_block(
-                        document,
-                        cascade,
-                        body_id,
-                        block_id,
-                        nested,
-                        block_effective_y,
-                        target_y,
-                        &mut state.subtree_shifts,
-                        page_before_candidate,
-                    );
-                    state.flow_shift += delta;
-                    effective_y += delta;
-                }
-            }
-            // `orphans` and `widows` constrain breaks between line boxes, not
-            // breaks between block-level children.  When the paragraph has
-            // lines enough for both, a break that leaves too few widows moves
-            // up between earlier lines; otherwise a fitting block is moved as
-            // a unit when its natural split would violate either constraint.
-            // Oversized blocks that cannot break earlier keep their natural
-            // break.
-            // A paragraph that is a flex item alone on its line cannot move
-            // as a unit, but its later lines can move down inside it. It is
-            // looked for only when no line block parent was found.
-            let flex_line_paragraph = flex_line_paragraph(
-                document,
-                cascade,
-                body_id,
-                &candidate,
-                paragraph_root.filter(|_| line_block_parent.is_none()),
-                uses_positioned_coordinates,
-            );
-            if let Some((block_id, nested)) =
-                line_block_parent.or(flex_line_paragraph.map(|(root, _)| (root, true)))
-                && state.checked_paragraphs.orphans_widows.insert(block_id)
-                && let Some(line_metrics) = paragraph_line_bounds(document, node_id, &text_lines)
-            {
-                let page_start = page_origin(state.current_page);
-                let page_end = page_start + page_step_at(state.current_page);
-                let line_fit = ParagraphLineFit::measure(
-                    &line_metrics,
-                    effective_y,
-                    page_start,
-                    page_end,
-                    cascade.computed[block_id].orphans,
-                    cascade.computed[block_id].widows,
-                );
-                let block_height = document.nodes[block_id].unrounded_layout.size.height;
-                let can_move_block = line_block_parent.is_some()
-                    && block_fits_page_step(block_height, page_step_at(state.current_page));
-                let fix = line_fit.fix(
-                    &line_metrics,
-                    effective_y,
-                    state.current_page,
-                    &page_origins,
-                    can_move_block,
-                    // Lines move down inside the paragraph only when it is
-                    // its own inline layout root, has no earlier split
-                    // pending, and can shift its lines.
-                    || {
-                        paragraph_root == Some(block_id)
-                            && state.deferred_shifts.line_splits.is_empty()
-                            && lines_can_shift_inside(document, block_id)
-                    },
-                );
-                match fix {
-                    LineBreakFix::MoveLines(moves) => {
-                        for (line, shift, page) in moves.into_iter().flatten() {
-                            check_candidate_page!('candidate_loop, page);
-                            move_paragraph_lines(
-                                document,
-                                cascade,
-                                body_id,
-                                &LineMove {
-                                    block_id,
-                                    flex_line: flex_line_paragraph,
-                                    line,
-                                    shift,
-                                },
-                                &mut state.subtree_shifts,
-                                page_before_candidate,
-                            );
-                            if reaches_line(text_lines.get(node_id), line) {
-                                height += shift;
-                            }
-                            state
-                                .deferred_shifts
-                                .line_splits
-                                .push((block_id, line, shift));
-                        }
-                    }
-                    LineBreakFix::MoveBlock => {
-                        // The move is measured from where the block is now.
-                        let block_effective_y = block_effective_y(
-                            document,
-                            block_id,
-                            raw_y,
-                            effective_y,
-                            root_flow_offset,
-                            state.flow_shift,
-                        );
-                        let target_page = state.current_page.saturating_add(1);
-                        check_candidate_page!('candidate_loop, target_page);
-                        let delta = move_line_block(
-                            document,
-                            cascade,
-                            body_id,
-                            block_id,
-                            nested,
-                            block_effective_y,
-                            page_origin(target_page),
-                            &mut state.subtree_shifts,
-                            page_before_candidate,
-                        );
-                        state.flow_shift += delta;
-                        effective_y += delta;
-                    }
-                    LineBreakFix::Keep => {}
-                }
-            }
-            place_text_candidate(
-                document,
-                &text_lines,
-                node_id,
-                ifc_root,
-                text_ifc_root,
-                effective_y,
-            );
-            let named_page_change = text_changes_page_name(
-                name_context_seen,
-                name_participates_in_flow,
-                height,
-                &candidate_page_name,
-                &comparison_page_name,
-            );
-            let pending_break_applies = state.pending_break.applies_to(document, node_id);
-            let consumes_pending_break = pending_break_applies && name_participates_in_flow;
-            if state.saw_child {
-                if consumes_pending_break || named_page_change {
-                    let natural_page =
-                        page_index_in_flow(effective_y).unwrap_or(state.current_page);
-                    let target_page = forced_target_page(state.current_page, natural_page);
-                    check_candidate_page!('candidate_loop, target_page);
-                    let target_y = page_origin(target_page);
-                    // The candidate was materialized to `effective_y` above,
-                    // so this is the additional movement for this boundary.
-                    // The same amount advances `flow_shift`, which also moves
-                    // later candidates whose ancestor is not moved here.
-                    let delta = target_y - effective_y;
-                    if delta.is_finite() {
-                        shift_text_candidate(
-                            document,
-                            &text_lines,
-                            node_id,
-                            ifc_root.map(|(root, _)| root),
-                            text_ifc_root,
-                            delta,
-                        );
-                        state.flow_shift += delta;
-                        effective_y += delta;
-                    }
-                    state.current_page = target_page;
-                    state.page_names.current = candidate_page_name.clone();
-                } else if let Some(natural_page) = page_index_in_flow(effective_y) {
-                    check_candidate_page!('candidate_loop, natural_page);
-                    state.current_page = state.current_page.max(natural_page);
-                }
-            } else {
-                state.saw_child = true;
-                state.current_page = 0;
-                if name_participates_in_flow {
-                    state.page_names.current = candidate_page_name.clone();
-                }
-            }
-            if text_sets_page_name(
-                height,
-                name_participates_in_flow,
-                named_page_change,
-                consumes_pending_break,
-                page_type_leaves_local_flow(
-                    keep_local_page_type,
-                    state.current_page,
-                    page_before_candidate,
-                ),
-            ) {
-                state.page_names.current = candidate_page_name;
-            }
-            check_candidate_page!('candidate_loop, state.current_page);
-            if name_participates_in_flow && height > 0.0 {
-                state.column_contexts.occupy_enclosing(
-                    node_id,
-                    state.current_page,
-                    document,
-                    cascade,
-                );
-            }
-            let end_page = page_origins.end_page(effective_y, height);
-            let in_flow = !candidate.context.is_out_of_flow_descendant;
-            record_candidate_pages(
-                &mut state.reach,
-                &mut state.page_names,
-                control,
-                state.current_page,
-                end_page,
-                in_flow,
-            )?; // cov:ignore: LLVM coverage maps this multiline call's error exit to its own line.
-            if consumes_pending_break {
-                state.pending_break.clear();
-            }
-            state.pending_break.note_after(
-                document,
-                cascade,
-                node_id,
-                candidate.context.deferred_named_break_after,
-            );
-            continue;
-        }
 
         let computed = &cascade.computed[node_id];
         let candidate_page_name = candidate.page_name.clone();

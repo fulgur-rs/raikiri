@@ -18248,12 +18248,16 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
     doc.nodes[floater].unrounded_layout.margin.top = 4.0;
     doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
     let pages = PageOrigins::new(&[], 100.0);
+    let control = PageLayoutControl::new(None);
     let lines = TextLineIndex::default();
     let env = FlowEnv {
         cascade: &cascade,
         body_id: body,
+        control: &control,
         page_origins: &pages,
         text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
     };
     let node_count = doc.nodes.len();
     let new_state = || pagination_state_before_first_candidate(node_count);
@@ -18440,6 +18444,7 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
 
     let pages = PageOrigins::new(&[], 100.0);
     let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
     let candidate = |node_id, ifc_root| PageCandidate {
         node_id,
         raw_y: 0.0,
@@ -18449,12 +18454,16 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
         named_flex_context: None,
         ifc_root,
     };
+    let control = PageLayoutControl::new(None);
     let start = |doc: &mut Document, state: &mut PaginationState, candidate: &PageCandidate| {
         let env = FlowEnv {
             cascade: &cascade,
             body_id: body,
+            control: &control,
             page_origins: &pages,
             text_lines: &lines,
+            roots,
+            root_flow_offset: 0.0,
         };
         let mut session = crate::layout::context::LayoutSession::new(doc);
         state.begin_candidate(&mut session, &env, candidate)
@@ -18501,4 +18510,59 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
     state.page_names.current = Some("c".to_string());
     let leaving = place(start(&mut doc, &mut state, &named));
     assert!(leaving.keep_local_page_type);
+}
+
+#[test]
+fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let text = doc.nodes[root].children[0];
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(Some(5));
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+    };
+    let candidate = PageCandidate {
+        node_id: text,
+        raw_y: f32::INFINITY,
+        height: 10.0,
+        context: candidates::BoxContext {
+            page_name_in_flow: true,
+            ..Default::default()
+        },
+        page_name: Some("b".to_string()),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: true,
+        comparison_page_name: Some("a".to_string()),
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut state = pagination_state_before_first_candidate(doc.nodes.len());
+    state.saw_child = true;
+    state.page_names = PageNames::new(Some("a".to_string()));
+
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let flow = state
+        .place_text(&mut session, &env, &candidate, &entry)
+        .unwrap();
+
+    // The text opens the next page for the page type it names, but it has
+    // no position to move to the start of that page from.
+    assert_eq!(flow, Flow::Next);
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
+    assert_eq!(state.page_names.current.as_deref(), Some("b"));
 }
