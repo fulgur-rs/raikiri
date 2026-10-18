@@ -58,3 +58,70 @@ fn decodes_a_png_whose_chunk_crc_is_wrong() {
     let decoded = ImageDecoder.decode(&corrupt, 32 * 1024 * 1024).unwrap();
     assert_eq!(decoded.rgba, vec![255, 0, 0, 255, 0, 255, 0, 255]);
 }
+
+/// A 3x2 PNG, red-green-blue over cyan-magenta-yellow, tagged with the EXIF
+/// orientation `orientation`.
+fn tagged_png(orientation: u16) -> Vec<u8> {
+    use image::ImageEncoder as _;
+    // Little-endian TIFF header, then one IFD entry: Orientation (0x0112),
+    // type SHORT, one value.
+    let mut exif = b"II*\0\x08\0\0\0".to_vec();
+    exif.extend_from_slice(&1u16.to_le_bytes());
+    exif.extend_from_slice(&0x0112u16.to_le_bytes());
+    exif.extend_from_slice(&3u16.to_le_bytes());
+    exif.extend_from_slice(&1u32.to_le_bytes());
+    exif.extend_from_slice(&orientation.to_le_bytes());
+    exif.extend_from_slice(&[0, 0]);
+    exif.extend_from_slice(&0u32.to_le_bytes());
+    let mut encoded = Vec::new();
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut encoded);
+    encoder.set_exif_metadata(exif).unwrap();
+    encoder
+        .write_image(
+            &[
+                255, 0, 0, 0, 255, 0, 0, 0, 255, // red, green, blue
+                0, 255, 255, 255, 0, 255, 255, 255, 0, // cyan, magenta, yellow
+            ],
+            3,
+            2,
+            image::ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+    encoded
+}
+
+const RED: [u8; 4] = [255, 0, 0, 255];
+const GREEN: [u8; 4] = [0, 255, 0, 255];
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+const CYAN: [u8; 4] = [0, 255, 255, 255];
+const MAGENTA: [u8; 4] = [255, 0, 255, 255];
+const YELLOW: [u8; 4] = [255, 255, 0, 255];
+
+#[test]
+fn turns_an_image_by_its_exif_orientation() {
+    let decode = |orientation| {
+        let decoded = ImageDecoder
+            .decode(&tagged_png(orientation), 32 * 1024 * 1024)
+            .unwrap();
+        let pixels: Vec<[u8; 4]> = decoded
+            .rgba
+            .chunks_exact(4)
+            .map(|pixel| pixel.try_into().unwrap())
+            .collect();
+        ((decoded.width, decoded.height), pixels)
+    };
+    // Stored as it is.
+    assert_eq!(
+        decode(1),
+        ((3, 2), vec![RED, GREEN, BLUE, CYAN, MAGENTA, YELLOW])
+    );
+    // A quarter turn clockwise swaps the sides.
+    assert_eq!(
+        decode(6),
+        ((2, 3), vec![CYAN, RED, MAGENTA, GREEN, YELLOW, BLUE])
+    );
+    assert_eq!(
+        decode(3),
+        ((3, 2), vec![YELLOW, MAGENTA, CYAN, BLUE, GREEN, RED])
+    );
+}

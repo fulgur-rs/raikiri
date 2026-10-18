@@ -2651,3 +2651,54 @@ fn background_raster_decodes_a_png_whose_chunk_crc_is_wrong() {
     let decoded = decode_background_raster(&corrupt, 1024).expect("decodes like a browser");
     assert_eq!((decoded.width, decoded.height), (3, 2));
 }
+
+/// A 3x2 PNG, red-green-blue over cyan-magenta-yellow, tagged with the EXIF
+/// orientation `orientation`.
+fn exif_tagged_png(orientation: u16) -> Vec<u8> {
+    use image::ImageEncoder as _;
+    // Little-endian TIFF header, then one IFD entry: Orientation (0x0112),
+    // type SHORT, one value.
+    let mut exif = b"II*\0\x08\0\0\0".to_vec();
+    exif.extend_from_slice(&1u16.to_le_bytes());
+    exif.extend_from_slice(&0x0112u16.to_le_bytes());
+    exif.extend_from_slice(&3u16.to_le_bytes());
+    exif.extend_from_slice(&1u32.to_le_bytes());
+    exif.extend_from_slice(&orientation.to_le_bytes());
+    exif.extend_from_slice(&[0, 0]);
+    exif.extend_from_slice(&0u32.to_le_bytes());
+    let mut encoded = Vec::new();
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut encoded);
+    encoder.set_exif_metadata(exif).unwrap();
+    encoder
+        .write_image(
+            &[
+                255, 0, 0, 0, 255, 0, 0, 0, 255, // red, green, blue
+                0, 255, 255, 255, 0, 255, 255, 255, 0, // cyan, magenta, yellow
+            ],
+            3,
+            2,
+            image::ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+    encoded
+}
+
+#[test]
+fn background_raster_turns_an_image_by_its_exif_orientation() {
+    let pixels = |image: &DecodedImage| -> Vec<[u8; 4]> {
+        image
+            .rgba
+            .chunks_exact(4)
+            .map(|pixel| pixel.try_into().unwrap())
+            .collect()
+    };
+    let (red, green, blue) = ([255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]);
+    let (cyan, magenta, yellow) = ([0, 255, 255, 255], [255, 0, 255, 255], [255, 255, 0, 255]);
+    let upright = decode_background_raster(&exif_tagged_png(1), 1024).unwrap();
+    assert_eq!((upright.width, upright.height), (3, 2));
+    assert_eq!(pixels(&upright), [red, green, blue, cyan, magenta, yellow]);
+    // A quarter turn clockwise swaps the sides, and the used size follows.
+    let turned = decode_background_raster(&exif_tagged_png(6), 1024).unwrap();
+    assert_eq!((turned.width, turned.height), (2, 3));
+    assert_eq!(pixels(&turned), [cyan, red, magenta, green, yellow, blue]);
+}

@@ -2899,6 +2899,7 @@ css/css-images/gradient/gradient-longer-hue-lch-011.html
 css/css-images/gradient/gradient-longer-hue-lch-012.html
 css/css-images/gradient/gradient-powerless-hue-lch.html
 css/css-images/gradient/gradient-powerless-hue-oklch.html
+css/css-images/image-orientation/image-orientation-default.html
 css/css-images/image-orientation/svg-image-orientation.html
 css/css-images/image-set/image-set-negative-resolution-rendering-2.html
 css/css-images/image-set/image-set-negative-resolution-rendering.html
