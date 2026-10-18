@@ -429,6 +429,18 @@ fn a_single_column_rtl_container_continues_in_an_overflow_column_to_the_left() {
 }
 
 #[test]
+fn a_relative_block_in_an_rtl_container_is_painted_shifted_once() {
+    // The painter adds the offset of a block that columns fragment, so the
+    // column placement leaves it out: the block is painted where it is in
+    // ordinary flow.
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{direction:rtl;height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:60px;top:0;width:40px;direction:rtl'><p style='position:relative;left:5px;background:lime'>A<br>B</p></div>",
+    );
+}
+
+#[test]
 fn multiple_paragraphs_balance_through_a_paragraph_break() {
     compare(
         "<div class=mc><p>A<br>B<br>C<br>D</p><p>E<br>F</p></div><p>G</p>",
