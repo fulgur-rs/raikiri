@@ -46,6 +46,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
         gap_percent,
         height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),
         horizontal: !cv.writing_mode.is_vertical(),
+        rtl: matches!(cv.direction, Direction::Rtl),
         orphans: cv.orphans.max(1) as usize,
         widows: cv.widows.max(1) as usize,
     })

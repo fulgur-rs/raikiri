@@ -205,6 +205,7 @@ fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
     crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
     // Model the vertical block as a descendant of a multicol container.
     doc.nodes[html].multicol = Some(crate::fragment::MulticolStyle {
+        rtl: false,
         count: Some(2),
         width: None,
         column_fill: raikiri_style::property::ColumnFillValue::Balance,

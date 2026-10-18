@@ -111,7 +111,6 @@ pub(crate) fn compute_multicol_layout(
         && style.horizontal
         && available_height.is_some_and(|height| height > 0.0)
         && multicol_has_direct_block_child(tree, index)
-        && tree.layout_node_with_style(index).unwrap().style.direction == TaffyDirection::Ltr
         && multicol_has_only_paragraph_children(tree, index)
         && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
@@ -689,20 +688,18 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
     })
 }
 
-fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) -> bool {
-    can_balance_paragraph_box(tree, parent, child)
+fn can_balance_single_paragraph(tree: &Document, child: usize) -> bool {
+    can_balance_paragraph_box(tree, child)
         && tree.nodes[child].ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
         && tree.nodes[child].ifc_boxes().is_empty()
 }
 
-fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bool {
-    let parent = &tree.layout_node_with_style(parent).unwrap();
+fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
     let child = &tree.layout_node_with_style(child).unwrap();
     let layout = child.unrounded_layout;
     // Child block-edge decoration needs slice/clone geometry; keep the existing
     // strategy until that geometry is carried by each fragment.
-    parent.style.direction == TaffyDirection::Ltr
-        && layout.padding.top == 0.0
+    layout.padding.top == 0.0
         && layout.padding.bottom == 0.0
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0
@@ -716,10 +713,23 @@ fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bo
         && child.style.max_size.height.is_auto()
 }
 
+/// Whether a right-to-left parent aligns `child` to its right edge, which
+/// happens to a block narrower than the parent's content box. The streams of
+/// pieces that cut a block at the column edges place it from the left, so
+/// they leave such a block to the placement of each child.
+fn is_right_aligned_in_parent(tree: &Document, child: usize) -> bool {
+    let rtl_parent = tree.nodes[child].parent.is_some_and(|parent| {
+        tree.layout_node_with_style(parent).unwrap().style.direction == TaffyDirection::Rtl
+    });
+    let node = &tree.layout_node_with_style(child).unwrap();
+    rtl_parent
+        && !(node.multicol_auto_width
+            && node.style.min_size.width.is_auto()
+            && node.style.max_size.width.is_auto())
+}
+
 fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
-    if tree.nodes[parent].ifc.is_some()
-        || tree.layout_node_with_style(parent).unwrap().style.direction != TaffyDirection::Ltr
-    {
+    if tree.nodes[parent].ifc.is_some() {
         return false;
     }
     let mut current = parent;
@@ -742,7 +752,6 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
         let node = &tree.layout_node_with_style(child).unwrap();
         let zero_margin = LengthPercentageAuto::length(0.0);
         if node.display() != DisplayValue::Block
-            || node.style.direction != TaffyDirection::Ltr
             || node.style.float.is_floated()
             || node.style.margin.top != zero_margin
             || node.style.margin.right != zero_margin
@@ -928,8 +937,8 @@ fn layout_column_group(
     let group_balance = auto_measurements
         .as_ref()
         .and_then(|(entries, _)| match fragment_height {
-            Some(height) => paragraph_group::fill_definite(tree, index, entries, context, height),
-            None => paragraph_group::balance(tree, index, entries, context),
+            Some(height) => paragraph_group::fill_definite(tree, entries, context, height),
+            None => paragraph_group::balance(tree, entries, context),
         });
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
         if fragment_height.is_some() {
@@ -945,7 +954,7 @@ fn layout_column_group(
             return None;
         }
         let node = &tree.layout_node_with_style(*child).unwrap();
-        if !can_balance_single_paragraph(tree, index, *child) {
+        if !can_balance_single_paragraph(tree, *child) {
             return None;
         }
         let lines = node.ifc.as_ref()?.lines.as_ref()?;
@@ -1100,7 +1109,15 @@ fn layout_column_group(
             context.origin_x + context.column_offset_x(column),
             context.origin_y + cursor,
         );
-        let x = child_layout.location.x + context.column_offset_x(column);
+        // A right-to-left container aligns its blocks to the right edge of
+        // the column, leaving the room a narrower block does not use to its
+        // left.
+        let x = if context.rtl {
+            content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
+                - child_layout.margin.right
+        } else {
+            child_layout.location.x + context.column_offset_x(column)
+        };
         let y = content_origin.y + cursor + margin_top;
         child_layout.order = order as u32;
         child_layout.size = child_output.size;
@@ -1405,7 +1422,7 @@ fn plan_nested_continuation(
     }
     let context = FragmentationContext::resolve(content_width, None, style)?;
     let row_top = -(cursor + margin_top);
-    let row_step = outer.column_offset_x(1);
+    let row_step = outer.column_offset_x(1) - outer.column_offset_x(0);
     let max_pieces = tree
         .fragment_tree
         .limit
@@ -1483,7 +1500,6 @@ fn plan_nested_continuation(
     // container's own record in the outer column comes before the rows'.
     let rows = match paragraph_group::fill_rows(
         tree,
-        child,
         &entries,
         context,
         first,

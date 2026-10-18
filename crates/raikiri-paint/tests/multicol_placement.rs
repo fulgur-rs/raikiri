@@ -418,11 +418,13 @@ fn an_empty_fixed_height_column_container_reserves_its_box() {
 }
 
 #[test]
-fn a_single_column_rtl_container_preserves_ordinary_block_flow() {
+fn a_single_column_rtl_container_continues_in_an_overflow_column_to_the_left() {
+    // The lines past the first column go to a column 120px to the left of the
+    // page, so only the first two stay on it.
     compare(
         "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
         ".mc{height:40px;column-count:1;direction:rtl}.mc p{direction:ltr}",
-        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:40px'>E</div>",
     );
 }
 

@@ -32,6 +32,7 @@ fn fragment_origins_use_the_fragment_parent_or_the_source_node() {
 #[test]
 fn a_calc_gap_adds_its_pixel_and_percentage_terms() {
     let style = |gap: f32| MulticolStyle {
+        rtl: false,
         count: Some(2),
         width: None,
         column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -53,11 +54,45 @@ fn a_calc_gap_adds_its_pixel_and_percentage_terms() {
 }
 
 #[test]
+fn an_rtl_context_lays_its_columns_out_from_the_right_edge() {
+    let context = FragmentationContext::resolve(
+        160.0,
+        None,
+        MulticolStyle {
+            rtl: true,
+            count: Some(3),
+            width: None,
+            column_fill: raikiri_style::property::ColumnFillValue::Balance,
+            gap: 20.0,
+            gap_percent: None,
+            height_definite: false,
+            horizontal: true,
+            orphans: 2,
+            widows: 2,
+        },
+    )
+    .expect("positive used width should resolve");
+    assert_eq!(context.column_width, 40.0);
+    assert_eq!(context.column_offset_x(0), 120.0);
+    assert_eq!(context.column_offset_x(1), 60.0);
+    assert_eq!(context.column_offset_x(2), 0.0);
+    // An overflow column continues past the left edge.
+    assert_eq!(context.column_offset_x(3), -60.0);
+    let ltr = FragmentationContext {
+        rtl: false,
+        ..context
+    };
+    assert_eq!(ltr.column_offset_x(0), 0.0);
+    assert_eq!(ltr.column_offset_x(3), 180.0);
+}
+
+#[test]
 fn resolves_count_and_percentage_gap_against_used_width() {
     let context = FragmentationContext::resolve(
         100.0,
         Some(60.0),
         MulticolStyle {
+            rtl: false,
             count: Some(2),
             width: None,
             column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -81,6 +116,7 @@ fn resolves_count_and_percentage_gap_against_used_width() {
             0.0,
             None,
             MulticolStyle {
+                rtl: false,
                 count: None,
                 width: None,
                 column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -98,6 +134,7 @@ fn resolves_count_and_percentage_gap_against_used_width() {
         100.0,
         None,
         MulticolStyle {
+            rtl: false,
             count: None,
             width: Some(30.0),
             column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -115,6 +152,7 @@ fn resolves_count_and_percentage_gap_against_used_width() {
         100.0,
         None,
         MulticolStyle {
+            rtl: false,
             count: Some(1),
             width: None,
             column_fill: raikiri_style::property::ColumnFillValue::Balance,

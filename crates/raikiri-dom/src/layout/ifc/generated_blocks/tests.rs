@@ -579,6 +579,7 @@ fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
             fixture.root,
             crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
             crate::fragment::FragmentationContext {
+                rtl: false,
                 available_width: 200.0,
                 available_height: Some(20.0),
                 column_fill: raikiri_style::property::ColumnFillValue::Auto,
@@ -622,6 +623,7 @@ fn line_starts_beside_a_float_in_the_second_fragmentainer(text_indent: &str) -> 
             fixture.root,
             crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
             crate::fragment::FragmentationContext {
+                rtl: false,
                 available_width: 200.0,
                 available_height: Some(20.0),
                 column_fill: raikiri_style::property::ColumnFillValue::Auto,

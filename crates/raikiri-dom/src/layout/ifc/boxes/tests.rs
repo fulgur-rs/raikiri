@@ -176,6 +176,7 @@ fn unprojected_root_has_no_fragmentainer_tail() {
         0,
         geometry,
         FragmentationContext {
+            rtl: false,
             available_width: 100.0,
             available_height: Some(10.0),
             column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -208,6 +209,7 @@ fn final_unfragmented_column_records_only_real_line_overflow() {
     .expect("layout");
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
     let context = FragmentationContext {
+        rtl: false,
         available_width: 100.0,
         available_height: Some(0.001),
         column_fill: raikiri_style::property::ColumnFillValue::Balance,

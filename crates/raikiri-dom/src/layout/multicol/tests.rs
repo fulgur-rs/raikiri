@@ -21,7 +21,7 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
     );
     doc.append_text(child, "text");
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
 
     let original = doc.layout_node_with_style(child).unwrap().style.clone();
     doc.layout_node_with_style_mut(child)
@@ -29,43 +29,43 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
         .style
         .size
         .height = Dimension::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
     doc.layout_node_with_style_mut(child)
         .unwrap()
         .style
         .min_size
         .height = LengthPercentageAuto::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
     doc.layout_node_with_style_mut(child)
         .unwrap()
         .style
         .max_size
         .height = LengthPercentageAuto::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     *doc.layout_style_for_key_mut(child).unwrap() = original;
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Avoid;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Auto;
     doc.nodes[child].unrounded_layout.padding.top = 4.0;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     doc.nodes[child].unrounded_layout.padding.top = 0.0;
     doc.nodes[child].unrounded_layout.border.bottom = 4.0;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(!can_balance_single_paragraph(&doc, child));
     doc.nodes[child].unrounded_layout.border.bottom = 0.0;
     doc.layout_node_with_style_mut(parent)
         .unwrap()
         .style
         .padding
         .left = LengthPercentage::length(4.0);
-    assert!(can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
     doc.layout_node_with_style_mut(parent)
         .unwrap()
         .style
         .border
         .top = LengthPercentage::length(1.0);
-    assert!(can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
     doc.layout_node_with_style_mut(parent)
         .unwrap()
         .style
@@ -75,12 +75,13 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
         .unwrap()
         .style
         .direction = TaffyDirection::Rtl;
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, child));
 }
 
 #[test]
 fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
     let context = FragmentationContext {
+        rtl: false,
         available_width: 200.0,
         available_height: None,
         column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -105,6 +106,7 @@ fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
 #[test]
 fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
     let context = FragmentationContext {
+        rtl: false,
         available_width: 300.0,
         available_height: Some(100.0),
         column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -134,6 +136,7 @@ fn line_ranges_in_columns_preserves_offsets_and_satisfies_widows() {
 #[test]
 fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_columns() {
     let context = FragmentationContext {
+        rtl: false,
         available_width: 300.0,
         available_height: None,
         column_fill: raikiri_style::property::ColumnFillValue::Balance,
@@ -230,6 +233,7 @@ fn flex_float_chain_matches_an_ancestor_walk() {
         false
     }
     let multicol = |horizontal| crate::fragment::MulticolStyle {
+        rtl: false,
         count: Some(2),
         width: None,
         column_fill: ColumnFillValue::Balance,

@@ -27,6 +27,9 @@ pub(crate) struct MulticolStyle {
     pub(crate) height_definite: bool,
     /// Whether this tranche is in the supported horizontal writing mode.
     pub(crate) horizontal: bool,
+    /// Whether the container's `direction` is `rtl`, which makes columns
+    /// progress from the right edge of the container leftward.
+    pub(crate) rtl: bool,
     /// Minimum line boxes retained before a line break.
     pub(crate) orphans: usize,
     /// Minimum line boxes retained after a line break.
@@ -48,6 +51,8 @@ pub(crate) struct FragmentationContext {
     pub(crate) column_count: usize,
     /// Used gap between columns.
     pub(crate) column_gap: f32,
+    /// Whether columns progress from right to left (`direction: rtl`).
+    pub(crate) rtl: bool,
     /// Current column in the parent context.
     pub(crate) column_index: usize,
     /// Physical origin supplied by the parent fragment.
@@ -95,6 +100,7 @@ impl FragmentationContext {
             column_width,
             column_count: count,
             column_gap: gap,
+            rtl: style.rtl,
             column_index: 0,
             origin_x: 0.0,
             origin_y: 0.0,
@@ -113,9 +119,25 @@ impl FragmentationContext {
         }
     }
 
-    /// Physical inline offset of a column in this context.
+    /// Physical inline offset of a column in this context, measured from the
+    /// left edge of the container's content box. Columns progress in the
+    /// inline direction of the container (CSS Multi-column 1, 3), so the
+    /// first column of an `rtl` container sits at the right edge and later
+    /// ones, overflow columns included, follow to its left.
     pub(crate) fn column_offset_x(self, column_index: usize) -> f32 {
-        column_index as f32 * (self.column_width + self.column_gap)
+        let advance = column_index as f32 * (self.column_width + self.column_gap);
+        if self.rtl {
+            self.available_width - self.column_width - advance
+        } else {
+            advance
+        }
+    }
+
+    /// Physical offset of a block-level box `width` wide that is flush with
+    /// the right edge of a column, which leaves the space a box narrower than
+    /// the column does not use on its left.
+    pub(crate) fn right_flush_offset_x(self, column_index: usize, width: f32) -> f32 {
+        self.column_offset_x(column_index) + self.column_width - width
     }
 }
 

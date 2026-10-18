@@ -60,7 +60,8 @@ struct Group {
 }
 
 /// One rule rectangle centered in the gap after `column`: the gap midpoint
-/// is the column's inline offset plus a full column width and half the gap.
+/// is the column's inline offset plus a full column width and half the gap
+/// (minus half the gap in a right-to-left container).
 /// Shared by retained groups, fresh groups, and page projection so the three
 /// stay in agreement.
 fn column_rule_rect(
@@ -71,10 +72,14 @@ fn column_rule_rect(
     width: f32,
     height: f32,
 ) -> PaintRect {
-    let center = origin_x
-        + context.column_offset_x(column)
-        + context.column_width
-        + context.column_gap / 2.0;
+    // The gap follows the column in the inline direction: to its right in a
+    // left-to-right container and to its left in a right-to-left one.
+    let gap_center = if context.rtl {
+        -context.column_gap / 2.0
+    } else {
+        context.column_width + context.column_gap / 2.0
+    };
+    let center = origin_x + context.column_offset_x(column) + gap_center;
     PaintRect::new(center - width / 2.0, origin_y, width, height)
 }
 

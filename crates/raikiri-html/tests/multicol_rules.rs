@@ -142,6 +142,24 @@ fn public_rules_do_not_adjoin_empty_columns() {
 }
 
 #[test]
+fn public_rules_of_an_rtl_container_sit_in_the_gaps_after_each_column_to_the_left() {
+    // Two 40px columns around a 20px gap: the gap is the same as for a
+    // left-to-right container.
+    let document = lay_out(
+        "<div class=mc>A<br>B<br>C<br>D</div>",
+        ".mc{direction:rtl;column-rule:2px solid red}",
+    );
+    assert_eq!(rules(&document), [(49.0, 0.0, 2.0, 40.0)]);
+    // The first column is at the right edge, so the gap between the two used
+    // columns of three is the right one.
+    let document = lay_out(
+        "<div class=mc>A<br>B<br>C<br>D</div>",
+        ".mc{direction:rtl;width:160px;column-count:3;height:40px;column-rule:2px solid red}",
+    );
+    assert_eq!(rules(&document), [(109.0, 0.0, 2.0, 40.0)]);
+}
+
+#[test]
 fn relative_content_offsets_do_not_change_column_occupancy() {
     for body in [
         "<div class=mc><span style='display:inline-block;width:20px;height:20px;position:relative;left:60px;background:blue'></span></div>",
