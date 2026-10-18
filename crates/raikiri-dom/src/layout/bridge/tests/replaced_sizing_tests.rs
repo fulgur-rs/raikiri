@@ -327,3 +327,54 @@ fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_agai
         assert_eq!(widths, expected, "{image_css}");
     }
 }
+
+#[test]
+fn the_width_of_a_percentage_height_container_follows_the_height_it_is_measured_against() {
+    // The image sits in a flex container whose own height is a percentage, so
+    // the width of the container follows the height of the paragraph root
+    // through the image, and so does the width of the image in the container.
+    let mut parent = 0;
+    let mut doc = laid_out(|doc, body| {
+        parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:inline-block;height:100px"),
+        );
+        let container = doc.append_element(
+            Some(parent),
+            "span",
+            Style::default(),
+            Some("display:inline-flex;height:100%"),
+        );
+        doc.append_element(
+            Some(container),
+            "img",
+            Style::default(),
+            Some("height:100%"),
+        );
+    });
+    let widths: Vec<f32> = [Some(100.0), None, Some(60.0), Some(100.0)]
+        .into_iter()
+        .map(|percent_height| {
+            let intrinsics = {
+                let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+                crate::layout::ifc::boxes::intrinsics_of_boxes(
+                    &mut session,
+                    parent,
+                    100.0,
+                    percent_height,
+                )
+            };
+            let root = doc.nodes[parent].ifc.as_ref().unwrap();
+            root.paragraph
+                .intrinsic_sizes(
+                    &mut shodo::LayoutContext::new(),
+                    &root.options,
+                    &intrinsics.engine,
+                )
+                .max_content
+        })
+        .collect();
+    assert_eq!(widths, [50.0, 25.0, 30.0, 50.0]);
+}
