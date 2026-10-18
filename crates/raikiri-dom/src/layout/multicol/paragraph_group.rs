@@ -472,11 +472,13 @@ pub(super) fn fill_rows(
             }
         }
         result.heights.push(height);
-        match chunk.next {
-            None => return Ok(result),
-            Some(next) if next != resume => resume = next,
-            Some(_) => return Err(RowsStop::Unsupported), // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
-        }
+        let Some(next) = chunk.next else {
+            return Ok(result);
+        };
+        // A continuation only follows an advanced line or paragraph; were it
+        // not, the rows bound would still end the loop.
+        debug_assert!(next != resume);
+        resume = next;
     }
     Err(RowsStop::Exhausted)
 }
