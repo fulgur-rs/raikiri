@@ -3273,6 +3273,61 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
     );
 }
 
+/// Check absolute conversion for the `inset` shorthand and its two-value
+/// logical forms, which `absolutize_in_page_context` handles like the margin
+/// ones (`auto` survives on whichever side carries it).
+#[test]
+fn absolutize_in_page_context_inset_shorthand_fall_throughs() {
+    let fs = ComputedLength(20.0);
+    let ctx = ResolveContext::new(ComputedLength(16.0));
+    let styles = Sides::all(BorderStyle::None);
+    let absolutize = |value| {
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(value),
+            fs,
+            None,
+            &ctx,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
+            OverflowXY::both(OverflowValue::Visible),
+        )
+    };
+
+    assert_eq!(
+        absolutize(PropertyValue::Inset(Box::new(Sides {
+            top: LengthOrAuto::Length(Length::Em(1.0)),
+            right: LengthOrAuto::Auto,
+            bottom: LengthOrAuto::Length(Length::Rem(2.0)),
+            left: LengthOrAuto::Length(Length::Px(5.0)),
+        }))),
+        PropertyValue::Inset(Box::new(Sides {
+            top: LengthOrAuto::Length(Length::Px(20.0)),
+            right: LengthOrAuto::Auto,
+            bottom: LengthOrAuto::Length(Length::Px(32.0)),
+            left: LengthOrAuto::Length(Length::Px(5.0)),
+        })),
+    );
+    assert_eq!(
+        absolutize(PropertyValue::InsetInline(StartEnd {
+            start: LengthOrAuto::Length(Length::Rem(2.0)),
+            end: LengthOrAuto::Auto,
+        })),
+        PropertyValue::InsetInline(StartEnd {
+            start: LengthOrAuto::Length(Length::Px(32.0)),
+            end: LengthOrAuto::Auto,
+        }),
+    );
+    assert_eq!(
+        absolutize(PropertyValue::InsetBlock(StartEnd {
+            start: LengthOrAuto::Auto,
+            end: LengthOrAuto::Length(Length::Em(3.0)),
+        })),
+        PropertyValue::InsetBlock(StartEnd {
+            start: LengthOrAuto::Auto,
+            end: LengthOrAuto::Length(Length::Px(60.0)),
+        }),
+    );
+}
+
 /// Direct exercise of `absolutize_in_page_context`'s `flex-basis`/
 /// `row-gap`/`column-gap` handling (the local `fb`/`lpn` helpers
 /// above) across every one of their match arms — the `sample_for`
@@ -4513,6 +4568,13 @@ property_key_samples! {
     Right => PropertyValue::Right(LengthOrAuto::Auto),
     Bottom => PropertyValue::Bottom(LengthOrAuto::Auto),
     Left => PropertyValue::Left(LengthOrAuto::Auto),
+    // `inset` and its logical forms carry a relative length, unlike the
+    // `auto` samples of their longhands, so absolutization is visible.
+    Inset => PropertyValue::Inset(Box::new(Sides::all(LengthOrAuto::Length(Length::Rem(2.0))))),
+    InsetInline =>
+        PropertyValue::InsetInline(StartEnd::both(LengthOrAuto::Length(Length::Rem(2.0)))),
+    InsetBlock =>
+        PropertyValue::InsetBlock(StartEnd::both(LengthOrAuto::Length(Length::Rem(2.0)))),
     // CSS Tables 3 §4 table-layout — non-initial (`fixed`, not `auto`)
     // so a would-be pass-through regression (accidentally routing this
     // arm through a transform) is visible (`Isolation` sibling comment
@@ -5020,6 +5082,9 @@ property_value_variant_registry! {
     Right,
     Bottom,
     Left,
+    Inset,
+    InsetInline,
+    InsetBlock,
     Font,
     TextDecorationSkipInk,
     TextDecorationSkipSpaces,
@@ -5525,9 +5590,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
                 start_end(*p, length_percentage_or_calc)
             }
-            PropertyValue::MarginInline(p) | PropertyValue::MarginBlock(p) => {
-                start_end(*p, length_or_auto)
-            }
+            PropertyValue::MarginInline(p)
+            | PropertyValue::MarginBlock(p)
+            | PropertyValue::InsetInline(p)
+            | PropertyValue::InsetBlock(p) => start_end(*p, length_or_auto),
+            PropertyValue::Inset(s) => sides(**s, length_or_auto),
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
             PropertyValue::BorderTop(b) => length(b.width),
             PropertyValue::BorderRight(b) => length(b.width),

@@ -466,6 +466,18 @@ pub(crate) fn parse_property_grammar(
         "right" => parse_inset(input).map(PropertyValue::Right),
         "bottom" => parse_inset(input).map(PropertyValue::Bottom),
         "left" => parse_inset(input).map(PropertyValue::Left),
+        // CSS Positioned Layout 3 §3 `inset` shorthand (1–4 values, expanded like `margin` when the
+        // declaration is parsed; see `PropertyValue::Inset`).
+        "inset" => parse_inset_shorthand(input).map(|sides| PropertyValue::Inset(Box::new(sides))),
+        // CSS Logical Properties and Values 1 §4.3 inset-inline-start/-end /
+        // inset-block-start/-end — parsed into the physical longhand each maps to in
+        // `horizontal-tb` with `direction: ltr`, like the margin and padding flow-relative longhands.
+        "inset-inline-start" => parse_inset(input).map(PropertyValue::Left),
+        "inset-inline-end" => parse_inset(input).map(PropertyValue::Right),
+        "inset-block-start" => parse_inset(input).map(PropertyValue::Top),
+        "inset-block-end" => parse_inset(input).map(PropertyValue::Bottom),
+        "inset-inline" => parse_inset_logical_shorthand(input).map(PropertyValue::InsetInline),
+        "inset-block" => parse_inset_logical_shorthand(input).map(PropertyValue::InsetBlock),
         // CSS Text 3 §6.1 text-align.
         // The spec defines a shorthand (text-align-all + text-align-last), but
         // we store one field (case (b) unsupported; see the `TextAlign` doc comment).

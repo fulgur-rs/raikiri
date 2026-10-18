@@ -387,6 +387,26 @@ fn deferred_projection_covers_supported_shorthands() {
             ],
         ),
         (
+            "inset",
+            "1px 2px 3px 4px",
+            vec![
+                PropertyKey::Top,
+                PropertyKey::Right,
+                PropertyKey::Bottom,
+                PropertyKey::Left,
+            ],
+        ),
+        (
+            "inset-inline",
+            "1px 2px",
+            vec![PropertyKey::Left, PropertyKey::Right],
+        ),
+        (
+            "inset-block",
+            "1px 2px",
+            vec![PropertyKey::Top, PropertyKey::Bottom],
+        ),
+        (
             "border",
             "1px solid red",
             vec![
@@ -2976,4 +2996,71 @@ fn mixed_calc_margin_and_padding_keep_the_percentage_until_used_time() {
         cv.border_image.width.right,
         BorderImageWidthSide::Number(2.0)
     );
+}
+
+// ── `var()` in the `inset` family ──
+
+#[test]
+fn var_in_inset_shorthand_preserves_later_longhand_cascade() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--offset: 10px; inset: var(--offset); left: 20px"),
+    );
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(20.0));
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(10.0));
+    assert_eq!(cv.right, ComputedLengthPercentageOrAuto::Px(10.0));
+    assert_eq!(cv.bottom, ComputedLengthPercentageOrAuto::Px(10.0));
+}
+
+#[test]
+fn var_in_inset_inline_and_block_shorthands_fan_out_to_their_axis() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--a: 1px; --b: 2px; inset-inline: var(--a) var(--b); inset-block: var(--b)"),
+    );
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.right, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(cv.bottom, ComputedLengthPercentageOrAuto::Px(2.0));
+}
+
+#[test]
+fn var_in_inset_inline_start_follows_direction() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--offset: 9px; direction: rtl; inset-inline-start: var(--offset)"),
+    );
+    assert_eq!(cv.right, ComputedLengthPercentageOrAuto::Px(9.0));
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Auto);
+}
+
+#[test]
+fn mixed_calc_in_inset_shorthands_resolves_per_longhand() {
+    use crate::property::CalcLengthPercentage;
+    use crate::resolve::ComputedLengthPercentageOrAuto as Auto;
+    let calc = |percent, px| CalcLengthPercentage { percent, px };
+
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 20px; inset: calc(10% + 1em) calc(1px + 2px)"),
+    );
+    assert_eq!(cv.top, Auto::Calc(calc(10.0, 20.0)));
+    assert_eq!(cv.right, Auto::Px(3.0));
+    assert_eq!(cv.bottom, Auto::Calc(calc(10.0, 20.0)));
+    assert_eq!(cv.left, Auto::Px(3.0));
+
+    let cv = cascade_doc("", "div", Some("inset-inline: calc(10% + 1px) auto"));
+    assert_eq!(cv.left, Auto::Calc(calc(10.0, 1.0)));
+    assert_eq!(cv.right, Auto::Auto);
+
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--a: 10%; inset-block-start: calc(var(--a) + 1px)"),
+    );
+    assert_eq!(cv.top, Auto::Calc(calc(10.0, 1.0)));
 }

@@ -10078,6 +10078,32 @@ pub enum PropertyValue {
     Bottom(LengthOrAuto),
     /// `left: auto | <length-percentage>` — **non-inherited**, initial: `auto`.
     Left(LengthOrAuto),
+    /// `inset: <'top'>{1,4}` shorthand — CSS Positioned Layout 3 §3
+    /// (<https://www.w3.org/TR/css-position-3/#propdef-inset>): one to four
+    /// values, expanded like `margin` (top, right, bottom, left). The
+    /// flow-relative `inset-*` longhands and two-value shorthands are CSS
+    /// Logical Properties and Values 1 §4.3
+    /// (<https://www.w3.org/TR/css-logical-1/#propdef-inset-inline>).
+    ///
+    /// **This variant is not observed during element cascade**:
+    /// [`crate::rule::expand_shorthand_into`] expands it into the four
+    /// [`Self::Top`] / [`Self::Right`] / [`Self::Bottom`] / [`Self::Left`]
+    /// longhands when the declaration is parsed, as it does for
+    /// [`Self::Margin`] (whose docs are canonical for why).
+    Inset(Box<Sides<LengthOrAuto>>),
+    /// `inset-inline: <'top'>{1,2}` shorthand — the inline-axis sibling of
+    /// [`Self::Inset`]. The first value is `inset-inline-start`, the second
+    /// `inset-inline-end` (the first value is copied when the second is
+    /// omitted). Like `margin-inline`, the flow-relative longhands are stored
+    /// under the physical side they map to in `horizontal-tb` with
+    /// `direction: ltr` ([`Self::Left`] / [`Self::Right`]) and tagged with their
+    /// flow-relative side, and the cascade moves them to the element's own
+    /// physical side (see the "Physical mapping" section of
+    /// [`Self::PaddingInline`]).
+    InsetInline(StartEnd<LengthOrAuto>),
+    /// `inset-block: <'top'>{1,2}` shorthand — the block-axis sibling of
+    /// [`Self::InsetInline`], expanding into [`Self::Top`] / [`Self::Bottom`].
+    InsetBlock(StartEnd<LengthOrAuto>),
     /// `text-align: start | end | left | right | center | justify | match-parent
     /// | justify-all` — **inherited**, initial: [`TextAlign::Start`]
     /// (CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
@@ -11552,6 +11578,12 @@ pub enum PropertyKey {
     Right,
     Bottom,
     Left,
+    // inset shorthand and its logical 2-value forms (semantics on the
+    // matching PropertyValue::Inset* variants). Placed after the longhands
+    // they can compete with, like `PaddingInline`/`MarginInline`.
+    Inset,
+    InsetInline,
+    InsetBlock,
     TextAlign,
     TextIndent,
     PaddingTop,
@@ -12121,6 +12153,9 @@ impl PropertyValue {
             PropertyValue::Right(_) => PropertyKey::Right,
             PropertyValue::Bottom(_) => PropertyKey::Bottom,
             PropertyValue::Left(_) => PropertyKey::Left,
+            PropertyValue::Inset(_) => PropertyKey::Inset,
+            PropertyValue::InsetInline(_) => PropertyKey::InsetInline,
+            PropertyValue::InsetBlock(_) => PropertyKey::InsetBlock,
             PropertyValue::TextAlign(_) => PropertyKey::TextAlign,
             PropertyValue::HangingPunctuation(_) => PropertyKey::HangingPunctuation,
             PropertyValue::TextIndent(_) => PropertyKey::TextIndent,
@@ -12868,15 +12903,15 @@ pub(crate) fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> b
         prop.to_ascii_lowercase().as_str(),
         "color" | "background-color"
     );
-    let dummies: &[&str] = if color_property {
-        &["1", "50%", "1deg"]
+    let dummies: Vec<String> = if color_property {
+        vec!["1".into(), "50%".into(), "1deg".into()]
     } else if math_source_has_dimension_or_percentage(value) {
-        &["1px"]
+        vec![folded_math_dummy(value)]
     } else {
-        &["1"]
+        vec!["1".into()]
     };
 
-    for dummy_value in dummies {
+    for dummy_value in &dummies {
         let Some(dummy) = replace_math_with_dummy_and_number(value, dummy_value) else {
             continue;
         };
@@ -12891,6 +12926,30 @@ pub(crate) fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> b
         }
     }
     false
+}
+
+/// The stand-in that replaces the math functions of a dimensioned `value` when its structure is
+/// checked: `1px`, unless the math function folds to one dimension or percentage, whose unit the
+/// stand-in then keeps. `calc(20deg)` is an angle, so `top: calc(20deg)` is invalid whichever
+/// length terms an unfolded sum could have held. A function that does not fold to a single token,
+/// such as `calc(2em + 3ex)`, keeps `1px`.
+pub(crate) fn folded_math_dummy(value: &str) -> String {
+    const LENGTH: &str = "1px";
+    let Some(folded) = crate::cascade::simplify_math_functions(value) else {
+        return LENGTH.into();
+    };
+    let mut input = ParserInput::new(&folded);
+    let mut parser = Parser::new(&mut input);
+    let dummy = match parser.next() {
+        Ok(Token::Dimension { unit, .. }) => format!("1{unit}"),
+        Ok(Token::Percentage { .. }) => "1%".into(),
+        _ => return LENGTH.into(),
+    };
+    if parser.is_exhausted() {
+        dummy
+    } else {
+        LENGTH.into()
+    }
 }
 
 /// Replace real math function tokens while preserving all other source bytes.
@@ -13193,6 +13252,17 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "right" => PropertyKey::Right,
         "bottom" => PropertyKey::Bottom,
         "left" => PropertyKey::Left,
+        "inset" => PropertyKey::Inset,
+        "inset-inline" => PropertyKey::InsetInline,
+        "inset-block" => PropertyKey::InsetBlock,
+        // CSS Logical Properties and Values 1 §4.3 inset-inline-start/-end /
+        // inset-block-start/-end — keyed by the {left,right,top,bottom} side
+        // they map to in horizontal-tb ltr; the cascade moves them by the
+        // element's writing mode, like the margin and padding longhands.
+        "inset-inline-start" => PropertyKey::Left,
+        "inset-inline-end" => PropertyKey::Right,
+        "inset-block-start" => PropertyKey::Top,
+        "inset-block-end" => PropertyKey::Bottom,
         "text-align" => PropertyKey::TextAlign,
         "hanging-punctuation" => PropertyKey::HangingPunctuation,
         "text-autospace" => PropertyKey::TextAutospace,

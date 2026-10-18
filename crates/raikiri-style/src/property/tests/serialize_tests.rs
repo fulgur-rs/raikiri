@@ -120,6 +120,46 @@ fn serialize_value_covers_safe_length_or_auto_variants() {
 }
 
 #[test]
+fn serialize_value_covers_inset_shorthands() {
+    let px = |v| LengthOrAuto::Length(Length::Px(v));
+    assert_eq!(
+        serialize_value(&PropertyValue::Inset(Box::new(Sides {
+            top: px(1.0),
+            right: LengthOrAuto::Auto,
+            bottom: px(3.0),
+            left: LengthOrAuto::Auto,
+        }))),
+        Some("1px auto 3px".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::InsetInline(StartEnd {
+            start: px(1.0),
+            end: LengthOrAuto::Auto,
+        })),
+        Some("1px auto".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::InsetBlock(StartEnd {
+            start: LengthOrAuto::Auto,
+            end: px(2.0),
+        })),
+        Some("auto 2px".to_owned())
+    );
+    // The margin pairs share the arm with the inset pairs.
+    assert_eq!(
+        serialize_value(&PropertyValue::MarginInline(StartEnd::both(px(4.0)))),
+        Some("4px".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::MarginBlock(StartEnd {
+            start: px(1.0),
+            end: px(2.0),
+        })),
+        Some("1px 2px".to_owned())
+    );
+}
+
+#[test]
 fn serialize_value_excludes_width_height_min_max_variants() {
     assert_eq!(
         serialize_value(&PropertyValue::Width(LengthOrAuto::Auto)),

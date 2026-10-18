@@ -22,9 +22,10 @@ use crate::rule::{
     expand_border_right, expand_border_right_css_wide, expand_border_style, expand_border_top,
     expand_border_top_css_wide, expand_border_width, expand_flex, expand_flex_flow, expand_font,
     expand_gap, expand_grid, expand_grid_column, expand_grid_row, expand_grid_template,
-    expand_margin, expand_margin_block, expand_margin_inline, expand_outline, expand_overflow,
-    expand_padding, expand_padding_block, expand_padding_inline, expand_place_content,
-    expand_place_items, expand_place_self, expand_text_decoration,
+    expand_inset, expand_inset_block, expand_inset_inline, expand_margin, expand_margin_block,
+    expand_margin_inline, expand_outline, expand_overflow, expand_padding, expand_padding_block,
+    expand_padding_inline, expand_place_content, expand_place_items, expand_place_self,
+    expand_text_decoration,
 };
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -2687,6 +2688,9 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)
         | PropertyValue::Left(_)
+        | PropertyValue::Inset(_)
+        | PropertyValue::InsetInline(_)
+        | PropertyValue::InsetBlock(_)
         | PropertyValue::BoxSizing(_)
         // `overflow-x`/`overflow-y`/`overflow` join this arm — CSS Overflow 3
         // §3.1's cross-axis coupling (`resolve_overflow`) depends only on the
@@ -3422,6 +3426,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Right(v) => target.right = v,
         PropertyValue::Bottom(v) => target.bottom = v,
         PropertyValue::Left(v) => target.left = v,
+        PropertyValue::Inset(sides) => expand_inset(*sides, |v| apply_value(v, target)),
+        PropertyValue::InsetInline(pair) => expand_inset_inline(pair, |v| apply_value(v, target)),
+        PropertyValue::InsetBlock(pair) => expand_inset_block(pair, |v| apply_value(v, target)),
         PropertyValue::BoxSizing(bs) => target.box_sizing = bs,
         PropertyValue::OverflowX(v) => target.overflow.x = v,
         PropertyValue::OverflowY(v) => target.overflow.y = v,
