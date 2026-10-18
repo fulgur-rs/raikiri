@@ -217,9 +217,22 @@ fn an_atomic_inline_first_keeps_the_text_beside_it_on_the_first_line() {
 }
 
 #[test]
-fn an_empty_paragraph_draws_nothing() {
-    let rgba = raster("<p></p>", "p{color:red} p::first-line{color:blue}");
+fn a_paragraph_without_content_draws_nothing() {
+    let rgba = raster(
+        "<p></p><p> <!--c--><span></span></p>",
+        "p{color:red} p::first-line{color:blue}",
+    );
     assert_eq!(count(&rgba, BLUE) + count(&rgba, RED), 0);
+}
+
+#[test]
+fn white_space_that_is_discarded_does_not_hold_the_first_line() {
+    let rgba = raster(
+        "<div class=outer> <div>X</div></div>",
+        ".outer{white-space-collapse:discard;color:red} .outer::first-line{color:blue} \
+         .outer div{white-space-collapse:collapse}",
+    );
+    assert_eq!(pixel(&rgba, 5, 5), BLUE);
 }
 
 #[test]
