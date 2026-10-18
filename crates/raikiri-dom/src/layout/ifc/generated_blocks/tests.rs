@@ -237,6 +237,7 @@ fn flow<'a, 'b>(
         lines: &[],
         ctx,
         width: 100.0,
+        content_left: 0.0,
         top_edge: 0.0,
         definite_height: None,
         at_start: false,
@@ -656,4 +657,277 @@ fn a_line_after_a_forced_break_in_an_earlier_fragmentainer_keeps_its_indent() {
         line_starts_beside_a_float_in_the_second_fragmentainer("10px each-line"),
         [10.0, 10.0, 10.0]
     );
+}
+
+/// The paragraph `text` styled `root_css`, with floats styled `floats` before
+/// it, laid out with the generated blocks of `sheet`: its lines and the boxes
+/// the line loop placed.
+fn placed_after_floats(
+    sheet: &str,
+    root_css: &str,
+    floats: &[&str],
+    text: &str,
+) -> (Vec<shodo::Line>, Vec<PlacedBlock>) {
+    let mut fixture =
+        crate::layout::ifc::test_support::sheet_fixture(sheet, root_css, |doc, root| {
+            for float_css in floats {
+                crate::layout::ifc::test_support::span(doc, root, float_css);
+            }
+            doc.append_text(root, text);
+        });
+    layout_single_page(
+        with_ahem(&mut fixture.doc),
+        &fixture.cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    let lines = fixture.doc.nodes[fixture.root]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("lines");
+    (lines.lines.to_vec(), lines.placed_blocks.clone())
+}
+
+const FLOAT_20X30: &str = "float: left; width: 20px; height: 30px";
+
+/// The block `::after` of `display` styled `css` after a 20x30 left float in
+/// a 100px paragraph: the offsets of its line and the border box it was
+/// placed in.
+fn block_after_float(display: &str, css: &str, root_css: &str) -> (Vec<(f32, f32)>, BoxRect) {
+    let (lines, blocks) = placed_after_floats(
+        &format!("div::after {{ content: 'XXX'; display: {display}; {css} }}"),
+        root_css,
+        &[FLOAT_20X30],
+        "",
+    );
+    let [block] = blocks.as_slice() else {
+        panic!("one placed block: {blocks:?}")
+    };
+    let tops = lines.iter().map(|line| line.block_offset());
+    (tops.zip(line_starts(&lines)).collect(), block.border_box)
+}
+
+fn rect(x: f32, y: f32, width: f32, height: f32) -> BoxRect {
+    BoxRect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+#[test]
+fn a_formatting_root_block_goes_beside_a_float_with_its_lines_at_full_width() {
+    // The 30px word fits the 40px box, which fits beside the 20px float.
+    assert_eq!(
+        block_after_float("flow-root", "width: 40px", TEN_PX),
+        (vec![(0.0, 20.0)], rect(20.0, 0.0, 40.0, 10.0))
+    );
+    // An ordinary block of the same size lies under the float, so its line is
+    // left with 20px and moves below it.
+    assert_eq!(
+        block_after_float("block", "width: 40px", TEN_PX),
+        (vec![(30.0, 0.0)], rect(0.0, 0.0, 40.0, 40.0))
+    );
+    // An `auto` width takes the room the float leaves.
+    assert_eq!(
+        block_after_float("flow-root", "", TEN_PX),
+        (vec![(0.0, 20.0)], rect(20.0, 0.0, 80.0, 10.0))
+    );
+    // A scroll container is one too.
+    assert_eq!(
+        block_after_float("block", "width: 40px; overflow: hidden", TEN_PX),
+        (vec![(0.0, 20.0)], rect(20.0, 0.0, 40.0, 10.0))
+    );
+}
+
+#[test]
+fn a_formatting_root_block_wider_than_the_room_beside_a_float_goes_below_it() {
+    let below = (vec![(30.0, 0.0)], rect(0.0, 30.0, 90.0, 10.0));
+    assert_eq!(block_after_float("flow-root", "width: 90px", TEN_PX), below);
+    // Its top margin does not collapse with the margins above it, and
+    // clearance puts it there as well.
+    assert_eq!(
+        block_after_float("flow-root", "width: 90px; margin-top: 5px", TEN_PX),
+        below
+    );
+    assert_eq!(
+        block_after_float("flow-root", "width: 90px; clear: left", TEN_PX),
+        below
+    );
+    assert_eq!(
+        block_after_float("flow-root", "width: 40px; clear: left", TEN_PX),
+        (vec![(30.0, 0.0)], rect(0.0, 30.0, 40.0, 10.0))
+    );
+}
+
+#[test]
+fn a_formatting_root_block_takes_the_first_gap_among_floats_that_fits_it() {
+    // The 60px and 30px floats leave 10px between them for 10px, then 70px.
+    let (lines, blocks) = placed_after_floats(
+        "div::after { content: 'XXX'; display: flow-root; width: 40px }",
+        TEN_PX,
+        &[
+            "float: left; width: 60px; height: 10px",
+            "float: right; width: 30px; height: 20px",
+        ],
+        "",
+    );
+    assert_eq!(
+        blocks
+            .iter()
+            .map(|block| block.border_box)
+            .collect::<Vec<_>>(),
+        [rect(0.0, 10.0, 40.0, 10.0)]
+    );
+    assert_eq!(line_starts(&lines), [0.0]);
+}
+
+#[test]
+fn the_margins_of_a_formatting_root_block_beside_a_float_are_placed_by_the_slot() {
+    let left = |css: &str| block_after_float("flow-root", css, TEN_PX).1.x;
+    // A margin the float already takes up moves nothing.
+    assert_eq!(left("width: 40px; margin-left: 5px"), 20.0);
+    assert_eq!(left("width: 40px; margin-left: 30px"), 30.0);
+    // `auto` margins share the room beside the float.
+    assert_eq!(left("width: 40px; margin: 0 auto"), 40.0);
+    assert_eq!(left("width: 40px; margin-left: auto"), 60.0);
+    assert_eq!(left("width: 40px; margin-right: auto"), 20.0);
+    // Padding and border are inside the width the box takes.
+    let (lines, border_box) = block_after_float(
+        "flow-root",
+        "width: 40px; padding: 0 5px; border-left: 2px solid",
+        TEN_PX,
+    );
+    assert_eq!(border_box, rect(20.0, 0.0, 52.0, 10.0));
+    assert_eq!(lines, [(0.0, 27.0)]);
+    // A narrow box in a right-to-left paragraph is at its end side.
+    assert_eq!(
+        block_after_float(
+            "flow-root",
+            "width: 40px",
+            &format!("{TEN_PX}; direction: rtl")
+        )
+        .1,
+        rect(60.0, 0.0, 40.0, 10.0)
+    );
+}
+
+#[test]
+fn the_lines_of_a_formatting_root_block_beside_a_float_are_not_moved_below_it() {
+    // A word wider than the box overflows it where the box is, instead of
+    // moving below the float.
+    assert_eq!(
+        block_after_float("flow-root", "width: 20px", TEN_PX),
+        (vec![(0.0, 20.0)], rect(20.0, 0.0, 20.0, 10.0))
+    );
+    // Further lines stay in the box once the float ends.
+    let (lines, blocks) = placed_after_floats(
+        "div::after { content: 'XXX XXX'; display: flow-root; width: 40px }",
+        TEN_PX,
+        &["float: left; width: 20px; height: 10px"],
+        "",
+    );
+    assert_eq!(line_starts(&lines), [20.0, 20.0]);
+    assert_eq!(blocks[0].border_box, rect(20.0, 0.0, 40.0, 20.0));
+}
+
+#[test]
+fn a_formatting_root_block_before_goes_beside_a_float_on_either_side() {
+    let before = |css: &str, float_css: &str| {
+        let (lines, blocks) = placed_after_floats(
+            &format!("div::before {{ content: 'XXX'; display: flow-root; {css} }}"),
+            TEN_PX,
+            &[float_css],
+            "A",
+        );
+        (line_starts(&lines), blocks[0].border_box)
+    };
+    // The float comes after the `::before` in the paragraph, so the box is
+    // where it was and the text after it goes beside the float.
+    assert_eq!(
+        before("width: 40px", FLOAT_20X30),
+        ([0.0, 20.0].to_vec(), rect(0.0, 0.0, 40.0, 10.0))
+    );
+    // A right float takes the room on the end side only.
+    let (lines, blocks) = placed_after_floats(
+        "div::after { content: 'XXX'; display: flow-root }",
+        TEN_PX,
+        &["float: right; width: 30px; height: 30px"],
+        "",
+    );
+    assert_eq!(line_starts(&lines), [0.0]);
+    assert_eq!(blocks[0].border_box, rect(0.0, 0.0, 70.0, 10.0));
+}
+
+#[test]
+fn a_formatting_root_block_beside_a_float_resolves_its_width_in_the_room_left() {
+    let width = |css: &str| block_after_float("flow-root", css, TEN_PX).1.width;
+    // Percentages are of the paragraph, not of the room beside the float.
+    assert_eq!(width("width: 50%"), 50.0);
+    assert_eq!(
+        width("width: 50%; box-sizing: border-box; padding: 0 5px"),
+        50.0
+    );
+    assert_eq!(width("width: 50%; padding: 0 5px"), 60.0);
+    // An `auto` width takes the room left, within its minimum and maximum.
+    assert_eq!(width("max-width: 50px"), 50.0);
+    assert_eq!(width("min-width: 70px"), 80.0);
+    // Too wide a minimum width puts the box below the float, where an `auto`
+    // width takes the whole paragraph.
+    assert_eq!(width("min-width: 90px"), 100.0);
+}
+
+/// The block `::before` of `css` before a paragraph that follows a sibling
+/// float styled `float_css`: the left edge and top of its border box.
+fn before_after_sibling_float(css: &str, float_css: &str) -> (f32, f32) {
+    let (mut doc, _, _, root) =
+        crate::layout::test_support::ahem_paragraph_beside_floats("A", &[float_css], "");
+    let style_element = doc.append_element(
+        Some(root),
+        "style",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    doc.append_text(
+        style_element,
+        format!("div > div:last-child::before {{ content: 'XXX'; display: flow-root; {css} }}"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let lines = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("lines");
+    let [block] = lines.placed_blocks.as_slice() else {
+        panic!("one placed block: {:?}", lines.placed_blocks)
+    };
+    (block.border_box.x, block.border_box.y)
+}
+
+#[test]
+fn a_float_adjoining_the_margins_above_a_formatting_root_block_moves_with_them() {
+    // The float and the margin that escapes above the box go down together,
+    // so the box is beside the float, whatever the margin, and the layout
+    // settles where it would otherwise move the float and the box in turn.
+    for margin in ["0", "10px", "40px", "-10px"] {
+        assert_eq!(
+            before_after_sibling_float(&format!("width: 40px; margin-top: {margin}"), FLOAT_20X30)
+                .0,
+            20.0,
+            "margin-top: {margin}"
+        );
+    }
+    // A box too wide for the room beside the float goes below it.
+    for margin in ["10px", "40px"] {
+        assert_eq!(
+            before_after_sibling_float(&format!("width: 90px; margin-top: {margin}"), FLOAT_20X30),
+            (0.0, 30.0),
+            "margin-top: {margin}"
+        );
+    }
 }
