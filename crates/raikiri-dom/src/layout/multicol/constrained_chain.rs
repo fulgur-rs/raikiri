@@ -30,7 +30,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || node.style.direction != TaffyDirection::Ltr
             || node.style.float.is_floated()
             || node.style.clear != defaults.clear
-            || node.style.inset != Rect::auto()
+            || !super::insets_are_a_relative_inline_offset(tree, child)
             || node.style.padding != Rect::zero()
             || node.style.border != Rect::zero()
             || node.style.overflow.x == taffy::Overflow::Scroll

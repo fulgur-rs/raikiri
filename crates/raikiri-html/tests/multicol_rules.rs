@@ -573,6 +573,10 @@ fn a_relative_box_in_a_column_keeps_its_text_where_it_is_painted() {
             format!(" style='margin-left:5px'><div><p>{text}</p></div>"),
         ),
         (
+            format!("><div style='position:relative;left:5px;width:40px'><p>{text}</p></div>"),
+            format!(" style='margin-left:5px'><div style='width:40px'><p>{text}</p></div>"),
+        ),
+        (
             format!(
                 "><div style='position:relative;left:5px'><div class=mc2><p>{text}</p></div></div>"
             ),
