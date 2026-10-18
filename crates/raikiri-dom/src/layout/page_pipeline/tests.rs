@@ -8,6 +8,7 @@ mod candidate_text_tests;
 mod fragment_sources_tests;
 pub(super) mod link_ancestor_tests;
 mod paged_spanning_tests;
+mod source_walk_tests;
 mod table_follow_tests;
 
 #[test]

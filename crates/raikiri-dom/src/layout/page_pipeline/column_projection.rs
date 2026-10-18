@@ -87,7 +87,7 @@ fn generated_kind(node: usize) -> Option<(usize, crate::GeneratedKind)> {
 /// its rectangle from the root's content-box origin.
 pub(crate) type PreparedContentImage = (f32, f32, usize, crate::PositionedContentImage);
 
-type TextGroups = Vec<(f32, usize, u32, IfcTextLines)>;
+pub(super) type TextGroups = Vec<(f32, usize, u32, IfcTextLines)>;
 
 #[derive(Clone, Default)]
 pub(super) struct ColumnProjection {
