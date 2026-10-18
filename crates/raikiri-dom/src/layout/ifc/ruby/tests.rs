@@ -301,7 +301,7 @@ fn annotation_boxes_keep_their_place_in_tree_order() {
 
 #[test]
 fn content_without_a_ruby_mapping_falls_back() {
-    let unplain: [fn(&mut Document, usize); 7] = [
+    let unplain: [fn(&mut Document, usize); 6] = [
         // An atomic inline.
         |doc, ruby| {
             element(doc, ruby, "span", "display:inline-block");
@@ -322,11 +322,6 @@ fn content_without_a_ruby_mapping_falls_back() {
         |doc, ruby| {
             let inner = element(doc, ruby, "ruby", "display:ruby");
             element(doc, inner, "span", "display:inline-block");
-        },
-        // An annotation in a base container.
-        |doc, ruby| {
-            let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
-            rt(doc, rbc, "x");
         },
         // A base in a text container.
         |doc, ruby| {
@@ -800,6 +795,136 @@ fn annotations_sit_over_their_bases() {
     assert!(!base.1);
     assert!(annotation.1);
     assert!(annotation.2.1 < base.2.1, "{runs:?}");
+}
+
+/// Whether a ruby container with the content `build` adds is laid out as
+/// ruby rather than left to the ordinary inline path.
+fn is_planned(build: impl FnOnce(&mut Document, usize)) -> bool {
+    let mut container = 0;
+    let fixture = block_fixture("", |doc, root| {
+        container = ruby(doc, root);
+        build(doc, container);
+    });
+    plan(&fixture.doc, &fixture.cascade, container).is_some()
+}
+
+/// The first glyph of every run of a ruby container with the content `build`
+/// adds, as whether it is an annotation and where it is.
+fn glyph_positions(build: impl FnOnce(&mut Document, usize)) -> Vec<(bool, (f32, f32))> {
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        build(doc, container);
+    });
+    runs(fixture)
+        .into_iter()
+        .map(|(_, annotation, position)| (annotation, position))
+        .collect()
+}
+
+#[test]
+fn an_annotation_in_a_base_container_sits_over_an_empty_base_of_its_own() {
+    let improper = glyph_positions(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        doc.append_text(rbc, "B");
+        rt(doc, rbc, "A");
+    });
+    // An anonymous ruby container wraps the annotation, whose base is empty.
+    let wrapped = glyph_positions(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        doc.append_text(rbc, "B");
+        let inner = self::ruby(doc, rbc);
+        doc.append_text(inner, "\u{200B}");
+        rt(doc, inner, "A");
+    });
+    let find = |positions: &[(bool, (f32, f32))], annotation: bool| {
+        positions
+            .iter()
+            .find(|glyph| glyph.0 == annotation)
+            .copied()
+            .expect("run")
+    };
+    let (base, annotation) = (find(&improper, false), find(&improper, true));
+    assert_eq!(base, find(&wrapped, false), "{improper:?} {wrapped:?}");
+    assert_eq!(annotation, find(&wrapped, true), "{improper:?} {wrapped:?}");
+    // The annotation is over its own base, which follows the base text and is
+    // empty, so it is above the line and past the base text.
+    assert!(annotation.1.1 < base.1.1, "{improper:?}");
+    assert!(annotation.1.0 > base.1.0, "{improper:?}");
+}
+
+#[test]
+fn consecutive_improper_annotations_each_get_a_base() {
+    let positions = glyph_positions(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        doc.append_text(rbc, "B");
+        rt(doc, rbc, "A");
+        doc.append_text(rbc, " ");
+        rt(doc, rbc, "C");
+    });
+    let annotations: Vec<_> = positions.iter().filter(|glyph| glyph.0).collect();
+    let [first, second] = annotations.as_slice() else {
+        panic!("{positions:?}");
+    };
+    assert_eq!(first.1.1, second.1.1);
+    assert!(first.1.0 < second.1.0, "{positions:?}");
+}
+
+#[test]
+fn text_between_improper_annotations_ends_their_run() {
+    let positions = glyph_positions(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        doc.append_text(rbc, "B");
+        rt(doc, rbc, "A");
+        doc.append_text(rbc, "C");
+        rt(doc, rbc, "D");
+    });
+    let x = |annotation: bool| -> Vec<f32> {
+        positions
+            .iter()
+            .filter(|glyph| glyph.0 == annotation)
+            .map(|glyph| glyph.1.0)
+            .collect()
+    };
+    let (bases, annotations) = (x(false), x(true));
+    assert_eq!((bases.len(), annotations.len()), (2, 2), "{positions:?}");
+    let (b, c, a, d) = (bases[0], bases[1], annotations[0], annotations[1]);
+    // Each annotation is over an empty base of its own: the first after `B`
+    // and before `C`, the second after `C`.
+    assert!(b < a && a <= c && c < d, "{positions:?}");
+}
+
+#[test]
+fn improper_annotations_stay_plain_wherever_inline_content_goes() {
+    // In a base, in an inline box of a base, in an annotation, and between
+    // the bases of a base container.
+    assert!(is_planned(|doc, ruby| {
+        let base = rb(doc, ruby, "a");
+        rt(doc, base, "x");
+        rt(doc, ruby, "y");
+    }));
+    assert!(is_planned(|doc, ruby| {
+        let base = rb(doc, ruby, "a");
+        let span = element(doc, base, "span", "display:inline");
+        rt(doc, span, "x");
+        rt(doc, ruby, "y");
+    }));
+    assert!(is_planned(|doc, ruby| {
+        rb(doc, ruby, "a");
+        let annotation = rt(doc, ruby, "y");
+        rt(doc, annotation, "x");
+    }));
+    assert!(is_planned(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        rb(doc, rbc, "a");
+        rt(doc, rbc, "x");
+        rb(doc, rbc, "b");
+    }));
+    // An improper annotation with content that is not plain falls back.
+    assert!(!is_planned(|doc, ruby| {
+        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
+        let annotation = rt(doc, rbc, "x");
+        element(doc, annotation, "span", "display:inline-block");
+    }));
 }
 
 #[test]

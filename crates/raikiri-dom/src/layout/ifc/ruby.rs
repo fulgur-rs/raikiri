@@ -8,8 +8,12 @@
 //! boxes form one annotation level, and every `ruby-text-container` forms a
 //! level of its own.
 //!
+//! A `ruby-text` box that is not a child of a ruby container or a
+//! `ruby-text-container` is improperly contained: an anonymous ruby container
+//! wraps each run of such boxes, giving every one an empty base of its own.
+//!
 //! Content that this mapping does not cover yet (atomic inlines, blocks,
-//! generated content, misparented annotations) leaves the container to the
+//! generated content, misparented bases) leaves the container to the
 //! ordinary inline path, which lays its bases and annotations out in the
 //! line.
 
@@ -177,8 +181,9 @@ struct Planner<'a> {
 
 impl Planner<'_> {
     /// Whether the content of `id` is plain inline content: text, inline
-    /// boxes and ruby containers, without generated content. Floats and
-    /// absolutely positioned boxes are set aside.
+    /// boxes, ruby containers and improperly contained annotations, without
+    /// generated content. Floats and absolutely positioned boxes are set
+    /// aside.
     fn is_plain_inline(&mut self, id: usize) -> bool {
         self.is_plain_inline_at(id, 0)
     }
@@ -219,6 +224,12 @@ impl Planner<'_> {
                 }
                 None => false,
             },
+            // An annotation outside a ruby container is wrapped in an
+            // anonymous ruby container when it is laid out (CSS Ruby 1 §2.2).
+            DisplayValue::RubyText => doc.nodes[id]
+                .children
+                .iter()
+                .all(|&child| self.is_plain_inline_at(child, depth + 1)),
             _ => false,
         }
     }
@@ -684,7 +695,9 @@ impl Content<'_, '_> {
         ends: (Option<usize>, Option<usize>),
         letter: Letter,
     ) -> Result<(), IfcError> {
-        for &id in nodes {
+        let mut next = 0;
+        while let Some(&id) = nodes.get(next) {
+            next += 1;
             if is_skipped(self.doc, id) || is_out_of_flow(self.doc, self.cascade, id) {
                 continue;
             }
@@ -708,6 +721,11 @@ impl Content<'_, '_> {
             {
                 // The outer ruby container anchors what this one sets aside.
                 self.ruby(builder, id, &plan, false, false, letter)?;
+                continue;
+            }
+            if node.display() == DisplayValue::RubyText {
+                let run = self.annotation_run(nodes, &mut next, id);
+                self.anonymous_ruby(builder, &run, letter)?;
                 continue;
             }
             if node.display() == DisplayValue::Contents {
@@ -931,6 +949,63 @@ impl Content<'_, '_> {
             builder.close_inline();
         }
         Ok(())
+    }
+
+    /// `first`, an improperly contained annotation, and the annotations that
+    /// follow it in `nodes` from `next` on, with nothing but white space and
+    /// nodes that render nothing between them. `next` moves past the last one.
+    fn annotation_run(&self, nodes: &[usize], next: &mut usize, first: usize) -> Vec<usize> {
+        let mut run = vec![first];
+        let mut look = *next;
+        while let Some(&id) = nodes.get(look) {
+            look += 1;
+            if is_skipped(self.doc, id) || is_white_space_text(self.doc, id) {
+                continue;
+            }
+            if self.doc.nodes[id].display() != DisplayValue::RubyText
+                || is_out_of_flow(self.doc, self.cascade, id)
+            {
+                break;
+            }
+            run.push(id);
+            *next = look;
+        }
+        run
+    }
+
+    /// Push the improperly contained annotations `annotations` in an
+    /// anonymous ruby container: each is the annotation of an empty base of
+    /// its own, and all share one level (CSS Ruby 1 §2.2). The container takes
+    /// its style from the parent of the first annotation and has no box of its
+    /// own.
+    fn anonymous_ruby(
+        &mut self,
+        builder: &mut ParagraphBuilder,
+        annotations: &[usize],
+        letter: Letter,
+    ) -> Result<(), IfcError> {
+        let first = annotations[0];
+        let owner = self.doc.parent_of(first).unwrap_or(first);
+        let segment = Segment {
+            gap: Vec::new(),
+            bases: annotations
+                .iter()
+                .map(|_| Part::new(None, owner, Vec::new()))
+                .collect(),
+            levels: vec![Level {
+                container: None,
+                annotations: annotations
+                    .iter()
+                    .map(|&id| Part::new(Some(id), id, self.doc.nodes[id].children.clone()))
+                    .collect(),
+            }],
+        };
+        let plan = Plan {
+            segments: vec![segment],
+            out_of_flow: Vec::new(),
+            base_containers: Vec::new(),
+        };
+        self.ruby(builder, owner, &plan, false, true, letter)
     }
 
     /// Anchor the float or absolutely positioned box `id` here in the line.
