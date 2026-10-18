@@ -444,12 +444,12 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
 }
 
 /// The style of a `::before` or `::after` laid out in its paragraph, by its
-/// generated id, when it turns its boxes, images and text by its own
-/// `transform`. Only an atomic inline-level pseudo-element does, or one
-/// that an image alone in its `content` replaces (CSS Content 3 §2.1): a
-/// non-replaced inline box is not transformable (CSS Transforms 1 §3).
-/// Floated and out-of-flow pseudo-elements are not in the paragraph.
-pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
+/// generated id, when its box can take a `transform`. Only an atomic
+/// inline-level pseudo-element can, or one that an image alone in its
+/// `content` replaces (CSS Content 3 §2.1): a non-replaced inline box is not
+/// transformable (CSS Transforms 1 §3). Floated and out-of-flow
+/// pseudo-elements are not in the paragraph.
+fn transformable_pseudo(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
     let (_, pseudo) = crate::generated_content::generated_origin(id)?;
     if !matches!(pseudo, PseudoElem::Before | PseudoElem::After) {
         return None;
@@ -460,21 +460,45 @@ pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedV
         PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
     ) && matches!(cv.float, FloatValue::None)
         && (cv.display.is_atomic_inline_level()
-            || matches!(cv.content.as_slice(), [ContentComponent::Image { .. }]))
-        && !cv.transform.is_empty())
+            || matches!(cv.content.as_slice(), [ContentComponent::Image { .. }])))
     .then_some(cv)
+}
+
+/// The style of a `::before` or `::after` laid out in its paragraph, by its
+/// generated id, when it turns its boxes, images and text by its own
+/// `transform` (see [`transformable_pseudo`] for the boxes that can).
+pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
+    transformable_pseudo(cascade, id).filter(|cv| !cv.transform.is_empty())
 }
 
 /// Whether the `::before` or `::after` with generated id `id`, laid out in
 /// its paragraph, is by its own style the containing block of fixed-position
-/// descendants: it has a filter, or a transform that applies to it (see
-/// [`pseudo_transform`]).
+/// descendants: it has a filter, a transform that applies to it (see
+/// [`transformable_pseudo`]), or layout or paint containment, which a
+/// non-replaced inline box ignores (CSS Containment 2 §3).
 pub fn pseudo_establishes_fixed_containing_block(cascade: &CascadeResult, id: usize) -> bool {
-    pseudo_transform(cascade, id).is_some()
-        || crate::generated_content::generated_origin(id)
-            .filter(|(_, pseudo)| matches!(pseudo, PseudoElem::Before | PseudoElem::After))
-            .and_then(|_| crate::generated_content::computed_for_id(cascade, id))
-            .is_some_and(|cv| !cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER))
+    let (Some((_, PseudoElem::Before | PseudoElem::After)), Some(cv)) = (
+        crate::generated_content::generated_origin(id),
+        crate::generated_content::computed_for_id(cascade, id),
+    ) else {
+        return false;
+    };
+    let transform = !cv.transform.is_empty() || cv.will_change.contains(WillChange::TRANSFORM);
+    let filter = !cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER);
+    let contain = cv.contain.contains_positioned_descendants()
+        || cv.will_change.contains(WillChange::CONTAIN);
+    let containable = !cv.display.is_inline_flow()
+        && !matches!(
+            cv.display,
+            DisplayValue::Contents
+                | DisplayValue::TableRow
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableColumn
+                | DisplayValue::TableColumnGroup
+        );
+    filter || (transform && transformable_pseudo(cascade, id).is_some()) || (contain && containable)
 }
 
 /// How the `::before` or `::after` with generated id `id` transforms its box

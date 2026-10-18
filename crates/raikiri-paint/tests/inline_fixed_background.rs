@@ -358,3 +358,44 @@ fn a_fixed_layer_of_a_pseudo_element_in_a_filtered_inline_element_stays_in_the_b
     };
     assert_wide_page_positioned(&paint_sheet(&css, plain), 10);
 }
+
+/// Pixels of a 100×80 page whose block holds only a `::before` styled by
+/// `pseudo_style`, with a wide `fixed` layer.
+fn paint_pseudo(pseudo_style: &str) -> Vec<u8> {
+    paint_sheet(
+        &format!(
+            "div::before {{ content: 'AAAA'; {pseudo_style}; {} }}",
+            wide_fixed()
+        ),
+        |_, _| {},
+    )
+}
+
+#[test]
+fn a_fixed_layer_of_a_contained_atomic_pseudo_element_stays_in_the_pseudo_element() {
+    for containment in ["contain: layout", "contain: paint", "will-change: contain"] {
+        let pixels = paint_pseudo(&format!("display: inline-block; {containment}"));
+        assert_wide_box_positioned(&pixels, 10);
+    }
+}
+
+#[test]
+fn a_fixed_layer_of_a_transformed_atomic_pseudo_element_stays_in_the_pseudo_element() {
+    for transform in ["transform: translateX(0px)", "will-change: transform"] {
+        let pixels = paint_pseudo(&format!("display: inline-block; {transform}"));
+        assert_wide_box_positioned(&pixels, 10);
+    }
+}
+
+#[test]
+fn a_non_replaced_inline_pseudo_element_ignores_containment_and_transforms() {
+    for style in [
+        "contain: layout",
+        "will-change: contain",
+        "transform: translateX(0px)",
+        "will-change: transform",
+    ] {
+        let pixels = paint_pseudo(&format!("display: inline; {style}"));
+        assert_wide_page_positioned(&pixels, 10);
+    }
+}
