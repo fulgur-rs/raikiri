@@ -1927,7 +1927,8 @@ fn z_indexed_inline_content_holding_a_block_stays_in_the_lines() {
 
 /// A box that is not visible lists no decoration of its own in either order,
 /// while a visible box inside it does. The row stays `hidden`: a collapsed
-/// row takes its own path through both lists.
+/// row takes its own path through both lists. A replaced element with a table
+/// display that is not visible paints nothing in either order.
 #[test]
 fn boxes_that_are_not_visible_keep_native_and_public_order() {
     for keyword in ["hidden", "collapse"] {
@@ -1936,7 +1937,10 @@ fn boxes_that_are_not_visible_keep_native_and_public_order() {
                 "<div id=a style='visibility:{keyword};background:red'>\
                  <div id=b style='visibility:visible;background:blue'>x</div></div>\
                  <table><tr id=r style='visibility:hidden;background:red'>\
-                 <td id=c>y</td></tr></table>"
+                 <td id=c>y</td></tr></table>\
+                 <svg id=s width='20' height='10' \
+                 style='display:table;visibility:{keyword};background:red'>\
+                 <rect width='10' height='10' visibility='visible'/></svg>"
             ),
             "",
         );
@@ -1949,7 +1953,7 @@ fn boxes_that_are_not_visible_keep_native_and_public_order() {
                 _ => None,
             })
             .collect();
-        for hidden in ["a", "r", "c"] {
+        for hidden in ["a", "r", "c", "s"] {
             assert!(!boxes.contains(&by_id(&result, hidden)), "{hidden}");
         }
         assert!(boxes.contains(&by_id(&result, "b")));

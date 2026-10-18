@@ -83,7 +83,8 @@ pub enum PaintEvent<'a> {
     /// canvas). Follows the element's [`PaintEvent::Box`], if it lists one.
     /// An element that is not `visible` still lists it: its image has no
     /// raster image to paint, but an SVG root keeps its vector source so that
-    /// descendants that set `visibility:visible` can paint.
+    /// descendants that set `visibility:visible` can paint. A table-display
+    /// element that is not visible lists nothing, as a hidden table does.
     Replaced(Fragment<'a>),
     /// Prepared raster marker of a list item. Its placement is owned by this page.
     MarkerImage(NodeId),
