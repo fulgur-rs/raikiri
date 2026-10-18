@@ -2199,12 +2199,14 @@ fn nested_paragraph_document(
     inner_css: &str,
     lines: usize,
 ) -> (Document, usize, usize) {
-    styled_nested_paragraph_document(columns, inner_css, "", lines)
+    styled_nested_paragraph_document(columns, 0.0, inner_css, "", lines)
 }
 
-/// `nested_paragraph_document` with `paragraph_css` on the paragraph.
+/// `nested_paragraph_document` with `paragraph_css` on the paragraph, after a
+/// block of `lead` px when that is not zero.
 fn styled_nested_paragraph_document(
     columns: usize,
+    lead: f32,
     inner_css: &str,
     paragraph_css: &str,
     lines: usize,
@@ -2222,6 +2224,14 @@ fn styled_nested_paragraph_document(
             columns * 100
         )),
     );
+    if lead > 0.0 {
+        doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:{lead}px")),
+        );
+    }
     let inner = doc.append_element(
         Some(outer),
         "div",
@@ -2289,9 +2299,11 @@ fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() 
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
 }
 
-/// Lay out `nested_paragraph_document` under a fragment budget of `limit`.
+/// Lay out `styled_nested_paragraph_document` after a block of `lead` px under a
+/// fragment budget of `limit`.
 fn nested_paragraph_with_limit(
     columns: usize,
+    lead: f32,
     inner_css: &str,
     lines: usize,
     limit: usize,
@@ -2299,7 +2311,7 @@ fn nested_paragraph_with_limit(
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
-    let (mut doc, inner, _) = nested_paragraph_document(columns, inner_css, lines);
+    let (mut doc, inner, _) = styled_nested_paragraph_document(columns, lead, inner_css, "", lines);
     doc.fragment_tree.limit = limit;
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -2319,7 +2331,7 @@ fn paragraph_rows_the_fragment_budget_cannot_hold_report_exhaustion() {
     // column.
     let mut exhausted = false;
     for limit in 1..40 {
-        let (doc, inner, result) = nested_paragraph_with_limit(3, "", 25, limit);
+        let (doc, inner, result) = nested_paragraph_with_limit(3, 0.0, "", 25, limit);
         match result {
             Ok(()) => assert_eq!(
                 doc.nodes[inner].multicol_rows.len(),
@@ -2348,9 +2360,29 @@ fn a_nested_multicol_without_room_or_lines_for_paragraph_rows_does_not_continue(
 
     // A container that is taller than the column only for the margin of an
     // empty block has no paragraph to fill rows with.
-    let (mut doc, inner, _) = styled_nested_paragraph_document(2, "", "margin-top:150px", 0);
+    let (mut doc, inner, _) = styled_nested_paragraph_document(2, 0.0, "", "margin-top:150px", 0);
     layout_nested_flex_float_fixture(&mut doc);
     assert!(doc.nodes[inner].multicol_rows.is_empty());
+}
+
+#[test]
+fn a_nested_multicol_that_cannot_afford_its_rows_here_may_start_in_the_next_column() {
+    // The container follows a 60px block, so its rows from here (4 + 10 + 10 +
+    // 1 lines) need more records than a budget can have left, while from the
+    // top of the next column (10 + 10 + 5 lines) they need fewer. Running out
+    // while planning from here does not end the layout if that plan works.
+    let rows: Vec<Option<usize>> = (1..40)
+        .map(|limit| {
+            let (doc, inner, result) = nested_paragraph_with_limit(3, 60.0, "", 25, limit);
+            result.ok().map(|()| doc.nodes[inner].multicol_rows.len())
+        })
+        .collect();
+    assert!(rows.contains(&None), "some budget is too small");
+    assert!(
+        rows.contains(&Some(3)),
+        "a tight budget moves the container"
+    );
+    assert_eq!(rows.last(), Some(&Some(4)), "a large one keeps it here");
 }
 
 #[test]
@@ -2359,7 +2391,7 @@ fn paragraph_rows_planning_stops_at_the_fragment_budget() {
 
     // Content that needs far more rows than the budget has records for is
     // reported as exhausted without the rows being made.
-    let (doc, inner, result) = nested_paragraph_with_limit(2, "", 3000, 20);
+    let (doc, inner, result) = nested_paragraph_with_limit(2, 0.0, "", 3000, 20);
     assert!(matches!(
         result,
         Err(LayoutError::FragmentLimitExceeded { .. })
@@ -2369,7 +2401,8 @@ fn paragraph_rows_planning_stops_at_the_fragment_budget() {
     // So are the fragments of a single row: ten inner columns cut the lines of
     // the first row into ten fragments, more than the budget has records for
     // after the container's own layout.
-    let (doc, inner, result) = nested_paragraph_with_limit(2, "columns:10;column-gap:0", 3000, 30);
+    let (doc, inner, result) =
+        nested_paragraph_with_limit(2, 0.0, "columns:10;column-gap:0", 3000, 30);
     assert!(matches!(
         result,
         Err(LayoutError::FragmentLimitExceeded { .. })

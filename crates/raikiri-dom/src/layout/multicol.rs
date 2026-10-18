@@ -1030,11 +1030,16 @@ fn layout_column_group(
                 child_output.size,
                 !avoid_column_break,
             );
+            // Running out of fragments while planning from here ends the
+            // layout only if starting in the next column does not help, so
+            // it is held back until both plans have been tried.
+            let mut exhausted = std::mem::take(&mut tree.fragment_tree.limit_exceeded);
             if continuation.is_none()
                 && cursor > 0.0
                 && cursor + needed > height
                 && !avoid_column_break
-                && let Some(plan) = plan_nested_continuation(
+            {
+                let moved = plan_nested_continuation(
                     tree,
                     child,
                     context,
@@ -1043,20 +1048,23 @@ fn layout_column_group(
                     margin_top,
                     child_output.size,
                     false,
-                )
-            {
-                maximum = maximum.max(cursor);
-                tree.fragment_tree
-                    .record_break(crate::fragment::BreakToken {
-                        node_id: index,
-                        child_index: order,
-                        line_index: 0,
-                    });
-                column += 1;
-                cursor = 0.0;
-                continuation = Some(plan);
+                );
+                exhausted |= std::mem::take(&mut tree.fragment_tree.limit_exceeded);
+                if let Some(plan) = moved {
+                    maximum = maximum.max(cursor);
+                    tree.fragment_tree
+                        .record_break(crate::fragment::BreakToken {
+                            node_id: index,
+                            child_index: order,
+                            line_index: 0,
+                        });
+                    column += 1;
+                    cursor = 0.0;
+                    continuation = Some(plan);
+                }
             }
-            if tree.fragment_tree.limit_exceeded {
+            if exhausted && continuation.is_none() {
+                tree.fragment_tree.limit_exceeded = true;
                 return fallback_height;
             }
         }
@@ -1325,7 +1333,9 @@ impl NestedContinuation {
 /// says a break before the container is allowed, which is preferred to
 /// cutting a child that holds no lines at the end of this column. `None`
 /// when it fits in the rest of the column, or when its content is neither
-/// plain paragraphs nor children without lines.
+/// plain paragraphs nor children without lines, or when the fragment budget
+/// cannot hold the rows, which also sets `limit_exceeded` for the caller to
+/// weigh against another placement.
 #[allow(clippy::too_many_arguments)]
 fn plan_nested_continuation(
     tree: &mut LayoutSession<'_>,
