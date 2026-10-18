@@ -2702,3 +2702,25 @@ fn background_raster_turns_an_image_by_its_exif_orientation() {
     assert_eq!((turned.width, turned.height), (2, 3));
     assert_eq!(pixels(&turned), [cyan, red, magenta, green, yellow, blue]);
 }
+
+/// A 1x1 PNG whose only pixel is stored as (0x99, 0, 0) and tagged with an
+/// sRGB profile whose red and green primaries trade places, so it really is
+/// sRGB (0, 0x99, 0).
+fn swapped_primaries_png() -> Vec<u8> {
+    use image::ImageEncoder as _;
+    let mut profile = moxcms::ColorProfile::new_srgb();
+    std::mem::swap(&mut profile.red_colorant, &mut profile.green_colorant);
+    let mut encoded = Vec::new();
+    let mut encoder = image::codecs::png::PngEncoder::new(&mut encoded);
+    encoder.set_icc_profile(profile.encode().unwrap()).unwrap();
+    encoder
+        .write_image(&[0x99, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    encoded
+}
+
+#[test]
+fn background_raster_converts_a_tagged_image_to_srgb() {
+    let decoded = decode_background_raster(&swapped_primaries_png(), 1024).unwrap();
+    assert_eq!(decoded.rgba, [0, 0x99, 0, 255]);
+}

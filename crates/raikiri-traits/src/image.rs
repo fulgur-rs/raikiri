@@ -94,6 +94,75 @@ pub trait ImagePixelSource {
     }
 }
 
+/// Converts straight-alpha RGBA8 `pixels` from the color space of an embedded
+/// ICC `profile` to sRGB, in place, and reports whether any pixel was rewritten.
+///
+/// CSS Color 4 treats a tagged image as being in the color space its valid
+/// profile describes, and an untagged image, or one whose profile cannot be
+/// used, as sRGB (<https://drafts.csswg.org/css-color-4/#tagged-images>).
+/// The pixels stay as they are when the profile cannot be parsed, is not an
+/// RGB profile, or already lands within one 8-bit step of sRGB on a probe of
+/// grays and primaries. That last case keeps the many images tagged with an
+/// sRGB profile byte for byte instead of adding rounding noise to them. Alpha
+/// is never touched.
+pub fn convert_rgba8_to_srgb(profile: &[u8], pixels: &mut [u8]) -> bool {
+    use moxcms::{ColorProfile, DataColorSpace, Layout, RenderingIntent, TransformOptions};
+
+    // Pixels per pass; bounds the scratch copy the transform reads from.
+    const CHUNK_BYTES: usize = 4 * 16 * 1024;
+
+    if pixels.is_empty() || !pixels.len().is_multiple_of(4) {
+        return false;
+    }
+    let options = TransformOptions {
+        rendering_intent: RenderingIntent::RelativeColorimetric,
+        ..TransformOptions::default()
+    };
+    let transform = ColorProfile::new_from_slice(profile)
+        .ok()
+        .filter(|source| source.color_space == DataColorSpace::Rgb)
+        .and_then(|source| {
+            source
+                .create_transform_8bit(
+                    Layout::Rgba,
+                    &ColorProfile::new_srgb(),
+                    Layout::Rgba,
+                    options,
+                )
+                .ok()
+        });
+    let Some(transform) = transform else {
+        return false;
+    };
+
+    // Run grays and single-channel ramps through the transform first: a
+    // profile that maps all of them to within one step is sRGB for our purposes.
+    let probe: Vec<u8> = (0..=255u8)
+        .step_by(5)
+        .flat_map(|level| {
+            [
+                level, level, level, 255, level, 0, 0, 255, 0, level, 0, 255, 0, 0, level, 255,
+            ]
+        })
+        .collect();
+    let mut probed = vec![0u8; probe.len()];
+    if transform.transform(&probe, &mut probed).is_ok()
+        && probe
+            .iter()
+            .zip(&probed)
+            .all(|(before, after)| before.abs_diff(*after) <= 1)
+    {
+        return false;
+    }
+
+    let mut scratch = [0u8; CHUNK_BYTES];
+    pixels.chunks_mut(CHUNK_BYTES).all(|chunk| {
+        let source = &mut scratch[..chunk.len()];
+        source.copy_from_slice(chunk);
+        transform.transform(source, chunk).is_ok()
+    })
+}
+
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
 /// Returns `bytes` with every PNG chunk CRC rewritten to match its chunk.

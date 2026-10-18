@@ -2649,6 +2649,7 @@ dependencies = [
  "html5ever 0.40.1",
  "image",
  "markup5ever 0.40.0",
+ "moxcms",
  "raikiri-dom",
  "raikiri-style",
  "raikiri-svg",
@@ -2711,6 +2712,7 @@ dependencies = [
  "data-url",
  "flate2",
  "image",
+ "moxcms",
  "png",
  "raikiri-svg",
  "raikiri-traits",
@@ -2772,6 +2774,7 @@ version = "0.2.0"
 dependencies = [
  "bytes",
  "libc",
+ "moxcms",
  "raikiri-style",
  "rustc-hash",
  "rustix",

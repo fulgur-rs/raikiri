@@ -2216,7 +2216,9 @@ css/css-color/t424-hsl-values-b-6.html
 css/css-color/t424-hsl-values-b-7.html
 css/css-color/t424-hsl-values-b-8.html
 css/css-color/t424-hsl-values-b-9.html
+css/css-color/tagged-images-001.html
 css/css-color/tagged-images-002.html
+css/css-color/untagged-images-001.html
 css/css-color/xyz-002.html
 css/css-color/xyz-d50-002.html
 css/css-color/xyz-d65-002.html
