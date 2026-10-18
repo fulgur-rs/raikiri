@@ -18,7 +18,7 @@ use raikiri_style::{
     ComputedTextIndent, ComputedValues,
 };
 use shodo::style::LineOptions;
-use taffy::CollapsibleMarginSet;
+use taffy::{CollapsibleMarginSet, Direction};
 
 /// Marks the end token of a block-level `::before` or `::after`: the id of
 /// its start token with this bit set. The ids of other content of the
@@ -295,6 +295,77 @@ impl GeneratedBlock {
         })
     }
 
+    /// Where the box goes among the floats already placed in `flow`, as a block
+    /// child that establishes a formatting context goes (CSS 2.1 9.5): its
+    /// border box does not overlap them, so it is set beside them where it
+    /// fits and below them where it does not. `min_top` is the highest
+    /// border-box top it may take, from the paragraph's content-box top;
+    /// `margins` and `edges` are the box's margins and padding plus border.
+    /// `None` when no float reaches that far down.
+    fn beside_floats(
+        &self,
+        flow: &Flow<'_, '_>,
+        margins: &Sides<f32>,
+        edges: &Sides<f32>,
+        min_top: f32,
+    ) -> Option<Beside> {
+        let from = flow.top_edge + min_top;
+        if !flow.ctx.has_active_floats(from) {
+            return None;
+        }
+        let direction = if flow.rtl {
+            Direction::Rtl
+        } else {
+            Direction::Ltr
+        };
+        let sides = edges.left + edges.right;
+        let definite = self.content_width(Some(flow.width), edges);
+        // The border-box width in a slot that leaves `stretch` for an `auto`
+        // width.
+        let border_width = |stretch: f32| {
+            definite.unwrap_or_else(|| {
+                self.clamp_width((stretch - sides).max(0.0), Some(flow.width), edges)
+            }) + sides
+        };
+        let stretched = |stretch: f32| stretch.max(-(margins.left + margins.right));
+        let mut after = None;
+        let slot = loop {
+            let slot = flow.ctx.find_bfc_slot(
+                from,
+                [margins.left, margins.right],
+                direction,
+                self.clear,
+                after,
+            );
+            let Some(segment) = slot.segment_id else {
+                break slot;
+            };
+            if border_width(stretched(slot.stretch_width)) <= slot.border_width + 0.001 {
+                break slot;
+            }
+            after = Some(segment);
+        };
+        let stretch = stretched(slot.stretch_width);
+        let width = border_width(stretch);
+        // `auto` side margins share the room the box leaves; the slot already
+        // holds the margins that are not `auto`.
+        let auto = |value| length_or_auto(value, Some(flow.width)).is_none();
+        let autos = u8::from(auto(self.margin.left)) + u8::from(auto(self.margin.right));
+        let free = (stretch - width).max(0.0);
+        let mut left = slot.x - flow.content_left;
+        if auto(self.margin.left) {
+            left += free / f32::from(autos);
+        } else if flow.rtl && autos == 0 {
+            // A narrow box in a right-to-left paragraph sits at the end side.
+            left += (slot.border_width - width).max(0.0);
+        }
+        Some(Beside {
+            left,
+            width,
+            top: slot.y - flow.top_edge,
+        })
+    }
+
     /// The margin-box width the box needs at least, for the intrinsic widths
     /// of its paragraph: its definite width, or for an `auto` width its
     /// minimum width, with its edges and margins. Percentages count as zero,
@@ -329,6 +400,17 @@ pub(super) fn length_or_auto(
         }
         _ => None,
     }
+}
+
+/// The border box of a block-level `::before` or `::after` that establishes a
+/// formatting context, set among the floats before it: see
+/// [`GeneratedBlock::beside_floats`].
+struct Beside {
+    /// Left edge from the paragraph's content box.
+    left: f32,
+    width: f32,
+    /// Top from the paragraph's content-box top.
+    top: f32,
 }
 
 /// The box of a block-level `::before` or `::after` as the line loop placed
@@ -484,6 +566,9 @@ pub(crate) struct OpenBlock {
     /// The box goes on from an earlier fragmentainer, where its first line
     /// was laid out.
     continues: bool,
+    /// The box was set among the floats before it, which it does not overlap:
+    /// its lines take its whole content width.
+    avoids_floats: bool,
 }
 
 impl OpenBlock {
@@ -524,6 +609,12 @@ impl OpenBlock {
         (options, first)
     }
 
+    /// Whether the box was placed clear of the floats before it, so that no
+    /// float narrows its lines or moves them down.
+    pub(crate) fn avoids_floats(&self) -> bool {
+        self.avoids_floats
+    }
+
     /// The line space `space` of a line of the box, set in by the box's
     /// inline-side edges from the paragraph's content box `width` wide.
     pub(crate) fn narrow(
@@ -537,12 +628,12 @@ impl OpenBlock {
         // start of a line cannot move before the content box.
         let (left, right) = self.inline;
         let space_end = space.inline_start + space.inline_size;
-        let float_start = if space.inline_start > 0.0 {
+        let float_start = if space.inline_start > 0.0 && !self.avoids_floats {
             space.inline_start
         } else {
             f32::NEG_INFINITY
         };
-        let float_end = if space_end < width {
+        let float_end = if space_end < width && !self.avoids_floats {
             space_end
         } else {
             f32::INFINITY
@@ -572,6 +663,8 @@ pub(crate) struct Flow<'a, 'b> {
     pub(crate) ctx: &'a BlockContext<'b>,
     /// The paragraph's content-box width.
     pub(crate) width: f32,
+    /// Border plus padding on the left of the paragraph's content box.
+    pub(crate) content_left: f32,
     /// Border plus padding above the paragraph's content box.
     pub(crate) top_edge: f32,
     pub(crate) definite_height: Option<f32>,
@@ -606,6 +699,19 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
     let flow_top = if escapes { *flow.y } else { hypothetical };
     let clearance = clear_y
         .filter(|&clear_y| flow.ctx.has_adjoining_float(block.clear) || hypothetical < clear_y);
+    // A box that establishes a formatting context keeps clear of the floats
+    // before it: it goes beside them where it fits, else it is pushed below
+    // them like clearance, taking its margins out of the collapse.
+    let top_bound = clearance.unwrap_or(hypothetical);
+    let beside = block
+        .formatting_root
+        .then(|| block.beside_floats(&flow, &margins, &edges, top_bound))
+        .flatten();
+    let clearance = beside
+        .as_ref()
+        .map(|beside| beside.top)
+        .filter(|&top| top > top_bound + 0.001)
+        .or(clearance);
     let content_top = if let Some(clear_y) = clearance {
         Some(clear_y + edges.top)
     } else if edges.top > 0.0 {
@@ -620,7 +726,13 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         }
         None => *flow.pending = top_set,
     }
-    let inline = block.inline_insets(flow.width, flow.rtl, &edges);
+    let inline = match &beside {
+        Some(beside) => (
+            beside.left + edges.left,
+            flow.width - beside.left - beside.width + edges.right,
+        ),
+        None => block.inline_insets(flow.width, flow.rtl, &edges),
+    };
     OpenBlock {
         lines_before: flow.lines.len(),
         content_top,
@@ -640,6 +752,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
             options
         },
         continues: false,
+        avoids_floats: beside.is_some(),
     }
 }
 

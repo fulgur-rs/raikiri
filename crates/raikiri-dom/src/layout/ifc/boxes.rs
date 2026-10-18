@@ -936,8 +936,12 @@ fn run_boxes_segment(
                 };
                 let narrowed = space.inline_start != 0.0 || space.inline_size < width;
                 // A line that cannot wrap overflows where it is instead: moving
-                // it below the floats would act as a soft wrap.
+                // it below the floats would act as a soft wrap. A box that
+                // keeps clear of the floats has none beside its lines.
                 let overflows = narrowed
+                    && !open_block
+                        .as_ref()
+                        .is_some_and(generated_blocks::OpenBlock::avoids_floats)
                     && !root.line_is_nowrap(&line)
                     && line.inline_size() + indent > space.inline_size + 0.01
                     && moves < MAX_LINE_MOVES;
@@ -1063,6 +1067,7 @@ fn run_boxes_segment(
                             lines: &lines,
                             ctx,
                             width,
+                            content_left: edges.0,
                             top_edge,
                             definite_height: geometry.definite_height,
                             at_start,
