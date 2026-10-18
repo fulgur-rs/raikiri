@@ -230,8 +230,9 @@ pub(super) fn leaves_groups(deferral_scopes: &[DeferralLayer<'_>]) -> bool {
         .is_some_and(|layer| layer.allowed && !layer.flushing)
 }
 
-/// Composites held lines into `scene` like `HeldLines::finish`, apart
-/// from the groups they leave to the end of the layer, which it returns.
+/// Composites held lines into `scene` like
+/// [`crate::ifc_text::HeldLines::finish`], apart from the groups they leave to
+/// the end of the layer, which it returns.
 pub(super) fn finish_lines_leaving_groups(
     scene: &mut impl PaintScene,
     lines: crate::ifc_text::HeldLines<'_>,
