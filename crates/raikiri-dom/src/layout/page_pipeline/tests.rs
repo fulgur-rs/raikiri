@@ -17888,3 +17888,42 @@ fn a_forced_page_start_lands_on_the_later_of_the_next_and_the_natural_page() {
     // The last page index has no next page to open.
     assert_eq!(forced_target_page(u32::MAX, 0), u32::MAX);
 }
+
+#[test]
+fn a_box_runs_on_to_the_page_its_flow_end_falls_on() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // A box inside its first page stays on it, even when it ends at the edge.
+    assert_eq!(pages.end_page(20.0, 50.0), Some(0));
+    assert_eq!(pages.end_page(0.0, 100.0), Some(0));
+    // One that crosses the edge runs on to the page its end falls on.
+    assert_eq!(pages.end_page(50.0, 100.0), Some(1));
+    assert_eq!(pages.end_page(50.0, 260.0), Some(3));
+    // A box ending exactly at an edge belongs to the page before it.
+    assert_eq!(pages.end_page(50.0, 250.0), Some(2));
+    // A box with no block size or no usable position runs on nowhere.
+    assert_eq!(pages.end_page(50.0, 0.0), None);
+    assert_eq!(pages.end_page(-10.0, 50.0), None);
+    assert_eq!(pages.end_page(f32::NAN, 50.0), None);
+}
+
+#[test]
+fn only_a_named_box_or_a_sized_leaf_holds_content_in_its_columns() {
+    let context = |set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        context
+    };
+    let plain = context(|_| {});
+    let named = context(|context| context.is_named = true);
+    let leaf = context(|context| context.is_rendered_leaf = true);
+    // A named box counts whatever its size.
+    assert!(box_occupies_column(&named, true, 0.0));
+    // A rendered leaf needs a block size.
+    assert!(box_occupies_column(&leaf, true, 10.0));
+    assert!(!box_occupies_column(&leaf, true, 0.0));
+    // Any other box leaves the columns empty.
+    assert!(!box_occupies_column(&plain, true, 10.0));
+    // So does one that does not take part in the flow's page names.
+    assert!(!box_occupies_column(&named, false, 10.0));
+    assert!(!box_occupies_column(&leaf, false, 10.0));
+}
