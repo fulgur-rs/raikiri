@@ -2,6 +2,7 @@ use super::{
     BoxRect, CascadeResult, Document, HashMap, LayoutError, PageLayoutControl, PositionedLines,
 };
 use crate::IfcTextLines;
+use crate::node::MulticolTextFragment;
 use std::collections::{BTreeSet, HashSet};
 
 pub(crate) struct ProjectionWork<'a, 'b> {
@@ -207,41 +208,17 @@ impl ParagraphProjection {
         let ranges = node.ifc_multicol_fragments();
         let multicol = ranges.is_some();
         let count = node.ifc_lines().map_or(0, |lines| lines.len());
-        // Charge the complete offset preparation before allocation, including
-        // repeated ranges, so malformed overlapping ranges cannot amplify work.
-        if let Some(ranges) = ranges {
-            let cost = ranges.iter().fold(count, |cost, range| {
-                cost.saturating_add(
-                    range
-                        .line_end
-                        .min(count)
-                        .saturating_sub(range.line_start.min(count)),
-                )
-            });
-            work.charge(cost)?;
-        }
+        charge_column_ranges(ranges, count, work)?;
         work.check()?;
         let positioned = PositionedLines::new(document, cascade, root, None);
-        let mut line_columns = vec![fallback_column; count];
-        let mut column_origins = vec![0.0; count];
         let origins_recorded = node
             .ifc
             .as_ref()
             .is_some_and(|root| root.multicol_fragment_origins_recorded);
-        if let Some(ranges) = ranges {
-            let mut assigned = vec![false; count];
-            for range in ranges {
-                for index in range.line_start.min(count)..range.line_end.min(count) {
-                    if !assigned[index] {
-                        line_columns[index] = range.fragmentainer;
-                        if origins_recorded {
-                            column_origins[index] = range.y;
-                        }
-                        assigned[index] = true;
-                    }
-                }
-            }
-        }
+        let LineColumns {
+            column: line_columns,
+            origin: column_origins,
+        } = LineColumns::new(ranges, count, fallback_column, origins_recorded);
         let mut result = Self {
             combined: ColumnProjection::default(),
             columns: HashMap::new(),
@@ -254,37 +231,8 @@ impl ParagraphProjection {
             content_images: Vec::new(),
             content_image_columns: HashMap::new(),
         };
-        // A translucent `::first-line` composites the first line apart from
-        // the others, so the paint order lists the line pieces of the inline
-        // elements on the first line and on later ones. An element on the
-        // first line that the `::first-line` gives other values is listed by
-        // its pieces too, so that the piece on the first line carries them.
         let pieces = node.ifc_inline_boxes().unwrap_or_default();
-        let mut split: HashSet<usize> =
-            if crate::paint_rules::first_line_opacity_layer(document, root).is_some() {
-                let first: HashSet<usize> = pieces
-                    .iter()
-                    .filter(|piece| piece.line == 0)
-                    .map(|piece| piece.node)
-                    .collect();
-                pieces
-                    .iter()
-                    .filter(|piece| piece.line != 0 && first.contains(&piece.node))
-                    .map(|piece| piece.node)
-                    .collect()
-            } else {
-                HashSet::new()
-            };
-        split.extend(
-            pieces
-                .iter()
-                .filter(|piece| {
-                    piece.line == 0
-                        && crate::generated_content::generated_origin(piece.node).is_none()
-                        && first_line_restyles(node, cascade, piece.node)
-                })
-                .map(|piece| piece.node),
-        );
+        let split = split_inline_elements(document, cascade, root, node, &pieces);
         // A block-level `::before` or `::after` paints its own box; its
         // pieces on the lines only hold its text.
         let blocks = node.ifc_generated_block_pieces();
@@ -596,6 +544,115 @@ impl ParagraphProjection {
         }
         Ok(result)
     }
+}
+
+/// Charge `work` for preparing the lines of `count` over the `ranges` of a
+/// paragraph in columns, before anything is allocated for them. Ranges that
+/// overlap are charged for each line again, so malformed ranges cannot amplify
+/// the work.
+pub(super) fn charge_column_ranges(
+    ranges: Option<&[MulticolTextFragment]>,
+    count: usize,
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<(), LayoutError> {
+    if let Some(ranges) = ranges {
+        let cost = ranges.iter().fold(count, |cost, range| {
+            cost.saturating_add(
+                range
+                    .line_end
+                    .min(count)
+                    .saturating_sub(range.line_start.min(count)),
+            )
+        });
+        work.charge(cost)?;
+    }
+    Ok(())
+}
+
+/// The column each line of a paragraph is in, and where that column starts.
+pub(super) struct LineColumns {
+    /// The column (fragmentainer) of each line.
+    pub(super) column: Vec<usize>,
+    /// The offset along the block axis at which the column of each line
+    /// starts. Zero unless the column layout recorded where its fragments
+    /// start.
+    pub(super) origin: Vec<f32>,
+}
+
+impl LineColumns {
+    /// The columns of `count` lines in the `ranges` a paragraph in columns is
+    /// split into. A line that several ranges hold belongs to the first of
+    /// them; a line that none holds, and every line of a paragraph that is
+    /// not in columns, belongs to `fallback_column`.
+    pub(super) fn new(
+        ranges: Option<&[MulticolTextFragment]>,
+        count: usize,
+        fallback_column: usize,
+        origins_recorded: bool,
+    ) -> Self {
+        let mut line_columns = vec![fallback_column; count];
+        let mut column_origins = vec![0.0; count];
+        if let Some(ranges) = ranges {
+            let mut assigned = vec![false; count];
+            for range in ranges {
+                for index in range.line_start.min(count)..range.line_end.min(count) {
+                    if !assigned[index] {
+                        line_columns[index] = range.fragmentainer;
+                        if origins_recorded {
+                            column_origins[index] = range.y;
+                        }
+                        assigned[index] = true;
+                    }
+                }
+            }
+        }
+        Self {
+            column: line_columns,
+            origin: column_origins,
+        }
+    }
+}
+
+/// The inline elements of the paragraph `root` that are listed by their line
+/// pieces, and not as a whole.
+pub(super) fn split_inline_elements(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    node: &crate::Node,
+    pieces: &[crate::layout::InlineBoxPiece],
+) -> HashSet<usize> {
+    // A translucent `::first-line` composites the first line apart from
+    // the others, so the paint order lists the line pieces of the inline
+    // elements on the first line and on later ones. An element on the
+    // first line that the `::first-line` gives other values is listed by
+    // its pieces too, so that the piece on the first line carries them.
+    let mut split: HashSet<usize> =
+        if crate::paint_rules::first_line_opacity_layer(document, root).is_some() {
+            let first: HashSet<usize> = pieces
+                .iter()
+                .filter(|piece| piece.line == 0)
+                .map(|piece| piece.node)
+                .collect();
+            pieces
+                .iter()
+                .filter(|piece| piece.line != 0 && first.contains(&piece.node))
+                .map(|piece| piece.node)
+                .collect()
+        } else {
+            HashSet::new()
+        };
+    split.extend(
+        pieces
+            .iter()
+            .filter(|piece| {
+                piece.line == 0
+                    && crate::generated_content::generated_origin(piece.node).is_none()
+                    && first_line_restyles(node, cascade, piece.node)
+            })
+            .map(|piece| piece.node),
+    );
+    split
 }
 
 /// Whether the `::first-line` around the inline element `element` of the
