@@ -4164,3 +4164,32 @@ fn page_shells_fall_back_for_a_non_finite_next_origin() {
     );
     assert_eq!(pages[1].flow_range, None);
 }
+
+#[test]
+fn source_collection_keeps_text_roots_sorted_and_prepared() {
+    let mut text = usize::MAX;
+    let (mut document, cascade, root) = ahem_paragraph_with("width:80px", |doc, root| {
+        text = doc.append_text(root, "hello");
+    });
+    layout_pages(with_ahem(&mut document), &cascade, PageBox::A4).expect("pagination");
+    let body = find_body(&document).expect("body");
+    let control = PageLayoutControl::default();
+    let mut work = column_projection::ProjectionWork::new(
+        &control,
+        document.fragment_tree.work_limit(document.nodes.len()),
+    );
+
+    let sources = super::super::collect_page_fragment_sources(&document, &cascade, body, &mut work)
+        .expect("page sources");
+
+    let source_ids: Vec<_> = sources.nodes.iter().map(|source| source.node_id).collect();
+    assert!(source_ids.windows(2).all(|ids| ids[0] <= ids[1]));
+    assert!(source_ids.contains(&NodeId::new(text as u64)));
+    assert!(
+        sources
+            .text_roots
+            .iter()
+            .any(|text_root| text_root.node == root)
+    );
+    assert!(sources.paragraph_cache.contains_key(&root));
+}

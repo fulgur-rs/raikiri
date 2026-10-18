@@ -2162,96 +2162,89 @@ fn build_page_fragments(
     (pages, flow_axis)
 }
 
-pub(crate) fn project_slices_with_control(
+#[derive(Clone)]
+struct PageFragmentSource {
+    node_id: NodeId,
+    node_kind: NodeKind,
+    is_img: bool,
+    abs_x: f32,
+    abs_y: f32,
+    width: f32,
+    height: f32,
+    content_insets: Option<PageFragmentInsets>,
+    line_metrics: Option<Vec<(f32, f32)>>,
+    /// The lines of `line_metrics` stack along x, from the block-start
+    /// edge of their paragraph.
+    lines_along_x: bool,
+    line_start_offset: u32,
+    is_repeat: bool,
+    fragmentainer: u32,
+    fragment_clip: Option<PaintRect>,
+    overflow_chain: Option<usize>,
+    own_overflow_source: Option<usize>,
+}
+
+impl PageFragmentSource {
+    /// This source with its geometry in the flow space of `axis`.
+    fn in_flow_space(&self, axis: FlowAxis) -> Self {
+        let (abs_x, abs_y, width, height) =
+            axis.to_flow((self.abs_x, self.abs_y, self.width, self.height));
+        let along_flow = self.lines_along_x == matches!(axis, FlowAxis::X { .. });
+        Self {
+            abs_x,
+            abs_y,
+            width,
+            height,
+            content_insets: self.content_insets.map(|insets| axis.sides_to_flow(insets)),
+            // Lines that stack across the flow all share the source's
+            // extent along it.
+            line_metrics: self.line_metrics.as_ref().map(|metrics| {
+                if along_flow {
+                    metrics.clone()
+                } else {
+                    vec![(0.0, height); metrics.len()]
+                }
+            }),
+            fragment_clip: self.fragment_clip.map(|clip| {
+                let (x, y, width, height) = axis.to_flow((clip.x, clip.y, clip.width, clip.height));
+                PaintRect::new(x, y, width, height)
+            }),
+            ..self.clone()
+        }
+    }
+}
+
+struct ProjectionVisit {
+    node: usize,
+    parent_origin: (f32, f32),
+    repeat: bool,
+    fragment: Option<usize>,
+    fragment_origin: (f32, f32),
+    is_fragment_visit: bool,
+    fragment_clip: Option<PaintRect>,
+    overflow_chain: Option<usize>,
+    paragraph_column: Option<(usize, usize)>,
+}
+
+struct CollectedPageFragmentSources {
+    nodes: Vec<PageFragmentSource>,
+    text_roots: Vec<ProjectedTextRoot>,
+    placement_overflow_clips: Vec<PlacementOverflowClipSource>,
+    repeated_placement_nodes: HashSet<usize>,
+    paragraph_cache: ParagraphCache,
+}
+
+fn collect_page_fragment_sources(
     document: &Document,
     cascade: &CascadeResult,
-    page_box: PageBox,
-    slices: &[PageSlice],
-    page_geometries: &[PageFragmentPageGeometry],
-    control: &PageLayoutControl<'_>,
-) -> Result<ProjectedSlices, LayoutError> {
-    let (mut pages, flow_axis) =
-        build_page_fragments(document, cascade, page_box, slices, page_geometries);
-
-    let mut work = ProjectionWork::new(
-        control,
-        document.fragment_tree.work_limit(document.nodes.len()),
-    );
-    work.check()?;
-    let mut text_roots = Vec::new();
-    // A root with `display: none` generates no boxes, so its pages carry no
-    // fragments, text, or links.
-    let root_generates_box = BoxPropertiesRef::from_computed(cascade.root_element_computed())
-        .display()
-        != DisplayValue::None;
-    let Some(body_id) = find_body(document).filter(|_| root_generates_box) else {
-        return Ok((
-            pages,
-            text_roots,
-            BTreeMap::new(),
-            Vec::new(),
-            ParagraphCache::new(),
-            work.remaining(),
-        ));
-    };
-
+    body_id: usize,
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<CollectedPageFragmentSources, LayoutError> {
     // Collect absolute post-pagination coordinates.  The arena index is the
     // stable NodeId projection used by `raikiri_traits::Dom`; sorting by it
     // reproduces fulgur's deterministic BTreeMap iteration order regardless of
     // traversal implementation details.
-    #[derive(Clone)]
-    struct PageFragmentSource {
-        node_id: NodeId,
-        node_kind: NodeKind,
-        is_img: bool,
-        abs_x: f32,
-        abs_y: f32,
-        width: f32,
-        height: f32,
-        content_insets: Option<PageFragmentInsets>,
-        line_metrics: Option<Vec<(f32, f32)>>,
-        /// The lines of `line_metrics` stack along x, from the block-start
-        /// edge of their paragraph.
-        lines_along_x: bool,
-        line_start_offset: u32,
-        is_repeat: bool,
-        fragmentainer: u32,
-        fragment_clip: Option<PaintRect>,
-        overflow_chain: Option<usize>,
-        own_overflow_source: Option<usize>,
-    }
-
-    impl PageFragmentSource {
-        /// This source with its geometry in the flow space of `axis`.
-        fn in_flow_space(&self, axis: FlowAxis) -> Self {
-            let (abs_x, abs_y, width, height) =
-                axis.to_flow((self.abs_x, self.abs_y, self.width, self.height));
-            let along_flow = self.lines_along_x == matches!(axis, FlowAxis::X { .. });
-            Self {
-                abs_x,
-                abs_y,
-                width,
-                height,
-                content_insets: self.content_insets.map(|insets| axis.sides_to_flow(insets)),
-                // Lines that stack across the flow all share the source's
-                // extent along it.
-                line_metrics: self.line_metrics.as_ref().map(|metrics| {
-                    if along_flow {
-                        metrics.clone()
-                    } else {
-                        vec![(0.0, height); metrics.len()]
-                    }
-                }),
-                fragment_clip: self.fragment_clip.map(|clip| {
-                    let (x, y, width, height) =
-                        axis.to_flow((clip.x, clip.y, clip.width, clip.height));
-                    PaintRect::new(x, y, width, height)
-                }),
-                ..self.clone()
-            }
-        }
-    }
-
+    let mut text_roots = Vec::new();
     let mut nodes = Vec::new();
     let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
     // The content width of each paragraph whose lines stack along x, and
@@ -2286,17 +2279,6 @@ pub(crate) fn project_slices_with_control(
         }
     }
     let mut placement_overflow_clips = Vec::new();
-    struct ProjectionVisit {
-        node: usize,
-        parent_origin: (f32, f32),
-        repeat: bool,
-        fragment: Option<usize>,
-        fragment_origin: (f32, f32),
-        is_fragment_visit: bool,
-        fragment_clip: Option<PaintRect>,
-        overflow_chain: Option<usize>,
-        paragraph_column: Option<(usize, usize)>,
-    }
     let mut stack = vec![ProjectionVisit {
         node: super::initial_containing_block::root_element(document).unwrap_or(body_id),
         parent_origin: (0.0, 0.0),
@@ -2511,7 +2493,7 @@ pub(crate) fn project_slices_with_control(
                     cascade,
                     root_id,
                     column.unwrap_or(0),
-                    &mut work,
+                    work,
                 )?);
             }
             let prepared = &paragraph_cache[&root_id];
@@ -2726,6 +2708,54 @@ pub(crate) fn project_slices_with_control(
         }
     }
     nodes.sort_by_key(|node| node.node_id);
+    Ok(CollectedPageFragmentSources {
+        nodes,
+        text_roots,
+        placement_overflow_clips,
+        repeated_placement_nodes,
+        paragraph_cache,
+    })
+}
+
+pub(crate) fn project_slices_with_control(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+    page_geometries: &[PageFragmentPageGeometry],
+    control: &PageLayoutControl<'_>,
+) -> Result<ProjectedSlices, LayoutError> {
+    let (mut pages, flow_axis) =
+        build_page_fragments(document, cascade, page_box, slices, page_geometries);
+
+    let mut work = ProjectionWork::new(
+        control,
+        document.fragment_tree.work_limit(document.nodes.len()),
+    );
+    work.check()?;
+    let text_roots = Vec::new();
+    // A root with `display: none` generates no boxes, so its pages carry no
+    // fragments, text, or links.
+    let root_generates_box = BoxPropertiesRef::from_computed(cascade.root_element_computed())
+        .display()
+        != DisplayValue::None;
+    let Some(body_id) = find_body(document).filter(|_| root_generates_box) else {
+        return Ok((
+            pages,
+            text_roots,
+            BTreeMap::new(),
+            Vec::new(),
+            ParagraphCache::new(),
+            work.remaining(),
+        ));
+    };
+
+    let collected = collect_page_fragment_sources(document, cascade, body_id, &mut work)?;
+    let mut nodes = collected.nodes;
+    let text_roots = collected.text_roots;
+    let placement_overflow_clips = collected.placement_overflow_clips;
+    let repeated_placement_nodes = collected.repeated_placement_nodes;
+    let paragraph_cache = collected.paragraph_cache;
     // A relayout resumed at a page start lays the content before it out
     // without the elements wholly before it, so a box crossing the start
     // begins lower than in the earlier layout. It keeps the top the earlier
