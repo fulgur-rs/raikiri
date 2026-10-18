@@ -998,6 +998,161 @@ fn split_inline_line_pieces_carry_the_first_line_values() {
     assert_eq!(color_of(1), (0, 0, 0));
 }
 
+/// An inline element only on the first line is listed by a piece, whose
+/// values are the ones the `::first-line` gives the element, so that
+/// `currentColor` in its borders follows the line's color. An element on a
+/// later line keeps its box.
+#[test]
+fn inline_element_only_on_the_first_line_carries_the_first_line_values() {
+    let result = lay_out_with_font(
+        "<p id=p>A<span id=s>B</span><br><span id=t>C</span></p>",
+        "p {margin:0} #p::first-line {color:rgb(255,0,0)} span {border:1px solid currentColor}",
+    );
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let events = page.paint_order();
+    let pieces: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::LineBox(piece) => Some(piece),
+            _ => None,
+        })
+        .collect();
+    let [piece] = pieces[..] else {
+        panic!("{pieces:?}");
+    };
+    assert_eq!(dom.attr(piece.fragment.node(), "id"), Some("s"));
+    assert_eq!(piece.line.index, 0);
+    assert_eq!((piece.has_start_edge, piece.has_end_edge), (true, true));
+    let color = piece.style.color;
+    assert_eq!((color.r, color.g, color.b), (255, 0, 0));
+    let boxes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::Box(fragment) => dom.attr(fragment.node(), "id"),
+            _ => None,
+        })
+        .collect();
+    assert!(boxes.contains(&"t"), "{boxes:?}");
+    assert!(!boxes.contains(&"s"), "{boxes:?}");
+}
+
+/// Without a translucent `::first-line`, an inline element on the first line
+/// and on later ones is split by line when the `::first-line` changes its
+/// values: its first piece takes them and the others keep its own.
+#[test]
+fn opaque_first_line_splits_the_boxes_it_restyles() {
+    let result = lay_out_with_font(
+        "<p id=p>A<span id=s>B<br>C</span></p>",
+        "p {margin:0} #p::first-line {color:rgb(255,0,0)} #s {border:1px solid currentColor}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let colors: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::LineBox(piece) => {
+                let color = piece.style.color;
+                Some((piece.line.index, (color.r, color.g, color.b)))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(colors, [(0, (255, 0, 0)), (1, (0, 0, 0))], "{events:?}");
+    let dom = page.dom();
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            PaintEvent::Box(fragment) if dom.attr(fragment.node(), "id") == Some("s")
+        )),
+        "{events:?}"
+    );
+}
+
+/// An inline element keeps its box where the `::first-line` leaves its color
+/// and font size alone, as with other inherited values, or where the element
+/// sets them itself.
+#[test]
+fn inline_element_with_the_same_color_and_size_keeps_its_box() {
+    for (first_line, own) in [
+        ("font-weight:bold", ""),
+        ("color:rgb(255,0,0)", "color:blue"),
+    ] {
+        assert_eq!(
+            line_order(
+                "<p id=p>A<span id=s>B</span></p>",
+                &format!("#p::first-line {{{first_line}}} #s {{border:1px solid;{own}}}"),
+            ),
+            ["box p", "box s", "text 0"],
+            "{first_line} {own}"
+        );
+    }
+}
+
+/// A translucent `::first-line` holds the piece of an element it restyles
+/// even where the element has no box on later lines.
+#[test]
+fn translucent_first_line_holds_the_pieces_it_restyles() {
+    assert_eq!(
+        line_order(
+            "<p id=p>A<span id=s>B</span><br>C</p>",
+            "#p::first-line {opacity:.5;color:rgb(255,0,0)} #s {background:blue}",
+        ),
+        ["box p", "text 1", "push 0.5", "box s 0", "text 0", "pop"]
+    );
+}
+
+/// The pieces of a restyled element are in the columns and on the pages
+/// where its lines are.
+#[test]
+fn restyled_pieces_follow_their_lines_over_columns_and_pages() {
+    let colors = |page: &raikiri_html::Page<'_>| {
+        let runs = page.text_runs();
+        page.paint_order_for_text_runs(&runs)
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::LineBox(piece) => {
+                    let color = piece.style.color;
+                    Some((piece.line.index, (color.r, color.g, color.b)))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let result = lay_out_with_font(
+        "<div style='columns:2;column-gap:0;width:100px;height:10px'>\
+         <p id=p>A<span id=s>B<br>C</span></p></div>",
+        "p {margin:0} #p::first-line {color:rgb(255,0,0)} #s {background:blue}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    let text = runs.iter().find(|run| run.text == "C").unwrap();
+    let first = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .find_map(|event| match event {
+            PaintEvent::LineBox(piece) if piece.line == text.line => Some(piece),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(first.rect.x, text.origin.0);
+    assert_eq!(colors(&page), [(0, (255, 0, 0)), (1, (0, 0, 0))]);
+    let result = lay_out_with_font(
+        "<p id=p>A<span id=s>B<br>C<br>D<br>E</span></p>",
+        "@page {size:200px 20px;margin:0} p {margin:0} \
+         #p::first-line {color:rgb(255,0,0)} #s {background:blue}",
+    );
+    assert_eq!(
+        colors(&result.page(0).unwrap()),
+        [(0, (255, 0, 0)), (1, (0, 0, 0))]
+    );
+    assert_eq!(
+        colors(&result.page(1).unwrap()),
+        [(2, (0, 0, 0)), (3, (0, 0, 0))]
+    );
+}
+
 /// A `::before` on the first line carries the values the `::first-line` gives
 /// it, and a `::after` on a later line its own.
 #[test]
