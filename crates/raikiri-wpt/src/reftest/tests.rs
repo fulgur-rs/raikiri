@@ -1299,6 +1299,22 @@ fn wpt_font_loader_roots_file_urls_outside_the_checkout_at_the_checkout() {
     );
 }
 
+#[test]
+fn rooted_url_path_drops_the_drive_a_windows_base_leaves_in_the_path() {
+    let rooted = raikiri::Url::parse("file:///C:/wpt/css/page.html")
+        .unwrap()
+        .join("/fonts/x.ttf")
+        .unwrap();
+    assert_eq!(rooted.as_str(), "file:///C:/fonts/x.ttf");
+    assert_eq!(rooted_url_path(rooted.path()), "fonts/x.ttf");
+    assert_eq!(rooted_url_path("/c:/fonts/x.ttf"), "fonts/x.ttf");
+    assert_eq!(rooted_url_path("/C:"), "");
+    assert_eq!(rooted_url_path("/fonts/x.ttf"), "fonts/x.ttf");
+    // Only a one-letter segment followed by a slash is a drive.
+    assert_eq!(rooted_url_path("/a:b/x.ttf"), "a:b/x.ttf");
+    assert_eq!(rooted_url_path("/ab:/x.ttf"), "ab:/x.ttf");
+}
+
 #[cfg(unix)]
 #[test]
 fn wpt_font_loader_refuses_a_rooted_file_url_that_escapes_through_a_link() {

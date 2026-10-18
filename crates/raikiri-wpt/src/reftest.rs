@@ -3811,7 +3811,7 @@ impl WptFontLoader {
             // The `./` keeps a first segment such as `a:b` from parsing as a
             // URL scheme.
             return root_url
-                .join(&format!("./{}", parsed.path().trim_start_matches('/')))
+                .join(&format!("./{}", rooted_url_path(parsed.path())))
                 .ok()?
                 .to_file_path()
                 .ok();
@@ -3819,6 +3819,22 @@ impl WptFontLoader {
         let base = self.base.as_deref()?;
         let base_url = raikiri::Url::from_directory_path(base).ok()?;
         base_url.join(url).ok()?.to_file_path().ok()
+    }
+}
+
+/// The part of a file URL's path that names a resource of the checkout when
+/// the URL was a server-absolute one resolved against a `file:` base: without
+/// the leading `/` and without the drive (`C:`) that a base on Windows leaves
+/// in front of the path.
+fn rooted_url_path(path: &str) -> &str {
+    let rel = path.trim_start_matches('/');
+    match rel.as_bytes() {
+        [drive, b':', rest @ ..]
+            if drive.is_ascii_alphabetic() && rest.first().is_none_or(|b| *b == b'/') =>
+        {
+            rel[2..].trim_start_matches('/')
+        }
+        _ => rel,
     }
 }
 
