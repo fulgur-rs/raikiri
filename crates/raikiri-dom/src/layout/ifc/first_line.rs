@@ -16,6 +16,8 @@ pub(crate) struct FirstLine {
     root: StyleNodeId,
     /// The blocks whose `::first-line` reaches the line, outermost first.
     origins: Vec<StyleNodeId>,
+    /// The values the paragraph itself has on the first line.
+    root_values: ComputedValues,
     styles: FirstLineStyles,
 }
 
@@ -71,6 +73,12 @@ impl FirstLine {
         {
             return None;
         }
+        let root_id = StyleNodeId::new(root as u64);
+        let origins: Vec<StyleNodeId> = line_origins
+            .iter()
+            .map(|&id| StyleNodeId::new(id as u64))
+            .collect();
+        let root_values = cascade.first_line_style(doc, &origins, root_id, root_id, None)?;
         let decorating = line_origins
             .iter()
             .filter_map(|&id| {
@@ -81,16 +89,19 @@ impl FirstLine {
             })
             .collect();
         Some(Self {
-            root: StyleNodeId::new(root as u64),
-            origins: line_origins
-                .iter()
-                .map(|&id| StyleNodeId::new(id as u64))
-                .collect(),
+            root: root_id,
+            origins,
+            root_values,
             styles: FirstLineStyles {
                 decorating,
                 ..FirstLineStyles::default()
             },
         })
+    }
+
+    /// The values the paragraph has on its first line.
+    pub(crate) fn root_values(&self) -> &ComputedValues {
+        &self.root_values
     }
 
     /// The values of `element` on the first line.
@@ -128,13 +139,10 @@ impl FirstLine {
 
     /// Record the values the text node `text` has on the first line.
     pub(crate) fn note_text(&mut self, doc: &Document, cascade: &CascadeResult, text: usize) {
-        let Some(parent) = doc.parent_of(text) else {
-            return; // cov:ignore: the paragraph's text nodes all have a parent element.
-        };
-        if self.styles.texts.contains_key(&parent) {
-            return;
-        }
-        if let Some(values) = self.element(doc, cascade, parent) {
+        if let Some(parent) = doc.parent_of(text)
+            && !self.styles.texts.contains_key(&parent)
+            && let Some(values) = self.element(doc, cascade, parent)
+        {
             let values = cascade.first_line_text_style(StyleNodeId::new(text as u64), &values);
             self.styles.texts.insert(parent, values);
         }
@@ -184,13 +192,11 @@ fn starts_with_block(doc: &Document, cascade: &CascadeResult, root: usize) -> bo
     while let Some(visit) = stack.pop() {
         match visit {
             Visit::Pseudo(id, pseudo) => {
-                if !is_in_flow_generated_text(cascade, id, pseudo) {
-                    continue;
+                if is_in_flow_generated_text(cascade, id, pseudo)
+                    && let Some(cv) = cascade.pseudo.get(&(StyleNodeId::new(id as u64), pseudo))
+                {
+                    return !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents);
                 }
-                let Some(cv) = cascade.pseudo.get(&(StyleNodeId::new(id as u64), pseudo)) else {
-                    continue; // cov:ignore: in-flow generated text requires a retained pseudo style.
-                };
-                return !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents);
             }
             Visit::Enter(id) => {
                 let node = &doc.nodes[id];

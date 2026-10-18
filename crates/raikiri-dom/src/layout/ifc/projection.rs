@@ -885,12 +885,8 @@ fn project_children_builder(
         first_letter.first_line = None;
     }
     if let Some(first_line) = &first_letter.first_line {
-        match first_line.element(doc, cascade, root) {
-            Some(values) => {
-                paragraph_style.first_line = Some(styled(doc, cascade, &values, root, fonts)?);
-            }
-            None => first_letter.first_line = None, // cov:ignore: the paragraph is inside the blocks whose first lines reach it, so its values always resolve.
-        }
+        paragraph_style.first_line =
+            Some(styled(doc, cascade, first_line.root_values(), root, fonts)?);
     }
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
