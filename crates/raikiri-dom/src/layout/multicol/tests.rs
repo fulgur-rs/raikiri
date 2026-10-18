@@ -2386,6 +2386,27 @@ fn a_nested_multicol_that_cannot_afford_its_rows_here_may_start_in_the_next_colu
 }
 
 #[test]
+fn a_nested_multicol_that_fits_the_next_column_whole_moves_there_when_its_rows_do_not_fit() {
+    // Eight lines after a 60px block continue in a second row from here, but
+    // fit a column whole. A budget too small for the two rows moves the
+    // container instead of failing, and a larger one never fails after a
+    // smaller one succeeded.
+    let rows: Vec<Option<usize>> = (1..16)
+        .map(|limit| {
+            let (doc, inner, result) = nested_paragraph_with_limit(3, 60.0, "", 8, limit);
+            result.ok().map(|()| doc.nodes[inner].multicol_rows.len())
+        })
+        .collect();
+    let first_ok = rows
+        .iter()
+        .position(Option::is_some)
+        .expect("some budget works");
+    assert!(rows[first_ok..].iter().all(Option::is_some), "{rows:?}");
+    assert_eq!(rows[first_ok], Some(0), "the container moves whole");
+    assert_eq!(rows.last(), Some(&Some(2)), "a large budget keeps the rows");
+}
+
+#[test]
 fn paragraph_rows_planning_stops_at_the_fragment_budget() {
     use raikiri_traits::LayoutError;
 

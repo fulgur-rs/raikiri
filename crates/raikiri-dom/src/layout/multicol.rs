@@ -1032,13 +1032,16 @@ fn layout_column_group(
             );
             // Running out of fragments while planning from here ends the
             // layout only if starting in the next column does not help, so
-            // it is held back until both plans have been tried.
+            // it is held back until that has been tried. A container that
+            // fits a column whole needs no rows there, and moves below.
             let mut exhausted = std::mem::take(&mut tree.fragment_tree.limit_exceeded);
+            let mut fits_next_column = false;
             if continuation.is_none()
                 && cursor > 0.0
                 && cursor + needed > height
                 && !avoid_column_break
             {
+                fits_next_column = needed <= height;
                 let moved = plan_nested_continuation(
                     tree,
                     child,
@@ -1063,7 +1066,7 @@ fn layout_column_group(
                     continuation = Some(plan);
                 }
             }
-            if exhausted && continuation.is_none() {
+            if exhausted && continuation.is_none() && !fits_next_column {
                 tree.fragment_tree.limit_exceeded = true;
                 return fallback_height;
             }
@@ -1476,9 +1479,16 @@ fn plan_nested_continuation(
         .collect();
     // The outer container has a definite height here, so the rows may also
     // fill overflow columns past its last one. Rows whose records outgrow the
-    // fragment budget stop the planning, which reports the exhaustion.
+    // fragment budget stop the planning, which reports the exhaustion. The
+    // container's own record in the outer column comes before the rows'.
     let rows = match paragraph_group::fill_rows(
-        tree, child, &entries, context, first, later, max_pieces,
+        tree,
+        child,
+        &entries,
+        context,
+        first,
+        later,
+        max_pieces.saturating_sub(1),
     ) {
         Ok(rows) => rows,
         Err(paragraph_group::RowsStop::Unsupported) => return None,
