@@ -394,8 +394,17 @@ fn apply_computed_to_style_in_session_inner(
             &mut doc.context.layout_warnings,
         );
         bridge_alignment(&mut style, cv);
-        if let Some(parent) = doc.nodes[idx].parent {
-            bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[parent]);
+        // The container an `auto` self-alignment borrows from is the nearest
+        // ancestor that makes a box: `display: contents` ones are flattened
+        // away.
+        let mut container = doc.nodes[idx].parent;
+        while let Some(ancestor) = container
+            && cascade.computed[ancestor].display == DisplayValue::Contents
+        {
+            container = doc.nodes[ancestor].parent;
+        }
+        if let Some(container) = container {
+            bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[container]);
         }
         bridge_gap(
             &mut style,
