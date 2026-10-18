@@ -4048,26 +4048,14 @@ pub(crate) fn paint_document_impl(
                         paint_inline_svg(
                             scene,
                             document,
+                            cascade,
+                            cv,
                             node_id,
                             layout.size.width,
                             layout.size.height,
                             paint_x,
                             paint_y,
-                            &cv.border,
                             &paint_padding,
-                            [cv.color.r, cv.color.g, cv.color.b, cv.color.a],
-                            cv.opacity,
-                            cascade
-                                .opacity_specified
-                                .get(node_id)
-                                .copied()
-                                .unwrap_or(false),
-                            cascade
-                                .background_color_specified
-                                .get(node_id)
-                                .copied()
-                                .unwrap_or(false),
-                            !raikiri_dom::paint_rules::hides_own_box(cv),
                             warnings,
                         )
                     } else if document.is_canvas_element(node_id) {
@@ -5225,33 +5213,37 @@ fn paint_canvas(
 fn paint_inline_svg(
     scene: &mut impl PaintScene,
     document: &Document,
+    cascade: &CascadeResult,
+    cv: &ComputedValues,
     node_id: usize,
     border_box_width: f32,
     border_box_height: f32,
     abs_x: f32,
     abs_y: f32,
-    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
-    inherited_color: [u8; 4],
-    opacity: f32,
-    host_opacity_is_specified: bool,
-    host_controls_root_background: bool,
-    visible: bool,
     warnings: &mut Vec<RenderWarning>,
 ) -> bool {
-    let bl = border.left.width().px();
-    let bt = border.top.width().px();
-    let br = border.right.width().px();
-    let bb = border.bottom.width().px();
+    let bl = cv.border.left.width().px();
+    let bt = cv.border.top.width().px();
+    let br = cv.border.right.width().px();
+    let bb = cv.border.bottom.width().px();
     let content_x = (abs_x + bl + padding.left) as f64;
     let content_y = (abs_y + bt + padding.top) as f64;
     let content_w = (border_box_width - bl - br - padding.left - padding.right).max(0.0);
     let content_h = (border_box_height - bt - bb - padding.top - padding.bottom).max(0.0);
+    let opacity = cv.opacity;
     if opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
         return true;
     }
+    let visible = !raikiri_dom::paint_rules::hides_own_box(cv);
 
     let source = document.serialize_svg_subtree(node_id).ok().flatten();
+    // The declarations the page's stylesheets give to the descendants, which
+    // the serialized source does not carry. A subtree whose declarations
+    // outgrow the size bound is drawn unstyled, as it always was.
+    let descendants =
+        raikiri_dom::inline_svg_style::inline_svg_element_declarations(document, cascade, node_id)
+            .unwrap_or_default();
     // A root that is not visible shows only the descendants that set
     // `visibility` themselves, so a source that never mentions it paints
     // nothing.
@@ -5259,31 +5251,59 @@ fn paint_inline_svg(
         && source
             .as_deref()
             .is_none_or(|source| !source.contains("visibility"))
+        && descendants
+            .iter()
+            .all(|descendant| !descendant.declarations.contains("visibility"))
     {
         return true;
     }
-    let svg = source
-        .and_then(|source| raikiri_svg::SvgDocument::parse(source.as_bytes()).ok())
-        .and_then(|svg| {
-            svg.rasterize_at_css_pixel_scale(
-                raikiri_svg::SvgViewport {
-                    width: content_w,
-                    height: content_h,
+    let svg = source.and_then(|source| {
+        let svg = raikiri_svg::SvgDocument::parse(source.as_bytes()).ok()?;
+        let elements: Vec<_> = descendants
+            .iter()
+            .map(|descendant| raikiri_svg::SvgElementStyle {
+                element_index: descendant.element_index,
+                declarations: &descendant.declarations,
+            })
+            .collect();
+        let inherited_color = [cv.color.r, cv.color.g, cv.color.b, cv.color.a];
+        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
+            raikiri_svg::SvgViewport {
+                width: content_w,
+                height: content_h,
+            },
+            raikiri_svg::SvgRootStyle {
+                inherited_color,
+                // The host opacity remains the SVG root's inherited value
+                // while the rasterizer removes its group alpha. The outer
+                // paint group applies it with backgrounds and borders.
+                opacity,
+                neutralize_root_opacity: cascade
+                    .opacity_specified
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(false),
+                host_controls_root_background: cascade
+                    .background_color_specified
+                    .get(node_id)
+                    .copied()
+                    .unwrap_or(false),
+                visible,
+            },
+            raikiri_svg::SvgResolvedStyles {
+                root_color: inherited_color,
+                font: raikiri_svg::SvgRootFont {
+                    size: cv.font_size.0,
+                    weight: cv.font_weight,
+                    style: cv.font_style.as_css_str(),
+                    family: &raikiri_dom::inline_svg_style::svg_font_family(cv),
                 },
-                raikiri_svg::SvgRootStyle {
-                    inherited_color,
-                    // The host opacity remains the SVG root's inherited value
-                    // while the rasterizer removes its group alpha. The outer
-                    // paint group applies it with backgrounds and borders.
-                    opacity,
-                    neutralize_root_opacity: host_opacity_is_specified,
-                    host_controls_root_background,
-                    visible,
-                },
-                None,
-            )
-            .ok()
-        });
+                elements: &elements,
+            },
+            None,
+        )
+        .ok()
+    });
     let Some(decoded) = svg else {
         // Nothing was expected to show from a root that is not visible.
         if visible {
