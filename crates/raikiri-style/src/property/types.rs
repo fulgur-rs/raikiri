@@ -4008,7 +4008,7 @@ pub enum SelfAlignmentValue {
     FlexStart,
     /// `flex-end` — `<self-position>`.
     FlexEnd,
-    /// `baseline` or `first baseline` — `<baseline-position>`.
+    /// `baseline` — `<baseline-position>`.
     Baseline,
     /// `last baseline` — `<baseline-position>`. Taffy has no last-baseline
     /// alignment, so layout treats it as `baseline` except where the box does
