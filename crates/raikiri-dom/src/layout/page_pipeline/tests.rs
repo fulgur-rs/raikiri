@@ -12,6 +12,14 @@ mod paged_spanning_tests;
 mod source_walk_tests;
 mod table_follow_tests;
 
+fn element_candidate_context(attributes: candidates::ElementContext) -> candidates::BoxContext {
+    candidates::BoxContext::element(candidates::CandidateFlowContext::default(), attributes)
+}
+
+fn text_candidate_context(flow: candidates::CandidateFlowContext) -> candidates::BoxContext {
+    candidates::BoxContext::text(flow)
+}
+
 #[test]
 fn first_line_overflows_needs_a_block_that_starts_on_the_page_and_fits_it() {
     // A 30px text at y=80 on a page from 0 to 100 straddles its end.
@@ -17638,10 +17646,10 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    let context = |set: fn(&mut candidates::BoxContext)| {
-        let mut context = candidates::BoxContext::default();
-        set(&mut context);
-        context
+    let context = |set: fn(&mut candidates::ElementContext)| {
+        let mut attributes = candidates::ElementContext::default();
+        set(&mut attributes);
+        element_candidate_context(attributes)
     };
     let mut breaks = AvoidedBreaks::default();
     let headers = HeaderRepeats::default();
@@ -17769,13 +17777,16 @@ fn a_box_changes_the_page_type_unless_it_is_first_or_joins_a_zero_height_named_b
 
 #[test]
 fn a_box_sets_the_page_type_when_it_stands_for_content_and_opens_a_page() {
-    let context = |set: fn(&mut candidates::BoxContext)| {
-        let mut context = candidates::BoxContext {
-            page_name_in_flow: true,
-            ..Default::default()
-        };
-        set(&mut context);
-        context
+    let context = |set: fn(&mut candidates::ElementContext)| {
+        let mut attributes = candidates::ElementContext::default();
+        set(&mut attributes);
+        candidates::BoxContext::element(
+            candidates::CandidateFlowContext {
+                page_name_in_flow: true,
+                ..Default::default()
+            },
+            attributes,
+        )
     };
     // Each kind of content box hands its page type on once it opened a page.
     for content in [
@@ -17792,10 +17803,10 @@ fn a_box_sets_the_page_type_when_it_stands_for_content_and_opens_a_page() {
     // A box that is no content does not.
     assert!(!box_sets_page_name(&context(|_| {}), true, true));
     // Nor does one whose page type takes no part in the flow.
-    let parallel = candidates::BoxContext {
+    let parallel = element_candidate_context(candidates::ElementContext {
         is_named: true,
         ..Default::default()
-    };
+    });
     assert!(!box_sets_page_name(&parallel, true, true));
 }
 
@@ -17807,23 +17818,25 @@ fn a_named_box_joins_the_transition_of_a_zero_height_named_box_at_its_coordinate
         was_zero_height: true,
         had_display_none_descendant: false,
     };
-    let candidate = |raw_y, named_flex_context, set: fn(&mut candidates::BoxContext)| {
-        let mut context = candidates::BoxContext {
+    let candidate = |raw_y, named_flex_context, set: fn(&mut candidates::ElementContext)| {
+        let mut attributes = candidates::ElementContext {
             is_named: true,
             ..Default::default()
         };
-        set(&mut context);
+        set(&mut attributes);
         PageCandidate {
             node_id: 0,
             raw_y,
             height: 10.0,
-            context,
+            context: element_candidate_context(attributes),
             page_name: None,
             named_flex_context,
             ifc_root: None,
         }
     };
-    let direct = |context: &mut candidates::BoxContext| context.is_direct_body_element = true;
+    let direct = |context: &mut candidates::ElementContext| {
+        context.is_direct_body_element = true;
+    };
     assert!(last.joins_transition(&candidate(10.0, None, direct)));
     // Elsewhere in the source, it starts its own transition.
     assert!(!last.joins_transition(&candidate(20.0, None, direct)));
@@ -17838,10 +17851,10 @@ fn a_named_box_joins_the_transition_of_a_zero_height_named_box_at_its_coordinate
     assert!(!flex_last.joins_transition(&candidate(10.0, Some(4), |_| {})));
     // So must the box be named.
     let unnamed = PageCandidate {
-        context: candidates::BoxContext {
+        context: element_candidate_context(candidates::ElementContext {
             is_direct_body_element: true,
             ..Default::default()
-        },
+        }),
         ..candidate(10.0, None, |_| {})
     };
     assert!(!last.joins_transition(&unnamed));
@@ -17973,14 +17986,14 @@ fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
             width: 50.0,
         },
     );
-    let candidate = |node_id, raw_y, set: fn(&mut candidates::BoxContext)| {
-        let mut context = candidates::BoxContext::default();
-        set(&mut context);
+    let candidate = |node_id, raw_y, set: fn(&mut candidates::CandidateFlowContext)| {
+        let mut flow = candidates::CandidateFlowContext::default();
+        set(&mut flow);
         PageCandidate {
             node_id,
             raw_y,
             height: 10.0,
-            context,
+            context: candidates::BoxContext::element(flow, candidates::ElementContext::default()),
             page_name: None,
             named_flex_context: None,
             ifc_root: None,
@@ -18093,14 +18106,14 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
         width: 60.0,
         height: 10.0,
     };
-    let candidate = |node_id, set: fn(&mut candidates::BoxContext)| {
-        let mut context = candidates::BoxContext::default();
-        set(&mut context);
+    let candidate = |node_id, set: fn(&mut candidates::CandidateFlowContext)| {
+        let mut flow = candidates::CandidateFlowContext::default();
+        set(&mut flow);
         PageCandidate {
             node_id,
             raw_y: 0.0,
             height: 10.0,
-            context,
+            context: candidates::BoxContext::element(flow, candidates::ElementContext::default()),
             page_name: None,
             named_flex_context: None,
             ifc_root: None,
@@ -18277,10 +18290,10 @@ fn a_box_runs_on_to_the_page_its_flow_end_falls_on() {
 
 #[test]
 fn only_a_named_box_or_a_sized_leaf_holds_content_in_its_columns() {
-    let context = |set: fn(&mut candidates::BoxContext)| {
-        let mut context = candidates::BoxContext::default();
-        set(&mut context);
-        context
+    let context = |set: fn(&mut candidates::ElementContext)| {
+        let mut attributes = candidates::ElementContext::default();
+        set(&mut attributes);
+        element_candidate_context(attributes)
     };
     let plain = context(|_| {});
     let named = context(|context| context.is_named = true);
@@ -18371,10 +18384,10 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
         node_id,
         raw_y,
         height: 10.0,
-        context: candidates::BoxContext {
+        context: element_candidate_context(candidates::ElementContext {
             is_direct_body_element: direct_body_element,
             ..Default::default()
-        },
+        }),
         page_name: None,
         named_flex_context: None,
         ifc_root: None,
@@ -18585,7 +18598,13 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
     state.page_names = PageNames::new(Some("a".to_string()));
     let mut named = candidate(table, Some((anonymous_cell, 5.0)));
     named.page_name = Some("b".to_string());
-    named.context.page_name_in_flow = true;
+    named.context = candidates::BoxContext::element(
+        candidates::CandidateFlowContext {
+            page_name_in_flow: true,
+            ..Default::default()
+        },
+        candidates::ElementContext::default(),
+    );
     let entry = place(start(&mut doc, &mut state, &named));
     assert_eq!(entry.page_before_candidate, 3);
     // The candidate compares its page type against the enclosing flow's.
@@ -18631,10 +18650,13 @@ fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
         node_id: text,
         raw_y: f32::INFINITY,
         height: 10.0,
-        context: candidates::BoxContext {
-            page_name_in_flow: true,
-            ..Default::default()
-        },
+        context: candidates::BoxContext::element(
+            candidates::CandidateFlowContext {
+                page_name_in_flow: true,
+                ..Default::default()
+            },
+            candidates::ElementContext::default(),
+        ),
         page_name: Some("b".to_string()),
         named_flex_context: None,
         ifc_root: None,
@@ -18983,10 +19005,10 @@ fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
         finish(&PageLayoutControl::new(None), &mut state, candidate, insets).unwrap();
         (state.reach.max, state.reach.flow_max)
     };
-    let direct = candidates::BoxContext {
+    let direct = element_candidate_context(candidates::ElementContext {
         is_direct_body_element: true,
         ..Default::default()
-    };
+    });
     let padded = PageContentInsets {
         top: 5.0,
         ..Default::default()
@@ -18999,10 +19021,13 @@ fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
         (1, 1)
     );
     // So does one outside it, in the pages outside the flow only.
-    let out_of_flow = candidates::BoxContext {
-        is_out_of_flow_descendant: true,
-        ..Default::default()
-    };
+    let out_of_flow = candidates::BoxContext::element(
+        candidates::CandidateFlowContext {
+            is_out_of_flow_descendant: true,
+            ..Default::default()
+        },
+        candidates::ElementContext::default(),
+    );
     assert_eq!(
         reach_after(&candidate(out_of_flow), Default::default()),
         (1, 0)
@@ -19015,10 +19040,10 @@ fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
 
     // A flex item is remembered for the box after it in its named flow.
     let mut state = pagination_state_before_first_candidate(node_count);
-    let flex_item = candidates::BoxContext {
+    let flex_item = element_candidate_context(candidates::ElementContext {
         is_flex_item: true,
         ..Default::default()
-    };
+    });
     finish(
         &PageLayoutControl::new(None),
         &mut state,
@@ -19178,9 +19203,10 @@ fn placement_halts_at_a_page_past_the_page_limit() {
         node_id,
         raw_y: 250.0,
         height: 10.0,
-        context: candidates::BoxContext {
-            is_text,
-            ..Default::default()
+        context: if is_text {
+            text_candidate_context(candidates::CandidateFlowContext::default())
+        } else {
+            candidates::BoxContext::default()
         },
         page_name: None,
         named_flex_context: None,
@@ -19212,7 +19238,7 @@ fn placement_halts_at_a_page_past_the_page_limit() {
         let mut state = pagination_state_before_first_candidate(node_count);
         state.saw_child = true;
         let mut session = crate::layout::context::LayoutSession::new(&mut doc);
-        if candidate.context.is_text {
+        if candidate.context.is_text() {
             state.place_text(&mut session, &env, candidate, &entry)
         } else {
             state.place_box(&mut session, &env, candidate, &entry)
@@ -19373,10 +19399,7 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
         node_id: text,
         raw_y: 0.0,
         height: 20.0,
-        context: candidates::BoxContext {
-            is_text: true,
-            ..Default::default()
-        },
+        context: text_candidate_context(candidates::CandidateFlowContext::default()),
         page_name: None,
         named_flex_context: None,
         ifc_root,
@@ -19490,10 +19513,13 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
     assert_eq!(blocks.flex_line, Some((item, container)));
 
     // Not so for text inside a float or placed by positioned insets.
-    let in_float = candidates::BoxContext {
-        is_float_descendant: true,
-        ..Default::default()
-    };
+    let in_float = candidates::BoxContext::element(
+        candidates::CandidateFlowContext {
+            is_float_descendant: true,
+            ..Default::default()
+        },
+        candidates::ElementContext::default(),
+    );
     let floated =
         pagination_state::LineBlocks::find(&session, &env, &candidate(in_float), false, &checked);
     assert_eq!(floated.flex_line, None);
@@ -19519,10 +19545,7 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
         node_id: text,
         raw_y: 95.0,
         height: 10.0,
-        context: candidates::BoxContext {
-            is_text: true,
-            ..Default::default()
-        },
+        context: text_candidate_context(candidates::CandidateFlowContext::default()),
         page_name: None,
         named_flex_context: None,
         ifc_root: Some((root, 0.0)),
@@ -19612,10 +19635,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
             node_id: text,
             raw_y: spacer_height,
             height: 10.0 * line_count,
-            context: candidates::BoxContext {
-                is_text: true,
-                ..Default::default()
-            },
+            context: text_candidate_context(candidates::CandidateFlowContext::default()),
             page_name: None,
             named_flex_context: None,
             ifc_root: Some((root, 0.0)),
@@ -19714,11 +19734,10 @@ fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_ope
         node_id: text,
         raw_y: 0.0,
         height: 10.0,
-        context: candidates::BoxContext {
-            is_text: true,
+        context: text_candidate_context(candidates::CandidateFlowContext {
             page_name_in_flow: true,
             ..Default::default()
-        },
+        }),
         page_name: Some(page_name.to_string()),
         named_flex_context: None,
         ifc_root: None,
