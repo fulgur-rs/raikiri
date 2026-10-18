@@ -2292,13 +2292,14 @@ fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() 
 /// Lay out `nested_paragraph_document` under a fragment budget of `limit`.
 fn nested_paragraph_with_limit(
     columns: usize,
+    inner_css: &str,
     lines: usize,
     limit: usize,
 ) -> (Document, usize, Result<(), raikiri_traits::LayoutError>) {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
-    let (mut doc, inner, _) = nested_paragraph_document(columns, "", lines);
+    let (mut doc, inner, _) = nested_paragraph_document(columns, inner_css, lines);
     doc.fragment_tree.limit = limit;
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -2318,7 +2319,7 @@ fn paragraph_rows_the_fragment_budget_cannot_hold_report_exhaustion() {
     // column.
     let mut exhausted = false;
     for limit in 1..40 {
-        let (doc, inner, result) = nested_paragraph_with_limit(3, 25, limit);
+        let (doc, inner, result) = nested_paragraph_with_limit(3, "", 25, limit);
         match result {
             Ok(()) => assert_eq!(
                 doc.nodes[inner].multicol_rows.len(),
@@ -2358,7 +2359,17 @@ fn paragraph_rows_planning_stops_at_the_fragment_budget() {
 
     // Content that needs far more rows than the budget has records for is
     // reported as exhausted without the rows being made.
-    let (doc, inner, result) = nested_paragraph_with_limit(2, 3000, 20);
+    let (doc, inner, result) = nested_paragraph_with_limit(2, "", 3000, 20);
+    assert!(matches!(
+        result,
+        Err(LayoutError::FragmentLimitExceeded { .. })
+    ));
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
+
+    // So are the fragments of a single row: ten inner columns cut the lines of
+    // the first row into ten fragments, more than the budget has records for
+    // after the container's own layout.
+    let (doc, inner, result) = nested_paragraph_with_limit(2, "columns:10;column-gap:0", 3000, 30);
     assert!(matches!(
         result,
         Err(LayoutError::FragmentLimitExceeded { .. })

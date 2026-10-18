@@ -1465,18 +1465,10 @@ fn plan_nested_continuation(
         })
         .collect();
     // The outer container has a definite height here, so the rows may also
-    // fill overflow columns past its last one. Every row holds a line and
-    // every row after the first has a box record of its own, so more rows
-    // than the fragment budget has records left cannot be made: planning
-    // stops one row past that and reports the exhaustion.
+    // fill overflow columns past its last one. Rows whose records outgrow the
+    // fragment budget stop the planning, which reports the exhaustion.
     let rows = match paragraph_group::fill_rows(
-        tree,
-        child,
-        &entries,
-        context,
-        first,
-        later,
-        max_pieces.saturating_add(1),
+        tree, child, &entries, context, first, later, max_pieces,
     ) {
         Ok(rows) => rows,
         Err(paragraph_group::RowsStop::Unsupported) => return None,
