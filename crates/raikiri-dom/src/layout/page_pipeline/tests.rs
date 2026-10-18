@@ -17876,3 +17876,15 @@ fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
     let unbounded = TransitionLanding::new(f32::INFINITY, 90.0, 8.0, 3.0, true, &overflow(0.0));
     assert!(!unbounded.is_finite());
 }
+
+#[test]
+fn a_forced_page_start_lands_on_the_later_of_the_next_and_the_natural_page() {
+    // A box on the current page opens the page after it.
+    assert_eq!(forced_target_page(2, 2), 3);
+    assert_eq!(forced_target_page(2, 0), 3);
+    // Content that overflowed past the current page puts the box on a later
+    // page already, and the break does not add another one.
+    assert_eq!(forced_target_page(2, 5), 5);
+    // The last page index has no next page to open.
+    assert_eq!(forced_target_page(u32::MAX, 0), u32::MAX);
+}
