@@ -1097,13 +1097,17 @@ fn has_only_fixed_rows(doc: &LayoutSession<'_>, grid: usize) -> bool {
 ///
 /// An image that was decoded has its own natural size, which is not the one
 /// supplied here: the supplied size would be taken as authored and win over it.
+/// The empty box a resolver's fallback leaves is not a natural size.
 fn bridge_known_image_intrinsic_size(
     doc: &Document,
     node_id: usize,
     cv: &ComputedValues,
 ) -> Option<(f32, f32)> {
     let node = &doc.layout_node_with_style(node_id).unwrap();
-    if node.tag_name() != Some("img") || node.image_intrinsic_size().is_some() {
+    let has_natural_size = node
+        .image_intrinsic_size()
+        .is_some_and(|(width, height)| width > 0.0 && height > 0.0);
+    if node.tag_name() != Some("img") || has_natural_size {
         return None;
     }
     let src = node.attribute("src")?;
