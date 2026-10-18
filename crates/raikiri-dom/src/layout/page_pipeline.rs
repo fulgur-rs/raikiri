@@ -4805,57 +4805,31 @@ fn paginate_flow(
                 // margin (CSS Fragmentation 3 §5.2): the box starts at the
                 // top of the page instead of keeping the part of the margin
                 // that crossed the page edge.
-                let previous = sibling_margins.gap_after_previous(document, node_id, raw_y);
-                if let Some((previous, gap)) = previous
-                    && collapses_with_previous_block
-                    // A clearing box's gap may contain clearance. Its used
-                    // clearance is not recorded separately, so retain the gap.
-                    && matches!(computed.clear, raikiri_style::property::ClearValue::None)
-                {
-                    let page_top = page_origin(natural_page);
-                    let previous_bottom = effective_y - gap;
-                    let follows_forced_break =
-                        sibling_margins.follows_forced_break(document, cascade, previous, node_id);
-                    if page_edge_falls_in_margin(
-                        natural_page,
-                        page_top,
-                        previous_bottom,
+                let truncation = sibling_margins.truncation_at_break(
+                    document,
+                    cascade,
+                    &page_origins,
+                    &MarginBreak {
+                        node_id,
+                        raw_y,
                         effective_y,
-                        follows_forced_break,
-                    )
-                        // Only a margin between adjoining siblings is
-                        // truncated; a box that is not a candidate may lie
-                        // between two nested candidates.
-                        && adjoins_previous_sibling(document, cascade, node_id, previous)
-                    {
-                        let (target_top, target_y) = page_origins.truncated_margin_target(
-                            natural_page,
-                            forced_before,
-                            margin_top,
-                            || {
-                                collapsed_margin_start(
-                                    document,
-                                    cascade,
-                                    previous,
-                                    node_id,
-                                    previous_bottom,
-                                    effective_y,
-                                )
-                            },
-                            follows_forced_break,
-                        );
-                        let delta = target_y - effective_y;
-                        sibling_margins.moved_boxes |= delta != 0.0;
-                        move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
-                        flow_shift += delta;
-                        effective_y += delta;
-                        if target_y < target_top {
-                            // Descendants follow the negative margin; later
-                            // siblings still follow the forced break boundary.
-                            deferred_shifts.underflow = Some((node_id, target_top - target_y));
-                        } else {
-                            natural_page = page_index_for_y(effective_y);
-                        }
+                        natural_page,
+                        forced_before,
+                        margin_top,
+                        collapses_with_previous_block,
+                    },
+                );
+                if let Some(MarginTruncation { delta, underflow }) = truncation {
+                    sibling_margins.moved_boxes |= delta != 0.0;
+                    move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
+                    flow_shift += delta;
+                    effective_y += delta;
+                    if let Some(underflow) = underflow {
+                        // Descendants follow the negative margin; later
+                        // siblings still follow the forced break boundary.
+                        deferred_shifts.underflow = Some((node_id, underflow));
+                    } else {
+                        natural_page = page_index_for_y(effective_y);
                     }
                 }
                 check_candidate_page!('candidate_loop, natural_page);
@@ -7353,7 +7327,95 @@ struct SiblingMargins {
     moved_boxes: bool,
 }
 
+/// A box that starts on `natural_page`, below a page edge that may fall in the
+/// margin above it.
+struct MarginBreak {
+    node_id: usize,
+    /// The unpaginated top of the box.
+    raw_y: f32,
+    /// The top of the box in the flow so far.
+    effective_y: f32,
+    /// The page the box starts on while the margin keeps its size.
+    natural_page: u32,
+    /// Whether a forced break sits before the box.
+    forced_before: bool,
+    /// The block-start margin of the box.
+    margin_top: f32,
+    /// Whether the box's margin collapses with the margin of the block
+    /// before it.
+    collapses_with_previous_block: bool,
+}
+
+/// How a page edge truncates the margin above a box.
+struct MarginTruncation {
+    /// How far the box moves; negative when it moves up.
+    delta: f32,
+    /// How far a negative margin pulls the box above the top of its page,
+    /// if it does.
+    underflow: Option<f32>,
+}
+
 impl SiblingMargins {
+    /// How the top of `at.natural_page` truncates the margin between the box
+    /// `at` and the sibling block before it, or `None` when the page edge
+    /// falls outside that margin or no margin separates the two.
+    fn truncation_at_break(
+        &self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        page_origins: &PageOrigins,
+        at: &MarginBreak,
+    ) -> Option<MarginTruncation> {
+        let node_id = at.node_id;
+        // A clearing box's gap may contain clearance. Its used clearance is
+        // not recorded separately, so retain the gap.
+        if !at.collapses_with_previous_block
+            || !matches!(
+                cascade.computed[node_id].clear,
+                raikiri_style::property::ClearValue::None
+            )
+        {
+            return None;
+        }
+        let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
+        let page_top = page_origins.origin(at.natural_page);
+        let previous_bottom = at.effective_y - gap;
+        let follows_forced_break = self.follows_forced_break(document, cascade, previous, node_id);
+        if !page_edge_falls_in_margin(
+            at.natural_page,
+            page_top,
+            previous_bottom,
+            at.effective_y,
+            follows_forced_break,
+        )
+            // Only a margin between adjoining siblings is truncated; a box
+            // that is not a candidate may lie between two nested candidates.
+            || !adjoins_previous_sibling(document, cascade, node_id, previous)
+        {
+            return None;
+        }
+        let (target_top, target_y) = page_origins.truncated_margin_target(
+            at.natural_page,
+            at.forced_before,
+            at.margin_top,
+            || {
+                collapsed_margin_start(
+                    document,
+                    cascade,
+                    previous,
+                    node_id,
+                    previous_bottom,
+                    at.effective_y,
+                )
+            },
+            follows_forced_break,
+        );
+        Some(MarginTruncation {
+            delta: target_y - at.effective_y,
+            underflow: (target_y < target_top).then_some(target_top - target_y),
+        })
+    }
+
     /// Whether the margin between `previous` and `node_id` still adjoins
     /// the latest forced break.
     fn follows_forced_break(

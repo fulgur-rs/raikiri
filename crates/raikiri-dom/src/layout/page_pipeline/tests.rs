@@ -17252,3 +17252,92 @@ fn a_named_box_joins_the_transition_of_a_zero_height_named_box_at_its_coordinate
     };
     assert!(!last.joins_transition(&unnamed));
 }
+
+#[test]
+fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
+    // `body > first, second, third`, with margins above the last two.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, css: &str| {
+        doc.append_element(Some(body), "div", Style::default(), Some(css))
+    };
+    let first = block(&mut doc, "display:block;height:90px");
+    let second = block(&mut doc, "display:block;height:30px");
+    let third = block(&mut doc, "display:block;height:30px;clear:both");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.nodes[second].unrounded_layout.margin.top = 30.0;
+    doc.nodes[third].unrounded_layout.margin.top = 30.0;
+    let session = crate::layout::context::LayoutSession::new(&mut doc);
+    let origins = PageOrigins::new(&[], 100.0);
+    let truncation = |margins: &SiblingMargins, cascade: &CascadeResult, at: &MarginBreak| {
+        margins.truncation_at_break(&session, cascade, &origins, at)
+    };
+    // The second block starts at 120 below a first block that ends at 90, so
+    // the edge of the second page at 100 falls inside the margin of 30.
+    let mut margins = SiblingMargins::default();
+    margins.record_bottom(body, first, true, 90.0);
+    let at = MarginBreak {
+        node_id: second,
+        raw_y: 120.0,
+        effective_y: 120.0,
+        natural_page: 1,
+        forced_before: false,
+        margin_top: 30.0,
+        collapses_with_previous_block: true,
+    };
+
+    // The block moves up to the top of the page.
+    let found = truncation(&margins, &cascade, &at).unwrap();
+    assert_eq!(found.delta, -20.0);
+    assert_eq!(found.underflow, None);
+
+    // After a forced break it keeps its margin on the new page, or is pulled
+    // above the page top by a negative one.
+    let forced = MarginBreak {
+        forced_before: true,
+        ..at
+    };
+    let found = truncation(&margins, &cascade, &forced).unwrap();
+    assert_eq!(found.delta, 10.0);
+    assert_eq!(found.underflow, None);
+    let pulled_up = MarginBreak {
+        forced_before: true,
+        margin_top: -5.0,
+        ..at
+    };
+    let found = truncation(&margins, &cascade, &pulled_up).unwrap();
+    assert_eq!(found.delta, -25.0);
+    assert_eq!(found.underflow, Some(5.0));
+
+    // Nothing is truncated when the margin does not collapse with the block
+    // before, or the page edge is not inside it.
+    let apart = MarginBreak {
+        collapses_with_previous_block: false,
+        ..at
+    };
+    assert!(truncation(&margins, &cascade, &apart).is_none());
+    let first_page = MarginBreak {
+        natural_page: 0,
+        ..at
+    };
+    assert!(truncation(&margins, &cascade, &first_page).is_none());
+    // Nor when no block before it was recorded.
+    assert!(truncation(&SiblingMargins::default(), &cascade, &at).is_none());
+
+    // A box that clears floats keeps the gap, which may hold clearance.
+    margins.record_bottom(body, second, true, 190.0);
+    let clearing = MarginBreak {
+        node_id: third,
+        raw_y: 220.0,
+        effective_y: 220.0,
+        natural_page: 2,
+        ..at
+    };
+    assert!(truncation(&margins, &cascade, &clearing).is_none());
+    cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
+    let found = truncation(&margins, &cascade, &clearing).unwrap();
+    assert_eq!(found.delta, -20.0);
+}
