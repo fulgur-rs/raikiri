@@ -35,6 +35,8 @@ pub struct StandaloneStyle {
     pub text_orientation: TextOrientation,
     /// Base inline direction; upright vertical text uses the engine's LTR flow.
     pub direction: Direction,
+    /// Height of each line: `normal`, a length or a multiple of the font size.
+    pub line_height: LineHeight,
 }
 
 impl Default for StandaloneStyle {
@@ -45,6 +47,7 @@ impl Default for StandaloneStyle {
             writing_mode: WritingMode::HorizontalTb,
             text_orientation: TextOrientation::Mixed,
             direction: Direction::Ltr,
+            line_height: LineHeight::Normal,
         }
     }
 }
@@ -176,7 +179,7 @@ impl Shaped {
             font_size: style.font_size,
             direction: style.direction,
             text_orientation: style.text_orientation,
-            line_height: LineHeight::Normal,
+            line_height: style.line_height,
             white_space_collapse: WhiteSpaceCollapse::Preserve,
             text_wrap_mode: TextWrapMode::Wrap,
             ..InlineStyle::default()

@@ -54,6 +54,52 @@ fn auto_side_boxes_share_a_column_like_the_ac_track() {
 }
 
 #[test]
+fn auto_side_boxes_share_a_column_by_the_height_of_their_lines() {
+    // The upper box has two lines and the lower one a single 10px line, so
+    // they share the column in the ratio of the heights of their lines.
+    let rects_with = |line_height: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @left-top {{ content: 'a\\A b'; white-space: pre; {line_height} }} \
+               @left-bottom {{ content: 'c' }} }}"
+        )))
+    };
+    assert_eq!(
+        rects_with("line-height: 3"),
+        [
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 188.57]),
+            (PageMarginBoxSlot::LeftBottom, [0.0, 228.57, 40.0, 31.43]),
+        ]
+    );
+    assert_eq!(
+        rects_with("line-height: 25px"),
+        [
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 183.33]),
+            (PageMarginBoxSlot::LeftBottom, [0.0, 223.33, 40.0, 36.67]),
+        ]
+    );
+}
+
+#[test]
+fn auto_top_boxes_share_a_row_by_the_width_of_their_vertical_lines() {
+    // The upright lines of the left box are 20px wide each, the right box is
+    // one 10px character wide, so they share the row in the ratio of 40 to 10.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'a\\A b'; white-space: pre; \
+                       writing-mode: vertical-rl; line-height: 2 }} \
+           @top-right {{ content: 'c' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 256.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [296.0, 0.0, 64.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
 fn fixed_height_side_boxes_center_in_their_thirds() {
     let boxes = boxes_for(
         "@page { margin: 40px; \

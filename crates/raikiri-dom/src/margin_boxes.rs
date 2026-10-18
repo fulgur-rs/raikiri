@@ -1144,6 +1144,7 @@ fn margin_box_spec(
         _ => MarginTextVerticalAlign::Top,
     };
     let mut text_style = text_style(font_size, &style.font_family);
+    text_style.line_height = crate::layout::ifc::style::line_height_of(&style.line_height);
     text_style.writing_mode = match style.cssom_writing_mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
         WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
@@ -1397,7 +1398,13 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec) -> f32
             )
             .map_or(0.0, |text| text.height())
     } else {
-        line_count * spec.text_style.font_size.max(0.0)
+        let font_size = spec.text_style.font_size.max(0.0);
+        let line_height = match spec.text_style.line_height {
+            shodo::style::LineHeight::Normal => font_size,
+            shodo::style::LineHeight::Number(number) => number * font_size,
+            shodo::style::LineHeight::Px(px) => px,
+        };
+        line_count * line_height.max(0.0)
     };
     spec.frame(Axis::Vertical).outer(text_height).max(0.0)
 }
