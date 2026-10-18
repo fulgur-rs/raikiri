@@ -1,5 +1,7 @@
 use super::*;
+use crate::page_projection::continuation::CrossingBox;
 use fragment_sources::FlowSlots;
+use std::collections::HashMap;
 
 /// A 10px wide box of `height` at `abs_y` in the flow, with no lines.
 fn source(abs_y: f32, height: f32) -> PageFragmentSource {
@@ -234,4 +236,206 @@ fn the_content_box_and_clip_of_a_fragment_follow_its_page() {
         ),
         (3, Some(7), Some(9))
     );
+}
+
+/// A box of node `node` that crosses the start of its page by `-top`, with
+/// `earlier_fragments` fragments before it.
+fn crossing(node: u64, earlier_fragments: u32, top: f32) -> (NodeId, CrossingBox) {
+    let node = NodeId::new(node);
+    (
+        node,
+        CrossingBox {
+            node,
+            earlier_fragments,
+            top,
+        },
+    )
+}
+
+#[test]
+fn a_box_crossing_the_start_of_a_resumed_page_keeps_the_top_it_had() {
+    let mut doc = Document::new();
+    doc.earlier_fragments = Some(HashMap::from([crossing(1, 1, -20.0)]));
+    let pages = pages_with_ranges(&[Some((100.0, 200.0))]);
+    let restore = |doc: &Document, sources: &mut [PageFragmentSource]| {
+        restore_crossing_tops(doc, sources, &pages);
+        sources
+            .iter()
+            .map(|source| (source.abs_y, source.height))
+            .collect::<Vec<_>>()
+    };
+    // Its end stays where it was.
+    assert_eq!(restore(&doc, &mut [source(100.0, 50.0)]), [(80.0, 70.0)]);
+    // A repeated source, a box that starts below the page start and a box the
+    // earlier layout did not cross are left alone.
+    let others = [
+        PageFragmentSource {
+            is_repeat: true,
+            ..source(100.0, 50.0)
+        },
+        source(130.0, 50.0),
+        PageFragmentSource {
+            node_id: NodeId::new(2),
+            ..source(100.0, 50.0)
+        },
+    ];
+    assert_eq!(
+        restore(&doc, &mut others.clone()),
+        [(100.0, 50.0), (130.0, 50.0), (100.0, 50.0)]
+    );
+    // A box that ends above its restored top has no height left.
+    assert_eq!(restore(&doc, &mut [source(50.0, 10.0)]), [(80.0, 0.0)]);
+    // Nothing is restored in a layout that is not resumed, or on pages with no
+    // range to start from.
+    assert_eq!(
+        restore(&Document::new(), &mut [source(100.0, 50.0)]),
+        [(100.0, 50.0)]
+    );
+    let mut rangeless = [source(100.0, 50.0)];
+    restore_crossing_tops(&doc, &mut rangeless, &pages_with_ranges(&[None]));
+    assert_eq!(rangeless[0].abs_y, 100.0);
+}
+
+/// An item of `node` whose box starts `flow_box_y` into the page.
+fn item(node: u64, flow_box_y: f32) -> PageFragmentItem {
+    PageFragmentItem::new(
+        NodeId::new(node),
+        PageFragmentRect::new(0.0, 0.0, 10.0, 10.0),
+        PageFragmentKind::Box,
+        0,
+        1,
+        false,
+    )
+    .with_flow_box_y(flow_box_y)
+}
+
+#[test]
+fn the_body_has_no_fragment_on_the_first_page_of_a_resumed_layout_unless_it_crossed_the_start() {
+    let page_with_items = || {
+        let mut pages = pages_with_ranges(&[Some((0.0, 100.0))]);
+        pages[0].items = vec![item(7, -5.0), item(7, 0.0), item(8, -5.0)];
+        pages
+    };
+    let kept = |pages: &[PageFragment]| {
+        pages[0]
+            .items
+            .iter()
+            .map(|item| (item.node_id.0, item.flow_box_y))
+            .collect::<Vec<_>>()
+    };
+    // The body is node 7. Without a resumed layout nothing is dropped.
+    let mut doc = Document::new();
+    let mut pages = page_with_items();
+    drop_uncrossed_body(&doc, &mut pages, 7);
+    assert_eq!(kept(&pages), [(7, -5.0), (7, 0.0), (8, -5.0)]);
+    // In one, the body fragment that starts above the page goes.
+    doc.earlier_fragments = Some(HashMap::new());
+    let mut pages = page_with_items();
+    drop_uncrossed_body(&doc, &mut pages, 7);
+    assert_eq!(kept(&pages), [(7, 0.0), (8, -5.0)]);
+    // A body that crossed the start in the earlier layout keeps it.
+    doc.earlier_fragments = Some(HashMap::from([crossing(7, 1, -5.0)]));
+    let mut pages = page_with_items();
+    drop_uncrossed_body(&doc, &mut pages, 7);
+    assert_eq!(kept(&pages), [(7, -5.0), (7, 0.0), (8, -5.0)]);
+}
+
+/// The `(index, count)` numbers of the items of each page.
+fn numbers(pages: &[PageFragment]) -> Vec<Vec<(u64, u32, u32)>> {
+    pages
+        .iter()
+        .map(|page| {
+            page.items
+                .iter()
+                .map(|item| (item.node_id.0, item.fragment_index, item.fragment_count))
+                .collect()
+        })
+        .collect()
+}
+
+/// Three pages holding node 1 on the first and second and as two column
+/// pieces on the third, and node 2 on the second.
+fn pages_of_two_nodes() -> Vec<PageFragment> {
+    let mut pages = three_pages();
+    pages[0].items = vec![item(1, 0.0)];
+    pages[1].items = vec![item(2, 0.0), item(1, 0.0)];
+    pages[2].items = vec![item(1, 0.0), item(1, 0.0)];
+    pages
+}
+
+#[test]
+fn the_fragments_of_a_node_are_numbered_through_the_pages_in_order() {
+    let mut pages = pages_of_two_nodes();
+    number_fragments(&Document::new(), &mut pages);
+    assert_eq!(
+        numbers(&pages),
+        [
+            vec![(1, 0, 4)],
+            vec![(2, 0, 1), (1, 1, 4)],
+            vec![(1, 2, 4), (1, 3, 4)],
+        ]
+    );
+}
+
+#[test]
+fn the_fragments_of_a_node_count_those_of_the_layouts_around_it() {
+    let mut doc = Document::new();
+    // Node 1 had three fragments before the page the layout resumes at, and
+    // nodes 1 and 2 go on for two and one fragments after the last page.
+    doc.earlier_fragments = Some(HashMap::from([crossing(1, 3, -5.0)]));
+    doc.later_fragments = HashMap::from([(NodeId::new(1), 2), (NodeId::new(2), 1)]);
+    let mut pages = pages_of_two_nodes();
+    number_fragments(&doc, &mut pages);
+    assert_eq!(
+        numbers(&pages),
+        [
+            vec![(1, 3, 9)],
+            vec![(2, 0, 2), (1, 4, 9)],
+            vec![(1, 5, 9), (1, 6, 9)],
+        ]
+    );
+}
+
+#[test]
+fn only_the_boxes_that_clip_their_overflow_are_kept_as_clip_sources() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, css: &str| {
+        doc.append_element(Some(body), "div", Style::default(), Some(css))
+    };
+    let clipping = block(
+        &mut doc,
+        "display:block;overflow:hidden;width:50px;height:40px",
+    );
+    let plain = block(&mut doc, "display:block;width:50px;height:40px");
+    let repeated = block(
+        &mut doc,
+        "display:block;overflow:hidden;width:50px;height:40px",
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    let sources: Vec<_> = [clipping, plain, repeated]
+        .into_iter()
+        .map(|id| PageFragmentSource {
+            node_id: NodeId::new(id as u64),
+            // The clip repeats on every page when its source does.
+            is_repeat: id == clipping,
+            ..source(30.0, 40.0)
+        })
+        .collect();
+    let clips = overflow_clip_sources(&doc, &cascade, &sources, &HashSet::from([repeated]));
+    assert_eq!(clips.len(), 1, "{:?}", clips.keys());
+    let clip = &clips[&NodeId::new(clipping as u64)];
+    assert_eq!(
+        (
+            clip.border_box.x,
+            clip.border_box.y,
+            clip.border_box.width,
+            clip.border_box.height
+        ),
+        (5.0, 30.0, 10.0, 40.0)
+    );
+    assert!(clip.is_repeat);
 }

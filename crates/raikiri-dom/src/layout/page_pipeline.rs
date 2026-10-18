@@ -12,7 +12,10 @@ mod transposed_flow;
 use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant};
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use footnotes::FootnoteAreas;
-use fragment_sources::{PageFragmentSource, place_sources};
+use fragment_sources::{
+    PageFragmentSource, drop_uncrossed_body, number_fragments, overflow_clip_sources,
+    place_sources, restore_crossing_tops,
+};
 pub(crate) use link_events::page_fragment_events_from_pages;
 use pagination_state::{FlowEnv, PaginationState};
 
@@ -2662,102 +2665,14 @@ pub(crate) fn project_slices_with_control(
         }
     }
     nodes.sort_by_key(|node| node.node_id);
-    // A relayout resumed at a page start lays the content before it out
-    // without the elements wholly before it, so a box crossing the start
-    // begins lower than in the earlier layout. It keeps the top the earlier
-    // layout gave it; its end, after the start, is the same in both. A box
-    // with no border or padding above the start begins at the start itself.
-    if let Some(earlier) = &document.earlier_fragments
-        && let Some((page_start, _)) = pages.first().and_then(|page| page.flow_range)
-    {
-        for source in &mut nodes {
-            if let Some(crossing) = earlier.get(&source.node_id)
-                && !source.is_repeat
-                && source.abs_y <= page_start + 0.01
-            {
-                let bottom = source.abs_y + source.height;
-                source.abs_y = page_start + crossing.top;
-                source.height = (bottom - source.abs_y).max(0.0);
-            }
-        }
-    }
+    restore_crossing_tops(document, &mut nodes, &pages);
 
     place_sources(document, &nodes, &mut pages, flow_axis, &mut work)?;
 
-    // A relayout resumed at a page start continues the fragments the boxes
-    // crossing that start had before it. The body begins on the relayout's
-    // first page, which the relayout drops; when it did not cross the start
-    // in the earlier layout, it has no fragment after it.
-    if let Some(earlier) = &document.earlier_fragments
-        && let Some(first) = pages.first_mut()
-    {
-        let body = NodeId::new(body_id as u64);
-        first.items.retain(|item| {
-            item.node_id != body || item.flow_box_y >= -0.01 || earlier.contains_key(&body)
-        });
-    }
-    let earlier = document.earlier_fragments.as_ref();
-    let before = |node: &NodeId| {
-        earlier
-            .and_then(|earlier| earlier.get(node))
-            .map(|crossing| crossing.earlier_fragments)
-    };
+    drop_uncrossed_body(document, &mut pages, body_id);
+    number_fragments(document, &mut pages);
 
-    // A source can have several column pieces on the same physical page.
-    // Count all committed pieces together so edge ownership remains stable.
-    let mut fragment_counts = HashMap::<NodeId, u32>::new();
-    for item in pages.iter().flat_map(|page| &page.items) {
-        *fragment_counts.entry(item.node_id).or_insert_with(|| {
-            before(&item.node_id).unwrap_or(0)
-                + document
-                    .later_fragments
-                    .get(&item.node_id)
-                    .copied()
-                    .unwrap_or(0)
-        }) += 1;
-    }
-    let mut fragment_indices = HashMap::<NodeId, u32>::new();
-    for item in pages.iter_mut().flat_map(|page| &mut page.items) {
-        let index = fragment_indices
-            .entry(item.node_id)
-            .or_insert_with(|| before(&item.node_id).unwrap_or(0));
-        item.fragment_index = *index;
-        item.fragment_count = fragment_counts[&item.node_id];
-        *index += 1;
-    }
-
-    // Retain each clipping source once. Page-local clips are resolved on access,
-    // so a deep open-axis chain cannot multiply storage by the page count.
-    let clip_sources = nodes
-        .iter()
-        .filter_map(|source| {
-            let id = source.node_id.0 as usize;
-            if repeated_placement_nodes.contains(&id) {
-                return None;
-            }
-            if !crate::paint_rules::clips_element_overflow(document, cascade, id) {
-                return None;
-            }
-            let border = document.nodes[id].unrounded_layout.border;
-            let padding = document.nodes[id].unrounded_layout.padding;
-            let border_box =
-                PaintRect::new(source.abs_x, source.abs_y, source.width, source.height);
-            Some((
-                source.node_id,
-                OverflowClipSource {
-                    border_box,
-                    geometry: crate::paint_rules::OverflowClipGeometry::new(
-                        &cascade.computed[id],
-                        border_box,
-                        PaintInsets::new(border.top, border.right, border.bottom, border.left),
-                        PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left),
-                        crate::paint_rules::is_replaced_element(document, id),
-                    ),
-                    is_repeat: source.is_repeat,
-                },
-            ))
-        })
-        .collect();
+    let clip_sources = overflow_clip_sources(document, cascade, &nodes, &repeated_placement_nodes);
 
     Ok((
         pages,
