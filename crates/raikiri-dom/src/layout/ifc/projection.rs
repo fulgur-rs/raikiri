@@ -889,7 +889,7 @@ fn project_children_builder(
             Some(values) => {
                 paragraph_style.first_line = Some(styled(doc, cascade, &values, root, fonts)?);
             }
-            None => first_letter.first_line = None,
+            None => first_letter.first_line = None, // cov:ignore: the paragraph is inside the blocks whose first lines reach it, so its values always resolve.
         }
     }
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);

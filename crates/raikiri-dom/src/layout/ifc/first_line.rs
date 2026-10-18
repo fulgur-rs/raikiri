@@ -106,7 +106,7 @@ impl FirstLine {
     /// Record the values the text node `text` has on the first line.
     pub(crate) fn note_text(&mut self, doc: &Document, cascade: &CascadeResult, text: usize) {
         let Some(parent) = doc.parent_of(text) else {
-            return;
+            return; // cov:ignore: the paragraph's text nodes all have a parent element.
         };
         if self.styles.texts.contains_key(&parent) {
             return;

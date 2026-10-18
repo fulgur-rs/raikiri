@@ -185,3 +185,51 @@ fn a_nested_block_holds_the_first_line_of_its_container() {
     assert_eq!(pixel(&rgba, 5, 5), BLUE);
     assert_eq!(pixel(&rgba, 5, 15), RED);
 }
+
+#[test]
+fn a_block_holds_the_first_line_past_boxes_that_take_no_room() {
+    // A comment, a script, hidden, out-of-flow and floated boxes, collapsible
+    // white space and a `display: contents` wrapper come before the block.
+    let rgba = raster(
+        "<div class=outer> <!--c--><script>0</script><span style='display:none'>N</span>\
+         <span style='position:absolute'></span><span style='float:left;width:0;height:0'></span>\
+         <span style='display:contents'><div>X</div></span>X</div>",
+        ".outer{color:red} .outer::first-line{color:blue}",
+    );
+    assert_eq!(pixel(&rgba, 5, 5), BLUE);
+    assert_eq!(pixel(&rgba, 5, 15), RED);
+}
+
+#[test]
+fn a_line_break_first_leaves_the_first_line_empty() {
+    let rgba = raster("<p><br>X</p>", "p{color:red} p::first-line{color:blue}");
+    assert_eq!(count(&rgba, BLUE), 0);
+    assert_eq!(pixel(&rgba, 5, 15), RED);
+}
+
+#[test]
+fn an_atomic_inline_first_keeps_the_text_beside_it_on_the_first_line() {
+    let rgba = raster(
+        "<p><span class=box></span>X</p>",
+        "p{color:red} p::first-line{color:blue} .box{display:inline-block;width:5px;height:5px}",
+    );
+    assert_eq!(pixel(&rgba, 10, 5), BLUE);
+}
+
+#[test]
+fn an_empty_paragraph_draws_nothing() {
+    let rgba = raster("<p></p>", "p{color:red} p::first-line{color:blue}");
+    assert_eq!(count(&rgba, BLUE) + count(&rgba, RED), 0);
+}
+
+#[test]
+fn a_block_before_pseudo_holds_the_first_line_away_from_the_text() {
+    // The line of the block `::before` is the first formatted line, so the
+    // paragraph's own text is on a later one.
+    let rgba = raster(
+        "<p>X</p>",
+        "p{color:red} p::first-line{color:blue} p::before{content:'';display:block}",
+    );
+    assert_eq!(count(&rgba, BLUE), 0);
+    assert_eq!(count(&rgba, RED), 100);
+}
