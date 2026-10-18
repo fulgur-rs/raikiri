@@ -327,6 +327,10 @@ pub(crate) fn hold_ifc_lines<'a>(
         root_node,
         pieces,
         block_nodes,
+        page_lines,
+        paragraph_box,
+        hit_layout,
+        custom_highlights,
         paint_transform,
         fixed_viewport,
         pixel_source,
@@ -334,41 +338,8 @@ pub(crate) fn hold_ifc_lines<'a>(
     };
     lines.paint_block_pieces(&mut groups, &blocks);
     for positioned_line in positioned.lines() {
-        let line_index = positioned_line.index;
-        let paint = groups.for_line(line_index);
-        let line = positioned_line.line;
-        let (column_x, column_y) = positioned_line.offset;
-        let position = IfcPosition {
-            x: base.x + column_x,
-            y: base.y + column_y,
-            shift_y: base.shift_y,
-        };
-        if let Some(lines) = page_lines
-            && !lines.holds_line(
-                paint_transform,
-                paragraph_box.unwrap_or_else(|| line_rect(&positioned_line, position)),
-            )
-        {
-            continue;
-        }
-        lines.paint_marker_images(paint, &positioned_line.markers, position);
-        lines.paint_line_boxes(paint, line_index, position);
-        lines.paint_content_images(paint, &positioned_line.content_images, line_index, position);
-        if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
-            draw_custom_highlights(
-                paint,
-                paragraph,
-                line_index,
-                line,
-                hit_layout,
-                position,
-                offsets,
-                custom_highlights,
-                &positioned_line.runs,
-                &positioned_line.converter,
-            );
-        }
-        lines.paint_text(paint, positioned_line, position);
+        let paint = groups.for_line(positioned_line.index);
+        lines.paint_line(paint, positioned_line);
     }
     Some(HeldLines {
         paragraph,

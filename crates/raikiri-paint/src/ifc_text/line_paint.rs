@@ -3,18 +3,21 @@
 //! go into.
 
 use super::typographic::{self, BackgroundSlice, Paragraph, TypographicPaint};
-use super::{IfcPosition, piece_fixed_viewport, transform_applies};
+use super::{
+    IfcPosition, draw_custom_highlights, line_rect, piece_fixed_viewport, transform_applies,
+};
 use crate::text::DecorationContext;
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use peniko::Fill;
 use raikiri_dom::generated_content::{computed_for_id, generated_origin};
 use raikiri_dom::{
-    Document, InlineBoxPiece, Node, PositionedContentImage, PositionedLines, PositionedMarker,
-    cumulative_offset,
+    Document, InlineBoxPiece, Node, PositionedContentImage, PositionedLine, PositionedLines,
+    PositionedMarker, cumulative_offset,
 };
 use raikiri_style::CascadeResult;
 use shodo::geometry::WritingMode;
+use shodo::hit::LineLayout;
 use std::collections::HashSet;
 
 /// A box laid out beside the lines, as one piece on its line and as the joined
@@ -212,13 +215,64 @@ pub(super) struct LinePaint<'a, 'r> {
     /// The nodes of the block-level boxes, which paint beside the lines
     /// rather than on them.
     pub(super) block_nodes: HashSet<usize>,
+    /// The pages that hold the paragraph's lines, when it is cut for pages.
+    pub(super) page_lines: Option<crate::walk::PageLines>,
+    /// The content box of a paragraph that a page keeps whole.
+    pub(super) paragraph_box: Option<Rect>,
+    /// The line layout that locates custom highlights, when there are any.
+    pub(super) hit_layout: Option<LineLayout<'a>>,
+    pub(super) custom_highlights: &'r [crate::TextHighlightRange],
     pub(super) paint_transform: Affine,
     pub(super) fixed_viewport: Option<Rect>,
     pub(super) pixel_source: Option<&'r dyn raikiri_traits::ImagePixelSource>,
     pub(super) warnings: &'r mut Vec<raikiri_traits::RenderWarning>,
 }
 
-impl LinePaint<'_, '_> {
+impl<'a> LinePaint<'a, '_> {
+    /// Paint `line` into `paint`: its markers, the boxes of its inline
+    /// elements, the images of its generated content, its custom highlights
+    /// and its text, in that order. A line a page does not hold paints
+    /// nothing.
+    pub(super) fn paint_line(&mut self, paint: &mut TypographicPaint, line: PositionedLine<'a>) {
+        let line_index = line.index;
+        let (column_x, column_y) = line.offset;
+        let base = self.base;
+        let position = IfcPosition {
+            x: base.x + column_x,
+            y: base.y + column_y,
+            shift_y: base.shift_y,
+        };
+        if let Some(page_lines) = self.page_lines
+            && !page_lines.holds_line(
+                self.paint_transform,
+                self.paragraph_box
+                    .unwrap_or_else(|| line_rect(&line, position)),
+            )
+        {
+            return;
+        }
+        self.paint_marker_images(paint, &line.markers, position);
+        self.paint_line_boxes(paint, line_index, position);
+        self.paint_content_images(paint, &line.content_images, line_index, position);
+        if !self.vertical
+            && let Some(hit_layout) = self.hit_layout.as_ref()
+        {
+            draw_custom_highlights(
+                paint,
+                self.paragraph,
+                line_index,
+                line.line,
+                hit_layout,
+                position,
+                self.offsets,
+                self.custom_highlights,
+                &line.runs,
+                &line.converter,
+            );
+        }
+        self.paint_text(paint, line, position);
+    }
+
     /// Paint the boxes of `blocks` into `groups`.
     pub(super) fn paint_block_pieces(&mut self, groups: &mut LineGroups, blocks: &[BlockPiece]) {
         let Paragraph {
