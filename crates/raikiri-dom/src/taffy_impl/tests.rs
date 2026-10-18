@@ -297,7 +297,7 @@ fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
         Some(grid),
         "div",
         Style::default(),
-        Some("position:absolute;width:20px;height:20px"),
+        Some("position:absolute;width:20px;height:20px;margin:auto"),
     );
     doc.mark_in_document_flags();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
