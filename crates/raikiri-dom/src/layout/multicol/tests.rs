@@ -2202,7 +2202,7 @@ fn nested_paragraph_document(
     styled_nested_paragraph_document(columns, inner_css, "", lines)
 }
 
-/// [`nested_paragraph_document`] with `paragraph_css` on the paragraph.
+/// `nested_paragraph_document` with `paragraph_css` on the paragraph.
 fn styled_nested_paragraph_document(
     columns: usize,
     inner_css: &str,
@@ -2243,7 +2243,7 @@ fn styled_nested_paragraph_document(
     (doc, inner, paragraph)
 }
 
-/// [`nested_paragraph_document`] laid out. Returns the document, the inner
+/// `nested_paragraph_document` laid out. Returns the document, the inner
 /// container and the paragraph's column ranges as (line start, line end,
 /// fragmentainer).
 fn nested_paragraph_rows(
@@ -2289,7 +2289,7 @@ fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() 
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
 }
 
-/// Lay out [`nested_paragraph_document`] under a fragment budget of `limit`.
+/// Lay out `nested_paragraph_document` under a fragment budget of `limit`.
 fn nested_paragraph_with_limit(
     columns: usize,
     lines: usize,
