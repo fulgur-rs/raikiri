@@ -656,3 +656,12 @@ fn a_relative_paragraph_in_a_padded_container_resolves_its_inset_against_the_col
         "<div style='position:absolute;left:20px;top:0;width:40px'><p>A<br>B</p></div><div style='position:absolute;left:80px;top:0;width:40px'><p style='position:relative;left:10%;background:lime'>C<br>D</p></div>",
     );
 }
+
+#[test]
+fn a_floated_relative_paragraph_in_a_column_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='float:left;position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:5px;top:0;width:40px'><p style='background:lime'>A<br>B</p></div>",
+    );
+}
