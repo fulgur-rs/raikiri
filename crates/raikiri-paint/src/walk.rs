@@ -5872,16 +5872,72 @@ fn paint_background_image(
         tile_w / decoded.width as f64,
         tile_h / decoded.height as f64,
     );
+    // A `repeat` or `round` axis places tiles edge to edge, so one fill with
+    // the image repeating along that axis covers it without a seam between
+    // tiles, however small they are. A `space` or `no-repeat` axis keeps one
+    // fill per tile, which leaves its gaps and clips the tile to its edges.
+    let continuous = |keyword: raikiri_style::property::BackgroundRepeatKeyword| {
+        matches!(
+            keyword,
+            raikiri_style::property::BackgroundRepeatKeyword::Repeat
+                | raikiri_style::property::BackgroundRepeatKeyword::Round
+        )
+    };
+    let (continuous_x, continuous_y) = (continuous(repeat.x), continuous(repeat.y));
+    let mut pattern = brush.clone();
+    if continuous_x {
+        pattern.sampler.x_extend = PenikoExtend::Repeat;
+    }
+    if continuous_y {
+        pattern.sampler.y_extend = PenikoExtend::Repeat;
+    }
+    // cov:ignore: defensive, background_tiles returns Some only with a tile in each axis
+    let (Some(&origin_x), Some(&origin_y)) = (tiles.x.first(), tiles.y.first()) else {
+        return;
+    };
     scene.push_clip_layer(Affine::IDENTITY, &painting);
-    for tile_y in &tiles.y {
-        for tile_x in &tiles.x {
-            scene.fill(
-                Fill::NonZero,
-                Affine::translate((*tile_x, *tile_y)) * tile_scale,
-                brush.as_ref(),
-                None,
-                &tile_shape,
-            );
+    match (continuous_x, continuous_y) {
+        (true, true) => scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            pattern.as_ref(),
+            Some(Affine::translate((origin_x, origin_y)) * tile_scale),
+            &painting,
+        ),
+        (true, false) => {
+            for tile_y in &tiles.y {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    pattern.as_ref(),
+                    Some(Affine::translate((origin_x, *tile_y)) * tile_scale),
+                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + tile_h),
+                );
+            }
+        }
+        (false, true) => {
+            for tile_x in &tiles.x {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    pattern.as_ref(),
+                    Some(Affine::translate((*tile_x, origin_y)) * tile_scale),
+                    &Rect::new(*tile_x, painting.y0, *tile_x + tile_w, painting.y1),
+                );
+            }
+        }
+        (false, false) => {
+            for tile_y in &tiles.y {
+                for tile_x in &tiles.x {
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::translate((*tile_x, *tile_y)) * tile_scale,
+                        brush.as_ref(),
+                        None,
+                        &tile_shape,
+                    );
+                }
+            }
         }
     }
     scene.pop_layer();
