@@ -16990,3 +16990,35 @@ fn text_between_two_blocks_ends_the_run_of_adjoining_siblings() {
     margins.end_run_at_text(&doc, text, None);
     assert!(margins.previous_bottoms.is_empty());
 }
+
+#[test]
+fn text_changes_the_page_type_only_when_it_has_height_and_follows_content() {
+    let body = Some("body".to_owned());
+    let cover = Some("cover".to_owned());
+    assert!(text_changes_page_name(true, true, 10.0, &body, &cover));
+    // The same page type is no change.
+    assert!(!text_changes_page_name(true, true, 10.0, &body, &body));
+    // Nothing of the flow was placed before the text.
+    assert!(!text_changes_page_name(false, true, 10.0, &body, &cover));
+    // Text without height holds no content.
+    assert!(!text_changes_page_name(true, true, 0.0, &body, &cover));
+    // The page type does not take part in the flow.
+    assert!(!text_changes_page_name(true, false, 10.0, &body, &cover));
+}
+
+#[test]
+fn a_local_page_type_leaves_its_flow_once_the_candidate_moves_to_a_later_page() {
+    assert!(page_type_leaves_local_flow(false, 0, 0));
+    assert!(!page_type_leaves_local_flow(true, 2, 2));
+    assert!(page_type_leaves_local_flow(true, 3, 2));
+}
+
+#[test]
+fn text_sets_the_page_type_unless_a_change_or_a_break_already_set_it() {
+    assert!(text_sets_page_name(10.0, true, false, false, true));
+    assert!(!text_sets_page_name(0.0, true, false, false, true));
+    assert!(!text_sets_page_name(10.0, false, false, false, true));
+    assert!(!text_sets_page_name(10.0, true, true, false, true));
+    assert!(!text_sets_page_name(10.0, true, false, true, true));
+    assert!(!text_sets_page_name(10.0, true, false, false, false));
+}
