@@ -17,6 +17,7 @@ use shodo::style::{
 };
 use shodo::{AtomicSizes, LayoutContext, Line, Paragraph, RichText};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Width handed to the line breaker when the caller wants one line.
 const UNBOUNDED_WIDTH: f32 = 1.0e7;
@@ -139,6 +140,132 @@ impl StandaloneText {
     }
 }
 
+/// How many shaped runs a [`StandaloneMemo`] keeps.
+const MEMO_CAPACITY: usize = 64;
+
+/// The longest text, in bytes, a [`StandaloneMemo`] keeps a run of. The runs
+/// it is for are headers and footers; a longer text that is new on every page
+/// would pin as many copies of it and of its shaped lines as the memo holds
+/// runs, which is the document's own memory many times over.
+const MEMO_MAX_TEXT_BYTES: usize = 4096;
+
+/// The longest `font-family` list a [`StandaloneMemo`] keeps a run of, since
+/// each remembered run holds a copy of the list.
+const MEMO_MAX_FAMILIES: usize = 32;
+
+/// The most lines a [`StandaloneMemo`] keeps a run of: a text of up to
+/// [`MEMO_MAX_TEXT_BYTES`] that is broken at every opportunity (a width probe
+/// of a narrow box) has a line for almost every character.
+const MEMO_MAX_LINES: usize = 32;
+
+/// Whether a run of `text` in `style` is small enough to be remembered.
+fn is_remembered(text: &str, style: &StandaloneStyle) -> bool {
+    text.len() <= MEMO_MAX_TEXT_BYTES && style.families.len() <= MEMO_MAX_FAMILIES
+}
+
+/// Runs shaped by [`Document::shape_standalone_text_shared`], the least
+/// recently used first.
+///
+/// The text that repeats on every page (a running header) is looked up again
+/// on each page, so it stays at the recent end, while text that is new on
+/// each page (a page number) is the first to be evicted.
+#[derive(Default)]
+pub(crate) struct StandaloneMemo {
+    state: Mutex<MemoState>,
+}
+
+#[derive(Default)]
+struct MemoState {
+    /// The font generations every entry was shaped under.
+    generations: Option<(u64, Option<u64>)>,
+    entries: Vec<MemoEntry>,
+}
+
+struct MemoEntry {
+    text: String,
+    style: StandaloneStyle,
+    // The bits stand in for the `f32`, which has no equality that holds for
+    // every value.
+    width: Option<u32>,
+    align: StandaloneAlign,
+    shaped: Arc<StandaloneText>,
+}
+
+impl MemoEntry {
+    fn matches(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> bool {
+        self.align == align
+            && self.width == width.map(f32::to_bits)
+            && self.text == text
+            && self.style == *style
+    }
+}
+
+impl StandaloneMemo {
+    /// The state for the fonts at `generations`: runs shaped under other
+    /// fonts are dropped first.
+    fn state(&self, generations: (u64, Option<u64>)) -> std::sync::MutexGuard<'_, MemoState> {
+        // An entry is complete before it is pushed, so a panic elsewhere
+        // leaves the list usable.
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.generations != Some(generations) {
+            state.entries.clear();
+            state.generations = Some(generations);
+        }
+        state
+    }
+
+    fn get(
+        &self,
+        generations: (u64, Option<u64>),
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> Option<Arc<StandaloneText>> {
+        let mut state = self.state(generations);
+        let index = state
+            .entries
+            .iter()
+            .rposition(|entry| entry.matches(text, style, width, align))?;
+        let entry = state.entries.remove(index);
+        let shaped = Arc::clone(&entry.shaped);
+        state.entries.push(entry);
+        Some(shaped)
+    }
+
+    fn insert(
+        &self,
+        generations: (u64, Option<u64>),
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+        shaped: &Arc<StandaloneText>,
+    ) {
+        let mut state = self.state(generations);
+        // Another thread may have shaped the same run in the meantime.
+        state
+            .entries
+            .retain(|entry| !entry.matches(text, style, width, align));
+        if state.entries.len() >= MEMO_CAPACITY {
+            state.entries.remove(0);
+        }
+        state.entries.push(MemoEntry {
+            text: text.to_owned(),
+            style: style.clone(),
+            width: width.map(f32::to_bits),
+            align,
+            shaped: Arc::clone(shaped),
+        });
+    }
+}
+
 fn align_of(align: StandaloneAlign) -> TextAlign {
     match align {
         StandaloneAlign::Start => TextAlign::Start,
@@ -251,6 +378,50 @@ impl Document {
         align: StandaloneAlign,
     ) -> Option<StandaloneText> {
         self.shape_standalone(text, style, StandaloneWidth::Given(width), align)
+    }
+
+    /// [`Document::shape_standalone_text`] for callers that shape the same
+    /// run again and again, such as the margin boxes of every page: a run
+    /// that was shaped recently with the same text, style, width and
+    /// alignment is handed out again instead of being shaped a second time.
+    ///
+    /// The runs are remembered together with the document's fonts, so a
+    /// document that gets another font collection shapes anew, and so does
+    /// one whose collection changes under it (a font is registered, or a
+    /// generic or fallback family list is set). A document that was never
+    /// laid out has none to tie them to and shapes every time, and so does a
+    /// text of more than 4 KiB, a list of more than 32 font families or a run
+    /// of more than 32 lines.
+    #[doc(hidden)]
+    pub fn shape_standalone_text_shared(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> Option<Arc<StandaloneText>> {
+        let remembered = self.ifc.as_ref().filter(|_| is_remembered(text, style));
+        let Some(state) = remembered else {
+            return self
+                .shape_standalone_text(text, style, width, align)
+                .map(Arc::new);
+        };
+        // Read before shaping: a change of the fonts while this run is shaped
+        // then drops the run again at the next look-up.
+        let generations = state.fonts.generations();
+        if let Some(shaped) = state
+            .standalone_memo
+            .get(generations, text, style, width, align)
+        {
+            return Some(shaped);
+        }
+        let shaped = Arc::new(self.shape_standalone_text(text, style, width, align)?);
+        if shaped.lines().len() <= MEMO_MAX_LINES {
+            state
+                .standalone_memo
+                .insert(generations, text, style, width, align, &shaped);
+        }
+        Some(shaped)
     }
 
     /// Shape `text` inside its own unconstrained width.

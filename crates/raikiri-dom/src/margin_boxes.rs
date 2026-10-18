@@ -1210,7 +1210,7 @@ fn place_margin_box(
         .content_image_lime
         .then(|| {
             let advance = document
-                .shape_standalone_text(
+                .shape_standalone_text_shared(
                     &spec.content,
                     &spec.text_style,
                     None,
@@ -1270,8 +1270,12 @@ fn place_margin_text(
     let style = &spec.text_style;
     let vertical = style.writing_mode.is_vertical();
     let inline_size = if vertical { height } else { width };
-    let shaped =
-        document.shape_standalone_text(&spec.content, style, Some(inline_size), spec.alignment)?;
+    let shaped = document.shape_standalone_text_shared(
+        &spec.content,
+        style,
+        Some(inline_size),
+        spec.alignment,
+    )?;
     let offset = |free: f32| match spec.vertical_align {
         MarginTextVerticalAlign::Top => 0.0,
         MarginTextVerticalAlign::Middle => free * 0.5,
@@ -1292,10 +1296,7 @@ fn place_margin_text(
     } else {
         (x, y + offset((height - shaped.height()).max(0.0)))
     };
-    Some(MarginBoxText {
-        shaped: Arc::new(shaped),
-        origin,
-    })
+    Some(MarginBoxText { shaped, origin })
 }
 
 fn margin_box_rule(
@@ -1316,7 +1317,7 @@ fn margin_box_text_width(
         None
     };
     let measured = document
-        .shape_standalone_text(
+        .shape_standalone_text_shared(
             &spec.content,
             &spec.text_style,
             inline_size,
@@ -1367,7 +1368,7 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
     }
     let text_height = if spec.text_style.writing_mode.is_vertical() {
         document
-            .shape_standalone_text(
+            .shape_standalone_text_shared(
                 &spec.content,
                 &spec.text_style,
                 None,
@@ -1387,7 +1388,7 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
             .frame(Axis::Horizontal)
             .content(spec.outer_size(Axis::Horizontal, cross_size));
         let line_count = document
-            .shape_standalone_text(
+            .shape_standalone_text_shared(
                 &spec.content,
                 &spec.text_style,
                 (column_width > 0.0).then_some(column_width),
@@ -1494,7 +1495,7 @@ fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32
         return max;
     }
     let measured = document
-        .shape_standalone_text(
+        .shape_standalone_text_shared(
             &spec.content,
             &spec.text_style,
             Some(MIN_CONTENT_PROBE),
