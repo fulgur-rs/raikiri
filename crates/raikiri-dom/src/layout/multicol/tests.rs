@@ -2199,6 +2199,16 @@ fn nested_paragraph_document(
     inner_css: &str,
     lines: usize,
 ) -> (Document, usize, usize) {
+    styled_nested_paragraph_document(columns, inner_css, "", lines)
+}
+
+/// [`nested_paragraph_document`] with `paragraph_css` on the paragraph.
+fn styled_nested_paragraph_document(
+    columns: usize,
+    inner_css: &str,
+    paragraph_css: &str,
+    lines: usize,
+) -> (Document, usize, usize) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
@@ -2220,7 +2230,12 @@ fn nested_paragraph_document(
             "display:block;columns:1;font-size:10px;line-height:10px;{inner_css}"
         )),
     );
-    let paragraph = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{paragraph_css}")),
+    );
     for _ in 0..lines {
         doc.append_text(paragraph, "a");
         doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
@@ -2315,6 +2330,26 @@ fn paragraph_rows_the_fragment_budget_cannot_hold_report_exhaustion() {
         }
     }
     assert!(exhausted);
+}
+
+#[test]
+fn a_nested_multicol_without_room_or_lines_for_paragraph_rows_does_not_continue() {
+    // Padding that a clone repeats in every row leaves them no room for
+    // content in a 100px column.
+    let (doc, inner, ranges) =
+        nested_paragraph_rows(2, "padding:60px 0;box-decoration-break:clone", 25);
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
+    assert!(
+        ranges
+            .iter()
+            .all(|&(_, _, fragmentainer)| fragmentainer == 0)
+    );
+
+    // A container that is taller than the column only for the margin of an
+    // empty block has no paragraph to fill rows with.
+    let (mut doc, inner, _) = styled_nested_paragraph_document(2, "", "margin-top:150px", 0);
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
 }
 
 #[test]
