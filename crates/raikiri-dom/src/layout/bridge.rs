@@ -702,9 +702,13 @@ fn layout_values<'a>(
 
 /// Whether the width of element `idx` is a sizing keyword its layout sizes the
 /// box by: `min-content`, or a `max-content` or `fit-content` width that
-/// [`layout_values`] keeps.
+/// [`layout_values`] keeps. A `display: contents` element generates no box, so
+/// its width sizes nothing.
 pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
+    if cv.display == DisplayValue::Contents {
+        return false;
+    }
     match cv.width {
         ComputedLengthPercentageOrAuto::MinContent => true,
         ComputedLengthPercentageOrAuto::MaxContent | ComputedLengthPercentageOrAuto::FitContent => {

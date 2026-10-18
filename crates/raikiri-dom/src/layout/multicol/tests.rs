@@ -3141,6 +3141,33 @@ fn ancestor_width_table_treats_max_and_fit_content_as_intrinsic() {
 }
 
 #[test]
+fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
+    let mut texts = Vec::new();
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        let contents = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:contents;width:{keyword}")),
+        );
+        texts.push((contents, doc.append_text(contents, "test")));
+    }
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    // The element has no box, so nothing below it is inside an intrinsic width.
+    for (contents, text) in texts {
+        assert!(!widths.in_intrinsic_width(contents));
+        assert!(!widths.in_intrinsic_width(text));
+    }
+}
+
+#[test]
 fn ancestor_width_table_ignores_a_keyword_width_the_layout_does_not_use() {
     use raikiri_style::{build_rule_tree, cascade};
 
