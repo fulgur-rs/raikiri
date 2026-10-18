@@ -1265,3 +1265,63 @@ fn collapsible_white_space_inside_an_inline_wrapper_keeps_the_forced_break() {
         [("A".into(), (0.0, 16.0)), ("B".into(), (60.0, 16.0))]
     );
 }
+
+/// The border box origins of the elements named `tag` on `page`, in paint
+/// order.
+fn element_origins(document: &DocumentLayout, page: u32, tag: &str) -> Vec<(f32, f32)> {
+    let page = document.page(page).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    page.paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::Box(fragment) if dom.local_name(fragment.node()) == Some(tag) => {
+                let rect = fragment.rect();
+                Some((rect.x, rect.y))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn atomic_inlines_of_one_paragraph_continue_in_the_columns_of_the_next_page() {
+    // Two 80px lines fill a 160px page column, so the first page holds four
+    // lines and the last two are balanced over the columns of the second.
+    let document = lay_out(
+        "<div class=mc>\
+         <i></i><br><i></i><br><i></i><br><i></i><br><i></i><br><i></i>\
+         </div>",
+        "i{display:inline-block;vertical-align:top;width:25px;height:80px;background:green}",
+    );
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [(0.0, 0.0), (0.0, 80.0), (60.0, 0.0), (60.0, 80.0)]
+    );
+    assert_eq!(
+        element_origins(&document, 1, "i"),
+        [(0.0, 0.0), (60.0, 0.0)]
+    );
+}
+
+#[test]
+fn an_atomic_inline_moves_with_the_text_on_its_line() {
+    let document = lay_out(
+        "<div class=mc>A<i></i><br>B<i></i><br>C<i></i><br>D<i></i></div>",
+        "i{display:inline-block;width:15px;height:20px;vertical-align:top;background:green}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (60.0, 16.0)),
+            ("D".into(), (60.0, 36.0)),
+        ]
+    );
+    assert_eq!(
+        element_origins(&document, 0, "i"),
+        [(20.0, 0.0), (20.0, 20.0), (80.0, 0.0), (80.0, 20.0)]
+    );
+}

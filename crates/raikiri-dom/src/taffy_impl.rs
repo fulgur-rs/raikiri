@@ -1314,16 +1314,25 @@ fn measure_ifc_root(
         };
     }
     // The content of a multicol container is broken at the column width and
-    // split in its columns. A paragraph with boxes of its own is laid out in
-    // one column as wide as the container.
+    // split in its columns. Atomic inlines sit on the lines like text, so a
+    // paragraph that holds only them is split line by line in an outermost
+    // container. A paragraph with floats, blocks, out-of-flow boxes or
+    // generated blocks of its own, and one with boxes in a container nested in
+    // another, is laid out in one column as wide as the container.
     let nested_fragmentation = (!vertical)
         .then(|| fragmentation_context_for_ifc(tree, idx, &probe))
         .flatten();
+    let atomics_only = probe.generated_blocks.is_empty()
+        && probe
+            .boxes
+            .iter()
+            .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
+        && (probe.boxes.is_empty() || tree.context.fragmentation_stack.len() <= 1);
     let fragmentation = if vertical {
         None
     } else if nested_fragmentation.is_some() {
         nested_fragmentation
-    } else if has_boxes {
+    } else if !atomics_only {
         None
     } else {
         tree.nodes[idx]
@@ -1473,6 +1482,21 @@ fn measure_ifc_root(
         .or_else(|| {
             fragmentation.map(|context| crate::layout::root_column_fragments(&lines, context))
         });
+    // The fragments of a paragraph laid out across the columns by the engine
+    // come with its lines; only the ones split here still hold the boxes where
+    // the lines stand in one tall column.
+    if perform
+        && !probe.boxes.is_empty()
+        && lines.fragmentainer_line_ranges.is_none()
+        && let Some((fragments, _)) = &fragments
+    {
+        crate::layout::ifc::boxes::move_atomics_to_columns(
+            tree,
+            &probe.boxes,
+            &lines.lines,
+            fragments,
+        );
+    }
     let content_height = fragments
         .as_ref()
         .map_or(lines.height, |(_, height)| *height);
