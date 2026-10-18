@@ -127,3 +127,180 @@ fn the_device_grid_follows_the_root_and_paint_transforms() {
     // A rotation leaves no axis-aligned grid to snap to.
     assert_eq!(cache.device_grid(Affine::rotate(0.5)), None);
 }
+
+fn row(pixels: &[[u8; 4]]) -> DecodedImage {
+    DecodedImage {
+        width: pixels.len() as u32,
+        height: 1,
+        rgba: pixels.concat(),
+    }
+}
+
+#[test]
+fn averaging_weighs_each_pixel_by_the_area_a_result_pixel_covers() {
+    let red = [255, 0, 0, 255];
+    let green = [0, 255, 0, 255];
+    let blue = [0, 0, 255, 255];
+    let image = row(&[red, green, blue, blue]);
+    // Whole pixels: two to one result pixel.
+    assert_eq!(
+        box_average(&image, [0.0, 0.0, 4.0, 1.0], (2, 1)).unwrap(),
+        [128, 128, 0, 255, 0, 0, 255, 255]
+    );
+    // A region that starts and ends inside a pixel counts those pixels in part.
+    assert_eq!(
+        box_average(&image, [0.5, 0.0, 2.5, 1.0], (1, 1)).unwrap(),
+        [64, 128, 64, 255]
+    );
+    // A seam inside one result pixel mixes in proportion to its position:
+    // three quarters of a pixel on each side of it.
+    assert_eq!(
+        box_average(&image, [0.25, 0.0, 1.75, 1.0], (1, 1)).unwrap(),
+        [128, 128, 0, 255]
+    );
+    assert_eq!(
+        box_average(&image, [0.5, 0.0, 1.25, 1.0], (1, 1)).unwrap(),
+        [170, 85, 0, 255]
+    );
+    // The rows are averaged the same way.
+    let column = DecodedImage {
+        width: 1,
+        height: 4,
+        rgba: [red, red, blue, blue].concat(),
+    };
+    assert_eq!(
+        box_average(&column, [0.0, 0.0, 1.0, 4.0], (1, 1)).unwrap(),
+        [128, 0, 128, 255]
+    );
+    assert_eq!(
+        box_average(&column, [0.0, 1.0, 1.0, 3.0], (1, 2)).unwrap(),
+        [255, 0, 0, 255, 0, 0, 255, 255]
+    );
+}
+
+#[test]
+fn averaging_runs_over_both_axes_at_once() {
+    let red = [255, 0, 0, 255];
+    let green = [0, 255, 0, 255];
+    let blue = [0, 0, 255, 255];
+    let image = DecodedImage {
+        width: 2,
+        height: 2,
+        rgba: [red, red, blue, green].concat(),
+    };
+    let whole = [0.0, 0.0, 2.0, 2.0];
+    assert_eq!(
+        box_average(&image, whole, (1, 1)).unwrap(),
+        [128, 64, 64, 255]
+    );
+    // Only the rows are averaged together: each column keeps its own colors.
+    assert_eq!(
+        box_average(&image, whole, (2, 1)).unwrap(),
+        [128, 0, 128, 255, 128, 128, 0, 255]
+    );
+    assert_eq!(
+        box_average(&image, whole, (1, 2)).unwrap(),
+        [255, 0, 0, 255, 0, 128, 128, 255]
+    );
+}
+
+#[test]
+fn averaging_a_region_past_the_image_uses_the_pixels_inside() {
+    let image = row(&[[255, 0, 0, 255], [0, 255, 0, 255]]);
+    assert_eq!(
+        box_average(&image, [1.0, 0.0, 3.0, 1.0], (1, 1)).unwrap(),
+        [0, 255, 0, 255]
+    );
+    assert_eq!(
+        box_average(&image, [-1.0, 0.0, 1.0, 1.0], (1, 1)).unwrap(),
+        [255, 0, 0, 255]
+    );
+    // A result pixel that lies wholly past the image has nothing to average.
+    assert_eq!(
+        box_average(&image, [1.0, 0.0, 3.0, 1.0], (2, 1)).unwrap(),
+        [0, 255, 0, 255, 0, 0, 0, 0]
+    );
+    let column = DecodedImage {
+        width: 1,
+        height: 2,
+        rgba: image.rgba.clone(),
+    };
+    assert_eq!(
+        box_average(&column, [0.0, 1.0, 1.0, 3.0], (1, 2)).unwrap(),
+        [0, 255, 0, 255, 0, 0, 0, 0]
+    );
+}
+
+#[test]
+fn averaging_colors_with_their_alpha() {
+    // A transparent pixel adds no color: half the area is opaque white.
+    let image = row(&[[255, 255, 255, 255], [9, 99, 199, 0]]);
+    assert_eq!(
+        box_average(&image, [0.0, 0.0, 2.0, 1.0], (1, 1)).unwrap(),
+        [255, 255, 255, 128]
+    );
+    // Nothing opaque at all stays transparent.
+    let clear = row(&[[9, 99, 199, 0], [9, 99, 199, 0]]);
+    assert_eq!(
+        box_average(&clear, [0.0, 0.0, 2.0, 1.0], (1, 1)).unwrap(),
+        [0, 0, 0, 0]
+    );
+}
+
+#[test]
+fn averaging_gives_nothing_without_pixels_to_average() {
+    let image = row(&[[1, 2, 3, 255], [4, 5, 6, 255]]);
+    let whole = [0.0, 0.0, 2.0, 1.0];
+    assert!(box_average(&image, whole, (0, 1)).is_none());
+    assert!(box_average(&image, whole, (1, 0)).is_none());
+    // An empty, inverted, non-finite or outside region.
+    for region in [
+        [1.0, 0.0, 1.0, 1.0],
+        [2.0, 0.0, 1.0, 1.0],
+        [0.0, 0.0, f64::NAN, 1.0],
+        [0.0, 0.0, 2.0, f64::INFINITY],
+        [2.0, 0.0, 3.0, 1.0],
+        [-2.0, 0.0, 0.0, 1.0],
+    ] {
+        assert!(box_average(&image, region, (1, 1)).is_none(), "{region:?}");
+    }
+    // A buffer shorter than its size says.
+    let short = DecodedImage {
+        rgba: vec![0; 4],
+        ..image
+    };
+    assert!(box_average(&short, whole, (1, 1)).is_none());
+}
+
+#[test]
+fn averaged_brushes_are_shared_per_image_region_and_size() {
+    let source = decoded();
+    let cache = ImageBrushCache::default();
+    let region = [0.0, 0.0, 4.0, 2.0];
+    let brush = cache.averaged(&source, region, (2, 1)).unwrap();
+    assert_eq!((brush.image.width, brush.image.height), (2, 1));
+    assert_eq!(
+        brush.image.data.id(),
+        cache
+            .averaged(&source, region, (2, 1))
+            .unwrap()
+            .image
+            .data
+            .id()
+    );
+    let smaller = cache.averaged(&source, region, (1, 1)).unwrap();
+    assert_ne!(brush.image.data.id(), smaller.image.data.id());
+    let shifted = cache
+        .averaged(&source, [0.0, 0.0, 3.0, 2.0], (2, 1))
+        .unwrap();
+    assert_ne!(brush.image.data.id(), shifted.image.data.id());
+    // Nothing to average gives no brush, and keeps none.
+    assert!(cache.averaged(&source, region, (0, 1)).is_none());
+    // The brush owns its pixels, so the paint cache can go.
+    let weak = Arc::downgrade(&source);
+    drop(source);
+    assert!(weak.upgrade().is_some());
+    drop(cache);
+    assert!(weak.upgrade().is_none());
+    assert_eq!((brush.image.width, brush.image.height), (2, 1));
+}

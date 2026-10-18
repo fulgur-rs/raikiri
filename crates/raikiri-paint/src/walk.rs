@@ -6328,7 +6328,8 @@ fn paint_border_image_within(
         bottom: f64::from(border.bottom.width().px()),
         left: f64::from(border.left.width().px()),
     };
-    let geometry = |natural| match image_cache.device_grid(transform) {
+    let grid = image_cache.device_grid(transform);
+    let geometry = |natural| match grid {
         Some(grid) => {
             border_image_geometry_on_device_pixels(border_box, widths, image, natural, grid)
         }
@@ -6429,7 +6430,11 @@ fn paint_border_image_within(
                 if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
                     continue;
                 }
-                let (brush, pixels) = if let Some(brush) = &shared {
+                let (brush, pixels) = if let Some(averaged) =
+                    averaged_part_brush(image_cache, &decoded, part, crop, (scale_x, scale_y), grid)
+                {
+                    averaged
+                } else if let Some(brush) = &shared {
                     // Whole decoded pixels to image coordinates.
                     let pixels = Affine::scale_non_uniform(1.0 / scale_x, 1.0 / scale_y);
                     (brush.clone(), pixels)
@@ -6558,6 +6563,67 @@ impl PixelCrop {
             height: self.height(),
         }))
     }
+}
+
+/// The brush and the transform from its pixels to image coordinates for a
+/// border image `part` that a raster output draws much smaller than the
+/// decoded pixels it shows, or `None` when it is not (or the output is not a
+/// raster).
+///
+/// The part is averaged down to one pixel per device pixel along each axis
+/// that shrinks, and keeps the whole decoded pixels of `crop` along the
+/// others. A bilinear filter alone averages at most about two pixels per
+/// device pixel, so past that it would skip the pixels between its sample
+/// points and turn a seam between two colors of the image into a hard step
+/// instead of a blend. `pixels_per_unit` is the decoded pixels per image
+/// unit.
+fn averaged_part_brush(
+    image_cache: &crate::walk::ImageBrushCache,
+    decoded: &std::sync::Arc<raikiri_traits::DecodedImage>,
+    part: &raikiri_dom::image_geometry::BorderImagePart,
+    crop: PixelCrop,
+    pixels_per_unit: (f64, f64),
+    grid: Option<DeviceGrid>,
+) -> Option<(peniko::ImageBrush, Affine)> {
+    let grid = grid?;
+    let (src_x, src_y, src_w, src_h) = part.source;
+    let (scale_x, scale_y) = pixels_per_unit;
+    // The decoded pixels the part shows and the device pixels a tile covers.
+    let (source_w, source_h) = (src_w * scale_x, src_h * scale_y);
+    let (device_w, device_h) = (
+        part.tile_width * grid.scale_x.abs(),
+        part.tile_height * grid.scale_y.abs(),
+    );
+    let shrinks = |source: f64, device: f64| source > device * 1.5;
+    let (shrinks_x, shrinks_y) = (shrinks(source_w, device_w), shrinks(source_h, device_h));
+    if !shrinks_x && !shrinks_y {
+        return None;
+    }
+    // The span of decoded pixels along an axis and the pixels it becomes.
+    let axis = |shrinks: bool, span: (f64, f64), device: f64, kept: (u32, u32)| {
+        if shrinks {
+            (span, device.round().max(1.0) as u32)
+        } else {
+            ((f64::from(kept.0), f64::from(kept.1)), kept.1 - kept.0)
+        }
+    };
+    let ((x0, x1), width) = axis(
+        shrinks_x,
+        (src_x * scale_x, (src_x + src_w) * scale_x),
+        device_w,
+        (crop.x0, crop.x1),
+    );
+    let ((y0, y1), height) = axis(
+        shrinks_y,
+        (src_y * scale_y, (src_y + src_h) * scale_y),
+        device_h,
+        (crop.y0, crop.y1),
+    );
+    let brush = image_cache.averaged(decoded, [x0, y0, x1, y1], (width, height))?;
+    // The averaged pixels to image coordinates.
+    let to_image = Affine::translate((src_x, src_y))
+        * Affine::scale_non_uniform(src_w / f64::from(width), src_h / f64::from(height));
+    Some((brush, to_image))
 }
 
 /// The pixels of `decoded` between the corners `start` and `end` (in

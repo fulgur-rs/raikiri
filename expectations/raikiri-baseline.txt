@@ -303,6 +303,7 @@ css/css-backgrounds/border-image-011.html
 css/css-backgrounds/border-image-012.html
 css/css-backgrounds/border-image-021.html
 css/css-backgrounds/border-image-calc.html
+css/css-backgrounds/border-image-image-type-001.htm
 css/css-backgrounds/border-image-image-type-002.htm
 css/css-backgrounds/border-image-image-type-004.htm
 css/css-backgrounds/border-image-image-type-005.htm
