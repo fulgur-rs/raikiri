@@ -8492,6 +8492,231 @@ fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
     assert_eq!(positioned_box_location("right:5px;top:0").0, 185.0);
 }
 
+/// `root(position:relative) > ["aaaa ", outer(position:relative;outer_css) >
+/// ["bb", child(position:absolute;child_css)]]` in a 200px Ahem paragraph:
+/// "bb" is the 20px from x 50 to x 70. Returns the child's border-box
+/// location from the root's border box.
+fn child_of_relative_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
+    let mut child = 0;
+    let (mut doc, cascade, root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some(&format!("display:inline;position:relative;{outer_css}")),
+            );
+            doc.append_text(outer, "bb");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some(&format!(
+                    "position:absolute;width:10px;height:10px;{child_css}"
+                )),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{outer_css} {child_css}");
+    let location = doc.nodes[child].unrounded_layout.location;
+    (location.x, location.y)
+}
+
+#[test]
+fn insets_of_a_box_in_a_relative_inline_resolve_against_the_inline() {
+    // Hand-computed (CSS 2.1 10.1): the containing block is the padding box
+    // of "bb", x 50 to 70 and y 0 to 10, not the 200px paragraph.
+    assert_eq!(
+        child_of_relative_inline_location("", "left:50%;top:50%"),
+        (60.0, 5.0)
+    );
+    // From the right edge, 70 - 10% of 20 - 10.
+    assert_eq!(
+        child_of_relative_inline_location("", "right:10%;bottom:0").0,
+        58.0
+    );
+    assert_eq!(
+        child_of_relative_inline_location("", "right:0;bottom:0"),
+        (60.0, 0.0)
+    );
+}
+
+#[test]
+fn the_containing_block_of_a_relative_inline_is_its_padding_box() {
+    // The border box is x 50 to 82; the padding box x 52 to 80, 28px wide,
+    // and 50% of it is 14.
+    assert_eq!(
+        child_of_relative_inline_location("padding:0 4px;border:2px solid", "left:50%;top:50%"),
+        (66.0, 5.0)
+    );
+}
+
+#[test]
+fn an_offset_moves_the_containing_block_of_a_relative_inline() {
+    assert_eq!(
+        child_of_relative_inline_location("left:5px;top:3px", "left:50%;top:50%"),
+        (65.0, 8.0)
+    );
+}
+
+#[test]
+fn the_nearest_positioned_inline_is_the_containing_block() {
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            // A static inline between the two does not contain the child.
+            let middle = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("display:inline"),
+            );
+            let inner = doc.append_element(
+                Some(middle),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(inner, "cccc");
+            child = doc.append_element(
+                Some(inner),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // "cccc" is x 70 to 110, so 50% of it is 20.
+    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 90.0);
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            let middle = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(middle, "cccc");
+            child = doc.append_element(
+                Some(middle),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // "bbcccc" is x 50 to 110, so the static inline gives way to the outer
+    // one and 50% is 30.
+    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 80.0);
+}
+
+#[test]
+fn a_relative_inline_split_over_lines_contains_its_fragments() {
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:100px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bbbb cccc");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%;top:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // Hand-computed: "aaaa bbbb" fills the first line to x 90 and "cccc" is
+    // x 0 to 40 on the second, so the fragments span x 0 to 90 and y 0 to 20.
+    let location = doc.nodes[child].unrounded_layout.location;
+    assert_eq!((location.x, location.y), (45.0, 10.0));
+}
+
+#[test]
+fn a_relative_inline_in_a_vertical_paragraph_contains_the_box_physically() {
+    let (mut outer, mut child) = (0, 0);
+    let (mut doc, cascade, root) = ahem_paragraph_with(
+        "width:100px;height:200px;writing-mode:vertical-rl;position:relative",
+        |doc, root| {
+            doc.append_text(root, "aaaa ");
+            outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%;top:50%"),
+            );
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // The element is a 10px wide and 20px tall box along the line, which
+    // runs down the right edge from y 50, and the child sits at its middle.
+    let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+    let piece = pieces.iter().find(|piece| piece.node == outer).unwrap();
+    let rect = piece.border_box;
+    assert_eq!((rect.width, rect.height, rect.y), (10.0, 20.0, 50.0));
+    let location = doc.nodes[child].unrounded_layout.location;
+    assert_eq!(
+        (location.x, location.y),
+        (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
+    );
+}
+
+#[test]
+fn a_fixed_box_in_a_relative_inline_keeps_the_page_area() {
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("position:fixed;width:10px;height:10px;left:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // The page area is 800px wide, and the paragraph starts at its left edge.
+    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 400.0);
+}
+
 #[test]
 fn an_absolute_box_does_not_take_up_inline_space() {
     for css in [

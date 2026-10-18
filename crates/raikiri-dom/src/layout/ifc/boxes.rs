@@ -9,6 +9,7 @@ use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
 use crate::taffy_impl::resolve_calc;
+use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::TextGroupAlign;
 use shodo::{
@@ -1282,19 +1283,10 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
     if root.offsets.is_empty() {
         return;
     }
+    // The content of an anonymous cell sits in the cell's owner.
+    let owner = tree.ifc_source_owner(idx);
     for b in &root.boxes {
-        let (mut dx, mut dy) = (0.0, 0.0);
-        // The content of an anonymous cell sits in the cell's owner.
-        let owner = tree.ifc_source_owner(idx);
-        for id in tree
-            .ancestors(b.node)
-            .take_while(|&id| id != idx && id != owner)
-        {
-            if let Some((_, (x, y))) = root.offsets.iter().find(|(owner, _)| *owner == id) {
-                dx += x;
-                dy += y;
-            }
-        }
+        let (dx, dy) = relative_offset_of(tree, idx, owner, &root.offsets, b.node);
         if dx != 0.0 || dy != 0.0 {
             let mut layout = tree.nodes[b.node].unrounded_layout;
             layout.location.x += dx;
@@ -1302,6 +1294,91 @@ fn offset_boxes_inside_relative_inlines(tree: &mut LayoutSession<'_>, idx: usize
             tree.set_unrounded_layout(taffy::NodeId::from(b.node), &layout);
         }
     }
+}
+
+/// The offsets of the relatively positioned inline elements that contain
+/// `node`, up to the paragraph root `idx` (or `owner`, the source owner of an
+/// anonymous cell's content), added up. `offsets` holds the offset of each
+/// element by node id.
+fn relative_offset_of(
+    tree: &Document,
+    idx: usize,
+    owner: usize,
+    offsets: &[(usize, (f32, f32))],
+    node: usize,
+) -> (f32, f32) {
+    tree.ancestors(node)
+        .take_while(|&id| id != idx && id != owner)
+        .filter_map(|id| offsets.iter().find(|(element, _)| *element == id))
+        .fold((0.0, 0.0), |(dx, dy), (_, (x, y))| (dx + x, dy + y))
+}
+
+/// The nearest ancestor of `node` inside the paragraph rooted at `idx` (or at
+/// `owner`, the source owner of an anonymous cell's content) that is a
+/// containing block for absolutely positioned boxes through its `position`:
+/// only a non-atomic inline element can be one there, as an atomic inline
+/// lays its own children out.
+fn positioned_inline_ancestor(
+    tree: &Document,
+    idx: usize,
+    owner: usize,
+    node: usize,
+) -> Option<usize> {
+    tree.ancestors(node)
+        .take_while(|&id| id != idx && id != owner)
+        .find(|&id| {
+            let ancestor = &tree.nodes[id];
+            ancestor.display() != DisplayValue::Contents
+                && ancestor.position() != &PositionValue::Static
+        })
+}
+
+/// The padding box of the inline element `inline`, in the coordinates of the
+/// paragraph's content box: the bounding box of the padding boxes of its
+/// `pieces` on the lines (CSS 2.1 10.1). `basis` resolves its borders, and
+/// `line_shift` gives the move pagination made to the lines. `None` for an
+/// element with no piece.
+fn inline_padding_box(
+    tree: &Document,
+    pieces: &[super::inline_boxes::InlineBoxPiece],
+    inline: usize,
+    basis: f32,
+    line_shift: impl Fn(usize) -> (f32, f32),
+) -> Option<PaddingBox> {
+    let border = tree
+        .layout_node_with_style(inline)?
+        .style
+        .border
+        .resolve_or_zero(Some(basis), resolve_calc);
+    // The edges of a piece: its border box less its borders. A side that is
+    // not an edge of the element has no border, and the content box reaches
+    // the border box there.
+    let (left, top, right, bottom) = pieces
+        .iter()
+        .filter(|piece| piece.node == inline)
+        .map(|piece| {
+            let (outer, inner) = (piece.border_box, piece.content_box);
+            let (dx, dy) = line_shift(piece.line);
+            (
+                outer.x + dx + border.left.min((inner.x - outer.x).max(0.0)),
+                outer.y + dy + border.top.min((inner.y - outer.y).max(0.0)),
+                outer.x + dx + outer.width
+                    - border
+                        .right
+                        .min((outer.x + outer.width - inner.x - inner.width).max(0.0)),
+                outer.y + dy + outer.height
+                    - border
+                        .bottom
+                        .min((outer.y + outer.height - inner.y - inner.height).max(0.0)),
+            )
+        })
+        .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))?;
+    Some(PaddingBox {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
 }
 
 /// How many times one line is moved down past floats before it is accepted
@@ -2439,6 +2516,15 @@ pub(crate) fn commit_child_layout(
     tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
 }
 
+/// A padding box in the coordinates of the root's border box.
+#[derive(Clone, Copy)]
+struct PaddingBox {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
 /// Place the absolutely positioned and fixed boxes of the paragraph rooted at
 /// `idx`, once its lines are final and its border box is `border_box`, the
 /// way taffy's block algorithm places the positioned children of a block
@@ -2447,6 +2533,12 @@ pub(crate) fn commit_child_layout(
 /// sits in the lines: at the anchor for a box that was inline-level, below
 /// the anchor's line for one that was block-level (as if it were a block
 /// there), and below the last line when it has no anchor.
+///
+/// An absolutely positioned box inside a positioned inline element is placed
+/// against that element instead: the bounding box of the padding boxes of its
+/// pieces on the lines, moved by its offset (CSS 2.1 10.1). An inline element
+/// that is a containing block only through `filter` or `will-change` is left
+/// to the root.
 pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border_box: Size<f32>) {
     use taffy::util::MaybeResolve;
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
@@ -2462,7 +2554,9 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
         return;
     }
     let rtl = root.rtl;
-    let vertical_root = root.writing_mode != WritingMode::HorizontalTb;
+    let writing_mode = root.writing_mode;
+    let vertical_root = writing_mode != WritingMode::HorizontalTb;
+    let offsets = root.offsets.clone();
     let Some(lines) = root.lines.clone() else {
         return;
     };
@@ -2474,11 +2568,54 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
         .padding
         .resolve_or_zero(Some(border_box.width), resolve_calc);
     // The containing block: the root's padding box.
-    let cb_width = (border_box.width - border.left - border.right).max(0.0);
-    let cb_height = (border_box.height - border.top - border.bottom).max(0.0);
+    let root_cb = PaddingBox {
+        x: border.left,
+        y: border.top,
+        width: (border_box.width - border.left - border.right).max(0.0),
+        height: (border_box.height - border.top - border.bottom).max(0.0),
+    };
     let content_left = border.left + padding.left;
     let content_top = border.top + padding.top;
+    let owner = tree.ifc_source_owner(idx);
+    // The pieces of the inline elements on the lines, made when a box needs
+    // them.
+    let mut pieces = None;
     for node in positioned {
+        let cb = (tree.nodes[node].position() == &PositionValue::Absolute)
+            .then(|| positioned_inline_ancestor(tree, idx, owner, node))
+            .flatten()
+            .and_then(|inline| {
+                let pieces = pieces.get_or_insert_with(|| {
+                    let content = shodo::geometry::PhysicalSize {
+                        width: if vertical_root {
+                            (border_box.width - content_left - border.right - padding.right)
+                                .max(0.0)
+                        } else {
+                            lines.width
+                        },
+                        height: (border_box.height - content_top - border.bottom - padding.bottom)
+                            .max(0.0),
+                    };
+                    super::inline_boxes::inline_box_pieces(
+                        &lines.lines,
+                        writing_mode,
+                        content,
+                        |_| None,
+                    )
+                });
+                inline_padding_box(tree, pieces, inline, border_box.width, |line| {
+                    super::positioned_runs::block_shift(writing_mode, lines.shift_of(line))
+                })
+            })
+            .map(|inline| {
+                let (dx, dy) = relative_offset_of(tree, idx, owner, &offsets, node);
+                PaddingBox {
+                    x: content_left + inline.x + dx,
+                    y: content_top + inline.y + dy,
+                    ..inline
+                }
+            })
+            .unwrap_or(root_cb);
         let anchor = lines.lines.iter().enumerate().find_map(|(index, line)| {
             line.fragments().find_map(|fragment| match fragment {
                 shodo::Fragment::OutOfFlowAnchor(anchor) if anchor.node.0 as usize == node => {
@@ -2514,18 +2651,18 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
         let auto_horizontal_margins = child.margin.left.is_auto() && child.margin.right.is_auto();
         let margin = child.margin.map(|margin| {
             margin
-                .resolve_to_option(cb_width, resolve_calc)
+                .resolve_to_option(cb.width, resolve_calc)
                 .unwrap_or(0.0)
         });
         let horizontal =
-            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb_width), resolve_calc);
+            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb.width), resolve_calc);
         let vertical =
-            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb_height), resolve_calc);
+            |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(cb.height), resolve_calc);
         let (left, right) = (horizontal(child.inset.left), horizontal(child.inset.right));
         let (top, bottom) = (vertical(child.inset.top), vertical(child.inset.bottom));
-        let width = used_block_width(tree, node, cb_width).or(match (left, right) {
+        let width = used_block_width(tree, node, cb.width).or(match (left, right) {
             (Some(left), Some(right)) => {
-                Some((cb_width - left - right - margin.left - margin.right).max(0.0))
+                Some((cb.width - left - right - margin.left - margin.right).max(0.0))
             }
             _ => None,
         });
@@ -2535,15 +2672,15 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
             .style
             .size
             .height
-            .maybe_resolve(Some(cb_height), resolve_calc)
+            .maybe_resolve(Some(cb.height), resolve_calc)
             .or(match (top, bottom) {
                 (Some(top), Some(bottom)) => {
-                    Some((cb_height - top - bottom - margin.top - margin.bottom).max(0.0))
+                    Some((cb.height - top - bottom - margin.top - margin.bottom).max(0.0))
                 }
                 _ => None,
             });
         let available =
-            (cb_width - margin.left - margin.right - left.unwrap_or(0.0) - right.unwrap_or(0.0))
+            (cb.width - margin.left - margin.right - left.unwrap_or(0.0) - right.unwrap_or(0.0))
                 .max(0.0);
         let output = tree.compute_child_layout(
             taffy::NodeId::from(node),
@@ -2557,8 +2694,8 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
                     height: true,
                 },
                 parent_size: Size {
-                    width: Some(cb_width),
-                    height: Some(cb_height),
+                    width: Some(cb.width),
+                    height: Some(cb.height),
                 },
                 available_space: Size {
                     width: AvailableSpace::Definite(available),
@@ -2569,39 +2706,35 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
         );
         let x = match (left, right) {
             (Some(left), Some(right)) if auto_horizontal_margins => {
-                let free_space = cb_width - left - right - output.size.width;
+                let free_space = cb.width - left - right - output.size.width;
                 if vertical_root || free_space >= 0.0 {
-                    border.left + left + free_space / 2.0
+                    cb.x + left + free_space / 2.0
                 } else if rtl {
-                    border.left + cb_width - right - output.size.width
+                    cb.x + cb.width - right - output.size.width
                 } else {
-                    border.left + left
+                    cb.x + left
                 }
             }
-            (Some(left), _) => border.left + left + margin.left,
-            (None, Some(right)) => {
-                border.left + cb_width - right - output.size.width - margin.right
-            }
+            (Some(left), _) => cb.x + left + margin.left,
+            (None, Some(right)) => cb.x + cb.width - right - output.size.width - margin.right,
             (None, None) => static_x + margin.left,
         };
         let y = match (top, bottom) {
             (Some(top), Some(bottom)) if auto_vertical_margins => {
-                let free_space = cb_height - top - bottom - output.size.height;
+                let free_space = cb.height - top - bottom - output.size.height;
                 if !vertical_root || free_space >= 0.0 {
-                    border.top + top + free_space / 2.0
+                    cb.y + top + free_space / 2.0
                 } else if rtl {
-                    border.top + cb_height - bottom - output.size.height
+                    cb.y + cb.height - bottom - output.size.height
                 } else {
-                    border.top + top
+                    cb.y + top
                 }
             }
-            (Some(top), _) => border.top + top + margin.top,
-            (None, Some(bottom)) => {
-                border.top + cb_height - bottom - output.size.height - margin.bottom
-            }
+            (Some(top), _) => cb.y + top + margin.top,
+            (None, Some(bottom)) => cb.y + cb.height - bottom - output.size.height - margin.bottom,
             (None, None) => static_y + margin.top,
         };
-        commit_child_layout(tree, node, &output, taffy::Point { x, y }, cb_width);
+        commit_child_layout(tree, node, &output, taffy::Point { x, y }, cb.width);
     }
 }
 
