@@ -1497,6 +1497,59 @@ fn a_narrow_paragraph_in_an_rtl_container_is_flush_with_the_right_edge_of_its_co
 }
 
 #[test]
+fn a_paragraph_that_cannot_join_the_balance_keeps_all_its_lines_in_its_column() {
+    // The padded second paragraph is not balanced with the first, so each
+    // paragraph stays whole in its own column.
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p style='padding-top:1px'>C<br>D</p></div>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (60.0, 17.0)),
+            ("D".into(), (60.0, 37.0)),
+        ]
+    );
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p style='padding-top:1px'>C<br>D</p></div>",
+        ".mc{direction:rtl}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (80.0, 16.0)),
+            ("B".into(), (80.0, 36.0)),
+            ("C".into(), (20.0, 17.0)),
+            ("D".into(), (20.0, 37.0)),
+        ]
+    );
+}
+
+#[test]
+fn the_paragraphs_of_a_block_that_is_balanced_whole_keep_all_their_lines() {
+    // The wrapper is one item of the balance, so both of its paragraphs stay
+    // in the first column; the padded paragraph is the second item.
+    let document = lay_out(
+        "<div class=mc><div><p>A<br>B</p><p>C<br>D</p></div><p style='padding-top:1px'>E<br>F</p></div>",
+        ".mc{column-count:3;width:160px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (0.0, 76.0)),
+            ("E".into(), (60.0, 17.0)),
+            ("F".into(), (60.0, 37.0)),
+        ]
+    );
+}
+
+#[test]
 fn narrow_paragraphs_among_others_in_an_rtl_container_are_flush_with_the_right_edge() {
     // The second paragraph is too narrow to join the paragraphs that are cut
     // at the column edges, so each paragraph is placed in its own column.
