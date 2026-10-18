@@ -17600,3 +17600,46 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
     assert_eq!(bottoms(&floats), Some(vec![120.0, 160.0]));
     assert_eq!(floats.pending, None);
 }
+
+#[test]
+fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
+    let overflow = |table_row_lead: f32| BoxOverflow {
+        page: false,
+        avoided_run: false,
+        table_row: false,
+        table_row_lead,
+        row_group_lead: None,
+        flex_item: false,
+        grid_item: false,
+    };
+    // A forced break keeps a positive block-start margin and the table's
+    // lead, so the box lands below the page top and the flow follows the
+    // page boundary.
+    let kept = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, true, &overflow(5.0));
+    assert_eq!(kept.page_top, 100.0);
+    assert_eq!(kept.target_y, 113.0);
+    assert_eq!(kept.node_delta, 23.0);
+    assert_eq!(kept.shift_delta, 10.0);
+    assert!(kept.is_finite());
+    assert_eq!(kept.underflow_correction(), None);
+
+    // A negative margin after a forced break pulls the box above the page
+    // top, and the flow after it keeps the distance the box did not move.
+    let underflow = TransitionLanding::new(100.0, 90.0, -6.0, 3.0, true, &overflow(0.0));
+    assert_eq!(underflow.target_y, 94.0);
+    assert_eq!(underflow.node_delta, 4.0);
+    assert_eq!(underflow.shift_delta, 10.0);
+    assert_eq!(underflow.underflow_correction(), Some(6.0));
+
+    // An unforced move truncates the margin and keeps the relative offset.
+    let unforced = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, false, &overflow(5.0));
+    assert_eq!(unforced.target_y, 103.0);
+    assert_eq!(unforced.node_delta, 13.0);
+    assert_eq!(unforced.underflow_correction(), None);
+
+    // A position that is not a number never moves the box.
+    let unresolved = TransitionLanding::new(100.0, f32::NAN, 8.0, 3.0, true, &overflow(0.0));
+    assert!(!unresolved.is_finite());
+    let unbounded = TransitionLanding::new(f32::INFINITY, 90.0, 8.0, 3.0, true, &overflow(0.0));
+    assert!(!unbounded.is_finite());
+}

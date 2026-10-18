@@ -4655,38 +4655,30 @@ fn paginate_flow(
                 );
                 let target_page = current_page.saturating_add(1).max(natural_page);
                 check_candidate_page!('candidate_loop, target_page);
-                let target_y = page_origin(target_page);
                 // A negative block-start margin can pull a forced-break box
                 // back into the preceding page.  Keep the break boundary for
                 // following siblings (and for page count), but materialize
                 // this box at the underflowed coordinate.  This is the
                 // `underflow-from-next-page` case from CSS Break.
-                let node_target_y = transition_target_y(
-                    target_y,
+                let landing = TransitionLanding::new(
+                    page_origin(target_page),
+                    effective_y,
                     margin_top,
                     relative_offset,
-                    overflow.table_row_lead,
                     forced_transition,
-                    overflow.row_group_lead,
-                    overflow.table_row,
+                    &overflow,
                 );
-                // The candidate was materialized to `effective_y` above,
-                // so this is the additional movement for this boundary.
-                // Keep `flow_shift` at the page boundary even when the
-                // candidate itself underflows into the preceding page.
-                let node_delta = node_target_y - effective_y;
-                let shift_delta = target_y - effective_y;
                 let row_flex_break_before =
                     forced_before && in_row_flex_container(document, cascade, node_id);
-                if node_delta.is_finite() && shift_delta.is_finite() {
+                if landing.is_finite() {
                     let moved_in_bounded_ancestor = move_box_for_transition(
                         document,
                         cascade,
                         body_id,
                         &candidate,
                         &TransitionMove {
-                            node_delta,
-                            shift_delta,
+                            node_delta: landing.node_delta,
+                            shift_delta: landing.shift_delta,
                             page_overflow: overflow.page,
                             forced_transition,
                         },
@@ -4697,13 +4689,19 @@ fn paginate_flow(
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
                     if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
-                        move_flex_line_siblings(document, parent_id, node_id, raw_y, shift_delta);
+                        move_flex_line_siblings(
+                            document,
+                            parent_id,
+                            node_id,
+                            raw_y,
+                            landing.shift_delta,
+                        );
                     }
                     // A kept margin moves the box's descendants and its
                     // later siblings along with the box.
-                    flow_shift += node_delta;
-                    if node_target_y < target_y {
-                        deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
+                    flow_shift += landing.node_delta;
+                    if let Some(correction) = landing.underflow_correction() {
+                        deferred_shifts.underflow = Some((node_id, correction));
                     }
                     float_shifts.settle_transition(
                         document,
@@ -4713,8 +4711,8 @@ fn paginate_flow(
                         &FloatTransition {
                             page_overflow: overflow.page,
                             forced_transition,
-                            delta: node_delta,
-                            target_y: node_target_y,
+                            delta: landing.node_delta,
+                            target_y: landing.target_y,
                             relative_offset,
                             flow_page: page_before_candidate,
                             height,
@@ -4723,7 +4721,7 @@ fn paginate_flow(
                         },
                         &mut subtree_shifts,
                     );
-                    effective_y += node_delta;
+                    effective_y += landing.node_delta;
                 }
                 current_page = target_page;
                 if forced_transition {
@@ -6627,6 +6625,66 @@ fn transition_target_y(
         target_y + table_row_lead + relative_offset
     } else {
         target_y + relative_offset
+    }
+}
+
+/// Where a page transition places a box, and how far that moves the box and
+/// the flow after it.
+struct TransitionLanding {
+    /// The top of the page the box moves to.
+    page_top: f32,
+    /// Where the box's border box starts after the move (see
+    /// [`transition_target_y`]).
+    target_y: f32,
+    /// How far the box itself moves down.
+    node_delta: f32,
+    /// How far the flow after the box moves down.
+    shift_delta: f32,
+}
+
+impl TransitionLanding {
+    /// The landing of a box that was materialized at `effective_y` and moves
+    /// to the page that starts at `page_top`.
+    ///
+    /// Both distances are the additional movement for this boundary, since the
+    /// box already sits at `effective_y`. The flow shift stays at the page
+    /// boundary even when the box itself underflows into the preceding page.
+    fn new(
+        page_top: f32,
+        effective_y: f32,
+        margin_top: f32,
+        relative_offset: f32,
+        forced_transition: bool,
+        overflow: &BoxOverflow,
+    ) -> Self {
+        let target_y = transition_target_y(
+            page_top,
+            margin_top,
+            relative_offset,
+            overflow.table_row_lead,
+            forced_transition,
+            overflow.row_group_lead,
+            overflow.table_row,
+        );
+        Self {
+            page_top,
+            target_y,
+            node_delta: target_y - effective_y,
+            shift_delta: page_top - effective_y,
+        }
+    }
+
+    /// Whether both distances are usable numbers, so that the box can move.
+    fn is_finite(&self) -> bool {
+        self.node_delta.is_finite() && self.shift_delta.is_finite()
+    }
+
+    /// The correction that later siblings still need when the box underflows
+    /// into the page above the one it moves to: its descendants follow the
+    /// box, while the flow after it begins at the page boundary. It is only
+    /// meaningful when [`is_finite`](Self::is_finite) holds.
+    fn underflow_correction(&self) -> Option<f32> {
+        (self.target_y < self.page_top).then_some(self.shift_delta - self.node_delta)
     }
 }
 
