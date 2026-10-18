@@ -1216,8 +1216,26 @@ fn a_lime_content_image_is_placed_after_the_text() {
     assert_eq!(margin_box.content, "ab");
     assert_eq!(
         margin_box.lime_content_image,
-        Some(PaintRect::new(60.0, 0.0, 100.0, 40.0))
+        Some(PaintRect::new(60.0, 0.0, 100.0, 50.0))
     );
+}
+
+#[test]
+fn an_overflowing_lime_content_image_keeps_its_intrinsic_extent() {
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'abcdefghij' url(green.png); \
+           {AHEM} width: 20px; height: 20px }} }}"
+    ));
+    let [margin_box] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert!(margin_box.overflow_clip.is_none());
+
+    let image = margin_box
+        .lime_content_image
+        .expect("the image remains after text overflows the box");
+    assert!(image.x >= margin_box.rect.x + margin_box.rect.width);
+    assert_eq!((image.width, image.height), (100.0, 50.0));
 }
 
 #[test]

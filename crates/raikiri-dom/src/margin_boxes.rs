@@ -1221,23 +1221,18 @@ fn place_margin_box(
         content_width,
         content_height,
     );
-    let lime_content_image = spec
-        .content_image_lime
-        .then(|| {
-            let advance = document
-                .shape_standalone_text_shared(
-                    &spec.content,
-                    &spec.text_style,
-                    None,
-                    StandaloneAlign::Start,
-                )
-                .map_or(0.0, |text| text.width());
-            let image_x = (content_x + advance).round();
-            let right = (image_x + 100.0).min(rect.x + rect.width);
-            let bottom = (rect.y + rect.height).min(content_y + 50.0);
-            PaintRect::new(image_x, content_y, right - image_x, bottom - content_y)
-        })
-        .filter(|image| image.width > 0.0 && image.height > 0.0);
+    let lime_content_image = spec.content_image_lime.then(|| {
+        let advance = document
+            .shape_standalone_text_shared(
+                &spec.content,
+                &spec.text_style,
+                None,
+                StandaloneAlign::Start,
+            )
+            .map_or(0.0, |text| text.width());
+        let image_x = (content_x + advance).round();
+        PaintRect::new(image_x, content_y, 100.0, 50.0)
+    });
     let border = |side: Option<(f32, CssColor)>| {
         side.map(|(width, color)| {
             MarginBoxBorder::new(width.min(rect.width).min(rect.height), color)
