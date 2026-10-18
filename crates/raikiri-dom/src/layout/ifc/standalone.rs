@@ -149,6 +149,20 @@ const MEMO_CAPACITY: usize = 64;
 /// runs, which is the document's own memory many times over.
 const MEMO_MAX_TEXT_BYTES: usize = 4096;
 
+/// The longest `font-family` list a [`StandaloneMemo`] keeps a run of, since
+/// each remembered run holds a copy of the list.
+const MEMO_MAX_FAMILIES: usize = 32;
+
+/// The most lines a [`StandaloneMemo`] keeps a run of: a text of up to
+/// [`MEMO_MAX_TEXT_BYTES`] that is broken at every opportunity (a width probe
+/// of a narrow box) has a line for almost every character.
+const MEMO_MAX_LINES: usize = 32;
+
+/// Whether a run of `text` in `style` is small enough to be remembered.
+fn is_remembered(text: &str, style: &StandaloneStyle) -> bool {
+    text.len() <= MEMO_MAX_TEXT_BYTES && style.families.len() <= MEMO_MAX_FAMILIES
+}
+
 /// Runs shaped by [`Document::shape_standalone_text_shared`], the least
 /// recently used first.
 ///
@@ -376,7 +390,8 @@ impl Document {
     /// one whose collection changes under it (a font is registered, or a
     /// generic or fallback family list is set). A document that was never
     /// laid out has none to tie them to and shapes every time, and so does a
-    /// text of more than 4 KiB.
+    /// text of more than 4 KiB, a list of more than 32 font families or a run
+    /// of more than 32 lines.
     #[doc(hidden)]
     pub fn shape_standalone_text_shared(
         &self,
@@ -385,10 +400,7 @@ impl Document {
         width: Option<f32>,
         align: StandaloneAlign,
     ) -> Option<Arc<StandaloneText>> {
-        let remembered = self
-            .ifc
-            .as_ref()
-            .filter(|_| text.len() <= MEMO_MAX_TEXT_BYTES);
+        let remembered = self.ifc.as_ref().filter(|_| is_remembered(text, style));
         let Some(state) = remembered else {
             return self
                 .shape_standalone_text(text, style, width, align)
@@ -404,9 +416,11 @@ impl Document {
             return Some(shaped);
         }
         let shaped = Arc::new(self.shape_standalone_text(text, style, width, align)?);
-        state
-            .standalone_memo
-            .insert(generations, text, style, width, align, &shaped);
+        if shaped.lines().len() <= MEMO_MAX_LINES {
+            state
+                .standalone_memo
+                .insert(generations, text, style, width, align, &shaped);
+        }
         Some(shaped)
     }
 

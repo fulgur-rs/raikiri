@@ -320,6 +320,58 @@ fn a_shared_run_of_a_long_text_is_not_remembered() {
 }
 
 #[test]
+fn a_shared_run_with_a_long_font_family_list_is_not_remembered() {
+    // Each remembered run holds a copy of the list.
+    let doc = enabled();
+    let start = StandaloneAlign::Start;
+    let with_families = |count: usize| {
+        let mut style = ahem(10.0);
+        style
+            .families
+            .extend((1..count).map(|index| FontFamilyName::named(format!("Missing {index}"))));
+        assert_eq!(style.families.len(), count);
+        style
+    };
+    let longest = with_families(MEMO_MAX_FAMILIES);
+    let kept = shared(&doc, "abc", &longest, None, start);
+    assert!(Arc::ptr_eq(
+        &kept,
+        &shared(&doc, "abc", &longest, None, start)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 1);
+    let too_long = with_families(MEMO_MAX_FAMILIES + 1);
+    let first = shared(&doc, "abc", &too_long, None, start);
+    let second = shared(&doc, "abc", &too_long, None, start);
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert_eq!(first.width(), second.width());
+    assert_eq!(doc.standalone_text_calls(), 3);
+}
+
+#[test]
+fn a_shared_run_of_many_lines_is_not_remembered() {
+    // A narrow box breaks a short text into a line per word; the lines are
+    // what a remembered run holds on to.
+    let doc = enabled();
+    let style = ahem(10.0);
+    let start = StandaloneAlign::Start;
+    let lines = |count: usize| vec!["a"; count].join("\n");
+    let longest = lines(MEMO_MAX_LINES);
+    let kept = shared(&doc, &longest, &style, None, start);
+    assert_eq!(kept.lines().len(), MEMO_MAX_LINES);
+    assert!(Arc::ptr_eq(
+        &kept,
+        &shared(&doc, &longest, &style, None, start)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 1);
+    let too_long = lines(MEMO_MAX_LINES + 1);
+    let first = shared(&doc, &too_long, &style, None, start);
+    let second = shared(&doc, &too_long, &style, None, start);
+    assert_eq!(first.lines().len(), MEMO_MAX_LINES + 1);
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert_eq!(doc.standalone_text_calls(), 3);
+}
+
+#[test]
 fn a_document_that_was_never_laid_out_shares_no_runs() {
     let doc = Document::new();
     let style = ahem(10.0);
