@@ -27,6 +27,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 mod line_paint;
+mod line_text;
 use line_paint::{LineGroups, LinePaint, PiecesByLine, block_pieces, kept_whole_box};
 mod typographic;
 pub(crate) use typographic::{BackgroundSlice, Paragraph, enclosing_inline_opacities};
@@ -319,6 +320,9 @@ pub(crate) fn hold_ifc_lines<'a>(
         offsets,
         base,
         writing_mode,
+        vertical,
+        size,
+        base_decorations,
         shifts,
         root_node,
         pieces,
@@ -347,10 +351,6 @@ pub(crate) fn hold_ifc_lines<'a>(
         {
             continue;
         }
-        let transform = Affine::translate((
-            f64::from(position.x),
-            f64::from(position.y + position.shift_y),
-        ));
         lines.paint_marker_images(paint, &positioned_line.markers, position);
         lines.paint_line_boxes(paint, line_index, position);
         lines.paint_content_images(paint, &positioned_line.content_images, line_index, position);
@@ -368,194 +368,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 &positioned_line.converter,
             );
         }
-        let resolved_decorations = raikiri_dom::text_decoration::positioned_line_decorations(
-            document,
-            cascade,
-            root_id,
-            base_decorations,
-            &positioned_line,
-            (position.x, position.y + position.shift_y),
-        );
-        let mut runs: Vec<RunDraw<'_>> = Vec::new();
-        let converter = positioned_line.converter;
-        for (mut positioned_run, decorations) in
-            positioned_line.runs.into_iter().zip(resolved_decorations)
-        {
-            let run = positioned_run.run;
-            let cv = positioned_run.style;
-            let glyphs = std::mem::take(&mut positioned_run.glyphs);
-            let offset = positioned_run.offset;
-            let paint_box = paint_box(
-                document,
-                cascade,
-                positioned_run.owner,
-                positioned_run.style_owner,
-            );
-            // Text outside every typographic box is in the groups of the
-            // inline elements around it.
-            let group = paint
-                .nearest(positioned_run.style_owner, positioned_run.owner)
-                .or_else(|| paint.element_group(paragraph, paint_box));
-            runs.push(RunDraw {
-                run,
-                glyph_transform: positioned_run.glyph_transform(),
-                turned: positioned_run
-                    .annotation
-                    .is_some_and(|annotation| annotation.turned),
-                style: cv,
-                color: css_color_to_peniko(cv.color),
-                glyphs,
-                decorations,
-                offset,
-                group,
-                paint_box,
-                annotation_baseline: positioned_run
-                    .annotation
-                    .map(|annotation| annotation.baseline),
-            });
-        }
-        // Consecutive runs of one box paint in phases: every shadow, then
-        // every underline and overline, then the glyphs, then every
-        // line-through (CSS 2.2 Appendix E; CSS Text Decoration 3 §4).
-        // Different boxes keep their tree order, so a later box's shadow
-        // still covers an earlier box's text.
-        for segment in runs.chunk_by(|a, b| a.paint_box == b.paint_box) {
-            if !vertical {
-                // Each shadow layer covers every run of the box before the
-                // next one up, so the first declared shadow stays on top.
-                let layers = segment
-                    .iter()
-                    .map(|draw| draw.style.text_shadow.len())
-                    .max()
-                    .unwrap_or(0);
-                for layer in (0..layers).rev() {
-                    for draw in segment {
-                        let Some(font) = draw.run.font_data() else {
-                            continue;
-                        };
-                        let Some(shadow) = draw.style.text_shadow.get(layer) else {
-                            continue;
-                        };
-                        let coords = normalized_coords(&draw.run);
-                        let glyph_transform = physical_glyph_transform(
-                            &converter,
-                            draw.glyph_transform,
-                            draw.run.skew(),
-                        );
-                        draw_shadow(
-                            paint.target(draw.group),
-                            &ShadowRun {
-                                draw,
-                                font: &font,
-                                coords: &coords,
-                                glyph_transform,
-                                document,
-                                missing_glyph_boxes: !vertical && !draw.turned,
-                                emphasis_origin: emphasis_origin(
-                                    position,
-                                    line.block_offset(),
-                                    draw,
-                                ),
-                            },
-                            shadow,
-                            draw.style,
-                            run_transform(transform, draw),
-                            IfcPosition {
-                                x: position.x + draw.offset.0,
-                                y: position.y + draw.offset.1,
-                                shift_y: position.shift_y,
-                            },
-                            size,
-                        );
-                    }
-                }
-                for draw in segment {
-                    draw_resolved_decoration_phase(
-                        paint.target(draw.group),
-                        &draw.decorations,
-                        DecorationPhase::BeforeGlyphs,
-                    );
-                }
-            }
-            for draw in segment {
-                let Some(font) = draw.run.font_data() else {
-                    continue;
-                };
-                let owner_style = draw.style;
-                let font_size = draw.run.font_size();
-                let coords = normalized_coords(&draw.run);
-                let glyph_transform =
-                    physical_glyph_transform(&converter, draw.glyph_transform, draw.run.skew());
-                let run_transform = run_transform(transform, draw);
-                let scene = paint.target(draw.group);
-                if crate::text::has_glyph_outlines(&font) {
-                    scene.draw_glyphs(
-                        &font,
-                        font_size,
-                        true,
-                        &coords,
-                        synthetic_embolden(draw.run.embolden(), font_size),
-                        Fill::NonZero,
-                        draw.color,
-                        1.0,
-                        run_transform,
-                        glyph_transform,
-                        draw.glyphs.iter().map(anyrender_glyph),
-                    );
-                } else if !vertical && !draw.turned {
-                    // Horizontal runs only: a vertical run's advances run
-                    // down the line, which the boxes do not follow yet.
-                    crate::text::draw_missing_glyph_boxes(
-                        scene,
-                        crate::text::missing_glyph_origins(
-                            &draw.run,
-                            draw.glyphs
-                                .iter()
-                                .map(|glyph| (glyph.cluster, glyph.x, glyph.y)),
-                        ),
-                        font_size,
-                        draw.color,
-                        run_transform,
-                    );
-                }
-                // Emphasis marks sit over or under their characters. A
-                // vertical annotation run's clusters are laid out on its own
-                // line, whose inline axis the marks are not placed along yet.
-                if !vertical && !draw.turned {
-                    crate::emphasis::draw_marks(
-                        scene,
-                        document,
-                        &draw.run,
-                        &draw.glyphs,
-                        emphasis_origin(position, line.block_offset(), draw),
-                        owner_style,
-                        draw.color,
-                    );
-                } else if vertical && draw.annotation_baseline.is_none() {
-                    crate::emphasis::draw_vertical_marks(
-                        scene,
-                        document,
-                        (line, &draw.run),
-                        (writing_mode, &converter),
-                        (
-                            position.x + draw.offset.0,
-                            position.y + position.shift_y + draw.offset.1,
-                        ),
-                        owner_style,
-                        draw.color,
-                    );
-                }
-            }
-            if !vertical {
-                for draw in segment {
-                    draw_resolved_decoration_phase(
-                        paint.target(draw.group),
-                        &draw.decorations,
-                        DecorationPhase::AfterGlyphs,
-                    );
-                }
-            }
-        }
+        lines.paint_text(paint, positioned_line, position);
     }
     Some(HeldLines {
         paragraph,

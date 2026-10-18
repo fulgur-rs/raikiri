@@ -4,6 +4,7 @@
 
 use super::typographic::{self, BackgroundSlice, Paragraph, TypographicPaint};
 use super::{IfcPosition, piece_fixed_viewport, transform_applies};
+use crate::text::DecorationContext;
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use peniko::Fill;
@@ -199,6 +200,11 @@ pub(super) struct LinePaint<'a, 'r> {
     /// The content-box origin of the paragraph in page coordinates.
     pub(super) base: IfcPosition,
     pub(super) writing_mode: WritingMode,
+    /// Whether the lines run along the vertical axis.
+    pub(super) vertical: bool,
+    /// The width the lines were broken at, and their total height.
+    pub(super) size: (f32, f32),
+    pub(super) base_decorations: &'r DecorationContext,
     /// How far pagination moved each line along the block axis.
     pub(super) shifts: &'r [f32],
     pub(super) root_node: &'a Node,
