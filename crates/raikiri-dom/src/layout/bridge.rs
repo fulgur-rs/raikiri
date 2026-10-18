@@ -702,20 +702,21 @@ fn layout_values<'a>(
 
 /// Whether the width of element `idx` is a sizing keyword its layout sizes the
 /// box by: `min-content`, or a `max-content` or `fit-content` width that
-/// [`layout_values`] keeps. A `display: contents` element generates no box, so
-/// its width sizes nothing.
+/// [`layout_values`] keeps. A `display: contents` element generates no box and
+/// `width` does not apply to a non-replaced inline box (CSS Sizing 3 §3.1.1),
+/// so the width of either sizes nothing.
 pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
-    if cv.display == DisplayValue::Contents {
-        return false;
-    }
-    match cv.width {
+    let keyword = match cv.width {
         ComputedLengthPercentageOrAuto::MinContent => true,
         ComputedLengthPercentageOrAuto::MaxContent | ComputedLengthPercentageOrAuto::FitContent => {
             sized_by_content_keyword(doc, cascade, idx, cv)
         }
         _ => false,
-    }
+    };
+    keyword
+        && cv.display != DisplayValue::Contents
+        && !super::fixed::generates_inline_box(doc, idx, cv)
 }
 
 /// Whether the layout of element `idx`, whose computed values are `cv`, sizes

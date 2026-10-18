@@ -3093,7 +3093,7 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
         Some(half),
         "div",
         Style::default(),
-        Some("width:min-content"),
+        Some("display:block;width:min-content"),
     );
     let text = doc.append_text(intrinsic, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -3118,14 +3118,14 @@ fn ancestor_width_table_treats_max_and_fit_content_as_intrinsic() {
         Some(body),
         "div",
         Style::default(),
-        Some("width:max-content"),
+        Some("display:block;width:max-content"),
     );
     let max_text = doc.append_text(max, "test");
     let fit = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("width:fit-content"),
+        Some("display:block;width:fit-content"),
     );
     let fit_text = doc.append_text(fit, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -3164,6 +3164,44 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
     for (contents, text) in texts {
         assert!(!widths.in_intrinsic_width(contents));
         assert!(!widths.in_intrinsic_width(text));
+    }
+}
+
+#[test]
+fn ancestor_width_table_ignores_a_keyword_width_on_a_non_replaced_inline() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
+    let mut boxes = Vec::new();
+    // `width` does not apply to an inline box, but it does once the box is
+    // blockified, atomic or floated.
+    for (css, applies) in [
+        ("display:inline", false),
+        ("display:inline;float:left", true),
+        ("display:inline-block", true),
+        ("display:inline;position:absolute", true),
+    ] {
+        for keyword in ["min-content", "max-content", "fit-content"] {
+            let outer = doc.append_element(
+                Some(body),
+                "span",
+                Style::default(),
+                Some(&format!("{css};width:{keyword}")),
+            );
+            let block =
+                doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
+            let text = doc.append_text(block, "test");
+            boxes.push((css, keyword, applies, outer, text));
+        }
+    }
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    for (css, keyword, applies, outer, text) in boxes {
+        assert_eq!(widths.in_intrinsic_width(outer), applies, "{css} {keyword}");
+        assert_eq!(widths.in_intrinsic_width(text), applies, "{css} {keyword}");
     }
 }
 
