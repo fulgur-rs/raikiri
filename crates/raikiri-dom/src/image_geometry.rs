@@ -10,8 +10,8 @@ use raikiri_traits::ImageIntrinsicSize;
 
 mod border_image;
 pub use border_image::{
-    BorderImageGeometry, BorderImagePart, DeviceGrid, border_image_geometry,
-    border_image_geometry_on_device_pixels,
+    BorderImageGeometry, BorderImagePart, DeviceGrid, VisibleArea, border_image_geometry,
+    border_image_geometry_on_device_pixels, border_image_geometry_within,
 };
 
 /// The default object size, in CSS pixels, for a replaced element or image
