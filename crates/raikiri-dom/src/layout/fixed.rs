@@ -929,6 +929,26 @@ fn static_position_alignment(
         width: if rtl { 1.0 } else { 0.0 },
         height: 0.0,
     };
+    if tree.nodes[parent].formatting_context == FormattingContext::Grid {
+        let child_style = &tree.layout_node_with_style(id).unwrap().style;
+        let layout = tree.nodes[parent].unrounded_layout;
+        let insets = (layout.padding + layout.border).sum_axes();
+        let space = Size {
+            width: layout.size.width - insets.width,
+            height: layout.size.height - insets.height,
+        };
+        let overflows = Size {
+            width: margin_box.width > space.width,
+            height: margin_box.height > space.height,
+        };
+        if let Some(alignment) = crate::taffy_impl::auto_grid_abspos_static_alignment(
+            child_style,
+            parent_style,
+            overflows,
+        ) {
+            return (alignment, space);
+        }
+    }
     if tree.nodes[parent].formatting_context != FormattingContext::Flex {
         // The alignment does not depend on the size, so neither does the
         // shift.

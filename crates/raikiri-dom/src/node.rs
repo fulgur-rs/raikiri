@@ -485,6 +485,10 @@ pub struct Node {
     /// as background images, rounded corners or shadows. Recomputed by the
     /// style bridge before every layout pass.
     pub(crate) paints_whole_box_effects: bool,
+    /// Whether `box-decoration-break: clone` gives every fragment of this box
+    /// its own block-start and block-end padding and border (CSS Fragmentation
+    /// 3, 5.4). Recomputed by the style bridge before every layout pass.
+    pub(crate) clones_box_decorations: bool,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
     /// Whether this normal-flow block spans its owning column group.
@@ -713,6 +717,7 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             paints_whole_box_effects: false,
+            clones_box_decorations: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
@@ -900,6 +905,25 @@ impl Node {
             .iter()
             .flat_map(|root| &root.letter_styles)
             .map(|style| (style.box_id, style.source_owner, &style.computed))
+    }
+
+    /// The values the inline element or generated box `id` of an ifc root has
+    /// on the first formatted line of the root, which the `::first-line`
+    /// around it gives, if one reaches the root.
+    pub fn ifc_first_line_element_style(
+        &self,
+        id: usize,
+    ) -> Option<&raikiri_style::ComputedValues> {
+        self.ifc.as_ref()?.first_line_element_style(id)
+    }
+
+    /// The `::first-line` boxes with a text decoration whose decorations reach
+    /// the first formatted line of an ifc root, outermost first. Each is
+    /// paired with the id of the block it belongs to.
+    pub fn ifc_first_line_decorating(&self) -> &[(usize, raikiri_style::ComputedValues)] {
+        self.ifc
+            .as_ref()
+            .map_or(&[], |ifc| ifc.first_line_decorating())
     }
 
     /// Enclosing typographic pseudo box, when ancestor block letters nest.

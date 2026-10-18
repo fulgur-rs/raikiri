@@ -432,17 +432,28 @@ impl<'a> PositionedLines<'a> {
             };
             // Text inherits `visibility` from its element; hidden and
             // collapsed text is laid out but not painted (CSS 2.1 §11.2).
-            let letter = self
+            let ifc = self
                 .document
                 .get_node(self.root_id)
                 .filter(|_| index == 0)
-                .and_then(|node| node.ifc.as_ref())
-                .and_then(|ifc| {
-                    run.source()
-                        .and_then(|source| ifc.typographic_source(source))
-                });
+                .and_then(|node| node.ifc.as_ref());
+            let letter = ifc.and_then(|ifc| {
+                run.source()
+                    .and_then(|source| ifc.typographic_source(source))
+            });
+            // On the first line, text takes the values it has inside the
+            // paragraph's `::first-line`.
+            let first_line = || {
+                let key = if generated_origin(owner).is_some() {
+                    owner
+                } else {
+                    self.document.parent_of(owner)?
+                };
+                ifc?.first_line_text_style(key)
+            };
             let Some(style) = letter
                 .map(|letter| &letter.computed)
+                .or_else(first_line)
                 .or_else(|| computed_for_id(self.cascade, owner))
             else {
                 continue;

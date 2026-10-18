@@ -14,6 +14,7 @@ repository.workspace = true
 raikiri-style = { workspace = true }
 smol_str      = { workspace = true }
 bytes         = { workspace = true }
+moxcms        = { workspace = true }
 url           = { workspace = true }
 rustc-hash    = { workspace = true }
 

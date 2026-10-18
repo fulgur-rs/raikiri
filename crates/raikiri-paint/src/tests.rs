@@ -2577,6 +2577,37 @@ fn painted_html(html: &[u8]) -> Scene {
     scene
 }
 
+fn painted_html_with_ahem(html: &[u8]) -> Scene {
+    use raikiri_html::{ParseOptions, parse};
+
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(html, &options).expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let mut doc = uncascaded.dom;
+    doc.set_font_collection(
+        raikiri_dom::build_bundled_font_collection(
+            vec![raikiri_dom::BundledFace {
+                family: "Ahem".into(),
+                bytes: include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
+                ))
+                .to_vec(),
+            }],
+            false,
+        )
+        .expect("bundled Ahem font should register"),
+    );
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
+    scene
+}
+
 /// The commands of `scene`, as `push`, `pop`, `fill` and the glyph count of
 /// each glyph run.
 fn command_kinds(scene: &Scene) -> Vec<String> {
@@ -2597,8 +2628,8 @@ fn command_kinds(scene: &Scene) -> Vec<String> {
 /// A translucent `::before` split over lines is one opacity group.
 #[test]
 fn translucent_before_over_several_lines_is_one_group() {
-    let scene = painted_html(
-        br#"<html><head><style>p{width:40px} p::before{content:'aaaa bbbb cccc';opacity:.5}</style></head><body><p>d</p></body></html>"#,
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>p{width:40px;font:10px/10px Ahem} p::before{content:'aaaa bbbb cccc';opacity:.5}</style></head><body><p>d</p></body></html>"#,
     );
     assert_eq!(
         command_kinds(&scene),
@@ -2859,8 +2890,8 @@ fn atomic_inline_under_a_singular_transform_places_nothing() {
 /// lines, below that group.
 #[test]
 fn atomic_inline_on_the_first_line_paints_in_its_group() {
-    let scene = painted_html(
-        br#"<html><head><style>p{width:40px} p::first-line{opacity:.5}</style></head><body><p>A<i style="display:inline-block;width:5px;height:5px;background:red"></i> BBBB CCCC<i style="display:inline-block;width:5px;height:5px;background:blue"></i></p></body></html>"#,
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>p{width:40px;font:10px/10px Ahem} p::first-line{opacity:.5}</style></head><body><p>A<i style="display:inline-block;width:5px;height:5px;background:red"></i> BBBB CCCC<i style="display:inline-block;width:5px;height:5px;background:blue"></i></p></body></html>"#,
     );
     assert_eq!(
         command_kinds(&scene),
@@ -2929,8 +2960,8 @@ fn first_letter_in_a_translucent_inline_element_paints_in_its_group() {
 /// box of the group it is in.
 #[test]
 fn negative_inline_group_paints_above_its_split_parent_box() {
-    let scene = painted_html(
-        br#"<html><body><p style="width:40px">A<span style="opacity:.5;background:blue">BBBB CCCC <b style="opacity:.25;position:relative;z-index:-1;background:red">D</b></span></p></body></html>"#,
+    let scene = painted_html_with_ahem(
+        br#"<html><body><p style="width:40px;font:10px/10px Ahem">A<span style="opacity:.5;background:blue">BBBB CCCC <b style="opacity:.25;position:relative;z-index:-1;background:red">D</b></span></p></body></html>"#,
     );
     assert_eq!(
         command_kinds(&scene),
@@ -3100,14 +3131,12 @@ fn custom_highlight_in_a_translucent_inline_element_paints_in_its_group() {
 /// one group, after the paragraph's other lines.
 #[test]
 fn translucent_first_line_is_one_group() {
-    let scene = painted_html(
-        br#"<html><head><style>p::first-line{opacity:.5}</style></head><body><p>First<br>Second</p></body></html>"#,
+    let scene = painted_html_with_ahem(
+        br#"<html><head><style>p{font:10px/10px Ahem} p::first-line{opacity:.5}</style></head><body><p>First<br>Second</p></body></html>"#,
     );
     assert_eq!(
         command_kinds(&scene),
-        [
-            "fill", "glyphs 2", "glyphs 4", "push 0.5", "glyphs 5", "pop"
-        ]
+        ["fill", "glyphs 6", "push 0.5", "glyphs 5", "pop"]
     );
 }
 

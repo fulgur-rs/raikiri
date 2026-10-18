@@ -21,7 +21,7 @@ use peniko::color::{
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
     DeviceGrid, background_image_dimensions, background_tiles, border_image_geometry,
-    border_image_geometry_on_device_pixels, position_offset,
+    border_image_geometry_on_device_pixels, position_offset, rounded_background_tile_size,
 };
 use raikiri_dom::{CounterSnapshots, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
@@ -30,7 +30,7 @@ use raikiri_style::property::{
     CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient, GradientStopColor,
     HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
     OutlineStyle, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
-    UnboundedColor, VerticalAlign, Visibility, VisualBox, ZIndexValue,
+    UnboundedColor, VerticalAlign, VisualBox, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -2631,7 +2631,7 @@ pub(crate) fn paint_document_impl(
                             ),
                         )
                     });
-                if cascade.computed[owner].visibility != Visibility::Hidden
+                if !raikiri_dom::paint_rules::hides_own_box(&cascade.computed[owner])
                     && cell_on_band
                     && let Some(border) = cell.collapsed_border()
                 {
@@ -3430,9 +3430,7 @@ pub(crate) fn paint_document_impl(
                     .get_node(node_id)
                     .and_then(|node| node.collapsed_border())
                     .unwrap_or(&cv.border);
-                // A hidden table must not paint its own collapsed border. Keep
-                // row/cell visibility handling unchanged; `visibility: collapse`
-                // is table-layout-specific and existing row painting relies on it.
+                // A hidden table must not paint its own collapsed border.
                 let visibility_hidden_table =
                     raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
                 let mut paints_on_page = !visibility_hidden_table
@@ -3654,6 +3652,7 @@ pub(crate) fn paint_document_impl(
                 {
                     if let Some(t) = trace.as_deref_mut()
                         && generates_box
+                        && !raikiri_dom::paint_rules::hides_own_box(cv)
                     {
                         t.push(crate::PaintTraceEvent::Box(node_id));
                     }
@@ -3696,10 +3695,11 @@ pub(crate) fn paint_document_impl(
                     };
                     // A `display: contents` element has no box whose
                     // background, borders or outline could paint; its
-                    // generated content still does.
-                    let paints_table_part = generates_box
-                        && !raikiri_dom::paint_rules::is_visibility_hidden_table_part(cv);
-                    if paints_table_part {
+                    // generated content still does. Neither does a box that
+                    // is not visible, whose descendants may still be.
+                    let paints_own_box =
+                        generates_box && !raikiri_dom::paint_rules::hides_own_box(cv);
+                    if paints_own_box {
                         // Paint element background (CSS Backgrounds 3 §2.2).
                         // Shift applies to the box itself per CSS 2.1 §10.8.1.
                         let clip_background = page_content_clip.filter(|_| {
@@ -3812,7 +3812,7 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::TableColumn
                             | DisplayValue::TableCell
                     );
-                    let border_image_drawn = paints_table_part
+                    let border_image_drawn = paints_own_box
                         && !collapsed_internal_table_box
                         && if paints_as_absolute_continuation && unfragmented_top < own_paint_y {
                             // A continuation fragment slices the image laid
@@ -3864,7 +3864,7 @@ pub(crate) fn paint_document_impl(
                         border_covered_by_background || border_image_drawn;
                     // Paint border on top of background (CSS Backgrounds 3 §5).
                     let paints_continuation_border =
-                        paints_table_part && paints_as_absolute_continuation;
+                        paints_own_box && paints_as_absolute_continuation;
                     if !border_covered_by_background && paints_continuation_border {
                         paint_element_border_with_top(
                             scene,
@@ -3876,7 +3876,7 @@ pub(crate) fn paint_document_impl(
                             cv.color,
                             false,
                         );
-                    } else if paints_table_part && !border_covered_by_background {
+                    } else if paints_own_box && !border_covered_by_background {
                         paint_element_border_rounded(
                             scene,
                             own_paint_width,
@@ -3895,7 +3895,7 @@ pub(crate) fn paint_document_impl(
                     // outside the border edge (CSS Basic UI §4). Each box of a
                     // sliced box draws a whole outline around itself, like the
                     // pieces of an inline box.
-                    if paints_table_part {
+                    if paints_own_box {
                         paint_element_outline(
                             scene,
                             own_paint_width,
@@ -3975,7 +3975,7 @@ pub(crate) fn paint_document_impl(
                                 .get(node_id)
                                 .copied()
                                 .unwrap_or(false),
-                            cv.visibility != Visibility::Hidden,
+                            !raikiri_dom::paint_rules::hides_own_box(cv),
                             warnings,
                         )
                     } else if document.is_canvas_element(node_id) {
@@ -4000,7 +4000,7 @@ pub(crate) fn paint_document_impl(
                             &paint_padding,
                             cv.object_fit,
                             &cv.object_position,
-                            cv.visibility != Visibility::Hidden,
+                            !raikiri_dom::paint_rules::hides_own_box(cv),
                         )
                     } else if let Some(source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
@@ -4020,7 +4020,7 @@ pub(crate) fn paint_document_impl(
                             &layout.padding,
                             cv.object_fit,
                             &cv.object_position,
-                            cv.visibility != Visibility::Hidden,
+                            !raikiri_dom::paint_rules::hides_own_box(cv),
                             node_id,
                             warnings,
                         )
@@ -4028,6 +4028,7 @@ pub(crate) fn paint_document_impl(
                         false
                     };
                     if !painted_image
+                        && paints_own_box
                         && pixel_source.is_none()
                         && node.tag_name() == Some("img")
                         && let Some(src) = node.attribute("src")
@@ -4076,7 +4077,7 @@ pub(crate) fn paint_document_impl(
                         }
                         scene.pop_layer();
                     }
-                    if has_column_rules && cv.visibility == Visibility::Visible {
+                    if has_column_rules && !raikiri_dom::paint_rules::hides_own_box(cv) {
                         // Rules obey the owner's overflow, while an outside marker
                         // remains outside that clip and paints above the rule.
                         let rule_clip = raikiri_dom::paint_rules::overflow_clip(
@@ -5770,11 +5771,17 @@ fn paint_background_from_source(
     let Some(intrinsic) = pixel_source.intrinsic_size(url) else {
         return;
     };
-    let Some((image_w, image_h)) =
+    let Some(image) =
         background_image_dimensions(size, positioning.width(), positioning.height(), intrinsic)
     else {
         return;
     };
+    let (image_w, image_h) = rounded_background_tile_size(
+        size,
+        image,
+        (positioning.width(), positioning.height()),
+        repeat,
+    );
     let raster_size = ImageRasterSize {
         width: image_w as f32,
         height: image_h as f32,
@@ -5865,16 +5872,71 @@ fn paint_background_image(
         tile_w / decoded.width as f64,
         tile_h / decoded.height as f64,
     );
+    // A `repeat` or `round` axis places tiles edge to edge, so one fill with
+    // the image repeating along that axis covers it without a seam between
+    // tiles, however small they are. A `space` or `no-repeat` axis keeps one
+    // fill per tile, which leaves its gaps and clips the tile to its edges.
+    let continuous = |keyword: raikiri_style::property::BackgroundRepeatKeyword| {
+        matches!(
+            keyword,
+            raikiri_style::property::BackgroundRepeatKeyword::Repeat
+                | raikiri_style::property::BackgroundRepeatKeyword::Round
+        )
+    };
+    let (continuous_x, continuous_y) = (continuous(repeat.x), continuous(repeat.y));
+    let mut pattern = brush.clone();
+    if continuous_x {
+        pattern.sampler.x_extend = PenikoExtend::Repeat;
+    }
+    if continuous_y {
+        pattern.sampler.y_extend = PenikoExtend::Repeat;
+    }
+    // `background_tiles` returns a tile in each axis, so the fallback never applies.
+    let origin_x = tiles.x.first().copied().unwrap_or(painting.x0);
+    let origin_y = tiles.y.first().copied().unwrap_or(painting.y0);
     scene.push_clip_layer(Affine::IDENTITY, &painting);
-    for tile_y in &tiles.y {
-        for tile_x in &tiles.x {
-            scene.fill(
-                Fill::NonZero,
-                Affine::translate((*tile_x, *tile_y)) * tile_scale,
-                brush.as_ref(),
-                None,
-                &tile_shape,
-            );
+    match (continuous_x, continuous_y) {
+        (true, true) => scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            pattern.as_ref(),
+            Some(Affine::translate((origin_x, origin_y)) * tile_scale),
+            &painting,
+        ),
+        (true, false) => {
+            for tile_y in &tiles.y {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    pattern.as_ref(),
+                    Some(Affine::translate((origin_x, *tile_y)) * tile_scale),
+                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + tile_h),
+                );
+            }
+        }
+        (false, true) => {
+            for tile_x in &tiles.x {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    pattern.as_ref(),
+                    Some(Affine::translate((*tile_x, origin_y)) * tile_scale),
+                    &Rect::new(*tile_x, painting.y0, *tile_x + tile_w, painting.y1),
+                );
+            }
+        }
+        (false, false) => {
+            for tile_y in &tiles.y {
+                for tile_x in &tiles.x {
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::translate((*tile_x, *tile_y)) * tile_scale,
+                        brush.as_ref(),
+                        None,
+                        &tile_shape,
+                    );
+                }
+            }
         }
     }
     scene.pop_layer();

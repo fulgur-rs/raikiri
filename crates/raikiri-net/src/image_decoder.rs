@@ -2,9 +2,10 @@
 
 use std::io::Cursor;
 
+use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder as _, ImageReader, Limits};
 use raikiri_traits::DecodedImage;
-use raikiri_traits::image::png_with_repaired_crcs;
+use raikiri_traits::image::{convert_rgba8_to_srgb, png_with_repaired_crcs};
 
 /// Decodes supported raster bytes into the shared straight RGBA8 contract.
 ///
@@ -29,12 +30,21 @@ impl ImageDecoder {
         let bytes = png_with_repaired_crcs(bytes);
         let mut reader = ImageReader::new(Cursor::new(&*bytes));
         reader.limits(limits);
-        let decoder = reader
+        let mut decoder = reader
             .with_guessed_format()
             .map_err(|error| error.to_string())?
             .into_decoder()
             .map_err(|error| error.to_string())?;
         let (width, height) = decoder.dimensions();
+        // `image-orientation` is `from-image` unless the author says otherwise
+        // (<https://drafts.csswg.org/css-images-3/#propdef-image-orientation>),
+        // so a tag in the file's EXIF data turns the image before anything
+        // sizes or paints it. A tag the decoder cannot read leaves the image
+        // as stored.
+        let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+        // A tagged image is in the color space of its embedded profile, which
+        // is converted to sRGB once the pixels are decoded.
+        let icc_profile = decoder.icc_profile().ok().flatten();
         let output_bytes = u64::from(width)
             .checked_mul(u64::from(height))
             .and_then(|pixels| pixels.checked_mul(4))
@@ -42,12 +52,15 @@ impl ImageDecoder {
         if width == 0 || height == 0 || output_bytes > max_output_bytes {
             return Err("decoded image exceeds cache byte budget".to_owned());
         }
-        let rgba = DynamicImage::from_decoder(decoder)
-            .map_err(|error| error.to_string())?
-            .into_rgba8();
-        let width = rgba.width();
-        let height = rgba.height();
-        let pixels = rgba.into_raw();
+        let mut image = DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
+        image.apply_orientation(orientation);
+        // A quarter turn swaps the sides.
+        let width = image.width();
+        let height = image.height();
+        let mut pixels = image.into_rgba8().into_raw();
+        if let Some(profile) = icc_profile {
+            convert_rgba8_to_srgb(&profile, &mut pixels);
+        }
         // Defensive invariant check: `DecodedImage::rgba`'s contract (see
         // raikiri-traits::image) is exactly `width * height * 4` bytes. Catches
         // any future decoder/transformation combination that slips past the

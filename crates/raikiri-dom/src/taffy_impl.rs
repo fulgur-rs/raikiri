@@ -786,7 +786,24 @@ impl LayoutSession<'_> {
         {
             output.baselines.first = Some(baseline);
         }
+        // The baselines of a box in a writing mode orthogonal to its parent's
+        // run across the parent's line, so they say nothing about where the
+        // box sits along it: it exposes none and is synthesized from its
+        // border box instead.
+        if self.is_orthogonal_to_parent(usize::from(node_id)) {
+            output.baselines = taffy::Baselines::NONE;
+        }
         output
+    }
+
+    /// Whether the box `idx` has a vertical inline axis while the container
+    /// that lays it out has a horizontal one, or the other way round. A
+    /// `display: contents` ancestor generates no box, so its writing mode
+    /// does not count.
+    fn is_orthogonal_to_parent(&self, idx: usize) -> bool {
+        self.taffy_parent_of(idx).is_some_and(|parent| {
+            self.has_vertical_writing_mode(parent) != self.has_vertical_writing_mode(idx)
+        })
     }
 }
 
@@ -2018,7 +2035,171 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
     if let Some(taffy::DetailedLayoutInfo::Grid(grid)) = grid {
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(&grid));
     }
+    align_auto_grid_abspos_children(
+        tree,
+        idx,
+        inputs.run_mode,
+        inputs.parent_size.width,
+        output.size,
+    );
     output
+}
+
+/// Share Grid static alignment with fixed-box relayout, where page-area
+/// sizing can change the child's margin-box size after this dispatch.
+///
+/// `overflows` tells, per axis, whether the child's margin box is larger than
+/// the content box it is aligned in: a safe alignment of an overflowing box
+/// aligns as `start` (CSS Box Alignment 3 §4.4).
+// spec: https://www.w3.org/TR/css-align-3/#overflow-values
+pub(crate) fn auto_grid_abspos_static_alignment(
+    child: &Style,
+    parent: &Style,
+    overflows: Size<bool>,
+) -> Option<Size<f32>> {
+    use taffy::{AlignItemsKeyword, AlignmentSafety, GridPlacement};
+
+    if child.position != TaffyPosition::Absolute
+        || !child.inset.top.is_auto()
+        || !child.inset.right.is_auto()
+        || !child.inset.bottom.is_auto()
+        || !child.inset.left.is_auto()
+        || !matches!(&child.grid_row.start, GridPlacement::Auto)
+        || !matches!(&child.grid_row.end, GridPlacement::Auto)
+        || !matches!(&child.grid_column.start, GridPlacement::Auto)
+        || !matches!(&child.grid_column.end, GridPlacement::Auto)
+    {
+        return None;
+    }
+
+    // `self-start` and `self-end` follow the box's own direction where the
+    // axis is its inline axis (CSS Box Alignment 3 §5.2).
+    let alignment_fraction = |self_alignment: Option<taffy::AlignSelf>,
+                              parent_alignment: taffy::AlignItems,
+                              inline: bool,
+                              overflows: bool| {
+        let alignment = self_alignment
+            .unwrap_or(parent_alignment)
+            .resolve_self_relative(child.direction, parent.direction, inline);
+        let keyword = if alignment.safety == AlignmentSafety::Safe && overflows {
+            AlignItemsKeyword::Start
+        } else {
+            alignment.keyword
+        };
+        match keyword {
+            AlignItemsKeyword::Center => 0.5,
+            AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd => 1.0,
+            _ => 0.0,
+        }
+    };
+    let inline = alignment_fraction(
+        child.justify_self,
+        parent.justify_items,
+        true,
+        overflows.width,
+    );
+    Some(Size {
+        width: if parent.direction == taffy::Direction::Rtl {
+            1.0 - inline
+        } else {
+            inline
+        },
+        height: alignment_fraction(
+            child.align_self,
+            parent.align_items,
+            false,
+            overflows.height,
+        ),
+    })
+}
+
+/// Align auto-placed out-of-flow children to this grid's content box.
+///
+/// Taffy's static-position fallback uses the grid's border edge. CSS Grid 2
+/// §10.2 instead aligns the margin box within the content box using the
+/// child's `justify-self` and `align-self`, which fall back to the grid's
+/// `justify-items` and `align-items`.
+fn align_auto_grid_abspos_children(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    run_mode: RunMode,
+    percent_basis: Option<f32>,
+    size: Size<f32>,
+) {
+    use taffy::ResolveOrZero;
+
+    if run_mode != RunMode::PerformLayout {
+        return;
+    }
+
+    let parent_style = &tree.layout_node_with_style(idx).unwrap().style;
+    // Percentage padding resolves against the containing block's width, not
+    // this grid's used width.
+    let border = parent_style
+        .border
+        .resolve_or_zero(percent_basis, resolve_calc);
+    let padding = parent_style
+        .padding
+        .resolve_or_zero(percent_basis, resolve_calc);
+    let content_width =
+        (size.width - border.left - border.right - padding.left - padding.right).max(0.0);
+    let content_height =
+        (size.height - border.top - border.bottom - padding.top - padding.bottom).max(0.0);
+
+    let placed: Vec<(usize, taffy::Layout)> =
+        TaffyChildIter::new_for_session(tree, NodeId::from(idx))
+            .filter_map(|child| {
+                let child = usize::from(child);
+                if tree.nodes[child].taffy_position() != TaffyPosition::Absolute
+                    || tree.nodes[child].is_display_none()
+                {
+                    return None;
+                }
+                let node = tree.layout_node_with_style(child).unwrap();
+                let style = &node.style;
+                let mut layout = node.unrounded_layout;
+                // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
+                // §10.6.4).
+                let margin = taffy::Rect {
+                    left: if style.margin.left.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.left
+                    },
+                    right: if style.margin.right.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.right
+                    },
+                    top: if style.margin.top.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.top
+                    },
+                    bottom: if style.margin.bottom.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.bottom
+                    },
+                };
+                let free_width = content_width - layout.size.width - margin.left - margin.right;
+                let free_height = content_height - layout.size.height - margin.top - margin.bottom;
+                let overflows = Size {
+                    width: free_width < 0.0,
+                    height: free_height < 0.0,
+                };
+                let alignment = auto_grid_abspos_static_alignment(style, parent_style, overflows)?;
+                layout.location.x =
+                    border.left + padding.left + margin.left + alignment.width * free_width;
+                layout.location.y =
+                    border.top + padding.top + margin.top + alignment.height * free_height;
+                Some((child, layout))
+            })
+            .collect();
+
+    for (child, layout) in placed {
+        tree.set_unrounded_layout(NodeId::from(child), &layout);
+    }
 }
 
 impl LayoutSession<'_> {

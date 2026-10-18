@@ -385,3 +385,158 @@ fn first_line_options_measure_normal_and_take_the_viewport() {
     assert_eq!(first.padding.left, px(50.0));
     assert_eq!(first.padding.right, px(100.0));
 }
+
+fn color(r: u8, g: u8, b: u8) -> CssColor {
+    CssColor { r, g, b, a: 255 }
+}
+
+#[test]
+fn first_line_styles_reach_descendants_without_any_first_letter() {
+    let (mut doc, root) =
+        tree_doc("#root{color:red} #root::first-line{color:blue} .own{color:green}");
+    let inherits = doc.push_element(root, "span", None);
+    let own = doc.push_element_with_attrs(root, "span", None, &[("class", "own")]);
+    let nested = doc.push_element(own, "span", None);
+    let text = doc.push_text(inherits, "text");
+    let result = crate::cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert!(result.has_first_line_styles());
+    assert!(!result.has_first_letter_styles());
+    let origins = [StyleNodeId(root as u64)];
+    let style = |id: usize| {
+        result
+            .first_line_style(
+                &doc,
+                &origins,
+                StyleNodeId(root as u64),
+                StyleNodeId(id as u64),
+                None,
+            )
+            .unwrap()
+    };
+    assert_eq!(result.computed[inherits].color, color(255, 0, 0));
+    assert_eq!(style(root).color, color(0, 0, 255));
+    assert_eq!(style(inherits).color, color(0, 0, 255));
+    assert_eq!(style(own).color, color(0, 128, 0));
+    assert_eq!(style(nested).color, color(0, 128, 0));
+    let text = result.first_line_text_style(StyleNodeId(text as u64), &style(inherits));
+    assert_eq!(text.color, color(0, 0, 255));
+    assert_eq!(result.computed[inherits].color, color(255, 0, 0));
+}
+
+#[test]
+fn first_line_styles_agree_with_the_strict_first_line_cascade() {
+    let (mut doc, root) = tree_doc(
+        "#root{font-size:16px;color:blue} #root::first-line{font-size:32px;color:red;text-transform:uppercase}",
+    );
+    let inherited = doc.push_element(root, "span", None);
+    let equal = doc.push_element(root, "span", Some("font-size:16px;color:blue"));
+    let outer = doc.push_element(root, "span", Some("font-size:20px"));
+    let nested = doc.push_element(outer, "span", Some("font-size:150%"));
+    let relative = doc.push_element(root, "span", Some("font-size:150%"));
+    let strict = cascade_with_first_line(
+        &doc,
+        &build_rule_tree(&doc),
+        &MediaContext::screen(),
+        StyleNodeId(root as u64),
+    )
+    .unwrap();
+    let expected = strict.first_line.unwrap();
+    let result = crate::cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let origins = [StyleNodeId(root as u64)];
+    for id in [root, inherited, equal, outer, nested, relative] {
+        let got = result
+            .first_line_style(
+                &doc,
+                &origins,
+                StyleNodeId(root as u64),
+                StyleNodeId(id as u64),
+                None,
+            )
+            .unwrap();
+        let want = expected.computed[id].as_ref().unwrap();
+        assert_eq!(got.font_size, want.font_size, "font-size of {id}");
+        assert_eq!(got.color, want.color, "color of {id}");
+        assert_eq!(got.text_transform, want.text_transform, "transform of {id}");
+    }
+}
+
+#[test]
+fn blocks_around_the_paragraph_pass_only_their_first_line_through() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, "#outer::first-line{color:green}");
+    let outer = doc.push_element_with_attrs(html, "div", Some("display:block"), &[("id", "outer")]);
+    let blue = doc.push_element(outer, "div", Some("display:block;color:blue"));
+    let paragraph = doc.push_element(blue, "p", Some("display:block;color:purple"));
+    let span = doc.push_element(paragraph, "span", None);
+    let own = doc.push_element(paragraph, "span", Some("color:red"));
+    let result = crate::cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let origins = [StyleNodeId(outer as u64)];
+    let style = |id: usize| {
+        result
+            .first_line_style(
+                &doc,
+                &origins,
+                StyleNodeId(paragraph as u64),
+                StyleNodeId(id as u64),
+                None,
+            )
+            .unwrap()
+    };
+    // The paragraph's own `color` is for its box, not its first line.
+    assert_eq!(result.computed[paragraph].color, color(128, 0, 128));
+    assert_eq!(style(paragraph).color, color(0, 128, 0));
+    assert_eq!(style(span).color, color(0, 128, 0));
+    assert_eq!(style(own).color, color(255, 0, 0));
+}
+
+#[test]
+fn first_line_style_is_none_without_a_first_line_style_in_reach() {
+    let (mut doc, root) = tree_doc("#root{color:red}");
+    let span = doc.push_element(root, "span", None);
+    let result = crate::cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert!(!result.has_first_line_styles());
+    assert!(result.typographic_inheritance.is_empty());
+    let origins = [StyleNodeId(root as u64)];
+    let ask = |origins: &[StyleNodeId]| {
+        result.first_line_style(
+            &doc,
+            origins,
+            StyleNodeId(root as u64),
+            StyleNodeId(span as u64),
+            None,
+        )
+    };
+    assert!(ask(&origins).is_none());
+    assert!(ask(&[]).is_none());
+}
+
+#[test]
+fn first_line_styles_survive_sibling_sharing_and_extraction() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, "p::first-line{color:blue}");
+    let body = doc.push_element(html, "body", None);
+    let first = doc.push_element(body, "p", None);
+    let second = doc.push_element(body, "p", None);
+    let inner = doc.push_element(second, "span", None);
+    let result = crate::cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    for (paragraph, element) in [(first, first), (second, inner)] {
+        let origins = [StyleNodeId(paragraph as u64)];
+        let values = result
+            .first_line_style(
+                &doc,
+                &origins,
+                StyleNodeId(paragraph as u64),
+                StyleNodeId(element as u64),
+                None,
+            )
+            .unwrap();
+        assert_eq!(values.color, color(0, 0, 255));
+    }
+    let part = result.extract(&[0, html, body, second, inner]);
+    assert!(part.has_first_line_styles());
+    assert!(!result.extract(&[0, html, body]).has_first_line_styles());
+}

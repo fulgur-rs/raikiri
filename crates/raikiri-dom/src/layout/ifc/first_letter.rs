@@ -1,6 +1,6 @@
 //! Source-preserving projection and retained paint for typographic letters.
 
-use super::{error::IfcError, projection::styled, style};
+use super::{error::IfcError, first_line::FirstLine, projection::styled, style};
 use crate::layout::box_tree::BoxTree;
 use crate::node::BoxPropertiesRef;
 use crate::{Document, generated_content::generated_node_id};
@@ -45,6 +45,9 @@ pub(crate) struct FirstLetter {
     item_limit: Option<u64>,
     checked_through: Option<usize>,
     pub(crate) styles: Vec<LetterStyle>,
+    /// The `::first-line` styles that reach the paragraph's first line, if
+    /// any.
+    pub(crate) first_line: Option<FirstLine>,
 }
 
 impl FirstLetter {
@@ -65,18 +68,20 @@ impl FirstLetter {
         limits: &shodo::limits::Limits,
         predecessors: &PredecessorCache,
     ) -> Self {
-        let (origins, line_origins) = if cascade.has_first_letter_styles() {
-            typographic_origins_in(
-                doc,
-                cascade,
-                origin,
-                predecessors,
-                true,
-                BoxTree::for_layout(doc),
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let (origins, line_origins) =
+            if cascade.has_first_letter_styles() || cascade.has_first_line_styles() {
+                typographic_origins_in(
+                    doc,
+                    cascade,
+                    origin,
+                    predecessors,
+                    true,
+                    BoxTree::for_layout(doc),
+                )
+            } else {
+                (Vec::new(), Vec::new())
+            };
+        let first_line = FirstLine::new(doc, cascade, origin, &line_origins);
         Self {
             origin,
             pending: !origins.is_empty(),
@@ -89,6 +94,7 @@ impl FirstLetter {
             item_limit: limits.max_items,
             checked_through: None,
             styles: Vec::new(),
+            first_line,
         }
     }
 

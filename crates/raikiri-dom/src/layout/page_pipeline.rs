@@ -886,6 +886,15 @@ impl LastNamedBox {
                 .raw_y
                 .is_some_and(|previous| (raw_y - previous).abs() <= 0.001)
     }
+
+    /// Whether `candidate` is a named box of the page flow, or of a flex
+    /// item's named flow, that joins the page transition of this zero-height
+    /// named box.
+    fn joins_transition(&self, candidate: &PageCandidate) -> bool {
+        candidate.context.is_named
+            && (candidate.context.is_direct_body_element || candidate.named_flex_context.is_some())
+            && self.shares_transition(candidate.named_flex_context, candidate.raw_y)
+    }
 }
 
 /// Whether the fixed-height box `node_id`, placed at `top`, fits on the
@@ -978,131 +987,6 @@ pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult,
     let mut session = super::context::LayoutSession::new(document);
     session.page_projection.clear();
     crate::layout::ifc::flow::rebreak_roots(&mut session, cascade, max_advance);
-}
-
-/// Correct the static position of grid abspos items whose placement is `auto`.
-/// Taffy handles explicit grid-area placement, but its static-position fallback
-/// uses the border edge instead of the grid content box.
-///
-/// The margin box is aligned in the content box by the item's `justify-self`
-/// and `align-self`, whose `auto` takes the container's `justify-items` and
-/// `align-items` (CSS Grid 2 §10.2).
-// spec: https://www.w3.org/TR/css-grid-2/#static-position
-fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &CascadeResult) {
-    fn resolve(value: AlignSelfValue, parent: SelfAlignmentValue) -> SelfAlignmentValue {
-        match value {
-            AlignSelfValue::Auto => parent,
-            AlignSelfValue::Value(value) => value,
-            _ => SelfAlignmentValue::Start,
-        }
-    }
-    fn align_offset(value: SelfAlignmentValue, free: f32) -> f32 {
-        match value {
-            SelfAlignmentValue::Center => free / 2.0,
-            SelfAlignmentValue::End | SelfAlignmentValue::FlexEnd => free,
-            _ => 0.0,
-        }
-    }
-    for child_id in 0..document.nodes.len() {
-        let child = &cascade.computed[child_id];
-        if !matches!(
-            document.nodes[child_id].position(),
-            PositionValue::Absolute | PositionValue::Fixed
-        ) || !matches!(child.top, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(child.right, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(child.bottom, ComputedLengthPercentageOrAuto::Auto)
-            || !matches!(child.left, ComputedLengthPercentageOrAuto::Auto)
-        {
-            continue;
-        }
-        #[cfg(all(test, debug_assertions))]
-        crate::layout::test_support::GRID_PARENT_LOOKUP_STEPS
-            .with(|steps| steps.set(steps.get() + 1));
-        let Some(parent_id) = document.parent_of(child_id) else {
-            continue;
-        };
-        if document.nodes[parent_id].formatting_context != FormattingContext::Grid
-            || !matches!(child.grid_row_start, GridLineValue::Auto)
-            || !matches!(child.grid_row_end, GridLineValue::Auto)
-            || !matches!(child.grid_column_start, GridLineValue::Auto)
-            || !matches!(child.grid_column_end, GridLineValue::Auto)
-        {
-            continue;
-        }
-        let parent = &cascade.computed[parent_id];
-        let parent_size = document.nodes[parent_id].unrounded_layout.size;
-        let border_left = parent.border.left.width().px();
-        let border_right = parent.border.right.width().px();
-        let border_top = parent.border.top.width().px();
-        let border_bottom = parent.border.bottom.width().px();
-        let parent_style = &document.layout_node_with_style(parent_id).unwrap().style;
-        let padding_left =
-            used_style_length_percentage(parent_style.padding.left, parent_size.width)
-                .unwrap_or(0.0);
-        let padding_right =
-            used_style_length_percentage(parent_style.padding.right, parent_size.width)
-                .unwrap_or(0.0);
-        let padding_top = used_style_length_percentage(parent_style.padding.top, parent_size.width)
-            .unwrap_or(0.0);
-        let padding_bottom =
-            used_style_length_percentage(parent_style.padding.bottom, parent_size.width)
-                .unwrap_or(0.0);
-        let content_width =
-            (parent_size.width - border_left - border_right - padding_left - padding_right)
-                .max(0.0);
-        let content_height =
-            (parent_size.height - border_top - border_bottom - padding_top - padding_bottom)
-                .max(0.0);
-        let child_layout = document.nodes[child_id].unrounded_layout;
-        // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
-        // §10.6.4).
-        let auto = |side: &ComputedLengthPercentageOrAuto, used: f32| {
-            if matches!(side, ComputedLengthPercentageOrAuto::Auto) {
-                0.0
-            } else {
-                used
-            }
-        };
-        let margin = taffy::Rect {
-            left: auto(&child.margin.left, child_layout.margin.left),
-            right: auto(&child.margin.right, child_layout.margin.right),
-            top: auto(&child.margin.top, child_layout.margin.top),
-            bottom: auto(&child.margin.bottom, child_layout.margin.bottom),
-        };
-        let free_width = content_width - child_layout.size.width - margin.left - margin.right;
-        let rtl_container = parent.direction == Direction::Rtl;
-        let justify = match resolve(child.justify_self, parent.justify_items) {
-            // An absolutely positioned box takes no part in baseline
-            // alignment; `last baseline` falls back to `safe self-end`: the
-            // end edge of the box's own inline direction, or the start edge
-            // of the container when the box overflows.
-            SelfAlignmentValue::LastBaseline => match (free_width < 0.0, rtl_container) {
-                (true, true) => free_width,
-                (true, false) => 0.0,
-                (false, _) if child.direction == Direction::Rtl => 0.0,
-                (false, _) => free_width,
-            },
-            value => {
-                let offset = align_offset(value, free_width);
-                // The inline start of a right-to-left container is its right edge.
-                if rtl_container {
-                    free_width - offset
-                } else {
-                    offset
-                }
-            }
-        };
-        let x = border_left + padding_left + margin.left + justify;
-        let free_height = content_height - child_layout.size.height - margin.top - margin.bottom;
-        let align = match resolve(child.align_self, parent.align_items) {
-            SelfAlignmentValue::LastBaseline => free_height.max(0.0),
-            value => align_offset(value, free_height),
-        };
-        let y = border_top + padding_top + margin.top + align;
-        let child_layout = &mut document.nodes[child_id].unrounded_layout;
-        child_layout.location.x = x;
-        child_layout.location.y = y;
-    }
 }
 
 /// Lay out a Document on one A4 page (or the specified PageBox).
@@ -1254,9 +1138,9 @@ fn layout_single_page_with_table_projection(
     };
     taffy::compute_root_layout(document, TaffyNodeId::from(icb), available_space);
     take_layout_failure(document)?;
-    // Step 5a: post-layout corrections taffy does not make: the static
-    // position of auto-placed grid abspos items, the containing block of
-    // nested fixed boxes, and auto-height ancestors of floats.
+    // Step 5a: post-layout corrections taffy does not make: the containing
+    // block of nested fixed boxes and auto-height ancestors of floats. Grid
+    // abspos static positions are aligned within the grid dispatch.
     // Taffy places fixed boxes against their parents, not the page area,
     // their containing block.
     let page_area = taffy::Size {
@@ -1270,9 +1154,6 @@ fn layout_single_page_with_table_projection(
     // Laying those boxes out again can fail a table or exhaust the
     // fragment budget like the root layout above.
     take_layout_failure(document)?;
-    // After the fixed boxes, whose relayout lays out the grids inside them
-    // again with taffy's static positions.
-    realign_grid_abspos_static_positions(document, cascade);
     // Again for the boxes inside fixed boxes that relayout put back; the
     // pass is idempotent, so the boxes placed above stay where they are.
     super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
@@ -1398,6 +1279,17 @@ impl<'a> PageLayoutControl<'a> {
     fn capped_page_index(&self, page_index: u32) -> u32 {
         self.max_pages
             .map_or(page_index, |limit| page_index.min(limit.saturating_sub(1)))
+    }
+
+    /// The last page to produce when pagination reached `reach_max`: that
+    /// page, or, once the page limit stopped pagination, the last page the
+    /// limit allows (the one before `max_pages`).
+    fn last_page(&self, reach_max: u32) -> u32 {
+        if self.page_limit_reached.get() {
+            self.max_pages.unwrap_or(0).saturating_sub(1)
+        } else {
+            reach_max
+        }
     }
 
     fn check_discovery_page_index(&self, page_index: u32) -> Result<(), LayoutError> {
@@ -4218,20 +4110,14 @@ fn paginate_flow(
         HeaderRepeats::prepare(document, cascade, roots.contents, page_step, |id| {
             root_flow_offset + current_abs_y(document, id)
         });
-    let table_row_leads = table_row_leads(document, cascade, &candidates, root_flow_offset);
-    let avoided_row_groups = avoided_row_groups(
+    let avoided_breaks = AvoidedBreaks::collect(
         document,
         cascade,
         &candidates,
         &table_headers,
-        &table_row_leads,
-    );
-    let avoided_run_ends = avoided_run_ends(
-        document,
-        cascade,
-        &candidates,
         roots.contents_box,
         content_width,
+        root_flow_offset,
     );
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
@@ -4318,71 +4204,34 @@ fn paginate_flow(
             flow_shift -= delta;
             current_page = flow_page;
         }
-        let float_edges = float_shifts.edges_for(document, cascade, node_id, body_id);
-        if let Some((float_context, float_edges)) = float_edges {
-            let floating = is_floating_box_for_pagination(document, cascade, node_id);
-            let floor = if !floating && candidate.context.is_float_descendant {
-                None
-            } else {
-                float_floor(
+        if let Some(clearance) =
+            float_shifts.clearance_for(document, cascade, body_id, &candidate, flow_shift)
+        {
+            flow_shift += clearance.shift;
+            if clearance.floating {
+                float_shifts.hold_cleared_float(
                     document,
                     cascade,
                     node_id,
-                    float_context,
-                    &float_edges,
-                    floating,
-                )
-            };
-            let margin_top = if floating {
-                document.nodes[node_id].unrounded_layout.margin.top
-            } else {
-                0.0
-            };
-            // Floors are in normal-flow coordinates, without the relative
-            // offsets of the box and its ancestors.
-            let follower_offset =
-                accumulated_relative_offset_y(document, cascade, body_id, node_id);
-            let flow_raw_y = candidate.raw_y - follower_offset;
-            let shift = clearance_shift(
-                floor,
-                flow_raw_y + flow_shift - margin_top,
-                float_shifts.later,
-            );
-            if shift > 0.0 {
-                flow_shift += shift;
-                if floating {
-                    float_shifts.pending = Some((node_id, shift, current_page));
-                    // The shifted float is now the one later floats on its
-                    // side keep below.
-                    if let Some(index) = float_side_index(cascade.computed[node_id].float) {
-                        let layout = &document.nodes[node_id].unrounded_layout;
-                        let edge = float_margin_edge(
-                            document,
-                            node_id,
-                            index,
-                            flow_raw_y + flow_shift,
-                            layout.size.height,
-                            layout.margin.top,
-                        );
-                        float_shifts.record_edge(float_context, edge);
-                    }
-                }
-                if !floating && !candidate.context.is_direct_body_element {
-                    // The ancestors of a nested clearing box grow to hold it.
-                    grow_ancestors_for_shift(
-                        document,
-                        cascade,
-                        node_id,
-                        shift,
-                        body_id,
-                        &mut subtree_shifts,
-                        current_page,
-                        &IfcBoxShifts::default(),
-                    );
-                }
-                // The box may now start on a later page than the flow.
-                current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
+                    &clearance,
+                    flow_shift,
+                    current_page,
+                );
+            } else if !candidate.context.is_direct_body_element {
+                // The ancestors of a nested clearing box grow to hold it.
+                grow_ancestors_for_shift(
+                    document,
+                    cascade,
+                    node_id,
+                    clearance.shift,
+                    body_id,
+                    &mut subtree_shifts,
+                    current_page,
+                    &IfcBoxShifts::default(),
+                );
             }
+            // The box may now start on a later page than the flow.
+            current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
         }
         if !document.is_source_node(node_id) {
             continue;
@@ -4398,12 +4247,8 @@ fn paginate_flow(
             let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
             // In-flow text between two blocks separates them: the next block's
             // gap is no longer a margin adjoining the previous block.
-            if participates_in_margin_adjacency
-                && let Some(parent_id) = text_ifc_root.or_else(|| {
-                    BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
-                })
-            {
-                sibling_margins.previous_bottoms.remove(&parent_id);
+            if participates_in_margin_adjacency {
+                sibling_margins.end_run_at_text(document, node_id, text_ifc_root);
             }
             // A footnote's descendants follow the moved footnote box. They are
             // deliberately not paginated independently, otherwise the stale
@@ -4604,10 +4449,13 @@ fn paginate_flow(
                 text_ifc_root,
                 effective_y,
             );
-            let named_page_change = name_context_seen
-                && height > 0.0
-                && name_participates_in_flow
-                && candidate_page_name != comparison_page_name;
+            let named_page_change = text_changes_page_name(
+                name_context_seen,
+                name_participates_in_flow,
+                height,
+                &candidate_page_name,
+                &comparison_page_name,
+            );
             let pending_break_applies = pending_break.applies_to(document, node_id);
             let consumes_pending_break = pending_break_applies && name_participates_in_flow;
             if saw_child {
@@ -4646,12 +4494,17 @@ fn paginate_flow(
                     page_names.current = candidate_page_name.clone();
                 }
             }
-            if height > 0.0
-                && name_participates_in_flow
-                && !named_page_change
-                && !consumes_pending_break
-                && (!keep_local_page_type || current_page > page_before_candidate)
-            {
+            if text_sets_page_name(
+                height,
+                name_participates_in_flow,
+                named_page_change,
+                consumes_pending_break,
+                page_type_leaves_local_flow(
+                    keep_local_page_type,
+                    current_page,
+                    page_before_candidate,
+                ),
+            ) {
                 page_names.current = candidate_page_name;
             }
             check_candidate_page!('candidate_loop, current_page);
@@ -4728,28 +4581,25 @@ fn paginate_flow(
             break_margins(document, cascade, node_id, content_width);
         let page_start = page_origin(current_page);
         let page_end = page_start + page_step_at(current_page);
-        let avoided_run_overflow = avoided_run_ends.get(&node_id).is_some_and(|end| {
-            avoided_run_moves(
-                *end - raw_y,
-                margin_top,
-                effective_y,
-                page_start,
-                page_end,
-                page_step_at(current_page.saturating_add(1)),
-            )
-        });
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
         let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
-        let flow_y = effective_y - relative_offset;
-        let page_overflow = box_avoids_page_break_inside(document, node_id, computed.break_inside)
-            && avoided_box_moves(
-                flow_y,
+        let overflow = avoided_breaks.measure(
+            document,
+            cascade,
+            &candidate,
+            &BoxFit {
+                effective_y,
+                flow_y: effective_y - relative_offset,
                 margin_top,
-                flow_y + height + trailing_margin,
+                trailing_margin,
                 page_start,
                 page_end,
-            );
+                next_page_step: page_step_at(current_page.saturating_add(1)),
+            },
+            &table_headers,
+            &mut trailing_flex_children,
+        );
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -4761,12 +4611,12 @@ fn paginate_flow(
         // break there would only leave the zero-height boxes alone on a page.
         // This matters for chains of empty named boxes with overflowing text,
         // including the first non-empty box that follows the chain.
-        let same_named_coordinate = candidate.context.is_named
-            && (candidate.context.is_direct_body_element || candidate.named_flex_context.is_some())
-            && last_named.shares_transition(candidate.named_flex_context, raw_y);
-        let named_page_change = name_context_seen
-            && candidate_page_name != comparison_page_name
-            && !same_named_coordinate;
+        let named_page_change = box_changes_page_name(
+            name_context_seen,
+            &candidate_page_name,
+            &comparison_page_name,
+            last_named.joins_transition(&candidate),
+        );
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
         // page. The forced break sits before the box's margin box, so the
@@ -4778,45 +4628,6 @@ fn paginate_flow(
                 current_page,
                 page_start,
             );
-        // Keep an ordinary table row intact when it would cross the current
-        // page. The row is a class-A boundary owned by the table engine; its
-        // cells and descendants follow the same flow shift below. Rowspans,
-        // cell-internal breaks remain out of this narrow row-boundary pass.
-        // A row that follows a repeated header must fit beside the header's
-        // copy on the next page; otherwise moving it gains nothing.
-        let repeated_header_height = table_headers.repeated_height_before(node_id);
-        let table_row_lead = table_row_leads.get(&node_id).copied().unwrap_or(0.0);
-        let table_row_overflow = candidate.context.is_table_row
-            && table_row_moves(
-                flow_y,
-                height,
-                table_row_lead + height + repeated_header_height,
-                page_start,
-                page_end,
-                page_step_at(current_page.saturating_add(1)),
-            );
-        let row_group = avoided_row_groups.get(&node_id).copied();
-        let row_group_overflow = row_group
-            .is_some_and(|(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end));
-        // A trailing flex item may extend into the containing flex box's
-        // continuation at the page edge. Earlier items still move intact when
-        // they would cross a fragmentainer, preserving the existing column
-        // flex pagination behavior.
-        let flex_item_is_last = candidate.context.is_flex_item
-            && trailing_flex_children.is_trailing(document, cascade, node_id);
-        let item_overflow = || {
-            item_moves_past_page_end(
-                effective_y,
-                height,
-                margin_top,
-                page_start,
-                page_end,
-                page_step_at(current_page.saturating_add(1)),
-            )
-        };
-        let flex_item_overflow =
-            candidate.context.is_flex_item && !flex_item_is_last && item_overflow();
-        let grid_item_overflow = candidate.context.is_grid_item && item_overflow();
 
         let collapses_with_previous_block =
             collapses_with_previous_block(document, &candidate, participates_in_margin_adjacency);
@@ -4827,14 +4638,7 @@ fn paginate_flow(
         let forced_transition = pending_break_applies
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
-        let page_transition = saw_child
-            && (forced_transition
-                || page_overflow
-                || avoided_run_overflow
-                || table_row_overflow
-                || row_group_overflow
-                || flex_item_overflow
-                || grid_item_overflow);
+        let page_transition = saw_child && (forced_transition || overflow.moves_box());
         if saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
@@ -4861,12 +4665,10 @@ fn paginate_flow(
                     target_y,
                     margin_top,
                     relative_offset,
-                    table_row_lead,
+                    overflow.table_row_lead,
                     forced_transition,
-                    row_group
-                        .filter(|_| row_group_overflow)
-                        .map(|(_, lead)| lead),
-                    table_row_overflow,
+                    overflow.row_group_lead,
+                    overflow.table_row,
                 );
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
@@ -4877,53 +4679,20 @@ fn paginate_flow(
                 let row_flex_break_before =
                     forced_before && in_row_flex_container(document, cascade, node_id);
                 if node_delta.is_finite() && shift_delta.is_finite() {
-                    document.nodes[node_id].unrounded_layout.location.y += node_delta;
-                    let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, node_delta);
-                    // A nested avoiding block that moves to the next page
-                    // lengthens the ancestors whose content box holds it, so
-                    // their continuation (and any `overflow` clip) reaches the
-                    // moved content.
-                    // A float does not lengthen the block around it; its
-                    // own shift ends with its subtree.
-                    let mut moved_in_bounded_ancestor = false;
-                    let moves_in_flow_down = node_delta > 0.0
-                        && !is_floating_box_for_pagination(document, cascade, node_id);
-                    let nested_block =
-                        !candidate.context.is_direct_body_element && moves_in_flow_down;
-                    if (page_overflow
-                        || (forced_transition && candidate.context.is_direct_body_element))
-                        && moves_in_flow_down
-                    {
-                        moved_in_bounded_ancestor = grow_ancestors_for_shift(
-                            document,
-                            cascade,
-                            node_id,
+                    let moved_in_bounded_ancestor = move_box_for_transition(
+                        document,
+                        cascade,
+                        body_id,
+                        &candidate,
+                        &TransitionMove {
                             node_delta,
-                            body_id,
-                            &mut subtree_shifts,
-                            page_before_candidate,
-                            &followed_ifc_boxes,
-                        );
-                    } else if forced_transition
-                        && nested_block
-                        && !candidate.context.is_flex_item
-                        && !candidate.context.is_grid_item
-                        && !candidate.context.is_table_row
-                    {
-                        // A forced break ends its ancestors' fragments on
-                        // this page, which their continuations account for;
-                        // only the boxes after it in block flow follow it,
-                        // up to the first ancestor that does not stack its
-                        // children in block order.
-                        // A box pulled back over the break by a negative
-                        // margin still leaves the flow after it at the break.
-                        shift_block_flow_after(
-                            document,
-                            node_id,
-                            body_id,
-                            node_delta.max(shift_delta),
-                        );
-                    }
+                            shift_delta,
+                            page_overflow: overflow.page,
+                            forced_transition,
+                        },
+                        &mut subtree_shifts,
+                        page_before_candidate,
+                    );
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
@@ -4936,35 +4705,24 @@ fn paginate_flow(
                     if node_target_y < target_y {
                         deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
                     }
-                    if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
-                        let inherited =
-                            float_shifts.add_to_pending(node_id, node_delta, page_before_candidate);
-                        // A clearing follower stays below the margin box,
-                        // which a negative block-end margin pulls up.
-                        if let Some(index) = float_side_index(computed.float) {
-                            let context = float_context_root(document, cascade, node_id, body_id);
-                            // Floors are kept in normal-flow coordinates,
-                            // without the relative offsets of the ancestors.
-                            let flow_target_y = node_target_y - relative_offset;
-                            float_shifts.record_edge(
-                                context,
-                                moved_float_edge(
-                                    document,
-                                    node_id,
-                                    index,
-                                    flow_target_y,
-                                    height,
-                                    margin_top,
-                                    forced_transition,
-                                ),
-                            );
-                            // The margin box then moved further than the
-                            // border box, and a later float may have to
-                            // follow it that far.
-                            if !forced_transition {
-                                float_shifts.extend_later(inherited + node_delta + margin_top);
-                            }
-                        }
+                    if overflow.page && is_floating_box_for_pagination(document, cascade, node_id) {
+                        float_shifts.record_moved_float(
+                            document,
+                            cascade,
+                            body_id,
+                            &MovedFloat {
+                                node_id,
+                                side: float_side_index(computed.float),
+                                delta: node_delta,
+                                flow_page: page_before_candidate,
+                                // Floors are kept in normal-flow coordinates,
+                                // without the relative offsets of the ancestors.
+                                flow_target_y: node_target_y - relative_offset,
+                                height,
+                                margin_top,
+                                forced_transition,
+                            },
+                        );
                         grow_float_context_to_moved_float(
                             document,
                             cascade,
@@ -5010,57 +4768,31 @@ fn paginate_flow(
                 // margin (CSS Fragmentation 3 §5.2): the box starts at the
                 // top of the page instead of keeping the part of the margin
                 // that crossed the page edge.
-                let previous = sibling_margins.gap_after_previous(document, node_id, raw_y);
-                if let Some((previous, gap)) = previous
-                    && collapses_with_previous_block
-                    // A clearing box's gap may contain clearance. Its used
-                    // clearance is not recorded separately, so retain the gap.
-                    && matches!(computed.clear, raikiri_style::property::ClearValue::None)
-                {
-                    let page_top = page_origin(natural_page);
-                    let previous_bottom = effective_y - gap;
-                    let follows_forced_break =
-                        sibling_margins.follows_forced_break(document, cascade, previous, node_id);
-                    if page_edge_falls_in_margin(
-                        natural_page,
-                        page_top,
-                        previous_bottom,
+                let truncation = sibling_margins.truncation_at_break(
+                    document,
+                    cascade,
+                    &page_origins,
+                    &MarginBreak {
+                        node_id,
+                        raw_y,
                         effective_y,
-                        follows_forced_break,
-                    )
-                        // Only a margin between adjoining siblings is
-                        // truncated; a box that is not a candidate may lie
-                        // between two nested candidates.
-                        && adjoins_previous_sibling(document, cascade, node_id, previous)
-                    {
-                        let (target_top, target_y) = page_origins.truncated_margin_target(
-                            natural_page,
-                            forced_before,
-                            margin_top,
-                            || {
-                                collapsed_margin_start(
-                                    document,
-                                    cascade,
-                                    previous,
-                                    node_id,
-                                    previous_bottom,
-                                    effective_y,
-                                )
-                            },
-                            follows_forced_break,
-                        );
-                        let delta = target_y - effective_y;
-                        sibling_margins.moved_boxes |= delta != 0.0;
-                        move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
-                        flow_shift += delta;
-                        effective_y += delta;
-                        if target_y < target_top {
-                            // Descendants follow the negative margin; later
-                            // siblings still follow the forced break boundary.
-                            deferred_shifts.underflow = Some((node_id, target_top - target_y));
-                        } else {
-                            natural_page = page_index_for_y(effective_y);
-                        }
+                        natural_page,
+                        forced_before,
+                        margin_top,
+                        collapses_with_previous_block,
+                    },
+                );
+                if let Some(MarginTruncation { delta, underflow }) = truncation {
+                    sibling_margins.moved_boxes |= delta != 0.0;
+                    move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
+                    flow_shift += delta;
+                    effective_y += delta;
+                    if let Some(underflow) = underflow {
+                        // Descendants follow the negative margin; later
+                        // siblings still follow the forced break boundary.
+                        deferred_shifts.underflow = Some((node_id, underflow));
+                    } else {
+                        natural_page = page_index_for_y(effective_y);
                     }
                 }
                 check_candidate_page!('candidate_loop, natural_page);
@@ -5112,13 +4844,11 @@ fn paginate_flow(
         effective_y += header_delta;
         flow_shift += header_delta;
 
-        if name_participates_in_flow
-            && (candidate.context.is_direct_body_element
-                || candidate.context.is_named
-                || candidate.context.is_rendered_leaf
-                || candidate.context.deferred_named_break_after)
-            && (!keep_local_page_type || page_transition || current_page > page_before_candidate)
-        {
+        if box_sets_page_name(
+            &candidate.context,
+            page_transition,
+            page_type_leaves_local_flow(keep_local_page_type, current_page, page_before_candidate),
+        ) {
             page_names.current = candidate_page_name;
             if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
                 last_named = LastNamedBox::new(document, &candidate, node_id, raw_y, height);
@@ -5218,22 +4948,31 @@ fn paginate_flow(
         control,
     )
     .and_then(|()| control.check_discovery_page_index(reach.max))?;
-    let last_page = if control.page_limit_reached.get() {
-        control.max_pages.unwrap_or(0).saturating_sub(1)
-    } else {
-        reach.max
-    };
-    Ok((0..=last_page)
+    Ok(page_slices(
+        control.last_page(reach.max),
+        &page_origins,
+        &page_names,
+    ))
+}
+
+/// The pages from the first through `last_page`, each starting at its origin
+/// in the flow and carrying the page type `page_names` gave it, if any.
+fn page_slices(
+    last_page: u32,
+    page_origins: &PageOrigins,
+    page_names: &PageNames,
+) -> Vec<PageSlice> {
+    (0..=last_page)
         .map(|page_index| PageSlice {
             page_index,
-            content_origin_y: page_origin(page_index),
+            content_origin_y: page_origins.origin(page_index),
             page_name: page_names
                 .by_page
                 .get(page_index as usize)
                 .cloned()
                 .flatten(),
         })
-        .collect())
+        .collect()
 }
 
 /// Where each table row among `candidates` sits in its parent before
@@ -5483,6 +5222,192 @@ fn avoided_run_ends(
         previous = Some(candidate);
     }
     avoided_run_ends
+}
+
+/// The boxes of a flow that avoid a page break inside them or between them,
+/// found once from its candidates.
+#[derive(Default)]
+struct AvoidedBreaks {
+    /// The block end of each run of boxes joined by avoided breaks, keyed by
+    /// the run's first box (see [`avoided_run_ends`]).
+    run_ends: HashMap<usize, f32>,
+    /// How far below its table's top edge the first row of each table
+    /// starts (see [`table_row_leads`]).
+    row_leads: HashMap<usize, f32>,
+    /// The block end and table lead of each avoided table row group, keyed
+    /// by its first row (see [`avoided_row_groups`]).
+    row_groups: HashMap<usize, (f32, f32)>,
+}
+
+/// Where a box and its page stand when the box is tested for moving to the
+/// next page.
+#[derive(Clone, Copy)]
+struct BoxFit {
+    /// The top of the box's border box, with the relative offsets of the box
+    /// and its ancestors.
+    effective_y: f32,
+    /// The same position in normal-flow coordinates, without those offsets.
+    flow_y: f32,
+    margin_top: f32,
+    trailing_margin: f32,
+    /// The flow positions at which the current page starts and ends.
+    page_start: f32,
+    page_end: f32,
+    /// The block size of the page after the current one.
+    next_page_step: f32,
+}
+
+/// The ways, besides a forced break, in which a box moves to the next page.
+struct BoxOverflow {
+    /// The box avoids breaks inside it and would cross the page edge.
+    page: bool,
+    /// The box starts a run of boxes joined by avoided breaks that would
+    /// cross the page edge.
+    avoided_run: bool,
+    /// The box is a table row that would cross the page edge.
+    table_row: bool,
+    /// How far below its table's top edge the box starts when it is the
+    /// first row of a table, or zero.
+    table_row_lead: f32,
+    /// The table lead of the avoided row group that starts at the box and
+    /// moves whole, if any.
+    row_group_lead: Option<f32>,
+    /// The box is a flex item that would cross the page edge.
+    flex_item: bool,
+    /// The box is a grid item that would cross the page edge.
+    grid_item: bool,
+}
+
+impl BoxOverflow {
+    /// Whether the box moves to the next page for any of these reasons. The
+    /// table lead is no reason: it only places a first row that moves.
+    fn moves_box(&self) -> bool {
+        self.page
+            || self.avoided_run
+            || self.table_row
+            || self.row_group_lead.is_some()
+            || self.flex_item
+            || self.grid_item
+    }
+}
+
+impl AvoidedBreaks {
+    /// Finds the avoided breaks of `candidates`, whose flow starts at
+    /// `root_flow_offset` and whose class-A boxes sit in `contents_box`.
+    fn collect(
+        document: &Document,
+        cascade: &CascadeResult,
+        candidates: &[PageCandidate],
+        table_headers: &HeaderRepeats,
+        contents_box: usize,
+        content_width: f32,
+        root_flow_offset: f32,
+    ) -> Self {
+        let row_leads = table_row_leads(document, cascade, candidates, root_flow_offset);
+        let row_groups =
+            avoided_row_groups(document, cascade, candidates, table_headers, &row_leads);
+        let run_ends = avoided_run_ends(document, cascade, candidates, contents_box, content_width);
+        Self {
+            run_ends,
+            row_leads,
+            row_groups,
+        }
+    }
+
+    /// How the box of `candidate`, placed as `fit` says, moves to the next
+    /// page. `trailing_flex_children` remembers the trailing item of each
+    /// flex container it looks up.
+    fn measure(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        candidate: &PageCandidate,
+        fit: &BoxFit,
+        table_headers: &HeaderRepeats,
+        trailing_flex_children: &mut TrailingFlexChildren,
+    ) -> BoxOverflow {
+        let node_id = candidate.node_id;
+        let raw_y = candidate.raw_y;
+        let height = candidate.height;
+        let BoxFit {
+            effective_y,
+            flow_y,
+            margin_top,
+            trailing_margin,
+            page_start,
+            page_end,
+            next_page_step,
+        } = *fit;
+        let avoided_run = self.run_ends.get(&node_id).is_some_and(|end| {
+            avoided_run_moves(
+                *end - raw_y,
+                margin_top,
+                effective_y,
+                page_start,
+                page_end,
+                next_page_step,
+            )
+        });
+        let page =
+            box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside)
+                && avoided_box_moves(
+                    flow_y,
+                    margin_top,
+                    flow_y + height + trailing_margin,
+                    page_start,
+                    page_end,
+                );
+        // Keep an ordinary table row intact when it would cross the current
+        // page. The row is a class-A boundary owned by the table engine; its
+        // cells and descendants follow the same flow shift below. Rowspans,
+        // cell-internal breaks remain out of this narrow row-boundary pass.
+        // A row that follows a repeated header must fit beside the header's
+        // copy on the next page; otherwise moving it gains nothing.
+        let repeated_header_height = table_headers.repeated_height_before(node_id);
+        let table_row_lead = self.row_leads.get(&node_id).copied().unwrap_or(0.0);
+        let table_row = candidate.context.is_table_row
+            && table_row_moves(
+                flow_y,
+                height,
+                table_row_lead + height + repeated_header_height,
+                page_start,
+                page_end,
+                next_page_step,
+            );
+        let row_group_lead = self
+            .row_groups
+            .get(&node_id)
+            .copied()
+            .filter(|&(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end))
+            .map(|(_, lead)| lead);
+        // A trailing flex item may extend into the containing flex box's
+        // continuation at the page edge. Earlier items still move intact when
+        // they would cross a fragmentainer, preserving the existing column
+        // flex pagination behavior.
+        let flex_item_is_last = candidate.context.is_flex_item
+            && trailing_flex_children.is_trailing(document, cascade, node_id);
+        let item_overflow = || {
+            item_moves_past_page_end(
+                effective_y,
+                height,
+                margin_top,
+                page_start,
+                page_end,
+                next_page_step,
+            )
+        };
+        let flex_item = candidate.context.is_flex_item && !flex_item_is_last && item_overflow();
+        let grid_item = candidate.context.is_grid_item && item_overflow();
+        BoxOverflow {
+            page,
+            avoided_run,
+            table_row,
+            table_row_lead,
+            row_group_lead,
+            flex_item,
+            grid_item,
+        }
+    }
 }
 
 // Pagination adjusts selected boxes after taffy has produced one normal
@@ -7094,6 +7019,86 @@ fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
     block_height.is_finite() && block_height <= page_step + 0.001
 }
 
+/// Whether the in-flow text of `height` with page type `page_name` opens a
+/// page of another type than `comparison_page_name`, the one the flow
+/// compares it against (see [`PageNames::comparison`]). Text that has no
+/// height, or that comes before any content of its flow
+/// (`name_context_seen`), does not.
+fn text_changes_page_name(
+    name_context_seen: bool,
+    name_participates_in_flow: bool,
+    height: f32,
+    page_name: &Option<String>,
+    comparison_page_name: &Option<String>,
+) -> bool {
+    name_context_seen
+        && height > 0.0
+        && name_participates_in_flow
+        && page_name != comparison_page_name
+}
+
+/// Whether a page type a candidate set inside a flex item's own named flow
+/// (`keep_local_page_type`) reaches the enclosing flow: it does once the
+/// candidate has moved on to a page after `page_before_candidate`.
+fn page_type_leaves_local_flow(
+    keep_local_page_type: bool,
+    current_page: u32,
+    page_before_candidate: u32,
+) -> bool {
+    !keep_local_page_type || current_page > page_before_candidate
+}
+
+/// Whether the in-flow text of `height` hands its page type on to the flow.
+/// Text that changed the page type or consumed a pending break already
+/// set the page type through the page it opened, and text without height
+/// sets none.
+fn text_sets_page_name(
+    height: f32,
+    name_participates_in_flow: bool,
+    named_page_change: bool,
+    consumes_pending_break: bool,
+    leaves_local_flow: bool,
+) -> bool {
+    height > 0.0
+        && name_participates_in_flow
+        && !named_page_change
+        && !consumes_pending_break
+        && leaves_local_flow
+}
+
+/// Whether a box with page type `page_name` opens a page of another type
+/// than `comparison_page_name`, the one the flow compares it against (see
+/// [`PageNames::comparison`]). A box that comes before any content of its
+/// flow (`name_context_seen`), or that joins the page transition of a
+/// preceding zero-height named box (`joins_last_named`), does not.
+fn box_changes_page_name(
+    name_context_seen: bool,
+    page_name: &Option<String>,
+    comparison_page_name: &Option<String>,
+    joins_last_named: bool,
+) -> bool {
+    name_context_seen && page_name != comparison_page_name && !joins_last_named
+}
+
+/// Whether the box with `context` hands its page type on to the flow: it
+/// does when it takes part in page type transitions and stands for content
+/// (a direct child of the body, a named box, a rendered leaf, or a box with
+/// a named break deferred past its end), once it opened a page
+/// (`page_transition`) or its page type left the local flow of a flex item
+/// (`leaves_local_flow`).
+fn box_sets_page_name(
+    context: &candidates::BoxContext,
+    page_transition: bool,
+    leaves_local_flow: bool,
+) -> bool {
+    context.page_name_in_flow
+        && (context.is_direct_body_element
+            || context.is_named
+            || context.is_rendered_leaf
+            || context.deferred_named_break_after)
+        && (page_transition || leaves_local_flow)
+}
+
 /// Whether the text from `text_y` with `text_height` starts at or below the
 /// start of the page that starts at `page_start` and is `page_step` tall and
 /// ends past that page's end, while its block, from `block_y` with
@@ -7285,7 +7290,96 @@ struct SiblingMargins {
     moved_boxes: bool,
 }
 
+/// A box that starts on `natural_page`, below a page edge that may fall in the
+/// margin above it.
+struct MarginBreak {
+    node_id: usize,
+    /// The unpaginated top of the box.
+    raw_y: f32,
+    /// The top of the box in the flow so far.
+    effective_y: f32,
+    /// The page the box starts on while the margin keeps its size.
+    natural_page: u32,
+    /// Whether a forced break sits before the box.
+    forced_before: bool,
+    /// The block-start margin of the box.
+    margin_top: f32,
+    /// Whether the box's margin collapses with the margin of the block
+    /// before it.
+    collapses_with_previous_block: bool,
+}
+
+/// How a page edge truncates the margin above a box.
+struct MarginTruncation {
+    /// How far the box moves; negative when it moves up.
+    delta: f32,
+    /// How far a negative margin pulls the box above the top of its page,
+    /// if it does.
+    underflow: Option<f32>,
+}
+
 impl SiblingMargins {
+    /// How the top of `at.natural_page` truncates the margin between the box
+    /// `at` and the sibling block before it, or `None` when the page edge
+    /// falls outside that margin or no margin separates the two. A box that
+    /// clears floats is left alone, since its gap may hold clearance.
+    fn truncation_at_break(
+        &self,
+        document: &super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        page_origins: &PageOrigins,
+        at: &MarginBreak,
+    ) -> Option<MarginTruncation> {
+        let node_id = at.node_id;
+        // A clearing box's gap may contain clearance. Its used clearance is
+        // not recorded separately, so retain the gap.
+        if !at.collapses_with_previous_block
+            || !matches!(
+                cascade.computed[node_id].clear,
+                raikiri_style::property::ClearValue::None
+            )
+        {
+            return None;
+        }
+        let (previous, gap) = self.gap_after_previous(document, node_id, at.raw_y)?;
+        let page_top = page_origins.origin(at.natural_page);
+        let previous_bottom = at.effective_y - gap;
+        let follows_forced_break = self.follows_forced_break(document, cascade, previous, node_id);
+        if !page_edge_falls_in_margin(
+            at.natural_page,
+            page_top,
+            previous_bottom,
+            at.effective_y,
+            follows_forced_break,
+        )
+            // Only a margin between adjoining siblings is truncated; a box
+            // that is not a candidate may lie between two nested candidates.
+            || !adjoins_previous_sibling(document, cascade, node_id, previous)
+        {
+            return None;
+        }
+        let (target_top, target_y) = page_origins.truncated_margin_target(
+            at.natural_page,
+            at.forced_before,
+            at.margin_top,
+            || {
+                collapsed_margin_start(
+                    document,
+                    cascade,
+                    previous,
+                    node_id,
+                    previous_bottom,
+                    at.effective_y,
+                )
+            },
+            follows_forced_break,
+        );
+        Some(MarginTruncation {
+            delta: target_y - at.effective_y,
+            underflow: (target_y < target_top).then_some(target_top - target_y),
+        })
+    }
+
     /// Whether the margin between `previous` and `node_id` still adjoins
     /// the latest forced break.
     fn follows_forced_break(
@@ -7313,6 +7407,18 @@ impl SiblingMargins {
             .and_then(|parent_id| self.previous_bottoms.get(&parent_id).copied())
             .map(|(previous, bottom)| (previous, raw_y - bottom))
             .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
+    }
+
+    /// Ends the run of adjoining siblings at the in-flow text `node_id`:
+    /// text between two blocks separates them. The run is that of
+    /// `ifc_root`, the inline layout root holding the text, or else that of
+    /// the text's parent.
+    fn end_run_at_text(&mut self, document: &Document, node_id: usize, ifc_root: Option<usize>) {
+        if let Some(parent_id) = ifc_root
+            .or_else(|| BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document))
+        {
+            self.previous_bottoms.remove(&parent_id);
+        }
     }
 
     /// Moves the forced break on to `node_id`, a child of `parent_id`, or
@@ -7546,6 +7652,78 @@ fn move_line_block(
         );
     }
     delta
+}
+
+/// How far a page transition moved a box and why.
+struct TransitionMove {
+    /// How far the box itself moves down.
+    node_delta: f32,
+    /// How far the flow after the box moves down.
+    shift_delta: f32,
+    /// Whether the box moves because it would cross a page edge it avoids.
+    page_overflow: bool,
+    /// Whether a forced or page-type break moves the box.
+    forced_transition: bool,
+}
+
+/// Moves the box `candidate` down by `moved.node_delta` for a page
+/// transition and brings along what has to follow it: the lines of its
+/// paragraph, and the ancestors or later siblings that hold or trail it.
+/// Returns whether an ancestor's height kept it from holding the moved
+/// content.
+fn move_box_for_transition(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    candidate: &PageCandidate,
+    moved: &TransitionMove,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) -> bool {
+    let node_id = candidate.node_id;
+    let TransitionMove {
+        node_delta,
+        shift_delta,
+        page_overflow,
+        forced_transition,
+    } = *moved;
+    document.nodes[node_id].unrounded_layout.location.y += node_delta;
+    let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, node_delta);
+    // A nested avoiding block that moves to the next page lengthens the
+    // ancestors whose content box holds it, so their continuation (and any
+    // `overflow` clip) reaches the moved content. A float does not lengthen
+    // the block around it; its own shift ends with its subtree.
+    let mut moved_in_bounded_ancestor = false;
+    let moves_in_flow_down =
+        node_delta > 0.0 && !is_floating_box_for_pagination(document, cascade, node_id);
+    let nested_block = !candidate.context.is_direct_body_element && moves_in_flow_down;
+    if (page_overflow || (forced_transition && candidate.context.is_direct_body_element))
+        && moves_in_flow_down
+    {
+        moved_in_bounded_ancestor = grow_ancestors_for_shift(
+            document,
+            cascade,
+            node_id,
+            node_delta,
+            body_id,
+            shifts,
+            flow_page,
+            &followed_ifc_boxes,
+        );
+    } else if forced_transition
+        && nested_block
+        && !candidate.context.is_flex_item
+        && !candidate.context.is_grid_item
+        && !candidate.context.is_table_row
+    {
+        // A forced break ends its ancestors' fragments on this page, which
+        // their continuations account for; only the boxes after it in block
+        // flow follow it, up to the first ancestor that does not stack its
+        // children in block order. A box pulled back over the break by a
+        // negative margin still leaves the flow after it at the break.
+        shift_block_flow_after(document, node_id, body_id, node_delta.max(shift_delta));
+    }
+    moved_in_bounded_ancestor
 }
 
 /// Grows the formatting context that holds a moved float. A formatting
@@ -8201,7 +8379,139 @@ struct FloatShifts {
     edges: HashMap<usize, Vec<FloatEdge>>,
 }
 
+/// A float that a page break moved down.
+struct MovedFloat {
+    node_id: usize,
+    /// The side the float sits on, or `None` for a float on neither side.
+    side: Option<usize>,
+    /// How far the float moved down.
+    delta: f32,
+    /// The page the flow was on before the float moved.
+    flow_page: u32,
+    /// Where the float's border box starts after the move, in normal-flow
+    /// coordinates.
+    flow_target_y: f32,
+    /// The float's border-box height.
+    height: f32,
+    /// The float's block-start margin.
+    margin_top: f32,
+    /// Whether a forced break moved the float.
+    forced_transition: bool,
+}
+
+/// A box that has to start below the moved floats of its formatting context.
+struct FloatClearance {
+    /// The formatting context the floats are in.
+    context: usize,
+    /// Whether the box is itself a float, rather than a box that clears one.
+    floating: bool,
+    /// The unpaginated top of the box in normal-flow coordinates, without
+    /// the relative offsets of the box and its ancestors.
+    flow_raw_y: f32,
+    /// How far the box moves down.
+    shift: f32,
+}
+
 impl FloatShifts {
+    /// How `candidate`, at `flow_shift` into the flow, has to move down to
+    /// stay below the moved floats of its formatting context, or `None`
+    /// when it does not.
+    fn clearance_for(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        candidate: &PageCandidate,
+        flow_shift: f32,
+    ) -> Option<FloatClearance> {
+        let node_id = candidate.node_id;
+        let (context, edges) = self.edges_for(document, cascade, node_id, body_id)?;
+        let floating = is_floating_box_for_pagination(document, cascade, node_id);
+        let floor = if !floating && candidate.context.is_float_descendant {
+            None
+        } else {
+            float_floor(document, cascade, node_id, context, &edges, floating)
+        };
+        let margin_top = if floating {
+            document.nodes[node_id].unrounded_layout.margin.top
+        } else {
+            0.0
+        };
+        // Floors are in normal-flow coordinates, without the relative
+        // offsets of the box and its ancestors.
+        let follower_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
+        let flow_raw_y = candidate.raw_y - follower_offset;
+        let shift = clearance_shift(floor, flow_raw_y + flow_shift - margin_top, self.later);
+        (shift > 0.0).then_some(FloatClearance {
+            context,
+            floating,
+            flow_raw_y,
+            shift,
+        })
+    }
+
+    /// Makes the float `node_id`, which `clearance` moved down, the one
+    /// later floats on its side keep below. `flow_shift` includes that move
+    /// and `flow_page` is the page the flow was on before it.
+    fn hold_cleared_float(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        clearance: &FloatClearance,
+        flow_shift: f32,
+        flow_page: u32,
+    ) {
+        self.pending = Some((node_id, clearance.shift, flow_page));
+        if let Some(side) = float_side_index(cascade.computed[node_id].float) {
+            let layout = &document.nodes[node_id].unrounded_layout;
+            let edge = float_margin_edge(
+                document,
+                node_id,
+                side,
+                clearance.flow_raw_y + flow_shift,
+                layout.size.height,
+                layout.margin.top,
+            );
+            self.record_edge(clearance.context, edge);
+        }
+    }
+
+    /// Records `moved`: adds its shift to the pending one and, for a float
+    /// on a side, keeps its margin-box edge for the floats and clearing
+    /// boxes that follow it in the same formatting context.
+    fn record_moved_float(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        moved: &MovedFloat,
+    ) {
+        let inherited = self.add_to_pending(moved.node_id, moved.delta, moved.flow_page);
+        // A clearing follower stays below the margin box, which a negative
+        // block-end margin pulls up.
+        if let Some(side) = moved.side {
+            let context = float_context_root(document, cascade, moved.node_id, body_id);
+            self.record_edge(
+                context,
+                moved_float_edge(
+                    document,
+                    moved.node_id,
+                    side,
+                    moved.flow_target_y,
+                    moved.height,
+                    moved.margin_top,
+                    moved.forced_transition,
+                ),
+            );
+            // The margin box then moved further than the border box, and a
+            // later float may have to follow it that far.
+            if !moved.forced_transition {
+                self.extend_later(inherited + moved.delta + moved.margin_top);
+            }
+        }
+    }
+
     /// Add `delta` to the pending shift of the float `node_id`, and return
     /// the shift the float already had.
     ///

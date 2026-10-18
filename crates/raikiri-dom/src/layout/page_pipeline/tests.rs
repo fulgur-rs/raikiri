@@ -5,7 +5,6 @@ use taffy::Style;
 mod avoid_followup_tests;
 mod candidate_context_tests;
 mod candidate_text_tests;
-mod grid_parent_tests;
 pub(super) mod link_ancestor_tests;
 mod paged_spanning_tests;
 mod table_follow_tests;
@@ -16989,4 +16988,691 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
         fit.fix(&long, 70.0, 0, &pages, false, || true),
         LineBreakFix::MoveLines([None, Some((12, 10.0, 2))])
     );
+}
+
+#[test]
+fn a_moved_float_records_its_shift_and_its_margin_box_edge() {
+    let (doc, cascade, float, root) = crate::layout::test_support::ahem_paragraph_with_float(
+        "a",
+        "float:left;width:20px;height:10px",
+        "b",
+        "",
+    );
+    let body = doc.parent_of(root).unwrap();
+    let context = float_context_root(&doc, &cascade, float, body);
+    let moved = |side, forced_transition| MovedFloat {
+        node_id: float,
+        side,
+        delta: 30.0,
+        flow_page: 2,
+        flow_target_y: 100.0,
+        height: 10.0,
+        margin_top: 4.0,
+        forced_transition,
+    };
+
+    // An unforced break truncates the block-start margin, and a later
+    // float follows the margin box that moved further than the border box.
+    let mut shifts = FloatShifts::default();
+    shifts.record_moved_float(&doc, &cascade, body, &moved(Some(0), false));
+    assert_eq!(shifts.pending, Some((float, 30.0, 2)));
+    assert_eq!(shifts.later, 34.0);
+    let edge = &shifts.edges[&context][0];
+    assert_eq!((edge.node, edge.side), (float, 0));
+    assert_eq!((edge.top, edge.bottom), (100.0, 110.0));
+
+    // A forced break keeps the margin above the border box and needs no
+    // extra shift for later floats.
+    let mut shifts = FloatShifts::default();
+    shifts.record_moved_float(&doc, &cascade, body, &moved(Some(1), true));
+    assert_eq!(shifts.pending, Some((float, 30.0, 2)));
+    assert_eq!(shifts.later, 0.0);
+    let edge = &shifts.edges[&context][0];
+    assert_eq!((edge.side, edge.top, edge.bottom), (1, 96.0, 110.0));
+
+    // A float on neither side only shifts.
+    let mut shifts = FloatShifts::default();
+    shifts.record_moved_float(&doc, &cascade, body, &moved(None, false));
+    assert_eq!(shifts.pending, Some((float, 30.0, 2)));
+    assert_eq!(shifts.later, 0.0);
+    assert!(shifts.edges.is_empty());
+}
+
+#[test]
+fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
+    // `body > wrapper > first, second`, all auto-height blocks. Returns the
+    // document, its cascade and the three nodes.
+    let build = |wrapper_css: &str| {
+        let mut doc = Document::new();
+        let block = |doc: &mut Document, parent| {
+            doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;height:10px"),
+            )
+        };
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Style::default(), Some(wrapper_css));
+        let first = block(&mut doc, wrapper);
+        let second = block(&mut doc, wrapper);
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        (doc, cascade, body, wrapper, first, second)
+    };
+    let candidate = |node_id| PageCandidate {
+        node_id,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let mv = |page_overflow, forced_transition| TransitionMove {
+        node_delta: 30.0,
+        shift_delta: 40.0,
+        page_overflow,
+        forced_transition,
+    };
+
+    // A forced break moves the box by its own delta and the boxes after it
+    // in block flow by the larger of the two deltas.
+    let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let bounded = move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(false, true),
+        &mut shifts,
+        0,
+    );
+    assert!(!bounded);
+    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 50.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+
+    // A box that moves because it would cross a page edge it avoids
+    // lengthens the ancestor that holds it, and the boxes after it follow
+    // by its own delta.
+    let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let bounded = move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(true, false),
+        &mut shifts,
+        0,
+    );
+    assert!(!bounded);
+    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 40.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 50.0);
+
+    // Any other break moves the box alone.
+    let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(false, false),
+        &mut shifts,
+        0,
+    );
+    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 10.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+
+    // An ancestor with a fixed height cannot hold the moved box.
+    let (mut doc, cascade, body, wrapper, first, _) = build("display:block;height:20px");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let bounded = move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(true, false),
+        &mut shifts,
+        0,
+    );
+    assert!(bounded);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+}
+
+#[test]
+fn the_last_page_stops_at_the_limit_only_once_it_was_reached() {
+    let control = PageLayoutControl::for_geometry_discovery(Some(5));
+    assert_eq!(control.last_page(2), 2);
+    control.page_limit_reached.set(true);
+    assert_eq!(control.last_page(9), 4);
+}
+
+#[test]
+fn page_slices_start_at_each_page_origin_with_the_page_type_it_was_given() {
+    let origins = PageOrigins::new(&[50.0], 100.0);
+    let mut names = PageNames::new(Some("cover".to_owned()));
+    names.current = Some("body".to_owned());
+    names.name_page(1);
+    let slices = page_slices(2, &origins, &names);
+    assert_eq!(
+        slices,
+        vec![
+            PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: Some("cover".to_owned()),
+            },
+            PageSlice {
+                page_index: 1,
+                content_origin_y: 50.0,
+                page_name: Some("body".to_owned()),
+            },
+            // A page nothing named has no page type.
+            PageSlice {
+                page_index: 2,
+                content_origin_y: 150.0,
+                page_name: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn text_between_two_blocks_ends_the_run_of_adjoining_siblings() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let text = doc.append_text(parent, "between");
+    let other = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let mut margins = SiblingMargins::default();
+    margins.record_bottom(parent, 5, true, 40.0);
+    margins.record_bottom(other, 6, true, 80.0);
+
+    // Text in a paragraph ends the run kept for its inline layout root.
+    margins.end_run_at_text(&doc, text, Some(other));
+    assert!(margins.previous_bottoms.contains_key(&parent));
+    assert!(!margins.previous_bottoms.contains_key(&other));
+
+    // Otherwise it ends the run of its own parent.
+    margins.end_run_at_text(&doc, text, None);
+    assert!(margins.previous_bottoms.is_empty());
+}
+
+#[test]
+fn text_changes_the_page_type_only_when_it_has_height_and_follows_content() {
+    let body = Some("body".to_owned());
+    let cover = Some("cover".to_owned());
+    assert!(text_changes_page_name(true, true, 10.0, &body, &cover));
+    // The same page type is no change.
+    assert!(!text_changes_page_name(true, true, 10.0, &body, &body));
+    // Nothing of the flow was placed before the text.
+    assert!(!text_changes_page_name(false, true, 10.0, &body, &cover));
+    // Text without height holds no content.
+    assert!(!text_changes_page_name(true, true, 0.0, &body, &cover));
+    // The page type does not take part in the flow.
+    assert!(!text_changes_page_name(true, false, 10.0, &body, &cover));
+}
+
+#[test]
+fn a_local_page_type_leaves_its_flow_once_the_candidate_moves_to_a_later_page() {
+    assert!(page_type_leaves_local_flow(false, 0, 0));
+    assert!(!page_type_leaves_local_flow(true, 2, 2));
+    assert!(page_type_leaves_local_flow(true, 3, 2));
+}
+
+#[test]
+fn text_sets_the_page_type_unless_a_change_or_a_break_already_set_it() {
+    assert!(text_sets_page_name(10.0, true, false, false, true));
+    assert!(!text_sets_page_name(0.0, true, false, false, true));
+    assert!(!text_sets_page_name(10.0, false, false, false, true));
+    assert!(!text_sets_page_name(10.0, true, true, false, true));
+    assert!(!text_sets_page_name(10.0, true, false, true, true));
+    assert!(!text_sets_page_name(10.0, true, false, false, false));
+}
+
+#[test]
+fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
+    // `body > avoiding, plain, flex > (first, last)`, all 60px blocks.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, parent, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let avoiding = block(
+        &mut doc,
+        body,
+        "display:block;height:60px;break-inside:avoid",
+    );
+    let plain = block(&mut doc, body, "display:block;height:60px");
+    let flex = block(&mut doc, body, "display:flex;flex-direction:column");
+    let first = block(&mut doc, flex, "display:block;height:60px");
+    let last = block(&mut doc, flex, "display:block;height:60px");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let context = |set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        context
+    };
+    let mut breaks = AvoidedBreaks::default();
+    let headers = HeaderRepeats::default();
+    let mut trailing = TrailingFlexChildren::default();
+    // How the 60px box `node_id` at 80 moves when `fit` places it on the
+    // page from 0 to 100.
+    let mut measure =
+        |breaks: &AvoidedBreaks, node_id, context: candidates::BoxContext, fit: &BoxFit| {
+            let candidate = PageCandidate {
+                node_id,
+                raw_y: 80.0,
+                height: 60.0,
+                context,
+                page_name: None,
+                named_flex_context: None,
+                ifc_root: None,
+            };
+            breaks.measure(&doc, &cascade, &candidate, fit, &headers, &mut trailing)
+        };
+    let fit = BoxFit {
+        effective_y: 80.0,
+        flow_y: 80.0,
+        margin_top: 0.0,
+        trailing_margin: 0.0,
+        page_start: 0.0,
+        page_end: 100.0,
+        next_page_step: 100.0,
+    };
+    // A relative offset moved the box up from its normal-flow position.
+    let offset_up = BoxFit {
+        effective_y: 20.0,
+        ..fit
+    };
+    // A relative offset moved the box down from its normal-flow position.
+    let offset_down = BoxFit {
+        flow_y: 20.0,
+        ..fit
+    };
+
+    // A box that avoids nothing stays where it is.
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert!(!overflow.moves_box());
+    assert_eq!(overflow.table_row_lead, 0.0);
+
+    // A box that avoids breaks inside it moves whole, judged at its
+    // normal-flow position and through its trailing margin.
+    let overflow = measure(&breaks, avoiding, Default::default(), &fit);
+    assert!(overflow.page && overflow.moves_box());
+    assert!(!overflow.avoided_run && !overflow.table_row);
+    assert!(measure(&breaks, avoiding, Default::default(), &offset_up).page);
+    assert!(!measure(&breaks, avoiding, Default::default(), &offset_down).page);
+    let ends_inside = BoxFit {
+        effective_y: 30.0,
+        flow_y: 30.0,
+        ..fit
+    };
+    assert!(!measure(&breaks, avoiding, Default::default(), &ends_inside).page);
+    let trailing_margin = BoxFit {
+        trailing_margin: 20.0,
+        ..ends_inside
+    };
+    assert!(measure(&breaks, avoiding, Default::default(), &trailing_margin).page);
+
+    // The first box of a run of avoided breaks moves with the run, judged
+    // where the box sits with its relative offset.
+    breaks.run_ends.insert(plain, 140.0);
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert!(overflow.avoided_run && overflow.moves_box());
+    assert!(!measure(&breaks, plain, Default::default(), &offset_up).avoided_run);
+    assert!(measure(&breaks, plain, Default::default(), &offset_down).avoided_run);
+
+    // A table row moves whole, keeping the lead of the table above it. The
+    // lead is kept for a first row that stays put as well.
+    breaks.row_leads.insert(plain, 7.0);
+    let row = context(|context| context.is_table_row = true);
+    let overflow = measure(&breaks, plain, row, &fit);
+    assert!(overflow.table_row);
+    assert_eq!(overflow.table_row_lead, 7.0);
+    let overflow = measure(&breaks, plain, row, &offset_down);
+    assert!(!overflow.table_row);
+    assert_eq!(overflow.table_row_lead, 7.0);
+    assert!(measure(&breaks, plain, row, &offset_up).table_row);
+
+    // An avoided row group moves whole when it would cross the page edge.
+    breaks.row_groups.insert(plain, (140.0, 9.0));
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert_eq!(overflow.row_group_lead, Some(9.0));
+    assert!(overflow.moves_box());
+    breaks.row_groups.insert(plain, (100.0, 9.0));
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert_eq!(overflow.row_group_lead, None);
+
+    // A flex item moves intact unless it is the container's trailing item,
+    // which may run on into the container's continuation. A grid item always
+    // moves. Both are judged where they sit, below their block-start margin.
+    let flex_item = context(|context| context.is_flex_item = true);
+    let overflow = measure(&breaks, first, flex_item, &fit);
+    assert!(overflow.flex_item && overflow.moves_box());
+    assert!(!measure(&breaks, first, flex_item, &offset_up).flex_item);
+    let margin_top = BoxFit {
+        margin_top: 80.0,
+        ..fit
+    };
+    assert!(!measure(&breaks, first, flex_item, &margin_top).flex_item);
+    let overflow = measure(&breaks, last, flex_item, &fit);
+    assert!(!overflow.flex_item && !overflow.moves_box());
+    let grid_item = context(|context| context.is_grid_item = true);
+    let overflow = measure(&breaks, plain, grid_item, &fit);
+    assert!(overflow.grid_item && overflow.moves_box());
+    assert!(!measure(&breaks, plain, grid_item, &margin_top).grid_item);
+}
+
+#[test]
+fn a_box_changes_the_page_type_unless_it_is_first_or_joins_a_zero_height_named_box() {
+    let body = Some("body".to_owned());
+    let cover = Some("cover".to_owned());
+    assert!(box_changes_page_name(true, &body, &cover, false));
+    // The same page type is no change.
+    assert!(!box_changes_page_name(true, &body, &body, false));
+    // Nothing of the flow was placed before the box.
+    assert!(!box_changes_page_name(false, &body, &cover, false));
+    // It joins the transition of the zero-height named box before it.
+    assert!(!box_changes_page_name(true, &body, &cover, true));
+}
+
+#[test]
+fn a_box_sets_the_page_type_when_it_stands_for_content_and_opens_a_page() {
+    let context = |set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext {
+            page_name_in_flow: true,
+            ..Default::default()
+        };
+        set(&mut context);
+        context
+    };
+    // Each kind of content box hands its page type on once it opened a page.
+    for content in [
+        context(|context| context.is_direct_body_element = true),
+        context(|context| context.is_named = true),
+        context(|context| context.is_rendered_leaf = true),
+        context(|context| context.deferred_named_break_after = true),
+    ] {
+        assert!(box_sets_page_name(&content, true, false));
+        // Or once its page type left the local flow of a flex item.
+        assert!(box_sets_page_name(&content, false, true));
+        assert!(!box_sets_page_name(&content, false, false));
+    }
+    // A box that is no content does not.
+    assert!(!box_sets_page_name(&context(|_| {}), true, true));
+    // Nor does one whose page type takes no part in the flow.
+    let parallel = candidates::BoxContext {
+        is_named: true,
+        ..Default::default()
+    };
+    assert!(!box_sets_page_name(&parallel, true, true));
+}
+
+#[test]
+fn a_named_box_joins_the_transition_of_a_zero_height_named_box_at_its_coordinate() {
+    let last = LastNamedBox {
+        raw_y: Some(10.0),
+        context: None,
+        was_zero_height: true,
+        had_display_none_descendant: false,
+    };
+    let candidate = |raw_y, named_flex_context, set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext {
+            is_named: true,
+            ..Default::default()
+        };
+        set(&mut context);
+        PageCandidate {
+            node_id: 0,
+            raw_y,
+            height: 10.0,
+            context,
+            page_name: None,
+            named_flex_context,
+            ifc_root: None,
+        }
+    };
+    let direct = |context: &mut candidates::BoxContext| context.is_direct_body_element = true;
+    assert!(last.joins_transition(&candidate(10.0, None, direct)));
+    // Elsewhere in the source, it starts its own transition.
+    assert!(!last.joins_transition(&candidate(20.0, None, direct)));
+    // Only a direct child of the body, or a box in a flex item's named flow,
+    // takes part.
+    assert!(!last.joins_transition(&candidate(10.0, None, |_| {})));
+    let flex_last = LastNamedBox {
+        context: Some(3),
+        ..last
+    };
+    assert!(flex_last.joins_transition(&candidate(10.0, Some(3), |_| {})));
+    assert!(!flex_last.joins_transition(&candidate(10.0, Some(4), |_| {})));
+    // So must the box be named.
+    let unnamed = PageCandidate {
+        context: candidates::BoxContext {
+            is_direct_body_element: true,
+            ..Default::default()
+        },
+        ..candidate(10.0, None, |_| {})
+    };
+    assert!(!last.joins_transition(&unnamed));
+}
+
+#[test]
+fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
+    // `body > first, second, third`, with margins above the last two.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, css: &str| {
+        doc.append_element(Some(body), "div", Style::default(), Some(css))
+    };
+    let first = block(&mut doc, "display:block;height:90px");
+    let second = block(&mut doc, "display:block;height:30px");
+    let third = block(&mut doc, "display:block;height:30px;clear:both");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.nodes[second].unrounded_layout.margin.top = 30.0;
+    doc.nodes[third].unrounded_layout.margin.top = 30.0;
+    let session = crate::layout::context::LayoutSession::new(&mut doc);
+    let origins = PageOrigins::new(&[], 100.0);
+    let truncation = |margins: &SiblingMargins, cascade: &CascadeResult, at: &MarginBreak| {
+        margins.truncation_at_break(&session, cascade, &origins, at)
+    };
+    // The second block starts at 120 below a first block that ends at 90, so
+    // the edge of the second page at 100 falls inside the margin of 30.
+    let mut margins = SiblingMargins::default();
+    margins.record_bottom(body, first, true, 90.0);
+    let at = MarginBreak {
+        node_id: second,
+        raw_y: 120.0,
+        effective_y: 120.0,
+        natural_page: 1,
+        forced_before: false,
+        margin_top: 30.0,
+        collapses_with_previous_block: true,
+    };
+
+    // The block moves up to the top of the page.
+    let found = truncation(&margins, &cascade, &at).unwrap();
+    assert_eq!(found.delta, -20.0);
+    assert_eq!(found.underflow, None);
+
+    // After a forced break it keeps its margin on the new page, or is pulled
+    // above the page top by a negative one.
+    let forced = MarginBreak {
+        forced_before: true,
+        ..at
+    };
+    let found = truncation(&margins, &cascade, &forced).unwrap();
+    assert_eq!(found.delta, 10.0);
+    assert_eq!(found.underflow, None);
+    let pulled_up = MarginBreak {
+        forced_before: true,
+        margin_top: -5.0,
+        ..at
+    };
+    let found = truncation(&margins, &cascade, &pulled_up).unwrap();
+    assert_eq!(found.delta, -25.0);
+    assert_eq!(found.underflow, Some(5.0));
+
+    // Nothing is truncated when the margin does not collapse with the block
+    // before, or the page edge is not inside it.
+    let apart = MarginBreak {
+        collapses_with_previous_block: false,
+        ..at
+    };
+    assert!(truncation(&margins, &cascade, &apart).is_none());
+    let first_page = MarginBreak {
+        natural_page: 0,
+        ..at
+    };
+    assert!(truncation(&margins, &cascade, &first_page).is_none());
+    // Nor when no block before it was recorded.
+    assert!(truncation(&SiblingMargins::default(), &cascade, &at).is_none());
+
+    // A box that clears floats keeps the gap, which may hold clearance. The
+    // gap above it is judged from the bottom recorded for the block before.
+    margins.record_bottom(body, second, true, 190.0);
+    let clearing = MarginBreak {
+        node_id: third,
+        raw_y: 220.0,
+        effective_y: 220.0,
+        natural_page: 2,
+        ..at
+    };
+    assert!(truncation(&margins, &cascade, &clearing).is_none());
+    cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
+    let found = truncation(&margins, &cascade, &clearing).unwrap();
+    assert_eq!(found.delta, -20.0);
+}
+
+#[test]
+fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
+    // `body > clearing, right, floater` after a float moved to 100..140.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, css: &str| {
+        doc.append_element(Some(body), "div", Style::default(), Some(css))
+    };
+    let clearing = block(&mut doc, "display:block;clear:left");
+    let right = block(&mut doc, "display:block;clear:right");
+    let floater = block(&mut doc, "display:block;float:left");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    doc.nodes[body].unrounded_layout.size.width = 100.0;
+    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+        width: 60.0,
+        height: 10.0,
+    };
+    doc.nodes[floater].unrounded_layout.margin.top = 4.0;
+    let mut shifts = FloatShifts {
+        later: 20.0,
+        ..Default::default()
+    };
+    shifts.record_edge(
+        body,
+        FloatEdge {
+            node: 99,
+            side: 0,
+            top: 100.0,
+            bottom: 140.0,
+            width: 50.0,
+        },
+    );
+    let candidate = |node_id, raw_y, set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        PageCandidate {
+            node_id,
+            raw_y,
+            height: 10.0,
+            context,
+            page_name: None,
+            named_flex_context: None,
+            ifc_root: None,
+        }
+    };
+    let clearance = |shifts: &FloatShifts, node_id, raw_y, flow_shift| {
+        shifts.clearance_for(
+            &doc,
+            &cascade,
+            body,
+            &candidate(node_id, raw_y, |_| {}),
+            flow_shift,
+        )
+    };
+
+    // A box that clears the float moves down to its bottom.
+    let found = clearance(&shifts, clearing, 130.0, 0.0).unwrap();
+    assert_eq!(found.context, body);
+    assert!(!found.floating);
+    assert_eq!(found.flow_raw_y, 130.0);
+    assert_eq!(found.shift, 10.0);
+    // The flow shift so far counts toward its position.
+    assert_eq!(
+        clearance(&shifts, clearing, 120.0, 5.0).unwrap().shift,
+        15.0
+    );
+    // It moves no further than the floats above took.
+    assert_eq!(
+        clearance(&shifts, clearing, 100.0, 0.0).unwrap().shift,
+        20.0
+    );
+    // A box already below the float, or one that clears the other side, stays.
+    assert!(clearance(&shifts, clearing, 150.0, 0.0).is_none());
+    assert!(clearance(&shifts, right, 130.0, 0.0).is_none());
+    // So does a box inside a float, which moves with it.
+    let inside = shifts.clearance_for(
+        &doc,
+        &cascade,
+        body,
+        &candidate(clearing, 130.0, |context| {
+            context.is_float_descendant = true
+        }),
+        0.0,
+    );
+    assert!(inside.is_none());
+    // And nothing moves once the shift later floats may need is spent.
+    let spent = FloatShifts {
+        later: 0.0,
+        edges: std::mem::take(&mut shifts.edges),
+        ..Default::default()
+    };
+    assert!(clearance(&spent, clearing, 130.0, 0.0).is_none());
+    let mut shifts = spent;
+    shifts.later = 20.0;
+
+    // A float that does not fit beside the earlier one moves below it, from
+    // the top of its margin box.
+    let found = clearance(&shifts, floater, 130.0, 0.0).unwrap();
+    assert!(found.floating);
+    assert_eq!(found.shift, 14.0);
+
+    // It then is the float that later floats on its side keep below.
+    shifts.hold_cleared_float(&doc, &cascade, floater, &found, 14.0, 3);
+    assert_eq!(shifts.pending, Some((floater, 14.0, 3)));
+    let edge = shifts.edges[&body]
+        .iter()
+        .find(|edge| edge.node == floater)
+        .unwrap();
+    assert_eq!((edge.side, edge.top, edge.bottom), (0, 140.0, 154.0));
 }

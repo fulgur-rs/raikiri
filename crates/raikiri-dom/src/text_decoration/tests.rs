@@ -70,7 +70,15 @@ fn an_uncascaded_descendant_keeps_the_existing_decoration_context() {
     assert_eq!(base.specs().len(), 1);
     let span = document.append_element(Some(root), "span", taffy::Style::default(), None::<&str>);
     let text = document.append_text(span, "ab");
-    let result = context_for_text(&document, &cascade, root, text, &base, &HashMap::new());
+    let result = context_for_text(
+        &document,
+        &cascade,
+        root,
+        text,
+        &base,
+        &HashMap::new(),
+        false,
+    );
     assert_eq!(result.specs(), base.specs());
 }
 

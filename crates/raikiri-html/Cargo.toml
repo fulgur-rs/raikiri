@@ -26,6 +26,7 @@ data-url       = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 bytes          = { workspace = true }
+moxcms         = { workspace = true }
 
 [lints]
 workspace = true

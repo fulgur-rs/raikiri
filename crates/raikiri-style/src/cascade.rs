@@ -39,6 +39,7 @@ use crate::page::{
     PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_normal_line_height,
 };
 use crate::property::{CssColor, PropertyKey, WritingMode};
+use crate::resolve::ResolveContext;
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{PseudoElem, PseudoValueArc};
@@ -74,6 +75,7 @@ pub struct CascadeResult {
     element_generation: u64,
     svg_style_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: HashMap<StyleNodeId, first_letter::FirstLetterInputs>,
+    first_line_contexts: HashMap<StyleNodeId, ResolveContext>,
     typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
     /// Index into [`Self::computed`] of the `@page` inheritance parent: the
     /// root element, or the Document node when the tree has no element child.
@@ -344,6 +346,7 @@ impl CascadeResult {
             element_generation: _,
             svg_style_properties,
             first_letter_inputs,
+            first_line_contexts,
             typographic_inheritance,
             root_element_index,
             custom_highlight_styles,
@@ -376,6 +379,10 @@ impl CascadeResult {
             first_letter_inputs: first_letter_inputs
                 .iter()
                 .filter_map(|(id, value)| Some((node(id)?, value.clone())))
+                .collect(),
+            first_line_contexts: first_line_contexts
+                .iter()
+                .filter_map(|(id, context)| Some((node(id)?, *context)))
                 .collect(),
             typographic_inheritance: typographic_inheritance
                 .iter()
@@ -572,6 +579,7 @@ fn finish<D: StyleDom>(
         element_generation: generation,
         svg_style_properties: outputs.svg_properties,
         first_letter_inputs: outputs.first_letter_inputs,
+        first_line_contexts: outputs.first_line_contexts,
         typographic_inheritance: outputs.typographic_inheritance,
         root_element_index,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),

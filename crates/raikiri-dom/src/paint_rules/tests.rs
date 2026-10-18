@@ -898,6 +898,43 @@ fn an_extreme_clip_margin_keeps_the_clip_finite() {
 }
 
 #[test]
+fn only_a_visible_box_paints_its_own_decorations() {
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "body", Style::default(), None::<&str>);
+    let boxes: Vec<_> = [
+        ("table", "visible"),
+        ("table", "hidden"),
+        ("table", "collapse"),
+        ("block", "hidden"),
+    ]
+    .into_iter()
+    .map(|(display, keyword)| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(format!("display:{display};visibility:{keyword}").as_str()),
+        )
+    })
+    .collect();
+    doc.mark_in_document_flags();
+    let cr = cascaded(&doc);
+    let hides: Vec<_> = boxes
+        .iter()
+        .map(|&id| {
+            (
+                hides_own_box(&cr.computed[id]),
+                is_visibility_hidden_table(&cr.computed[id]),
+            )
+        })
+        .collect();
+    assert_eq!(
+        hides,
+        [(false, false), (true, true), (true, true), (true, false)]
+    );
+}
+
+#[test]
 fn positioned_frames_go_back_to_their_place_in_tree_order() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

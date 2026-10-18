@@ -9,10 +9,10 @@ use std::path::PathBuf;
 use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
-/// Preserve the newly verified Flex static-position passes.
+/// Preserve verified Flex passes and cover Grid static-position alignment.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn flex_abspos_static_position_pass_pairs_are_pixel_exact_at_800x600() {
+fn flex_and_grid_abspos_static_position_pass_pairs_are_pixel_exact_at_800x600() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let cases = [
         "css/css-flexbox/abspos/position-absolute-006.html",
@@ -22,6 +22,10 @@ fn flex_abspos_static_position_pass_pairs_are_pixel_exact_at_800x600() {
         "css/css-flexbox/abspos/position-absolute-010.html",
         "css/css-flexbox/abspos/position-absolute-011.html",
         "css/css-flexbox/abspos/position-absolute-containing-block-001.html",
+        "css/css-grid/abspos/grid-abspos-staticpos-align-items-center.html",
+        "css/css-grid/abspos/grid-abspos-staticpos-align-items-end-large-border-padding.html",
+        "css/css-grid/abspos/grid-abspos-staticpos-align-self-center.html",
+        "css/css-grid/abspos/grid-abspos-staticpos-align-self-flex-end-large-border-padding.html",
     ];
     let mut config = ReftestConfig::default();
     config.width = 800;

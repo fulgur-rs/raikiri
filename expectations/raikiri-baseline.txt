@@ -283,6 +283,7 @@ css/css-backgrounds/background-repeat-round-1b.html
 css/css-backgrounds/background-repeat-round-1c.html
 css/css-backgrounds/background-repeat-round-1d.html
 css/css-backgrounds/background-repeat-round-1e.html
+css/css-backgrounds/background-repeat-round-2.html
 css/css-backgrounds/background-repeat-round-3.html
 css/css-backgrounds/background-repeat-round-4.html
 css/css-backgrounds/background-repeat-space-2.html
@@ -292,6 +293,8 @@ css/css-backgrounds/background-rounded-image-clip-002.html
 css/css-backgrounds/background-size-one-value-1x1-image.html
 css/css-backgrounds/background-size/background-size-near-zero-color.html
 css/css-backgrounds/background-size/background-size-near-zero-gradient.html
+css/css-backgrounds/background-size/background-size-near-zero-png.html
+css/css-backgrounds/background-size/background-size-near-zero-svg.html
 css/css-backgrounds/border-image-007.html
 css/css-backgrounds/border-image-011.html
 css/css-backgrounds/border-image-012.html
@@ -786,10 +789,15 @@ css/css-text/text-encoding/shaping-no-join-001.html
 css/css-text/text-encoding/shaping-no-join-002.html
 css/css-text/text-encoding/shaping-tatweel-001.html
 css/css-text/text-encoding/shaping-tatweel-003.html
+css/css-text/text-group-align/text-group-align-center-vlr.html
 css/css-text/text-group-align/text-group-align-center.html
+css/css-text/text-group-align/text-group-align-end-vlr.html
 css/css-text/text-group-align/text-group-align-end.html
+css/css-text/text-group-align/text-group-align-left-vlr.html
 css/css-text/text-group-align/text-group-align-left.html
+css/css-text/text-group-align/text-group-align-right-vlr.html
 css/css-text/text-group-align/text-group-align-right.html
+css/css-text/text-group-align/text-group-align-start-vlr.html
 css/css-text/text-group-align/text-group-align-start.html
 css/css-text/text-indent/text-indent-abspos-hanging-001.html
 css/css-text/text-indent/text-indent-caret-001.html
@@ -1759,6 +1767,18 @@ css/css-break/break-inside-avoid-min-block-size-1.html
 # KEEP in two audit-vacuous-passes runs.
 css/css-pseudo/first-line-opacity-001.html
 
+# --- ::first-line text and inline box styles (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-18) ---
+# KEEP in two audit-vacuous-passes runs.
+css/css-pseudo/first-line-below-float.html
+css/css-pseudo/first-line-change-inline-color-nested.html
+css/css-pseudo/first-line-change-inline-color.html
+css/css-pseudo/first-line-nested-gcs.html
+css/css-pseudo/first-line-on-ancestor-block.html
+css/css-pseudo/first-line-with-inline-block.html
+css/css-pseudo/first-line-with-out-of-flow-and-nested-div.html
+css/css-pseudo/first-line-with-out-of-flow-and-nested-span.html
+css/css-pseudo/first-line-with-out-of-flow.html
+
 # --- vacuity-audited sweep promotion (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-12) ---
 # Every id passed and was KEEP in two audit-vacuous-passes runs (see README.md).
 css/CSS2/abspos/between-float-and-text.html
@@ -2215,7 +2235,9 @@ css/css-color/t424-hsl-values-b-6.html
 css/css-color/t424-hsl-values-b-7.html
 css/css-color/t424-hsl-values-b-8.html
 css/css-color/t424-hsl-values-b-9.html
+css/css-color/tagged-images-001.html
 css/css-color/tagged-images-002.html
+css/css-color/untagged-images-001.html
 css/css-color/xyz-002.html
 css/css-color/xyz-d50-002.html
 css/css-color/xyz-d65-002.html
@@ -2898,6 +2920,7 @@ css/css-images/gradient/gradient-longer-hue-lch-011.html
 css/css-images/gradient/gradient-longer-hue-lch-012.html
 css/css-images/gradient/gradient-powerless-hue-lch.html
 css/css-images/gradient/gradient-powerless-hue-oklch.html
+css/css-images/image-orientation/image-orientation-default.html
 css/css-images/image-orientation/svg-image-orientation.html
 css/css-images/image-set/image-set-negative-resolution-rendering-2.html
 css/css-images/image-set/image-set-negative-resolution-rendering.html

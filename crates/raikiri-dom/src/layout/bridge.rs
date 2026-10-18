@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::node::{FormattingContext, Node};
-use raikiri_style::property::{ContentComponent, TextOrientation};
+use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 
 // cov:ignore: computed multicol bridge is exercised by ignored WPT reftests.
@@ -263,6 +263,8 @@ fn apply_computed_to_style_in_session_inner(
             });
         doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial)
             || super::fixed::has_applied_transform(doc, idx, cv);
+        doc.nodes[idx].clones_box_decorations =
+            cv.box_decoration_break == BoxDecorationBreak::Clone;
         doc.nodes[idx].contains_absolute_boxes =
             super::fixed::establishes_absolute_containing_block(doc, idx, cv)
                 && !super::fixed::establishes_fixed_containing_block(doc, idx, cv);
