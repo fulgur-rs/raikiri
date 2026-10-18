@@ -15,7 +15,9 @@ fn print_margin_currentcolor_and_inherited_expression_match_literal_pixels() {
         assert_eq!(actual.pages.len(), 1);
         let actual = &actual.pages[0];
         assert_eq!((actual.width, actual.height), (200, 100));
-        let offset = (10 * actual.width as usize + 50) * 4;
+        // The lone 60px top-center box is centered on the page, so the middle
+        // of its strip is x = 100.
+        let offset = (10 * actual.width as usize + 100) * 4;
         assert_eq!(
             &expected.pages[0].rgba[offset..offset + 4],
             &[0, 128, 0, 255]

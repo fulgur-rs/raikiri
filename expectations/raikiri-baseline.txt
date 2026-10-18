@@ -3076,6 +3076,7 @@ css/css-page/margin-boxes/dimensions-001-print.html
 css/css-page/margin-boxes/dimensions-002-print.html
 css/css-page/margin-boxes/dimensions-003-print.html
 css/css-page/margin-boxes/dimensions-005-print.html
+css/css-page/margin-boxes/dimensions-007-print.html
 css/css-page/margin-boxes/dimensions-010-print.html
 css/css-page/margin-boxes/dimensions-015-print.tentative.html
 css/css-page/margin-boxes/inapplicable-properties-print.html

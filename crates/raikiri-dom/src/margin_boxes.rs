@@ -1353,17 +1353,21 @@ fn margin_box_text_width(
             StandaloneAlign::Start,
         )
         .map_or(0.0, |text| text.width());
+    measured.max(text_width_floor(spec)).max(0.0)
+}
+
+/// The least width text takes: a font size, once it has anything but
+/// collapsible white space.
+fn text_width_floor(spec: &MarginBoxSpec) -> f32 {
     let non_collapsible_content = spec
         .content
         .chars()
         .any(|character| !character.is_whitespace() || character == '\u{a0}');
-    measured
-        .max(if non_collapsible_content {
-            spec.text_style.font_size.max(0.0)
-        } else {
-            0.0
-        })
-        .max(0.0)
+    if non_collapsible_content {
+        spec.text_style.font_size.max(0.0)
+    } else {
+        0.0
+    }
 }
 
 fn margin_box_intrinsic_width(
@@ -1387,7 +1391,7 @@ fn margin_box_intrinsic_width(
 
 fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec) -> f32 {
     if spec.content.is_empty() {
-        return 0.0;
+        return spec.frame(Axis::Vertical).outer(0.0).max(0.0);
     }
     let line_count = spec
         .content
@@ -1461,9 +1465,111 @@ const RIGHT_EDGE: Edge = Edge {
     axis: Axis::Vertical,
 };
 
+/// The sizes a box asks for along an edge: its outer min-content and
+/// max-content size, which are equal for a box with a specified size.
+#[derive(Clone, Copy, Debug)]
+struct EdgeExtent {
+    min: f32,
+    max: f32,
+}
+
+impl EdgeExtent {
+    fn fixed(size: f32) -> Self {
+        Self {
+            min: size,
+            max: size,
+        }
+    }
+}
+
+/// A width narrow enough to break margin box text at every break
+/// opportunity, so that its widest line is the min-content size.
+const MIN_CONTENT_PROBE: f32 = 0.01;
+
+/// The outer max-content size of `spec` along the `axis` of its edge: its
+/// specified size, or that of its text on a single line. `cross_size` is the
+/// thickness of the page margin.
+fn edge_max_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, cross_size: f32) -> f32 {
+    if spec.size(axis).is_some() {
+        return spec.outer_size(axis, 0.0);
+    }
+    match axis {
+        Axis::Horizontal => margin_box_intrinsic_width(document, spec, cross_size),
+        Axis::Vertical => margin_box_intrinsic_height(document, spec),
+    }
+}
+
+/// The outer min-content size of `spec` along the `axis` of its edge, given
+/// its `max` size: that of its text broken at every opportunity.
+fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32) -> f32 {
+    // Text can break at every opportunity along its inline axis. Across it,
+    // the size is the same however narrow the box gets.
+    let along_inline_axis = spec.text_style.writing_mode.is_vertical() == (axis == Axis::Vertical);
+    if spec.size(axis).is_some() || !along_inline_axis || spec.content.is_empty() {
+        return max;
+    }
+    let measured = document
+        .shape_standalone_text(
+            &spec.content,
+            &spec.text_style,
+            Some(MIN_CONTENT_PROBE),
+            StandaloneAlign::Start,
+        )
+        .map_or(0.0, |text| match axis {
+            Axis::Horizontal => text.width().max(text_width_floor(spec)),
+            Axis::Vertical => text.height(),
+        });
+    spec.frame(axis).outer(measured.max(0.0)).max(0.0).min(max)
+}
+
+/// The outer sizes of boxes that all have an `auto` size, as CSS Page 3
+/// distributes `available` over them: from the max-content sizes if those
+/// fit, else from the min-content sizes plus a share of the free space in
+/// proportion to how far each box can grow, else from the min-content sizes
+/// shrunk in proportion to themselves. When none of them has anything to
+/// grow or shrink by, the space goes in proportion to `counts`, the number of
+/// generated boxes each one stands for, so that empty boxes share an edge
+/// equally. The `counts` add up to more than zero.
+fn flex_fit(extents: &[EdgeExtent], counts: &[f32], available: f32) -> Vec<f32> {
+    let max_total = extents.iter().map(|extent| extent.max).sum::<f32>();
+    let min_total = extents.iter().map(|extent| extent.min).sum::<f32>();
+    let (bases, factors, space): (Vec<f32>, Vec<f32>, f32) = if max_total < available {
+        let maxes = extents.iter().map(|extent| extent.max).collect::<Vec<_>>();
+        (maxes.clone(), maxes, available - max_total)
+    } else {
+        let mins = extents.iter().map(|extent| extent.min).collect::<Vec<_>>();
+        let factors = if min_total < available {
+            extents
+                .iter()
+                .map(|extent| extent.max - extent.min)
+                .collect()
+        } else {
+            mins.clone()
+        };
+        (mins, factors, available - min_total)
+    };
+    let factor_total = factors.iter().sum::<f32>();
+    let (factors, factor_total) = if factor_total > 0.0 {
+        (factors, factor_total)
+    } else {
+        (counts.to_vec(), counts.iter().sum::<f32>())
+    };
+    bases
+        .iter()
+        .zip(&factors)
+        .map(|(base, factor)| (base + space * factor / factor_total).max(0.0))
+        .collect()
+}
+
 /// The boxes present on `edge`, in layout order, each with its outer size
 /// along the edge. `available` is the length of the edge between the
 /// corners and `cross_size` the thickness of the page margin.
+///
+/// Sizes follow CSS Page 3's variable dimension rules. Without a middle box,
+/// a lone `auto` box takes what the other box leaves and two `auto` boxes
+/// fit the edge together. With one, the middle box is sized against the
+/// larger of the two side boxes doubled, which keeps it centered, and `auto`
+/// side boxes take half of what it leaves each.
 fn edge_track_sizes<'s>(
     document: &Document,
     specs: &'s [MarginBoxSpec],
@@ -1477,85 +1583,90 @@ fn edge_track_sizes<'s>(
         .iter()
         .filter_map(|slot| specs.iter().find(|spec| spec.slot == *slot))
         .collect();
-    if active.is_empty() {
-        return Vec::new();
-    }
-    let fixed = active
+    let center = active.iter().position(|spec| spec.slot == edge.slots[1]);
+    let maxes: Vec<f32> = active
         .iter()
-        .filter(|spec| spec.size(axis).is_some())
-        .map(|spec| spec.outer_size(axis, 0.0))
-        .sum::<f32>();
-    let auto_bases: Vec<f32> = active
+        .map(|spec| edge_max_size(document, spec, axis, cross_size))
+        .collect();
+    // The min-content sizes only come into play once the max-content sizes
+    // don't fit, so text is not measured a second time before that.
+    let widest_side = [0, 2]
+        .into_iter()
+        .filter_map(|slot| active.iter().position(|spec| spec.slot == edge.slots[slot]))
+        .map(|index| maxes[index])
+        .fold(0.0, f32::max);
+    let max_need = match center {
+        Some(center) => maxes[center] + 2.0 * widest_side,
+        None => maxes.iter().sum(),
+    };
+    let extents: Vec<EdgeExtent> = active
         .iter()
-        .map(|spec| {
-            if spec.size(axis).is_some() {
-                0.0
+        .zip(&maxes)
+        .map(|(spec, &max)| EdgeExtent {
+            min: if max_need < available {
+                max
             } else {
-                match axis {
-                    Axis::Horizontal => margin_box_intrinsic_width(document, spec, cross_size),
-                    Axis::Vertical => margin_box_intrinsic_height(document, spec),
-                }
-            }
+                edge_min_size(document, spec, axis, max)
+            },
+            max,
         })
         .collect();
-    let auto_base_total = auto_bases.iter().sum::<f32>();
-    let auto_remaining = available - fixed - auto_base_total;
-    let center_slot = edge.slots[1];
-    let center_index = active.iter().position(|spec| spec.slot == center_slot);
-    // On the top and bottom edges, an empty auto-sized center box between
-    // sides with content takes no space, and the sides split the edge
-    // evenly. The left and right edges don't anchor their middle box.
-    let center_is_anchored = axis == Axis::Horizontal
-        && center_index.is_some_and(|index| {
-            active[index].size(axis).is_none()
-                && auto_bases[index] <= 0.0
-                && active
-                    .iter()
-                    .enumerate()
-                    .any(|(other, _)| other != index && auto_bases[other] > 0.0)
-        });
-    let anchored_side_size = if center_is_anchored {
-        ((available - fixed) / 2.0).max(0.0)
-    } else {
-        0.0
-    };
-    // CSS Page 3's AC box treats the two side tracks as one flex item when
-    // an edge has an auto-sized center and auto-sized sides.  Proportional
-    // distribution across all three intrinsic bases makes an asymmetric
-    // side (dimensions-005) steal space from the opposite side instead of
-    // keeping the center aligned.
-    let ac_sizes = if active.len() == 3 && active.iter().all(|spec| spec.size(axis).is_none()) {
-        let side_base = auto_bases[0].max(auto_bases[2]);
-        let center_base = auto_bases[1];
-        let ac_base = side_base * 2.0;
-        let total_base = ac_base + center_base;
-        (side_base > 0.0 && center_base > 0.0 && total_base > 0.0).then(|| {
-            let free = available - total_base;
-            let ac = (ac_base + free * ac_base / total_base).max(0.0);
-            let center = (center_base + free * center_base / total_base).max(0.0);
-            [ac * 0.5, center, ac * 0.5]
-        })
-    } else {
-        None
-    };
-    active
-        .iter()
-        .enumerate()
-        .map(|(index, spec)| {
-            let size = if let Some(ac_sizes) = ac_sizes {
-                ac_sizes[index]
-            } else if center_is_anchored && Some(index) == center_index {
-                0.0
-            } else if center_is_anchored {
-                anchored_side_size
-            } else if spec.size(axis).is_some() {
-                spec.outer_size(axis, 0.0)
-            } else if auto_base_total > 0.0 {
-                (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
+    let is_auto = |index: usize| active[index].size(axis).is_none();
+    let mut sizes = maxes;
+    if let Some(center) = center {
+        let side = |slot: usize| {
+            active
+                .iter()
+                .position(|spec| spec.slot == edge.slots[slot])
+                .map_or(EdgeExtent::fixed(0.0), |index| EdgeExtent {
+                    min: extents[index].min * 2.0,
+                    max: extents[index].max * 2.0,
+                })
+        };
+        if is_auto(center) {
+            // Of the two doubled sides, the larger one decides the size of
+            // the middle box, so that the middle box can stay centered.
+            let counts = [1.0, (active.len() - 1) as f32];
+            let [from_start, from_end] = [side(0), side(2)]
+                .map(|doubled| flex_fit(&[extents[center], doubled], &counts, available));
+            sizes[center] = if from_end[1] > from_start[1] {
+                from_end[0]
             } else {
-                (auto_remaining / auto_bases.len() as f32).max(0.0)
+                from_start[0]
             };
-            (*spec, size)
+        }
+        for index in (0..active.len()).filter(|&index| index != center && is_auto(index)) {
+            sizes[index] = ((available - sizes[center]) / 2.0).max(0.0);
+        }
+    } else {
+        let autos: Vec<usize> = (0..active.len()).filter(|&index| is_auto(index)).collect();
+        let fixed_total = (0..active.len())
+            .filter(|&index| !is_auto(index))
+            .map(|index| sizes[index])
+            .sum::<f32>();
+        match autos.as_slice() {
+            [only] => sizes[*only] = (available - fixed_total).max(0.0),
+            [_, _] => sizes = flex_fit(&extents, &[1.0, 1.0], available),
+            _ => {}
+        }
+    }
+    active.into_iter().zip(sizes).collect()
+}
+
+/// Where each of `tracks` starts along its edge, counted from the start of
+/// the `available` length between the corners. CSS Page 3 puts the first slot
+/// flush with the start, the middle one in the center and the last one flush
+/// with the end, whichever of the other boxes are present.
+fn edge_offsets(edge: Edge, tracks: &[(&MarginBoxSpec, f32)], available: f32) -> Vec<f32> {
+    tracks
+        .iter()
+        .map(|&(spec, size)| {
+            let free = available - size;
+            match edge.slots.iter().position(|slot| *slot == spec.slot) {
+                Some(0) => 0.0,
+                Some(1) => free / 2.0,
+                _ => free,
+            }
         })
         .collect()
 }
@@ -1578,12 +1689,13 @@ fn layout_horizontal_margin_boxes(
         return;
     }
     let available = (page_width - margins.left - margins.right).max(0.0);
-    let mut x = margins.left;
-    for (spec, outer_width) in edge_track_sizes(document, specs, edge, available, row_height) {
+    let tracks = edge_track_sizes(document, specs, edge, available, row_height);
+    let offsets = edge_offsets(edge, &tracks, available);
+    for (&(spec, outer_width), offset) in tracks.iter().zip(offsets) {
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
         let width = (outer_width - margin_left - margin_right).max(0.0);
-        let paint_x = x + margin_left;
+        let paint_x = margins.left + offset + margin_left;
         let outer_height = if spec.height.is_some() {
             spec.outer_size(Axis::Vertical, 0.0)
                 .min(row_height)
@@ -1606,7 +1718,6 @@ fn layout_horizontal_margin_boxes(
             spec,
             PaintRect::new(paint_x, y, width, height),
         ));
-        x += outer_width;
     }
 }
 
@@ -1629,14 +1740,11 @@ fn layout_vertical_margin_boxes(
     }
     let available = (page_height - margins.top - margins.bottom).max(0.0);
     let tracks = edge_track_sizes(document, specs, edge, available, column_width);
-    let has_slot = |slot: PageMarginBoxSlot| tracks.iter().any(|(spec, _)| spec.slot == slot);
-    let has_top = has_slot(edge.slots[0]);
-    let has_bottom = has_slot(edge.slots[2]);
     let all_fixed_heights =
         tracks.len() == 3 && tracks.iter().all(|(spec, _)| spec.height.is_some());
     let segment_height = available / 3.0;
-    let mut y = margins.top;
-    for &(spec, outer_height) in &tracks {
+    let offsets = edge_offsets(edge, &tracks, available);
+    for (&(spec, outer_height), offset) in tracks.iter().zip(offsets) {
         let margin_top = spec.margin[0];
         let margin_bottom = spec.margin[2];
         let height = (outer_height - margin_top - margin_bottom).max(0.0);
@@ -1650,10 +1758,8 @@ fn layout_vertical_margin_boxes(
                 + slot_index * segment_height
                 + (segment_height - outer_height).max(0.0) / 2.0
                 + margin_top
-        } else if spec.height.is_some() && spec.slot == edge.slots[1] && !has_top && !has_bottom {
-            margins.top + (available - outer_height).max(0.0) / 2.0 + margin_top
         } else {
-            y + margin_top
+            margins.top + offset + margin_top
         };
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
@@ -1675,7 +1781,6 @@ fn layout_vertical_margin_boxes(
             spec,
             PaintRect::new(paint_x, paint_y, width, height),
         ));
-        y += outer_height;
     }
 }
 
