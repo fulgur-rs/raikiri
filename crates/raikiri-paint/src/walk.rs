@@ -44,9 +44,17 @@ use raikiri_traits::{
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
+mod frames;
 mod gradient;
 mod image_brush;
+mod page_geometry;
 pub(crate) use image_brush::ImageBrushCache;
+
+use frames::{
+    DeferralLayer, LayerClose, PaintFrame, finish_lines_leaving_groups, leave_groups,
+    leaves_groups, positioned_frame, set_aside,
+};
+use page_geometry::PageGeometry;
 
 use crate::text;
 
@@ -2130,269 +2138,34 @@ pub(crate) fn paint_document_impl(
             .or_default()
             .push(fragment_id);
     }
-    #[derive(Clone)]
-    enum PaintFrame<'a> {
-        Visit {
-            node_id: usize,
-            parent_abs_x: f32,
-            parent_abs_y: f32,
-            parent_font_size: f32,
-            shift_y: f32,
-            transform_x: f32,
-            transform_y: f32,
-            /// How far the relative offsets that paint applies to the
-            /// ancestors move `parent_abs_y` from where layout placed it.
-            paint_offset_y: f32,
-            fragment_clip_height: Option<f32>,
-            /// On a `display: contents` child of a multicolumn container, the
-            /// column height that container clips its blocks to. The element
-            /// has no box, so its children are the ones the columns hold.
-            column_clip_height: Option<f32>,
-            fragment_id: Option<usize>,
-            fragment_origin_x: f32,
-            fragment_origin_y: f32,
-            fragmentainer: Option<usize>,
-            fragment_rect: Option<FragmentRect>,
-            fragment_clip: Option<FragmentRect>,
-            is_fragment_visit: bool,
-            inside_fixed: bool,
-            inside_fixed_containing_block: bool,
-            decorations: text::DecorationContext,
-        },
-        AnonymousParagraph {
-            key: usize,
-            cell: &'a raikiri_dom::Node,
-            x: f32,
-            y: f32,
-            shift_y: f32,
-            transform_x: f32,
-            transform_y: f32,
-            /// How far the relative offsets that paint applies move `y`
-            /// from where layout placed it.
-            paint_offset_y: f32,
-            fragmentainer: Option<usize>,
-            inside_fixed: bool,
-            decorations: text::DecorationContext,
-            /// The page area that `fixed` backgrounds of the paragraph's
-            /// inline boxes are positioned in.
-            fixed_viewport: Option<Rect>,
-            /// Whether the paragraph's lines wait for the end of the layer,
-            /// as those of the explicit cells beside it do.
-            defer: bool,
-        },
-        RestoreTransform(Affine),
-        /// The lines of one paragraph, drawn where this frame pops: in place
-        /// for most paragraphs, or at the end of the enclosing layer for a
-        /// block whose inline content is deferred (see
-        /// [`raikiri_dom::paint_rules::defers_inline_content`]).
-        Lines {
-            node_id: usize,
-            x: f32,
-            y: f32,
-            shift_y: f32,
-            /// How far the translations around the paragraph move its lines
-            /// along y.
-            translation_y: f32,
-            decorations: text::DecorationContext,
-            fragmentainer: Option<usize>,
-            inside_fixed: bool,
-            paint_transform: Affine,
-            /// The page area that `fixed` backgrounds of the paragraph's
-            /// inline boxes are positioned in.
-            fixed_viewport: Option<Rect>,
-            /// Keep the paragraph's groups open until
-            /// [`PaintFrame::FinishLines`] when it has any, so the boxes laid
-            /// out beside the lines join them.
-            hold: bool,
-            /// Whether a box beside the lines is inside a translucent inline
-            /// element, so the groups are kept open even if no text of the
-            /// element allocated one.
-            boxes_in_groups: bool,
-        },
-        /// Start recording the paint of a box laid out beside the held lines
-        /// of its paragraph. An `early` box paints before the lines, which
-        /// place it once they are drawn.
-        BeginBox {
-            root: usize,
-            node_id: usize,
-            early: bool,
-        },
-        /// Place the recorded paint of a box in the held lines of `root`.
-        EndBox {
-            root: usize,
-            node_id: usize,
-            early: bool,
-        },
-        /// Trace the text of paragraph `root` positioned below its blocks,
-        /// which its held lines paint below the blocks placed in them.
-        TraceBelowBlocks {
-            root: usize,
-        },
-        /// Composite the held lines of `root` and the boxes placed in them.
-        FinishLines {
-            root: usize,
-        },
-        /// The group of a positioned inline element that forms a stacking
-        /// context in its paragraph's stacking context (see
-        /// [`raikiri_dom::paint_rules::leaves_paragraph_content`]), which
-        /// waits for the end of the layer like the positioned boxes. Its
-        /// lines leave its paint in `left_groups`.
-        InlineGroup {
-            root: usize,
-            node_id: usize,
-        },
-        /// Close a layer of deferred inline content: paint what its blocks
-        /// deferred, then drop the layer.
-        EndDeferral,
-        /// Reopen the overflow clip of a block around the content its layer
-        /// handed to the enclosing one (see
-        /// [`raikiri_dom::paint_rules::merges_clipped_inline_content`]), in
-        /// the transform the block was painted in.
-        PushClip {
-            node_id: usize,
-            clip: raikiri_traits::PaintClip,
-            transform: Affine,
-        },
-        PopClip,
-        /// Open the opacity group of a translucent inline element around a
-        /// box laid out beside its paragraph's lines.
-        PushOpacity {
-            node_id: usize,
-            alpha: f32,
-        },
-        /// Close an element opacity group after its complete subtree.
-        PopOpacity,
-        /// Paint an originating element's `::after` pseudo after its real
-        /// children, while still inside any overflow clip pushed for the
-        /// originating element.
-        PaintAfter {
-            node_id: usize,
-            x: f32,
-            y: f32,
-            width: f32,
-            height: f32,
-            before_advance: f32,
-            content_advance: f32,
-        },
-    }
 
-    let margins = raikiri_dom::page_margins(cascade, page_box);
-    let insets = raikiri_dom::page_content_insets(cascade, page_box);
-    // Keep fixed-position sizing consistent with layout: the page area inside
-    // the page border and padding.
-    let content_width = insets.page_area_width(margins, page_box);
-    let content_height = insets.page_area_height(margins, page_box);
-    // The page area in page-local coordinates, which `fixed` background
-    // layers are positioned in (CSS Backgrounds 3 section 2.5).
-    let page_area = page_area_rect(margins, insets, page_box);
-    // Fixed-position containing blocks use the page area of the initial
-    // layout even when a later named page has a different paper width.
-    // The page area takes the root element's direction, which decides the
-    // inset that places an over-constrained fixed box.
-    let fixed_rtl = find_html(document)
-        .and_then(|html| cascade.computed.get(html))
-        .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl);
-    let fixed_content_width = if fixed_page_width.is_finite() && fixed_page_width > 0.0 {
-        fixed_page_width
-    } else {
-        content_width
-    };
-    // The walker keeps source coordinates in the stack.  Only the paint sites
-    // receive the page translation, which makes page membership testable even
-    // when an ancestor spans a page boundary.
-    let pages_follow_x_axis = raikiri_dom::pages_follow_x_axis(document, cascade);
-    let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
-        // Pages that follow the x axis hold a band of the flow across the
-        // whole page height: every box is on the page along y, and the
-        // page area decides along x which boxes and lines the page holds. Flowing right to left, the
-        // band starts at the page area's right edge, so on a page whose area
-        // is narrower or wider than the one this document was laid out in it
-        // moves with that edge.
-        Some(right_to_left) => (
-            -FLOW_EXTENT,
-            FLOW_EXTENT,
-            margins.left
-                + insets.left
-                + if right_to_left {
-                    let layout_width = document
-                        .laid_out_page_area_width()
-                        .unwrap_or(fixed_content_width);
-                    content_origin_y + content_width - layout_width
-                } else {
-                    -content_origin_y
-                },
-            margins.top + insets.top,
-        ),
-        None => (
-            content_origin_y,
-            content_origin_y + content_height,
-            margins.left + insets.left,
-            margins.top + insets.top - content_origin_y,
-        ),
-    };
-    // Viewport-fixed boxes repeat at the same place on every page, so they
-    // are placed against the page, not against the band of the flow that
-    // the page offsets above carry.
-    // The whole band offset, including a right-to-left page's edge shift,
-    // is taken back out so those boxes stay page-local.
-    let (fixed_flow_shift_x, fixed_origin_y) = if pages_follow_x_axis.is_some() {
-        (page_offset_x - (margins.left + insets.left), 0.0)
-    } else {
-        (0.0, content_origin_y)
-    };
-    // Element backgrounds can extend past the page content box, for example
-    // through negative margins. Clip those backgrounds to the physical
-    // content box without clipping text ink, which may legitimately overflow
-    // its box.
-    // `scene` paints through the root element's `root_transform`, which
-    // moves the document but not the page: page-area clips undo it.
-    let page_clip_transform = root_transform.inverse();
-    let page_content_clip = if margins.left > 0.0
-        || margins.right > 0.0
-        || margins.top > 0.0
-        || margins.bottom > 0.0
-        || insets.left > 0.0
-        || insets.right > 0.0
-        || insets.top > 0.0
-        || insets.bottom > 0.0
-    {
-        let left = margins.left + insets.left;
-        Some(Rect::new(
-            left as f64,
-            (margins.top + insets.top) as f64,
-            (page_box.width - margins.right - insets.right).max(left) as f64,
-            (margins.top + insets.top + content_height) as f64,
-        ))
-    } else {
-        None
-    };
-    // A page that follows the x axis holds the boxes and lines that lie
-    // across its page area, as pages along y hold those across their page
-    // height; nothing else of the flow beside it is painted.
-    let flow_band = pages_follow_x_axis.map(|right_to_left| {
-        let left = margins.left + insets.left;
-        FlowBand {
-            left,
-            right: left + content_width,
-            right_to_left,
-            root_transform,
-        }
-    });
-    // A paragraph that runs over several pages paints on each only the
-    // lines that page owns, not the ones layout moved beside it into the
-    // page margins. The first page also owns whatever lies before the flow.
-    let page_lines = Some(flow_band.map_or_else(
-        || PageLines::AlongY {
-            start: if content_origin_y > 0.0 {
-                content_origin_y
-            } else {
-                -FLOW_EXTENT
-            },
-            end: content_origin_y + content_height,
-            paint_shift: page_offset_y,
-        },
-        PageLines::AlongX,
-    ));
+    let PageGeometry {
+        margins,
+        insets,
+        content_width,
+        content_height,
+        page_area,
+        fixed_rtl,
+        fixed_content_width,
+        pages_follow_x_axis,
+        page_top,
+        page_bottom,
+        page_offset_x,
+        page_offset_y,
+        fixed_flow_shift_x,
+        fixed_origin_y,
+        page_clip_transform,
+        page_content_clip,
+        flow_band,
+        page_lines,
+    } = PageGeometry::new(
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        fixed_page_width,
+        root_transform,
+    );
     let mut capture_scene = crate::capture::CaptureScene::new(scene);
     let mut transformed_scene = crate::transform::TransformScene {
         scene: &mut capture_scene,
@@ -2411,123 +2184,9 @@ pub(crate) fn paint_document_impl(
         std::collections::HashMap::new();
     // Paragraphs whose text below their blocks was traced before the blocks.
     let mut traced_below = std::collections::HashSet::new();
-    // How an open layer ends once its subtree is done.
-    #[derive(Clone, Copy)]
-    enum LayerClose {
-        /// Paint what the layer collected.
-        Paint,
-        /// Hand what the layer collected to the enclosing layer, inside the
-        /// overflow clip of the block that opened it.
-        Merge {
-            node_id: usize,
-            clip: raikiri_traits::PaintClip,
-            transform: Affine,
-        },
-        /// Paint the deferred inline content, and hand the positioned boxes
-        /// to the enclosing layer.
-        Hoist,
-    }
-    // An open layer: the inline content its plain blocks defer and the
-    // positioned boxes that wait for its end, each in tree order, whether
-    // blocks inside it may defer (the content of a block in columns stays
-    // with its column clip), and how it ends.
-    struct DeferralLayer<'a> {
-        pending: Vec<PaintFrame<'a>>,
-        positioned: Vec<PaintFrame<'a>>,
-        allowed: bool,
-        close: LayerClose,
-        /// Whether the layer's end is painting its positioned boxes: the
-        /// boxes it pops then paint where they pop rather than waiting again.
-        flushing: bool,
-        /// The positioned boxes still to paint once the layer's end is
-        /// painting them.
-        queue: Option<raikiri_dom::paint_rules::PositionedQueue<PaintFrame<'a>>>,
-        /// Whether the standalone `::after` of the block that opened the
-        /// layer waits right below the layer's end frame. It follows the
-        /// block's content wherever that paints.
-        after: bool,
-    }
-    impl<'a> DeferralLayer<'a> {
-        fn new(allowed: bool, close: LayerClose) -> Self {
-            Self {
-                pending: Vec::new(),
-                positioned: Vec::new(),
-                allowed,
-                close,
-                flushing: false,
-                queue: None,
-                after: false,
-            }
-        }
-    }
     // Each open layer collects the content that waits for its end. The
     // outermost layer closes after the whole body.
     let mut deferral_scopes: Vec<DeferralLayer> = vec![DeferralLayer::new(true, LayerClose::Paint)];
-    // How the queue of a layer's positioned boxes reads its frames.
-    fn positioned_frame(frame: &PaintFrame<'_>) -> raikiri_dom::paint_rules::PositionedFrame {
-        match frame {
-            PaintFrame::Visit { node_id, .. } | PaintFrame::InlineGroup { node_id, .. } => {
-                raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
-            }
-            PaintFrame::PushClip { node_id, .. } => {
-                raikiri_dom::paint_rules::PositionedFrame::Open(*node_id)
-            }
-            _ => raikiri_dom::paint_rules::PositionedFrame::Close,
-        }
-    }
-    // Whether the lines drawn now leave the groups that form stacking
-    // contexts in the paragraph's stacking context to the end of the layer,
-    // where the positioned boxes paint.
-    fn leaves_groups(deferral_scopes: &[DeferralLayer<'_>]) -> bool {
-        deferral_scopes
-            .last()
-            .is_some_and(|layer| layer.allowed && !layer.flushing)
-    }
-    // Composites held lines into `scene` like `HeldLines::finish`, apart
-    // from the groups they leave to the end of the layer, which it returns.
-    fn finish_lines_leaving_groups(
-        scene: &mut impl PaintScene,
-        lines: crate::ifc_text::HeldLines<'_>,
-    ) -> Vec<(usize, anyrender::Scene)> {
-        let (below, blocks, above, left) = lines.finish_leaving_groups(true);
-        scene.append_scene(below, Affine::IDENTITY);
-        for block in blocks {
-            scene.append_scene(block, Affine::IDENTITY);
-        }
-        scene.append_scene(above, Affine::IDENTITY);
-        left
-    }
-    // Lets the groups a paragraph's lines left wait for the end of the
-    // layer, inside `clip`, the clip of the lines, if any.
-    fn leave_groups<'a>(
-        document: &Document,
-        deferral_scopes: &mut [DeferralLayer<'a>],
-        left_groups: &mut std::collections::HashMap<usize, anyrender::Scene>,
-        root: usize,
-        left: Vec<(usize, anyrender::Scene)>,
-        clip: Option<(Affine, Rect)>,
-    ) {
-        for (node_id, content) in left {
-            let entry = left_groups.entry(node_id);
-            let waiting = matches!(entry, std::collections::hash_map::Entry::Occupied(_));
-            let paint = entry.or_default();
-            if let Some((transform, clip)) = clip {
-                paint.push_clip_layer(transform, &clip);
-                paint.append_scene(content, Affine::IDENTITY);
-                paint.pop_layer();
-            } else {
-                paint.append_scene(content, Affine::IDENTITY);
-            }
-            if !waiting && let Some(layer) = deferral_scopes.last_mut() {
-                raikiri_dom::paint_rules::insert_positioned_frame(
-                    document,
-                    &mut layer.positioned,
-                    PaintFrame::InlineGroup { root, node_id },
-                    positioned_frame,
-                );
-            }
-        }
-    }
     // Whether each paragraph's content can leave its lines, found once.
     let paragraphs = raikiri_dom::paint_rules::LeavingParagraphs::default();
     let mut stack = vec![
@@ -2582,63 +2241,16 @@ pub(crate) fn paint_document_impl(
         })
     };
     while let Some(frame) = stack.pop() {
-        // A positioned box waits for the end of its layer, after the
-        // backgrounds of the blocks that follow it.
-        if let PaintFrame::Visit { node_id, .. } = &frame
-            && let Some(layer) = deferral_scopes.last_mut()
-            && layer.allowed
-            && !layer.flushing
-            && raikiri_dom::paint_rules::defers_to_positioned_layer(
-                document,
-                cascade,
-                *node_id,
-                &paragraphs,
-            )
-        {
-            if raikiri_dom::paint_rules::leaves_paragraph_lines(
-                document,
-                cascade,
-                *node_id,
-                &paragraphs,
-            ) {
-                raikiri_dom::paint_rules::insert_positioned_frame(
-                    document,
-                    &mut layer.positioned,
-                    frame,
-                    positioned_frame,
-                );
-            } else {
-                layer.positioned.push(frame);
-            }
+        let Some(frame) = set_aside(
+            frame,
+            document,
+            cascade,
+            &paragraphs,
+            &mut deferral_scopes,
+            &mut stack,
+        ) else {
             continue;
-        }
-        // The lines of an anonymous cell in a table part that defers wait
-        // for the end of the layer, in tree order with the other cells'.
-        let mut frame = frame;
-        if let PaintFrame::AnonymousParagraph { defer, .. } = &mut frame
-            && std::mem::take(defer)
-        {
-            if let Some(layer) = deferral_scopes.last_mut() {
-                layer.pending.push(frame);
-            }
-            continue;
-        }
-        // A box that does not defer, such as a flex container, paints after
-        // the inline content deferred before it.
-        if let PaintFrame::Visit { node_id, .. } = &frame
-            && deferral_scopes
-                .last()
-                .is_some_and(|layer| !layer.pending.is_empty())
-            && raikiri_dom::paint_rules::closes_deferred_inline_content(document, cascade, *node_id)
-        {
-            let pending = deferral_scopes
-                .last_mut()
-                .map(|layer| std::mem::take(&mut layer.pending))
-                .unwrap_or_default();
-            stack.push(frame);
-            stack.extend(pending.into_iter().rev());
-            continue;
-        }
+        };
         let (
             node_id,
             parent_abs_x,
