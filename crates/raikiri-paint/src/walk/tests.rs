@@ -3365,6 +3365,30 @@ fn tile_spans_keep_a_positive_length_on_a_mirrored_grid() {
 }
 
 #[test]
+fn tile_spans_keep_a_tile_thinner_than_a_device_pixel() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Space};
+    // Both edges of the tile round to the same device pixel boundary, which
+    // would leave it no length at all; it keeps its own span instead.
+    assert_eq!(
+        tile_spans(&[10.1], 0.2, NoRepeat, Some((1.0, 0.0))),
+        vec![(10.1, 0.2)]
+    );
+    assert_eq!(
+        tile_spans(&[10.1, 20.1], 0.2, Space, Some((1.0, 0.0))),
+        vec![(10.1, 0.2), (20.1, 0.2)]
+    );
+    assert_eq!(
+        tile_spans(&[10.1], 0.2, NoRepeat, Some((-1.0, 0.0))),
+        vec![(10.1, 0.2)]
+    );
+    // A tile whose edges land on different boundaries is still snapped.
+    assert_eq!(
+        tile_spans(&[10.4], 0.2, NoRepeat, Some((1.0, 0.0))),
+        vec![(10.0, 1.0)]
+    );
+}
+
+#[test]
 fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
     struct BluePixels;
     impl raikiri_traits::ImagePixelSource for BluePixels {

@@ -6194,7 +6194,15 @@ fn tile_spans(
             .iter()
             .map(|start| {
                 let snapped = snap(*start);
-                (snapped, snap(*start + length) - snapped)
+                let snapped_length = snap(*start + length) - snapped;
+                // A tile thinner than a device pixel can have both edges
+                // round to the same boundary; it then stays where it is
+                // instead of vanishing.
+                if snapped_length > 0.0 {
+                    (snapped, snapped_length)
+                } else {
+                    (*start, length)
+                }
             })
             .collect(),
     }
