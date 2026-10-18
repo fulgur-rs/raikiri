@@ -303,8 +303,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
 
     /// The inline content of paragraph root `node_id`.
     fn content(&mut self, node_id: usize) {
-        let (document, cascade, items, lines) =
-            (self.document, self.cascade, self.items, self.lines);
+        let (document, cascade, lines) = (self.document, self.cascade, self.lines);
         // The supplied runs tell the first line apart; text fragments cover
         // all the lines of a text node.
         let first_line =
@@ -319,9 +318,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         if !first_line {
             content.extend(self.inline_marker_image(node_id));
         }
-        let groups = push_paragraph(document, items, node_id, None, lines, part, &mut content);
-        let groups = document.groups_with_content(items, node_id, groups, lines, part);
-        let boxes = document.ifc_boxes_in_group(cascade, node_id, None, part);
+        let (groups, boxes) = self.list_paragraph_content(&mut content, node_id, None, part);
         let mut frames =
             document.paragraph_frames(cascade, node_id, boxes, groups, part, first_line);
         // The blocks inside the paragraph paint above the content positioned
@@ -342,6 +339,24 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         self.document
             .has_inline_marker_image(self.cascade, self.page_index, root)
             .then_some(PaintEvent::MarkerImage(NodeId::new(root as u64)))
+    }
+
+    /// List the inline content of paragraph `root`, or of its inline opacity
+    /// group `group`, on the lines of `part` into `content`. Returns the
+    /// groups nested in it that list something and the boxes laid out beside
+    /// those lines, for the frames around the content.
+    fn list_paragraph_content(
+        &self,
+        content: &mut Vec<PaintEvent<'a>>,
+        root: usize,
+        group: Option<usize>,
+        part: LinePart,
+    ) -> (Vec<usize>, Vec<usize>) {
+        let (document, items, lines) = (self.document, self.items, self.lines);
+        let nested = push_paragraph(document, items, root, group, lines, part, content);
+        let nested = document.groups_with_content(items, root, nested, lines, part);
+        let boxes = document.ifc_boxes_in_group(self.cascade, root, group, part);
+        (nested, boxes)
     }
 
     /// The paragraph of anonymous cell `key`.
@@ -369,16 +384,13 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     /// groups on it. The other boxes laid out beside the lines stay with the
     /// rest.
     fn first_line(&mut self, root: usize) {
-        let (document, cascade, items, lines) =
-            (self.document, self.cascade, self.items, self.lines);
+        let (document, cascade, items) = (self.document, self.cascade, self.items);
         let Some(alpha) = paint_rules::first_line_opacity_layer(document, root) else {
             return; // cov:ignore: the frame is listed only for a translucent first line
         };
         let mut content = Vec::from_iter(self.inline_marker_image(root));
         let part = LinePart::First;
-        let nested = push_paragraph(document, items, root, None, lines, part, &mut content);
-        let nested = document.groups_with_content(items, root, nested, lines, part);
-        let boxes = document.ifc_boxes_in_group(cascade, root, None, part);
+        let (nested, boxes) = self.list_paragraph_content(&mut content, root, None, part);
         // A first line on another page lists nothing here.
         if content.is_empty()
             && nested.is_empty()
@@ -396,8 +408,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
     /// contexts: its inline boxes and text, then its atomic inlines and
     /// floats, then the groups nested in it.
     fn inline_group(&mut self, root: usize, group: usize, part: LinePart) {
-        let (document, cascade, items, lines) =
-            (self.document, self.cascade, self.items, self.lines);
+        let (document, cascade, items) = (self.document, self.cascade, self.items);
         let alpha = self.group_opacity(root, group);
         // A `::before` or `::after` with a transform turns its group about
         // its own box (CSS Transforms 1 §6). A singular one paints nothing of
@@ -427,17 +438,7 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             self.push_opacity(alpha);
         }
         let mut content = Vec::new();
-        let nested = push_paragraph(
-            document,
-            items,
-            root,
-            Some(group),
-            lines,
-            part,
-            &mut content,
-        );
-        let nested = document.groups_with_content(items, root, nested, lines, part);
-        let boxes = document.ifc_boxes_in_group(cascade, root, Some(group), part);
+        let (nested, boxes) = self.list_paragraph_content(&mut content, root, Some(group), part);
         let frames = document.paragraph_frames(cascade, root, boxes, nested, part, false);
         // The group's own boxes are its background, below the stacking
         // contexts nested in it.
