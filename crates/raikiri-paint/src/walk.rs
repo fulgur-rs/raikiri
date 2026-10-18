@@ -2391,15 +2391,26 @@ pub(crate) fn paint_document_impl(
                 };
                 let child_shift_y = shift_y + own_shift;
                 // Taffy and the IFC block/atomic placement paths already apply
-                // relative insets. Floats, explicit multicol fragments and
-                // manually placed table parts still use paint-side insets.
+                // relative insets. Floats, the boxes a multicol container
+                // places in its columns and manually placed table parts still
+                // use paint-side insets. The container's own fragment and the
+                // fragment of a box deeper inside a column child stand where
+                // block flow put the box, inset included.
+                let placed_in_column = is_fragment_visit
+                    && fragment_id.is_some_and(|id| {
+                        layout_fragments[id].parent.is_some_and(|parent| {
+                            document
+                                .get_node(layout_fragments[parent].node_id)
+                                .is_some_and(|owner| owner.is_multicol_container())
+                        })
+                    });
                 let needs_paint_inset = raikiri_dom::placed_without_relative_offset(
                     document,
                     cascade,
                     Some(root_id),
                     node_id,
                     cv,
-                ) || (is_fragment_visit && !cv.display.is_inline_level());
+                ) || (placed_in_column && !cv.display.is_inline_level());
                 let (pos_dx, pos_dy) = if needs_paint_inset {
                     raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
@@ -3508,6 +3519,16 @@ pub(crate) fn paint_document_impl(
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
                 let child_paint_offset_y = paint_offset_y + pos_dy + fixed_dy;
+                // The descendants of a box that is placed in a column are
+                // placed from the origin of its fragment, which stands where
+                // layout left it. The offset that paint adds to the box moves
+                // them as well, as it does the descendants that follow the
+                // parent chain.
+                let (child_fragment_origin_x, child_fragment_origin_y) = if placed_in_column {
+                    (fragment_origin_x + pos_dx, fragment_origin_y + pos_dy)
+                } else {
+                    (fragment_origin_x, fragment_origin_y)
+                };
                 // A paragraph inside a fixed box, or a fixed box that is a
                 // paragraph itself, repeats on every page and is not clipped
                 // like flowed text, as the text branch below does.
@@ -3784,8 +3805,8 @@ pub(crate) fn paint_document_impl(
                             .then_some(own_multicol_clip_height)
                             .flatten(),
                         fragment_id,
-                        fragment_origin_x,
-                        fragment_origin_y,
+                        fragment_origin_x: child_fragment_origin_x,
+                        fragment_origin_y: child_fragment_origin_y,
                         fragmentainer,
                         fragment_rect: None,
                         fragment_clip: None,

@@ -1261,17 +1261,12 @@ fn layout_column_group(
                 - margin_right
         } else {
             // Block flow placed the child with its `position: relative`
-            // inset. The painter adds that inset to the box and the lines of
-            // a paragraph placed in a column, so it is taken out of the
+            // inset. The painter adds that inset to a box placed in a column
+            // and to everything inside it, so it is taken out of the
             // location here. A float is placed without the inset, so its
-            // location has none to take out, and the fragments of the boxes
-            // inside any other child are placed from its location, so that
-            // keeps the inset.
+            // location has none to take out.
             let node = tree.layout_node_with_style(child).unwrap();
-            let inset = if node.ifc.is_some()
-                && node.multicol.is_none()
-                && !node.style.float.is_floated()
-            {
+            let inset = if !node.style.float.is_floated() {
                 crate::taffy_impl::block_flow::relative_inline_offset(
                     node.style,
                     context.available_width,
