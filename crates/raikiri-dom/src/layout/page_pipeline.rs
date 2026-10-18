@@ -4483,10 +4483,13 @@ fn paginate_flow(
                 text_ifc_root,
                 effective_y,
             );
-            let named_page_change = name_context_seen
-                && height > 0.0
-                && name_participates_in_flow
-                && candidate_page_name != comparison_page_name;
+            let named_page_change = text_changes_page_name(
+                name_context_seen,
+                name_participates_in_flow,
+                height,
+                &candidate_page_name,
+                &comparison_page_name,
+            );
             let pending_break_applies = pending_break.applies_to(document, node_id);
             let consumes_pending_break = pending_break_applies && name_participates_in_flow;
             if saw_child {
@@ -4525,12 +4528,17 @@ fn paginate_flow(
                     page_names.current = candidate_page_name.clone();
                 }
             }
-            if height > 0.0
-                && name_participates_in_flow
-                && !named_page_change
-                && !consumes_pending_break
-                && (!keep_local_page_type || current_page > page_before_candidate)
-            {
+            if text_sets_page_name(
+                height,
+                name_participates_in_flow,
+                named_page_change,
+                consumes_pending_break,
+                page_type_leaves_local_flow(
+                    keep_local_page_type,
+                    current_page,
+                    page_before_candidate,
+                ),
+            ) {
                 page_names.current = candidate_page_name;
             }
             check_candidate_page!('candidate_loop, current_page);
@@ -4952,7 +4960,12 @@ fn paginate_flow(
                 || candidate.context.is_named
                 || candidate.context.is_rendered_leaf
                 || candidate.context.deferred_named_break_after)
-            && (!keep_local_page_type || page_transition || current_page > page_before_candidate)
+            && (page_transition
+                || page_type_leaves_local_flow(
+                    keep_local_page_type,
+                    current_page,
+                    page_before_candidate,
+                ))
         {
             page_names.current = candidate_page_name;
             if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
@@ -6936,6 +6949,53 @@ fn flex_line_paragraph(
 /// give or take 0.001, so that moving it whole to a page can hold it.
 fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
     block_height.is_finite() && block_height <= page_step + 0.001
+}
+
+/// Whether the in-flow text of `height` with page type `page_name` opens a
+/// page of another type than `comparison_page_name`, the one the flow
+/// compares it against (see [`PageNames::comparison`]). Text that has no
+/// height, or that comes before any content of its flow
+/// (`name_context_seen`), does not.
+fn text_changes_page_name(
+    name_context_seen: bool,
+    name_participates_in_flow: bool,
+    height: f32,
+    page_name: &Option<String>,
+    comparison_page_name: &Option<String>,
+) -> bool {
+    name_context_seen
+        && height > 0.0
+        && name_participates_in_flow
+        && page_name != comparison_page_name
+}
+
+/// Whether a page type a candidate set inside a flex item's own named flow
+/// (`keep_local_page_type`) reaches the enclosing flow: it does once the
+/// candidate has moved on to a page after `page_before_candidate`.
+fn page_type_leaves_local_flow(
+    keep_local_page_type: bool,
+    current_page: u32,
+    page_before_candidate: u32,
+) -> bool {
+    !keep_local_page_type || current_page > page_before_candidate
+}
+
+/// Whether the in-flow text of `height` hands its page type on to the flow.
+/// Text that changed the page type or consumed a pending break already
+/// set the page type through the page it opened, and text without height
+/// sets none.
+fn text_sets_page_name(
+    height: f32,
+    name_participates_in_flow: bool,
+    named_page_change: bool,
+    consumes_pending_break: bool,
+    leaves_local_flow: bool,
+) -> bool {
+    height > 0.0
+        && name_participates_in_flow
+        && !named_page_change
+        && !consumes_pending_break
+        && leaves_local_flow
 }
 
 /// Whether the text from `text_y` with `text_height` starts at or below the
