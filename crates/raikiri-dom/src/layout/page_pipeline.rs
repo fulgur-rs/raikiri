@@ -4862,53 +4862,20 @@ fn paginate_flow(
                 let row_flex_break_before =
                     forced_before && in_row_flex_container(document, cascade, node_id);
                 if node_delta.is_finite() && shift_delta.is_finite() {
-                    document.nodes[node_id].unrounded_layout.location.y += node_delta;
-                    let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, node_delta);
-                    // A nested avoiding block that moves to the next page
-                    // lengthens the ancestors whose content box holds it, so
-                    // their continuation (and any `overflow` clip) reaches the
-                    // moved content.
-                    // A float does not lengthen the block around it; its
-                    // own shift ends with its subtree.
-                    let mut moved_in_bounded_ancestor = false;
-                    let moves_in_flow_down = node_delta > 0.0
-                        && !is_floating_box_for_pagination(document, cascade, node_id);
-                    let nested_block =
-                        !candidate.context.is_direct_body_element && moves_in_flow_down;
-                    if (page_overflow
-                        || (forced_transition && candidate.context.is_direct_body_element))
-                        && moves_in_flow_down
-                    {
-                        moved_in_bounded_ancestor = grow_ancestors_for_shift(
-                            document,
-                            cascade,
-                            node_id,
+                    let moved_in_bounded_ancestor = move_box_for_transition(
+                        document,
+                        cascade,
+                        body_id,
+                        &candidate,
+                        &TransitionMove {
                             node_delta,
-                            body_id,
-                            &mut subtree_shifts,
-                            page_before_candidate,
-                            &followed_ifc_boxes,
-                        );
-                    } else if forced_transition
-                        && nested_block
-                        && !candidate.context.is_flex_item
-                        && !candidate.context.is_grid_item
-                        && !candidate.context.is_table_row
-                    {
-                        // A forced break ends its ancestors' fragments on
-                        // this page, which their continuations account for;
-                        // only the boxes after it in block flow follow it,
-                        // up to the first ancestor that does not stack its
-                        // children in block order.
-                        // A box pulled back over the break by a negative
-                        // margin still leaves the flow after it at the break.
-                        shift_block_flow_after(
-                            document,
-                            node_id,
-                            body_id,
-                            node_delta.max(shift_delta),
-                        );
-                    }
+                            shift_delta,
+                            page_overflow,
+                            forced_transition,
+                        },
+                        &mut subtree_shifts,
+                        page_before_candidate,
+                    );
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
@@ -4922,34 +4889,23 @@ fn paginate_flow(
                         deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
                     }
                     if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
-                        let inherited =
-                            float_shifts.add_to_pending(node_id, node_delta, page_before_candidate);
-                        // A clearing follower stays below the margin box,
-                        // which a negative block-end margin pulls up.
-                        if let Some(index) = float_side_index(computed.float) {
-                            let context = float_context_root(document, cascade, node_id, body_id);
-                            // Floors are kept in normal-flow coordinates,
-                            // without the relative offsets of the ancestors.
-                            let flow_target_y = node_target_y - relative_offset;
-                            float_shifts.record_edge(
-                                context,
-                                moved_float_edge(
-                                    document,
-                                    node_id,
-                                    index,
-                                    flow_target_y,
-                                    height,
-                                    margin_top,
-                                    forced_transition,
-                                ),
-                            );
-                            // The margin box then moved further than the
-                            // border box, and a later float may have to
-                            // follow it that far.
-                            if !forced_transition {
-                                float_shifts.extend_later(inherited + node_delta + margin_top);
-                            }
-                        }
+                        float_shifts.record_moved_float(
+                            document,
+                            cascade,
+                            body_id,
+                            &MovedFloat {
+                                node_id,
+                                side: float_side_index(computed.float),
+                                delta: node_delta,
+                                flow_page: page_before_candidate,
+                                // Floors are kept in normal-flow coordinates,
+                                // without the relative offsets of the ancestors.
+                                flow_target_y: node_target_y - relative_offset,
+                                height,
+                                margin_top,
+                                forced_transition,
+                            },
+                        );
                         grow_float_context_to_moved_float(
                             document,
                             cascade,
@@ -7533,6 +7489,78 @@ fn move_line_block(
     delta
 }
 
+/// How far a page transition moved a box and why.
+struct TransitionMove {
+    /// How far the box itself moves down.
+    node_delta: f32,
+    /// How far the flow after the box moves down.
+    shift_delta: f32,
+    /// Whether the box moves because it would cross a page edge it avoids.
+    page_overflow: bool,
+    /// Whether a forced or page-type break moves the box.
+    forced_transition: bool,
+}
+
+/// Moves the box `candidate` down by `moved.node_delta` for a page
+/// transition and brings along what has to follow it: the lines of its
+/// paragraph, and the ancestors or later siblings that hold or trail it.
+/// Returns whether an ancestor's height kept it from holding the moved
+/// content.
+fn move_box_for_transition(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    candidate: &PageCandidate,
+    moved: &TransitionMove,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) -> bool {
+    let node_id = candidate.node_id;
+    let TransitionMove {
+        node_delta,
+        shift_delta,
+        page_overflow,
+        forced_transition,
+    } = *moved;
+    document.nodes[node_id].unrounded_layout.location.y += node_delta;
+    let followed_ifc_boxes = follow_moved_ifc_block(document, node_id, node_delta);
+    // A nested avoiding block that moves to the next page lengthens the
+    // ancestors whose content box holds it, so their continuation (and any
+    // `overflow` clip) reaches the moved content. A float does not lengthen
+    // the block around it; its own shift ends with its subtree.
+    let mut moved_in_bounded_ancestor = false;
+    let moves_in_flow_down =
+        node_delta > 0.0 && !is_floating_box_for_pagination(document, cascade, node_id);
+    let nested_block = !candidate.context.is_direct_body_element && moves_in_flow_down;
+    if (page_overflow || (forced_transition && candidate.context.is_direct_body_element))
+        && moves_in_flow_down
+    {
+        moved_in_bounded_ancestor = grow_ancestors_for_shift(
+            document,
+            cascade,
+            node_id,
+            node_delta,
+            body_id,
+            shifts,
+            flow_page,
+            &followed_ifc_boxes,
+        );
+    } else if forced_transition
+        && nested_block
+        && !candidate.context.is_flex_item
+        && !candidate.context.is_grid_item
+        && !candidate.context.is_table_row
+    {
+        // A forced break ends its ancestors' fragments on this page, which
+        // their continuations account for; only the boxes after it in block
+        // flow follow it, up to the first ancestor that does not stack its
+        // children in block order. A box pulled back over the break by a
+        // negative margin still leaves the flow after it at the break.
+        shift_block_flow_after(document, node_id, body_id, node_delta.max(shift_delta));
+    }
+    moved_in_bounded_ancestor
+}
+
 /// Grows the formatting context that holds a moved float. A formatting
 /// context of its own holds its floats (CSS 2.1 §10.6.7), so an auto-height
 /// one grows to the moved float's margin box, and the flow after it moves
@@ -8186,7 +8214,62 @@ struct FloatShifts {
     edges: HashMap<usize, Vec<FloatEdge>>,
 }
 
+/// A float that a page break moved down.
+struct MovedFloat {
+    node_id: usize,
+    /// The side the float sits on, or `None` for a float on neither side.
+    side: Option<usize>,
+    /// How far the float moved down.
+    delta: f32,
+    /// The page the flow was on before the float moved.
+    flow_page: u32,
+    /// Where the float's border box starts after the move, in normal-flow
+    /// coordinates.
+    flow_target_y: f32,
+    /// The float's border-box height.
+    height: f32,
+    /// The float's block-start margin.
+    margin_top: f32,
+    /// Whether a forced break moved the float.
+    forced_transition: bool,
+}
+
 impl FloatShifts {
+    /// Records `moved`: adds its shift to the pending one and, for a float
+    /// on a side, keeps its margin-box edge for the floats and clearing
+    /// boxes that follow it in the same formatting context.
+    fn record_moved_float(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        moved: &MovedFloat,
+    ) {
+        let inherited = self.add_to_pending(moved.node_id, moved.delta, moved.flow_page);
+        // A clearing follower stays below the margin box, which a negative
+        // block-end margin pulls up.
+        if let Some(side) = moved.side {
+            let context = float_context_root(document, cascade, moved.node_id, body_id);
+            self.record_edge(
+                context,
+                moved_float_edge(
+                    document,
+                    moved.node_id,
+                    side,
+                    moved.flow_target_y,
+                    moved.height,
+                    moved.margin_top,
+                    moved.forced_transition,
+                ),
+            );
+            // The margin box then moved further than the border box, and a
+            // later float may have to follow it that far.
+            if !moved.forced_transition {
+                self.extend_later(inherited + moved.delta + moved.margin_top);
+            }
+        }
+    }
+
     /// Add `delta` to the pending shift of the float `node_id`, and return
     /// the shift the float already had.
     ///
