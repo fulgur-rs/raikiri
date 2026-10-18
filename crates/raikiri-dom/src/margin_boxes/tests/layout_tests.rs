@@ -162,9 +162,12 @@ fn fixed_width_top_boxes_sit_at_the_start_the_middle_and_the_end() {
 }
 
 #[test]
-fn boxes_that_fill_the_edge_stay_one_after_another() {
-    // The auto widths add up to the whole edge, so there is no room to move
-    // the center away from the box before it.
+fn a_center_box_is_sized_against_double_the_larger_side_box() {
+    // The sides count as one box twice the size of the larger side, so that
+    // the center box can stay centered. 'aaaa' is 40px wide and the center
+    // text 160px: the 80px of the sides and the 160px of the center share the
+    // 320px in proportion, which leaves the left box what the center leaves
+    // it on each side.
     let boxes = boxes_for(&format!(
         "@page {{ margin: 40px; {AHEM} \
            @top-left {{ content: 'aaaa' }} \
@@ -173,29 +176,35 @@ fn boxes_that_fill_the_edge_stay_one_after_another() {
     assert_eq!(
         rects(&boxes),
         [
-            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 64.0, 40.0]),
-            (PageMarginBoxSlot::TopCenter, [104.0, 0.0, 256.0, 40.0]),
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 53.33, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [93.33, 0.0, 213.33, 40.0]),
         ]
     );
-    let fixed_sides = boxes_for(&format!(
+}
+
+#[test]
+fn an_auto_center_box_stays_centered_between_fixed_side_boxes() {
+    // The 150px side box is the larger one, so the center box is sized as if
+    // it had one of 150px on each side and is centered at x = 200.
+    let boxes = boxes_for(&format!(
         "@page {{ margin: 40px; {AHEM} \
            @top-left {{ content: 'x'; width: 50px }} \
            @top-center {{ content: 'x' }} \
            @top-right {{ content: 'x'; width: 150px }} }}"
     ));
     assert_eq!(
-        rects(&fixed_sides),
+        rects(&boxes),
         [
             (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 50.0, 40.0]),
-            (PageMarginBoxSlot::TopCenter, [90.0, 0.0, 120.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [194.84, 0.0, 10.32, 40.0]),
             (PageMarginBoxSlot::TopRight, [210.0, 0.0, 150.0, 40.0]),
         ]
     );
 }
 
 #[test]
-fn a_wide_side_box_pushes_a_fixed_center_off_the_middle() {
-    // The center would start at x = 150 but the left box runs up to x = 190.
+fn a_fixed_center_box_stays_centered_under_a_wide_side_box() {
+    // The left box runs up to x = 190, over the start of the center box.
     let boxes = boxes_for(
         "@page { margin: 40px; \
            @top-left { content: 'x'; width: 150px } \
@@ -205,8 +214,132 @@ fn a_wide_side_box_pushes_a_fixed_center_off_the_middle() {
         rects(&boxes),
         [
             (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 150.0, 40.0]),
-            (PageMarginBoxSlot::TopCenter, [190.0, 0.0, 100.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [150.0, 0.0, 100.0, 40.0]),
         ]
+    );
+}
+
+#[test]
+fn auto_side_boxes_split_what_a_fixed_center_box_leaves() {
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'x' }} \
+           @top-center {{ content: 'x'; width: 100px }} \
+           @top-right {{ content: 'xxxxxxxx' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 110.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [150.0, 0.0, 100.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [250.0, 0.0, 110.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn a_lone_auto_box_takes_what_the_other_box_leaves() {
+    let right_fixed = boxes_for(
+        "@page { margin: 40px; \
+           @top-left { content: 'x' } \
+           @top-right { content: 'x'; width: 50px } }",
+    );
+    assert_eq!(
+        rects(&right_fixed),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 270.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [310.0, 0.0, 50.0, 40.0]),
+        ]
+    );
+    let left_fixed = boxes_for(
+        "@page { margin: 40px; \
+           @top-left { content: 'x'; width: 50px } \
+           @top-right { content: 'x' } }",
+    );
+    assert_eq!(
+        rects(&left_fixed),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 50.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [90.0, 0.0, 270.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn two_auto_boxes_share_the_edge_by_their_content_when_it_fits() {
+    // 40px and 80px of text leave 200px, which the boxes share in proportion
+    // to the widths of their text.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'aaaa' }} \
+           @top-right {{ content: 'cccccccc' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 106.67, 40.0]),
+            (PageMarginBoxSlot::TopRight, [146.67, 0.0, 213.33, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn two_auto_boxes_that_do_not_fit_wrap_in_proportion_to_what_can_wrap() {
+    // The text is 110px and 260px wide on one line but breaks into 20px
+    // words, so each box starts at 20px and takes a share of the remaining
+    // 280px in proportion to how much it can still grow: 90px and 240px.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'aa aa aa aa' }} \
+           @top-right {{ content: 'cc cc cc cc cc cc cc cc cc' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 96.36, 40.0]),
+            (PageMarginBoxSlot::TopRight, [136.36, 0.0, 223.64, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn two_auto_boxes_that_cannot_wrap_shrink_in_proportion_to_their_size() {
+    // 300px and 100px of unbreakable text have 80px too many between them.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }} \
+           @top-right {{ content: 'cccccccccc' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 240.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [280.0, 0.0, 80.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn empty_top_boxes_share_the_edge_equally() {
+    // Nothing in the boxes asks for any width, so each of the three gets the
+    // same, and a lone center box has the edge to itself.
+    let boxes = boxes_for(
+        "@page { margin: 40px; \
+           @top-left { content: '' } @top-center { content: '' } \
+           @top-right { content: '' } }",
+    );
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 106.67, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [146.67, 0.0, 106.67, 40.0]),
+            (PageMarginBoxSlot::TopRight, [253.33, 0.0, 106.67, 40.0]),
+        ]
+    );
+    let lone = boxes_for("@page { margin: 40px; @top-center { content: '' } }");
+    assert_eq!(
+        rects(&lone),
+        [(PageMarginBoxSlot::TopCenter, [40.0, 0.0, 320.0, 40.0])]
     );
 }
 
@@ -247,11 +380,13 @@ fn fixed_height_side_boxes_sit_at_the_start_and_the_end_of_the_column() {
 }
 
 #[test]
-fn a_fixed_size_box_longer_than_its_edge_starts_at_the_start() {
+fn a_fixed_size_box_longer_than_its_edge_overflows_away_from_its_slot() {
+    // The last box stays flush with the end of the edge, so it runs out
+    // past the start.
     let boxes = boxes_for("@page { margin: 40px; @top-right { content: 'x'; width: 400px } }");
     assert_eq!(
         rects(&boxes),
-        [(PageMarginBoxSlot::TopRight, [40.0, 0.0, 400.0, 40.0])]
+        [(PageMarginBoxSlot::TopRight, [-40.0, 0.0, 400.0, 40.0])]
     );
 }
 
@@ -337,6 +472,73 @@ fn an_empty_center_box_anchors_the_side_boxes_to_half_the_row() {
     assert_eq!(
         rects(&boxes),
         [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 160.0, 40.0])]
+    );
+}
+
+#[test]
+fn an_empty_center_box_leaves_a_fixed_side_box_its_width() {
+    // Only the auto-sized side takes half of what the empty center box
+    // leaves; the box with a width keeps it.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'x'; width: 100px }} \
+           @top-center {{ content: '' }} \
+           @top-right {{ content: 'x' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 100.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [200.0, 0.0, 160.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn an_empty_auto_box_takes_what_a_fixed_box_leaves() {
+    let boxes = boxes_for(
+        "@page { margin: 40px; \
+           @top-left { content: 'x'; width: 100px } \
+           @top-right { content: '' } }",
+    );
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 100.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [140.0, 0.0, 220.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn an_empty_middle_box_anchors_the_side_boxes_to_half_the_column() {
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @left-top {{ content: 'abc' }} @left-middle {{ content: '' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 110.0])]
+    );
+}
+
+#[test]
+fn vertical_text_in_side_boxes_wraps_at_the_column_like_text_in_top_boxes() {
+    // The upper text is 80px tall on one line and the lower one 230px, which
+    // is more than the 220px column. Both break into 20px words, so each box
+    // starts at 20px and takes a share of the remaining 180px in proportion
+    // to how much it can still grow: 60px and 210px.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} writing-mode: vertical-rl; \
+           @left-top {{ content: 'ab cd ef' }} \
+           @left-bottom {{ content: 'ab cd ef gh ij kl mn op' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 60.0]),
+            (PageMarginBoxSlot::LeftBottom, [0.0, 100.0, 40.0, 160.0]),
+        ]
     );
 }
 
