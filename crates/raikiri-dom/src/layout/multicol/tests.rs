@@ -3880,3 +3880,38 @@ fn a_containing_block_with_no_block_size_is_sliced_for_the_absolute_boxes_it_hol
         true,
     ));
 }
+
+#[test]
+fn a_relative_column_child_is_placed_without_its_inset() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // The painter adds the inset of a box that is placed in a column, so
+    // the location layout gives it is the column's own.
+    for inset in ["left:5px", "right:5px", "left:10%", "left:5px;top:3px"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px;column-fill:auto"),
+        );
+        let child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some(format!("display:block;position:relative;{inset}").as_str()),
+        );
+        doc.append_text(child, "A B C");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+
+        let layout = doc.nodes[child].unrounded_layout;
+        assert_eq!(layout.location.x, 0.0, "{inset}");
+        assert_eq!(layout.size.width, 40.0, "{inset}");
+    }
+}

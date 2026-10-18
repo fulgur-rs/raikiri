@@ -61,7 +61,11 @@ fn margins(style: &Style, basis: f32) -> Rect<f32> {
         .map(|edge| edge.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
 }
 
-fn relative(style: &Style, parent: Size<Option<f32>>, direction: taffy::Direction) -> Point<f32> {
+pub(super) fn relative(
+    style: &Style,
+    parent: Size<Option<f32>>,
+    direction: taffy::Direction,
+) -> Point<f32> {
     if !matches!(style.position, Position::Relative | Position::Sticky) {
         return Point::ZERO;
     }
