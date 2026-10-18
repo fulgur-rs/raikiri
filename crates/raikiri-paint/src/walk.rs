@@ -109,12 +109,23 @@ pub(crate) fn paint_canvas_background(
     // the opaque page color instead of compositing over it.
     let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
     fill_rect(scene, page_color.unwrap_or(white), page_rect);
+    // The page background covers the paper, but `background-origin` places it
+    // in the page box, whose border edge lies inside the page margins. The
+    // page border is painted at the same edge.
+    let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
+    let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
     paint_page_background_image(
         image_cache,
         scene,
         document,
         cascade,
-        page_rect,
+        PageBackgroundAreas {
+            paper: page_rect,
+            border_box: kurbo::Rect::from_origin_size(
+                (f64::from(margins.left), f64::from(margins.top)),
+                (f64::from(border_box_width), f64::from(border_box_height)),
+            ),
+        },
         pixel_source,
         warnings,
     );
@@ -565,6 +576,16 @@ fn page_background_origins(cascade: &CascadeResult) -> Option<&[VisualBox]> {
     }
 }
 
+/// The page `background-attachment` list, one entry per layer.
+fn page_background_attachments(
+    cascade: &CascadeResult,
+) -> Option<&[raikiri_style::property::BackgroundAttachment]> {
+    match page_property(cascade, PropertyKey::BackgroundAttachment) {
+        Some(PropertyValue::BackgroundAttachment(attachments)) => Some(attachments),
+        _ => None,
+    }
+}
+
 /// The page `background-clip` of the first layer.
 #[cfg(test)]
 fn page_background_clip(cascade: &CascadeResult) -> VisualBox {
@@ -735,15 +756,28 @@ fn warn_unpainted_background_layers(layer_count: usize, warnings: &mut Vec<Rende
     });
 }
 
+/// Where the page background paints and where its images are placed.
+#[derive(Clone, Copy)]
+struct PageBackgroundAreas {
+    /// The paper, which every layer covers whatever its `background-clip`.
+    paper: Rect,
+    /// The page box's border edge, inside the page margins, which
+    /// `background-origin` insets.
+    border_box: Rect,
+}
+
+/// Paint the page background images over the paper, positioned in the page
+/// box.
 fn paint_page_background_image(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    area: Rect,
+    areas: PageBackgroundAreas,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
+    let area = areas.paper;
     // The page box paints a URL image through the pixel source, and a
     // linear or radial gradient itself.
     let Some(PropertyValue::BackgroundImage(images)) =
@@ -773,6 +807,7 @@ fn paint_page_background_image(
         _ => None,
     };
     let origins = page_background_origins(cascade);
+    let attachments = page_background_attachments(cascade);
     let border = page_border_widths(cascade, area);
     let padding = page_padding_widths(cascade, area);
     // The page context inherits `color` from the root element.
@@ -808,11 +843,12 @@ fn paint_page_background_image(
         });
         layer.repeat = page_layer_item(repeats, index, initial_layer.repeat);
         layer.origin = page_layer_item(origins, index, initial_layer.origin);
+        layer.attachment = page_layer_item(attachments, index, initial_layer.attachment);
         paint_page_background_layer(
             image_cache,
             scene,
             &layer,
-            area,
+            areas,
             (border, padding),
             (page_font_size, &resolve_context, current_color),
             pixel_source,
@@ -824,13 +860,17 @@ fn paint_page_background_image(
 /// Left, top, right and bottom widths of a box edge, in CSS px.
 type EdgeWidths = (f64, f64, f64, f64);
 
-/// Paint one `@page` background layer over the page border box `area`.
+/// Paint one `@page` background layer over the paper, positioned in the page
+/// box.
 #[allow(clippy::too_many_arguments)]
 fn paint_page_background_layer(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     layer: &raikiri_style::ComputedBackgroundLayer,
-    area: Rect,
+    PageBackgroundAreas {
+        paper: area,
+        border_box,
+    }: PageBackgroundAreas,
     (border, padding): (EdgeWidths, EdgeWidths),
     (page_font_size, resolve_context, current_color): (ComputedLength, &ResolveContext, CssColor),
     pixel_source: Option<&dyn ImagePixelSource>,
@@ -850,12 +890,18 @@ fn paint_page_background_layer(
     };
     let url = source.as_ref().ok().map(|(_, url)| url);
     // `@page` positioning area with nonzero margins/borders (CSS Page 3 page
-    // box plus CSS Backgrounds 3 section 2.8): `area` is the page border box
-    // (full paper for the page background), and origin insets it to the
-    // positioning box. The page background painting area covers the whole
-    // page box regardless of `background-clip` (CSS Page 3, "Page Backgrounds
-    // and Painting Order"), so every layer paints over all of `area`.
-    let positioning = origin_inset_rect(area, layer.origin, border, padding, url, warnings);
+    // box plus CSS Backgrounds 3 section 2.8): `border_box` is the page
+    // box's border edge, inside the page margins, and origin insets it to
+    // the positioning box. The page background painting area covers the
+    // whole paper regardless of `background-clip` (CSS Page 3, "Page
+    // Backgrounds and Painting Order"), so every layer paints over all of
+    // `area`. A `fixed` layer is instead fixed to the page box including its
+    // margins (CSS Backgrounds 3 section 2.5), whatever its origin.
+    let positioning = if layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed {
+        area
+    } else {
+        origin_inset_rect(border_box, layer.origin, border, padding, url, warnings)
+    };
     let painting = area;
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
