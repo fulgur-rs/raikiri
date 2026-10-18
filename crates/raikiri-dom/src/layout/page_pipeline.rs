@@ -1509,7 +1509,7 @@ impl PageOrigins {
 
     /// The page a fixed-height block is pushed to when its first line, the
     /// text of `text_height` at `text_y`, would straddle the end of
-    /// `current_page` (see `first_line_overflows`), or `None` when the block
+    /// `current_page` (see [`first_line_overflows`]), or `None` when the block
     /// stays. The block moves at least to the page after `current_page`.
     fn first_line_push_page(
         &self,
