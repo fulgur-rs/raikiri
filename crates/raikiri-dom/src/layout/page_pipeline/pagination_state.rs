@@ -297,9 +297,9 @@ impl PaginationState {
         if self.table_headers.owner(node_id).is_some() {
             return Ok(None);
         }
-        let name_participates_in_flow = candidate.context.page_name_in_flow;
+        let name_participates_in_flow = candidate.context.page_name_in_flow();
         if name_participates_in_flow
-            && candidate.context.is_flex_item
+            && candidate.context.is_flex_item()
             && let Some(context) = candidate.named_flex_context
             && self
                 .preceding_flex_items
@@ -333,7 +333,7 @@ impl PaginationState {
             participates_in_margin_adjacency(document, env.cascade, candidate);
         // Explicit positioned insets follow their containing box, not margin
         // changes in a parallel normal flow. Both-auto boxes keep static placement.
-        let uses_positioned_coordinates = candidate.context.is_out_of_flow_descendant
+        let uses_positioned_coordinates = candidate.context.is_out_of_flow_descendant()
             && has_explicit_positioned_block_ancestor(document, node_id);
         Ok(Some(CandidateEntry {
             name_context_seen,
@@ -373,7 +373,7 @@ impl PaginationState {
             ..
         } = *entry;
         let node_id = candidate.node_id;
-        let name_participates_in_flow = candidate.context.page_name_in_flow;
+        let name_participates_in_flow = candidate.context.page_name_in_flow();
         // The inline layout root whose lines hold this text, if any.
         let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
         // In-flow text between two blocks separates them: the next block's
@@ -385,7 +385,7 @@ impl PaginationState {
         // A footnote's descendants follow the moved footnote box. They are
         // deliberately not paginated independently, otherwise the stale
         // pre-pagination coordinates would move them back into normal flow.
-        if candidate.context.is_float_descendant
+        if candidate.context.is_float_descendant()
             && has_footnote_ancestor(cascade, node_id, document)
         {
             return Ok(());
@@ -435,7 +435,7 @@ impl PaginationState {
                 .occupy_enclosing(node_id, self.current_page, document, cascade);
         }
         let end_page = page_origins.end_page(text.effective_y, text.height);
-        let in_flow = !candidate.context.is_out_of_flow_descendant;
+        let in_flow = !candidate.context.is_out_of_flow_descendant();
         self.record_pages(control, end_page, in_flow)?;
         if step.consumes_pending_break {
             self.pending_break.clear();
@@ -444,7 +444,7 @@ impl PaginationState {
             document,
             cascade,
             node_id,
-            candidate.context.deferred_named_break_after,
+            candidate.context.deferred_named_break_after(),
         );
 
         Ok(())
@@ -517,7 +517,8 @@ impl PaginationState {
             ),
         ) {
             self.page_names.current = candidate.page_name.clone();
-            if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
+            if candidate.context.is_direct_body_element() || candidate.named_flex_context.is_some()
+            {
                 self.last_named = LastNamedBox::new(document, candidate, node_id, raw_y, height);
             }
         }
@@ -549,7 +550,7 @@ impl PaginationState {
         // A fixed-height direct block that fits on the physical paper is
         // monolithic in this minimal paginator.
         let monolithic_paper_fit = || {
-            candidate.context.is_direct_body_element
+            candidate.context.is_direct_body_element()
                 && fits_decorated_paper(
                     document,
                     node_id,
@@ -563,18 +564,18 @@ impl PaginationState {
         let end_page = page_origins
             .end_page(effective_y, height)
             .filter(|_| !monolithic_paper_fit());
-        let in_flow = !candidate.context.is_out_of_flow_descendant;
+        let in_flow = !candidate.context.is_out_of_flow_descendant();
         self.record_pages(control, end_page, in_flow)?;
 
         if box_occupies_column(
             &candidate.context,
-            candidate.context.page_name_in_flow,
+            candidate.context.page_name_in_flow(),
             height,
         ) {
             self.column_contexts
                 .occupy_enclosing(node_id, self.current_page, document, cascade);
         }
-        if candidate.context.is_flex_item
+        if candidate.context.is_flex_item()
             && let Some(context) = candidate.named_flex_context
         {
             self.preceding_flex_items
@@ -584,7 +585,7 @@ impl PaginationState {
             document,
             cascade,
             node_id,
-            candidate.context.deferred_named_break_after,
+            candidate.context.deferred_named_break_after(),
         );
 
         Ok(())
@@ -686,7 +687,7 @@ impl PaginationState {
                 document,
                 node_id,
                 page_transition,
-                candidate.context.is_direct_body_element,
+                candidate.context.is_direct_body_element(),
             );
         } else {
             // A forced break before the first class-A box does not manufacture
@@ -1223,7 +1224,7 @@ impl PaginationState {
             ..
         } = *env;
         let node_id = candidate.node_id;
-        let name_participates_in_flow = candidate.context.page_name_in_flow;
+        let name_participates_in_flow = candidate.context.page_name_in_flow();
         let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
         // Text is not itself a class-A box, but non-empty text can be the
         // content that follows a nested named box.  Carry the containing
@@ -1393,7 +1394,7 @@ impl PaginationState {
                     self.flow_shift,
                     self.current_page,
                 );
-            } else if !candidate.context.is_direct_body_element {
+            } else if !candidate.context.is_direct_body_element() {
                 // The ancestors of a nested clearing box grow to hold it.
                 grow_ancestors_for_shift(
                     document,
