@@ -27,6 +27,19 @@ pub(crate) struct BoxSlot {
     pub(crate) width: f32,
 }
 
+/// The edges of the room `slot` leaves, left to right: where a border box
+/// that fits starts and ends, then where an `auto` width stretches from and
+/// to. The side that leads in `direction` is the same for both; a trailing
+/// margin that no float reaches is left out of the stretch.
+fn room_edges(slot: BfcSlot, direction: Direction) -> [f32; 4] {
+    let fit = (slot.x, slot.x + slot.border_width);
+    let stretch = match direction {
+        Direction::Ltr => (slot.x, slot.x + slot.stretch_width),
+        Direction::Rtl => (fit.1 - slot.stretch_width, fit.1),
+    };
+    [fit.0, fit.1, stretch.0, stretch.1]
+}
+
 /// Float placement storage owned by one CSS block formatting context.
 pub(crate) struct BlockFormattingContext {
     floats: Arc<FloatContext>,
@@ -317,7 +330,7 @@ impl BlockContext<'_> {
         }
         let mut slot = first;
         let mut width = width;
-        let mut shifts = [0.0; 2];
+        let mut shifts = [0.0; 4];
         let mut bottom = f32::NEG_INFINITY;
         loop {
             bottom = bottom.max(first.y + probe(BoxProbe::Height { width }));
@@ -329,7 +342,7 @@ impl BlockContext<'_> {
             slot = BfcSlot {
                 x: first.x + shifts[0],
                 border_width: first.border_width - shifts[0] - shifts[1],
-                stretch_width: first.stretch_width - shifts[0] - shifts[1],
+                stretch_width: first.stretch_width - shifts[2] - shifts[3],
                 ..first
             };
             width = probe(BoxProbe::Width {
@@ -355,7 +368,10 @@ impl BlockContext<'_> {
     }
 
     /// How far the segments that start above `bottom` cut into the room of
-    /// `first` at its start edge and at its end edge.
+    /// `first`: at the start and end edge of the room a border box fits, then
+    /// at the start and end edge of the room an `auto` width stretches over.
+    /// The two differ where a trailing margin is, which overflows for fit
+    /// but not for stretch, so each is intersected on its own.
     fn narrowed_across(
         &self,
         first: BfcSlot,
@@ -363,16 +379,24 @@ impl BlockContext<'_> {
         direction: Direction,
         clear: Clear,
         bottom: f32,
-    ) -> [f32; 2] {
-        let end = first.x + first.border_width;
-        let mut shifts = [0.0_f32; 2];
+    ) -> [f32; 4] {
+        let reference = room_edges(first, direction);
+        let mut shifts = [0.0_f32; 4];
         let mut segment = first;
         while let Some(next) = self.next_segment(segment, margins, direction, clear) {
             if next.y >= bottom - FIT_SLACK {
                 break;
             }
-            shifts[0] = shifts[0].max(next.x - first.x);
-            shifts[1] = shifts[1].max(end - (next.x + next.border_width));
+            let edges = room_edges(next, direction);
+            for (index, shift) in shifts.iter_mut().enumerate() {
+                // Starts move in, ends move back.
+                let cut = if index % 2 == 0 {
+                    edges[index] - reference[index]
+                } else {
+                    reference[index] - edges[index]
+                };
+                *shift = shift.max(cut);
+            }
             segment = next;
         }
         shifts
