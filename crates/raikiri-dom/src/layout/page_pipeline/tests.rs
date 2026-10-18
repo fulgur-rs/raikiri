@@ -18795,6 +18795,73 @@ fn placement_halts_at_a_page_past_the_page_limit() {
 }
 
 #[test]
+fn footnotes_stack_at_the_bottom_of_their_anchor_page_and_leave_the_flow() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
+    let node_count = doc.nodes.len();
+    // A footnote whose anchor is on the third page.
+    let note = PageCandidate {
+        node_id: root,
+        raw_y: 250.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let place =
+        |doc: &mut Document, control: &PageLayoutControl<'_>, state: &mut PaginationState| {
+            let env = FlowEnv {
+                cascade: &cascade,
+                body_id: body,
+                control,
+                page_origins: &pages,
+                text_lines: &lines,
+                roots,
+                root_flow_offset: 0.0,
+                content_width: 800.0,
+                avoided_breaks: &AvoidedBreaks::default(),
+                insets: PageContentInsets::default(),
+                page_box: page_box_800x600(),
+            };
+            let mut session = crate::layout::context::LayoutSession::new(doc);
+            state.place_footnote(&mut session, &env, &note)
+        };
+
+    // The first note sits at the bottom of the page, takes its height out of
+    // the flow, and reaches the page outside the normal flow.
+    let control = PageLayoutControl::new(None);
+    let mut state = pagination_state_before_first_candidate(node_count);
+    place(&mut doc, &control, &mut state).unwrap();
+    assert_eq!(current_abs_y(&doc, root), 290.0);
+    assert_eq!(state.flow_shift, -10.0);
+    assert_eq!((state.reach.max, state.reach.flow_max), (2, 0));
+    assert!(state.saw_child);
+    // The flow stays on the page it was on.
+    assert_eq!(state.current_page, 0);
+
+    // The next note of the page stacks above it.
+    place(&mut doc, &control, &mut state).unwrap();
+    assert_eq!(current_abs_y(&doc, root), 280.0);
+    assert_eq!(state.flow_shift, -20.0);
+
+    // A note whose page is past the page limit halts pagination and leaves
+    // the state as it was.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(2));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    assert!(matches!(
+        place(&mut doc, &discovery, &mut state),
+        Err(pagination_state::Halt::PageLimit)
+    ));
+    assert_eq!(state.flow_shift, 0.0);
+    assert!(!state.saw_child);
+}
+
+#[test]
 fn halting_pagination_at_the_page_limit_is_not_an_error() {
     assert!(pagination_state::Halt::PageLimit.finish().is_ok());
     assert!(matches!(

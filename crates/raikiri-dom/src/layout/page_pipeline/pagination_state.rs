@@ -477,26 +477,10 @@ impl PaginationState {
         let name_participates_in_flow = candidate.context.page_name_in_flow;
 
         let computed = &cascade.computed[node_id];
-        let candidate_page_name = candidate.page_name.clone();
-        // `float: footnote` is a page-local out-of-flow placement. Keep the
-        // anchor's page, stack multiple notes from the bottom, and remove the
-        // note's ordinary-flow footprint so following content can continue.
         if matches!(computed.float, FloatValue::Footnote) {
-            let placement = self.footnote_areas.candidate(
-                candidate.raw_y,
-                candidate.height,
-                self.flow_shift,
-                self.current_page,
-                page_origins,
-            );
-            reach_page(control, placement.page)?;
-            self.footnote_areas
-                .place(document, node_id, placement, page_origins);
-            self.flow_shift -= placement.height;
-            self.reach.include(placement.page, false);
-            self.saw_child = true;
-            return Ok(());
+            return self.place_footnote(document, env, candidate);
         }
+        let candidate_page_name = candidate.page_name.clone();
         // Copy layout data before any break adjustment so the immutable node
         // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
@@ -719,6 +703,37 @@ impl PaginationState {
             candidate.context.deferred_named_break_after,
         );
 
+        Ok(())
+    }
+
+    /// Places the footnote box `candidate`. `float: footnote` is a page-local
+    /// out-of-flow placement: it keeps the anchor's page, stacks multiple notes
+    /// from the bottom, and removes the note's ordinary-flow footprint so
+    /// following content can continue.
+    pub(super) fn place_footnote(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            control,
+            page_origins,
+            ..
+        } = *env;
+        let placement = self.footnote_areas.candidate(
+            candidate.raw_y,
+            candidate.height,
+            self.flow_shift,
+            self.current_page,
+            page_origins,
+        );
+        reach_page(control, placement.page)?;
+        self.footnote_areas
+            .place(document, candidate.node_id, placement, page_origins);
+        self.flow_shift -= placement.height;
+        self.reach.include(placement.page, false);
+        self.saw_child = true;
         Ok(())
     }
 
