@@ -4732,7 +4732,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
 }
 
 #[test]
-fn conic_paint_covers_empty_square_and_rounded_boxes() {
+fn conic_paint_covers_empty_and_square_boxes() {
     let mut document = Document::new();
     let square_id = document.append_element(
         Some(document.root_index()),
@@ -4740,16 +4740,9 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         taffy::Style::default(),
         Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
-    let round_id = document.append_element(
-        Some(document.root_index()),
-        "div",
-        taffy::Style::default(),
-        Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%); border-radius: 10px"),
-    );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let square = conic_of(&cascade.computed[square_id].background_layers()[0].image);
-    let round = conic_of(&cascade.computed[round_id].background_layers()[0].image);
     let current = CssColor {
         r: 0,
         g: 0,
@@ -4759,18 +4752,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
     let mut scene = Scene::new();
     let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
     let painting = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
-    let square_radius = cascade.computed[square_id].border_radius;
-    let round_radius = cascade.computed[round_id].border_radius;
-    paint_conic_gradient(
-        &mut scene,
-        &square,
-        positioning,
-        painting,
-        &square_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
-        current,
-    );
+    paint_conic_gradient(&mut scene, &square, positioning, painting, current);
     assert!(!scene.commands.is_empty());
     let before = scene.commands.len();
     paint_conic_gradient(
@@ -4778,23 +4760,9 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         &square,
         kurbo::Rect::new(0.0, 0.0, 0.0, 0.0),
         painting,
-        &square_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
         current,
     );
     assert_eq!(scene.commands.len(), before);
-    paint_conic_gradient(
-        &mut scene,
-        &round,
-        positioning,
-        painting,
-        &round_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
-        current,
-    );
-    assert!(scene.commands.len() > before);
 }
 
 #[test]

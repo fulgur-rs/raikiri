@@ -51,16 +51,16 @@ pub(super) fn gradient_image_size(size: &ComputedBackgroundSize, area: Rect) -> 
 ///
 /// `positioning` is the `background-origin` box that sizes and places the
 /// tiles; `painting` is the `background-clip` box the tiles cover and are
-/// clipped to, or `clip` when the box has rounded corners. Returns false for
-/// a gradient this module does not draw (a conic gradient), so the caller
-/// can fall back to its own path.
+/// clipped to. A box with rounded corners is clipped to its curve by the
+/// caller, around the background color and the gradient together. Returns
+/// false for a gradient this module does not draw (a conic gradient), so the
+/// caller can fall back to its own path.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint_gradient_layer(
     scene: &mut impl PaintScene,
     gradient: &Gradient,
     positioning: Rect,
     painting: Rect,
-    clip: Option<&BezPath>,
     size: &ComputedBackgroundSize,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
@@ -138,7 +138,7 @@ pub(super) fn paint_gradient_layer(
             && area.height() > 0.0
             && let Some(fill) = gradient_fill(gradient, tile, current_color)
         {
-            fill_average(scene, &fill, area, clip);
+            fill_average(scene, &fill, area);
         }
         return true;
     }
@@ -167,13 +167,10 @@ pub(super) fn paint_gradient_layer(
         return true;
     };
     if tiles.x.len().saturating_mul(tiles.y.len()) > MAX_GRADIENT_TILES {
-        fill_average(scene, &fill, painting, clip);
+        fill_average(scene, &fill, painting);
         return true;
     }
-    match clip {
-        Some(path) => scene.push_clip_layer(Affine::IDENTITY, path),
-        None => scene.push_clip_layer(Affine::IDENTITY, &painting),
-    }
+    scene.push_clip_layer(Affine::IDENTITY, &painting);
     for tile_y in &tiles.y {
         for tile_x in &tiles.x {
             // Repeated tile edges snap to whole pixels so neighboring tiles
@@ -217,20 +214,12 @@ pub(super) fn paint_gradient_layer(
 }
 
 /// Fill the painting area once with the average color of a tile.
-fn fill_average(
-    scene: &mut impl PaintScene,
-    fill: &GradientFill,
-    painting: Rect,
-    clip: Option<&BezPath>,
-) {
+fn fill_average(scene: &mut impl PaintScene, fill: &GradientFill, painting: Rect) {
     let color = match fill {
         GradientFill::Brush(brush, _) => brush_average_color(brush),
         GradientFill::Solid(color) => *color,
     };
-    match clip {
-        Some(path) => scene.push_clip_layer(Affine::IDENTITY, path),
-        None => scene.push_clip_layer(Affine::IDENTITY, &painting),
-    }
+    scene.push_clip_layer(Affine::IDENTITY, &painting);
     scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
     scene.pop_layer();
 }

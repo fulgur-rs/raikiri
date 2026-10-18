@@ -936,7 +936,6 @@ fn paint_page_background_layer(
                 &gradient,
                 positioning,
                 painting,
-                None,
                 &layer.size,
                 &layer.position,
                 &layer.repeat,
@@ -1023,7 +1022,6 @@ fn paint_canvas_background_layer(
             gradient,
             positioning,
             painting,
-            None,
             &layer.size,
             &layer.position,
             &layer.repeat,
@@ -5729,56 +5727,6 @@ fn paint_element_background_slice(
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
-    if let BackgroundImage::Gradient(gradient) = bg_image {
-        if bg.a != 0 {
-            let base = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
-            fill_rounded_background(
-                scene,
-                base,
-                painting.x0,
-                painting.y0,
-                painting.x1,
-                painting.y1,
-                border_radius,
-                radius_inset,
-                radius_reference,
-            );
-        }
-        if let Gradient::Conic(conic) = &**gradient {
-            paint_conic_gradient(
-                scene,
-                conic,
-                positioning,
-                painting,
-                border_radius,
-                radius_inset,
-                radius_reference,
-                current_color,
-            );
-            return;
-        }
-        let rounded = rounded_background_path(
-            painting.x0,
-            painting.y0,
-            painting.x1,
-            painting.y1,
-            border_radius,
-            radius_inset,
-            radius_reference,
-        );
-        gradient::paint_gradient_layer(
-            scene,
-            gradient,
-            positioning,
-            image_slice.map_or(painting, |slice| painting.intersect(slice)),
-            rounded.as_ref(),
-            background_size,
-            background_position,
-            background_repeat,
-            current_color,
-        );
-        return;
-    }
     let rounded = rounded_background_path(
         painting.x0,
         painting.y0,
@@ -5788,12 +5736,40 @@ fn paint_element_background_slice(
         radius_inset,
         radius_reference,
     );
+    // A rounded box clips its color and its image or gradient to the curve
+    // together (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
+    // Clipped one by one, the antialiased edge would cover the color twice,
+    // once for the color and once more for the image over it, and show more of
+    // it past the curve. Square painting areas and color-only boxes skip the
+    // layer.
+    if let BackgroundImage::Gradient(gradient) = bg_image {
+        if let Some(curve) = rounded.as_ref() {
+            scene.push_clip_layer(Affine::IDENTITY, curve);
+        }
+        if bg.a != 0 {
+            let base = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, base, None, &painting);
+        }
+        if let Gradient::Conic(conic) = &**gradient {
+            paint_conic_gradient(scene, conic, positioning, painting, current_color);
+        } else {
+            gradient::paint_gradient_layer(
+                scene,
+                gradient,
+                positioning,
+                image_slice.map_or(painting, |slice| painting.intersect(slice)),
+                background_size,
+                background_position,
+                background_repeat,
+                current_color,
+            );
+        }
+        if rounded.is_some() {
+            scene.pop_layer();
+        }
+        return;
+    }
     let image = background_url.as_ref().zip(pixel_source);
-    // A rounded box clips its color and its image to the curve together
-    // (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve). Clipped
-    // one by one, the antialiased edge would cover the color twice, once for
-    // the color and once more for the image over it, and show more of it past
-    // the curve. Square painting areas and color-only boxes skip the layer.
     let grouped = rounded.as_ref().filter(|_| image.is_some());
     if let Some(curve) = grouped {
         scene.push_clip_layer(Affine::IDENTITY, curve);
@@ -7749,17 +7725,13 @@ fn conic_to_peniko(
 ///
 /// The sweep geometry uses the positioning area for its center while the
 /// fill covers the painting area, mirroring the origin and clip split used
-/// for solid and image backgrounds. Rounded boxes reuse the shared rounded
-/// clip so the sweep follows the same curve.
-#[allow(clippy::too_many_arguments)]
+/// for solid and image backgrounds. A rounded box is clipped to its curve by
+/// the caller, around the background color and the sweep together.
 fn paint_conic_gradient(
     scene: &mut impl PaintScene,
     conic: &ConicGradient,
     positioning: Rect,
     painting: Rect,
-    border_radius: &ComputedBorderRadius,
-    radius_inset: (f64, f64, f64, f64),
-    radius_reference: (f64, f64),
     current_color: CssColor,
 ) {
     if positioning.width() <= 0.0 || positioning.height() <= 0.0 {
@@ -7770,19 +7742,7 @@ fn paint_conic_gradient(
     let Some(gradient) = conic_to_peniko(conic, center, current_color) else {
         return;
     };
-    if let Some(rounded) = rounded_background_path(
-        painting.x0,
-        painting.y0,
-        painting.x1,
-        painting.y1,
-        border_radius,
-        radius_inset,
-        radius_reference,
-    ) {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &rounded);
-    } else {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &painting);
-    }
+    scene.fill(Fill::NonZero, Affine::IDENTITY, &gradient, None, &painting);
 }
 
 /// Infer a solid color from a url() string for minimal painting.
