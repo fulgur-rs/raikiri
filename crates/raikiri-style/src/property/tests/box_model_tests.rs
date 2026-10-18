@@ -3907,3 +3907,206 @@ fn overflow_clip_margin_rejects_other_values() {
         assert_eq!(parse(input, "overflow-clip-margin"), None, "{input}");
     }
 }
+
+// ── CSS Positioned Layout 3 §3 `inset` shorthand and CSS Logical Properties
+//    and Values 1 §4.3 inset-{inline,block}-{start,end} longhands plus the
+//    inset-{inline,block} two-value shorthands ──
+//
+// The flow-relative longhands are stored under their horizontal-tb, ltr
+// physical side, like the margin and padding ones above.
+
+fn inset_px(v: f32) -> LengthOrAuto {
+    LengthOrAuto::Length(Length::Px(v))
+}
+
+#[test]
+fn inset_shorthand_expands_one_to_four_values_like_margin() {
+    assert_eq!(
+        parse("1px", "inset"),
+        Some(PropertyValue::Inset(Box::new(Sides::all(inset_px(1.0)))))
+    );
+    assert_eq!(
+        parse("1px 2px", "inset"),
+        Some(PropertyValue::Inset(Box::new(Sides {
+            top: inset_px(1.0),
+            right: inset_px(2.0),
+            bottom: inset_px(1.0),
+            left: inset_px(2.0),
+        })))
+    );
+    assert_eq!(
+        parse("1px 2px 3px", "inset"),
+        Some(PropertyValue::Inset(Box::new(Sides {
+            top: inset_px(1.0),
+            right: inset_px(2.0),
+            bottom: inset_px(3.0),
+            left: inset_px(2.0),
+        })))
+    );
+    assert_eq!(
+        parse("1px 2px 3px 4px", "inset"),
+        Some(PropertyValue::Inset(Box::new(Sides {
+            top: inset_px(1.0),
+            right: inset_px(2.0),
+            bottom: inset_px(3.0),
+            left: inset_px(4.0),
+        })))
+    );
+}
+
+#[test]
+fn inset_shorthand_accepts_auto_negative_and_percentage_values() {
+    assert_eq!(
+        parse("auto -5px 50% 0", "inset"),
+        Some(PropertyValue::Inset(Box::new(Sides {
+            top: LengthOrAuto::Auto,
+            right: inset_px(-5.0),
+            bottom: LengthOrAuto::Length(Length::Percent(50.0)),
+            left: inset_px(0.0),
+        })))
+    );
+}
+
+#[test]
+fn inset_shorthand_rejects_a_non_length_first_value() {
+    assert_eq!(parse("red", "inset"), None);
+    assert_eq!(parse("", "inset"), None);
+}
+
+#[test]
+fn inset_shorthand_leaves_extra_values_for_caller_exhausted_check() {
+    // The fifth value stays unconsumed; the declaration parser's
+    // `expect_exhausted` then drops the whole declaration.
+    assert_eq!(
+        parse("1px 2px 3px 4px 5px", "inset"),
+        Some(PropertyValue::Inset(Box::new(Sides {
+            top: inset_px(1.0),
+            right: inset_px(2.0),
+            bottom: inset_px(3.0),
+            left: inset_px(4.0),
+        })))
+    );
+}
+
+#[test]
+fn inset_logical_longhands_parse_to_their_horizontal_tb_ltr_side() {
+    assert_eq!(
+        parse("5px", "inset-inline-start"),
+        Some(PropertyValue::Left(inset_px(5.0)))
+    );
+    assert_eq!(
+        parse("auto", "inset-inline-end"),
+        Some(PropertyValue::Right(LengthOrAuto::Auto))
+    );
+    assert_eq!(
+        parse("-3px", "inset-block-start"),
+        Some(PropertyValue::Top(inset_px(-3.0)))
+    );
+    assert_eq!(
+        parse("10%", "inset-block-end"),
+        Some(PropertyValue::Bottom(LengthOrAuto::Length(
+            Length::Percent(10.0)
+        )))
+    );
+}
+
+#[test]
+fn inset_inline_and_block_shorthands_take_one_or_two_values() {
+    assert_eq!(
+        parse("12px", "inset-inline"),
+        Some(PropertyValue::InsetInline(StartEnd::both(inset_px(12.0))))
+    );
+    assert_eq!(
+        parse("5px auto", "inset-inline"),
+        Some(PropertyValue::InsetInline(StartEnd {
+            start: inset_px(5.0),
+            end: LengthOrAuto::Auto,
+        }))
+    );
+    assert_eq!(
+        parse("12px", "inset-block"),
+        Some(PropertyValue::InsetBlock(StartEnd::both(inset_px(12.0))))
+    );
+    assert_eq!(
+        parse("auto 5px", "inset-block"),
+        Some(PropertyValue::InsetBlock(StartEnd {
+            start: LengthOrAuto::Auto,
+            end: inset_px(5.0),
+        }))
+    );
+    // A third value stays unconsumed for the caller's `expect_exhausted`.
+    assert_eq!(
+        parse("1px 2px 3px", "inset-block"),
+        Some(PropertyValue::InsetBlock(StartEnd {
+            start: inset_px(1.0),
+            end: inset_px(2.0),
+        }))
+    );
+}
+
+#[test]
+fn inset_property_names_resolve_to_keys() {
+    // The deferred (`var()`) path looks the key up by name, so it must agree
+    // with `parse_value`'s own arm for every inset name.
+    for (name, key) in [
+        ("inset", PropertyKey::Inset),
+        ("inset-inline", PropertyKey::InsetInline),
+        ("inset-block", PropertyKey::InsetBlock),
+        ("inset-inline-start", PropertyKey::Left),
+        ("inset-inline-end", PropertyKey::Right),
+        ("inset-block-start", PropertyKey::Top),
+        ("inset-block-end", PropertyKey::Bottom),
+    ] {
+        assert_eq!(property_key_for_name(name), Some(key), "{name}");
+    }
+    assert_eq!(
+        PropertyValue::Inset(Box::new(Sides::all(inset_px(1.0)))).key(),
+        PropertyKey::Inset
+    );
+    assert_eq!(
+        PropertyValue::InsetInline(StartEnd::both(inset_px(1.0))).key(),
+        PropertyKey::InsetInline
+    );
+    assert_eq!(
+        PropertyValue::InsetBlock(StartEnd::both(inset_px(1.0))).key(),
+        PropertyKey::InsetBlock
+    );
+}
+
+#[test]
+fn math_function_of_a_non_length_type_is_invalid_for_a_length_property() {
+    // `calc(20deg)` folds to an angle, which no length property accepts, so
+    // the declaration is dropped at parse time rather than deferred.
+    for name in [
+        "top",
+        "inset-block-start",
+        "inset-inline-end",
+        "inset-block",
+        "inset-inline",
+        "inset",
+        "margin-top",
+        "width",
+    ] {
+        for value in ["calc(20deg)", "calc(20s)", "calc(2 * 10deg)"] {
+            assert_eq!(parse(value, name), None, "{name}: {value}");
+        }
+    }
+}
+
+#[test]
+fn math_function_that_folds_to_a_length_is_still_accepted() {
+    // A length that folds outside the property's range is clamped at
+    // computed-value time, so it defers instead of being dropped.
+    assert!(matches!(
+        parse("calc(-5px)", "width"),
+        Some(PropertyValue::Deferred(_))
+    ));
+    // Length-percentage sums that cannot fold before computed-value time are
+    // kept too.
+    for (name, value) in [
+        ("top", "calc(2em + 3ex)"),
+        ("inset-inline-start", "calc(10% + 1px)"),
+    ] {
+        assert!(parse(value, name).is_some(), "{name}: {value}");
+    }
+}

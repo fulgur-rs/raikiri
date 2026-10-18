@@ -1,8 +1,9 @@
-//! Flow-relative margin and padding longhands.
+//! Flow-relative margin, padding and inset longhands.
 //!
-//! The parser stores `margin-inline-start` and its siblings under the
-//! physical longhand they map to in `horizontal-tb` with `direction: ltr`,
-//! and tags the declaration with the flow-relative side it was written for.
+//! The parser stores `margin-inline-start` and its siblings (the padding and
+//! inset ones too) under the physical longhand they map to in `horizontal-tb`
+//! with `direction: ltr`, and tags the declaration with the flow-relative side
+//! it was written for.
 //! The cascade moves a tagged declaration to the physical side that side maps
 //! to under the element's (or page context's) own writing mode and
 //! `direction` before it picks winners, so that a flow-relative declaration
@@ -26,7 +27,7 @@ use smol_str::SmolStr;
 
 use crate::property::{Direction, PropertyKey, PropertyValue, WritingMode};
 
-/// The flow-relative side a margin or padding declaration was written for.
+/// The flow-relative side a margin, padding or inset declaration was written for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum LogicalSide {
     InlineStart,
@@ -131,6 +132,15 @@ impl FlowMapping {
                 PhysicalSide::Bottom => PropertyValue::PaddingBottom(v),
                 PhysicalSide::Left => PropertyValue::PaddingLeft(v),
             },
+            PropertyValue::Top(v)
+            | PropertyValue::Right(v)
+            | PropertyValue::Bottom(v)
+            | PropertyValue::Left(v) => match to {
+                PhysicalSide::Top => PropertyValue::Top(v),
+                PhysicalSide::Right => PropertyValue::Right(v),
+                PhysicalSide::Bottom => PropertyValue::Bottom(v),
+                PhysicalSide::Left => PropertyValue::Left(v),
+            },
             PropertyValue::MarginTopInherit
             | PropertyValue::MarginRightInherit
             | PropertyValue::MarginBottomInherit
@@ -152,11 +162,12 @@ impl FlowMapping {
     }
 }
 
-/// The two box properties that have flow-relative longhands.
+/// The box properties that have flow-relative longhands.
 #[derive(Clone, Copy)]
 enum BoxProperty {
     Margin,
     Padding,
+    Inset,
 }
 
 impl BoxProperty {
@@ -170,6 +181,9 @@ impl BoxProperty {
             | PropertyKey::PaddingRight
             | PropertyKey::PaddingBottom
             | PropertyKey::PaddingLeft => Some(Self::Padding),
+            PropertyKey::Top | PropertyKey::Right | PropertyKey::Bottom | PropertyKey::Left => {
+                Some(Self::Inset)
+            }
             _ => None,
         }
     }
@@ -184,6 +198,10 @@ impl BoxProperty {
             (Self::Padding, PhysicalSide::Right) => PropertyKey::PaddingRight,
             (Self::Padding, PhysicalSide::Bottom) => PropertyKey::PaddingBottom,
             (Self::Padding, PhysicalSide::Left) => PropertyKey::PaddingLeft,
+            (Self::Inset, PhysicalSide::Top) => PropertyKey::Top,
+            (Self::Inset, PhysicalSide::Right) => PropertyKey::Right,
+            (Self::Inset, PhysicalSide::Bottom) => PropertyKey::Bottom,
+            (Self::Inset, PhysicalSide::Left) => PropertyKey::Left,
         }
     }
 
@@ -197,14 +215,18 @@ impl BoxProperty {
             (Self::Padding, PhysicalSide::Right) => "padding-right",
             (Self::Padding, PhysicalSide::Bottom) => "padding-bottom",
             (Self::Padding, PhysicalSide::Left) => "padding-left",
+            (Self::Inset, PhysicalSide::Top) => "top",
+            (Self::Inset, PhysicalSide::Right) => "right",
+            (Self::Inset, PhysicalSide::Bottom) => "bottom",
+            (Self::Inset, PhysicalSide::Left) => "left",
         }
     }
 }
 
 /// The flow-relative side the longhand `name` is written for, when `name`
-/// is one of the margin or padding flow-relative longhands.
+/// is one of the margin, padding or inset flow-relative longhands.
 pub(crate) fn longhand_side(name: &str) -> Option<LogicalSide> {
-    const LONGHANDS: [(&str, LogicalSide); 8] = [
+    const LONGHANDS: [(&str, LogicalSide); 12] = [
         ("margin-inline-start", LogicalSide::InlineStart),
         ("margin-inline-end", LogicalSide::InlineEnd),
         ("margin-block-start", LogicalSide::BlockStart),
@@ -213,10 +235,14 @@ pub(crate) fn longhand_side(name: &str) -> Option<LogicalSide> {
         ("padding-inline-end", LogicalSide::InlineEnd),
         ("padding-block-start", LogicalSide::BlockStart),
         ("padding-block-end", LogicalSide::BlockEnd),
+        ("inset-inline-start", LogicalSide::InlineStart),
+        ("inset-inline-end", LogicalSide::InlineEnd),
+        ("inset-block-start", LogicalSide::BlockStart),
+        ("inset-block-end", LogicalSide::BlockEnd),
     ];
     // Every declaration passes through here; most names are shorter or
-    // longer than any of the eight, so their length rules them out first.
-    if !(16..=20).contains(&name.len()) {
+    // longer than any of the twelve, so their length rules them out first.
+    if !(15..=20).contains(&name.len()) {
         return None;
     }
     LONGHANDS

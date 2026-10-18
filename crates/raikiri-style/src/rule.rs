@@ -237,6 +237,9 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         Margin => &[MarginTop, MarginRight, MarginBottom, MarginLeft],
         MarginInline => &[MarginLeft, MarginRight],
         MarginBlock => &[MarginTop, MarginBottom],
+        Inset => &[Top, Right, Bottom, Left],
+        InsetInline => &[Left, Right],
+        InsetBlock => &[Top, Bottom],
         PaddingInline => &[PaddingLeft, PaddingRight],
         PaddingBlock => &[PaddingTop, PaddingBottom],
         Border => &[
@@ -728,6 +731,13 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::MarginBlock(pair) => {
             expand_margin_block(pair, logical_longhand(d.important, &mut push, LogicalAxis::Block))
         }
+        PropertyValue::Inset(ref sides) => expand_inset(**sides, push_longhand),
+        PropertyValue::InsetInline(pair) => {
+            expand_inset_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))
+        }
+        PropertyValue::InsetBlock(pair) => {
+            expand_inset_block(pair, logical_longhand(d.important, &mut push, LogicalAxis::Block))
+        }
         PropertyValue::PaddingInline(pair) => {
             expand_padding_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))
         }
@@ -1102,10 +1112,10 @@ fn expand_deferred(
         return expand_none(d, push);
     };
     let sides = match deferred.key {
-        PropertyKey::MarginInline | PropertyKey::PaddingInline => {
+        PropertyKey::MarginInline | PropertyKey::PaddingInline | PropertyKey::InsetInline => {
             [Some(LogicalSide::InlineStart), Some(LogicalSide::InlineEnd)]
         }
-        PropertyKey::MarginBlock | PropertyKey::PaddingBlock => {
+        PropertyKey::MarginBlock | PropertyKey::PaddingBlock | PropertyKey::InsetBlock => {
             [Some(LogicalSide::BlockStart), Some(LogicalSide::BlockEnd)]
         }
         _ => [None, None],
@@ -1201,6 +1211,38 @@ pub(crate) fn expand_margin_block(
 ) {
     push(PropertyValue::MarginTop(pair.start));
     push(PropertyValue::MarginBottom(pair.end));
+}
+
+/// Cold helper that expands the `inset` shorthand into the four offset longhands.
+#[inline(never)]
+pub(crate) fn expand_inset(sides: Sides<LengthOrAuto>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::Top(sides.top));
+    push(PropertyValue::Right(sides.right));
+    push(PropertyValue::Bottom(sides.bottom));
+    push(PropertyValue::Left(sides.left));
+}
+
+/// Cold helper expanding `inset-inline` into two longhands, `left`/`right`: the offset sibling of
+/// [`expand_margin_inline`]. The caller tags them with their flow-relative sides, which the
+/// cascade maps.
+#[inline(never)]
+pub(crate) fn expand_inset_inline(
+    pair: StartEnd<LengthOrAuto>,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::Left(pair.start));
+    push(PropertyValue::Right(pair.end));
+}
+
+/// Cold helper expanding `inset-block` into two longhands, `top`/`bottom`: the block-axis sibling of
+/// [`expand_inset_inline`].
+#[inline(never)]
+pub(crate) fn expand_inset_block(
+    pair: StartEnd<LengthOrAuto>,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::Top(pair.start));
+    push(PropertyValue::Bottom(pair.end));
 }
 
 /// Cold helper expanding `padding-inline` into two longhands, `padding-left`/

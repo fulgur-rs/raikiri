@@ -155,11 +155,15 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         }
         PropertyValue::BorderWidth(sides) => Some(serialize_sides(sides, serialize_length)),
         PropertyValue::Margin(sides) => Some(serialize_sides(sides, serialize_length_or_auto)),
+        PropertyValue::Inset(sides) => Some(serialize_sides(sides, serialize_length_or_auto)),
 
         PropertyValue::PaddingInline(pair) | PropertyValue::PaddingBlock(pair) => Some(
             serialize_start_end(pair, serialize_length_percentage_or_calc),
         ),
-        PropertyValue::MarginInline(pair) | PropertyValue::MarginBlock(pair) => {
+        PropertyValue::MarginInline(pair)
+        | PropertyValue::MarginBlock(pair)
+        | PropertyValue::InsetInline(pair)
+        | PropertyValue::InsetBlock(pair) => {
             Some(serialize_start_end(pair, serialize_length_or_auto))
         }
 

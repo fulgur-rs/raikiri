@@ -1041,6 +1041,88 @@ fn relative_box_paints_at_its_public_fragment_coordinates() {
     }
 }
 
+/// The paint rectangle of the box `id` on the first page, as
+/// `(x, y, width, height)`.
+fn paint_rect_of(result: &DocumentLayout, id: &str) -> (f32, f32, f32, f32) {
+    let node = by_id(result, id);
+    let page = result.pages().next().expect("a page");
+    let rect = page
+        .fragments()
+        .find(|fragment| {
+            fragment.kind() == FragmentKind::Box && node_index(fragment.node()) == node
+        })
+        .expect("box fragment")
+        .paint_rect();
+    (rect.x, rect.y, rect.width, rect.height)
+}
+
+/// `inset` and the flow-relative `inset-*` properties place an absolutely
+/// positioned box exactly where the physical offsets they stand for would.
+#[test]
+fn inset_properties_place_an_absolute_box_like_the_physical_offsets() {
+    let css = "@page { margin:0 } body { margin:0 } \
+         .parent { position:absolute;left:10px;top:20px;width:100px;height:80px;padding:10px;border:5px solid red } \
+         #child { position:absolute;background:green }";
+    let body = "<div class='parent'><div id='child'></div></div>";
+    let placed = |child_css: &str| {
+        let result = lay_out(body, &format!("{css} #child {{ {child_css} }}"));
+        paint_rect_of(&result, "child")
+    };
+
+    // The parent's padding box is 120 by 100 at (15, 25).
+    assert_eq!(placed("inset:0"), (15.0, 25.0, 120.0, 100.0));
+    assert_eq!(
+        placed("inset:0"),
+        placed("top:0;right:0;bottom:0;left:0"),
+        "inset: 0 is the four zero offsets"
+    );
+    assert_eq!(placed("inset:5px 10px"), (25.0, 30.0, 100.0, 90.0));
+    assert_eq!(
+        placed("inset:5px 10px"),
+        placed("top:5px;right:10px;bottom:5px;left:10px"),
+    );
+    assert_eq!(
+        placed("inset:1px 2px 3px 4px"),
+        placed("top:1px;right:2px;bottom:3px;left:4px"),
+    );
+    assert_eq!(
+        placed("inset-inline:10px 20px;inset-block:5px 15px"),
+        placed("left:10px;right:20px;top:5px;bottom:15px"),
+    );
+    assert_eq!(
+        placed(
+            "inset-inline-start:10px;inset-inline-end:20px;inset-block-start:5px;inset-block-end:15px"
+        ),
+        (25.0, 30.0, 90.0, 80.0),
+    );
+    // A later physical offset overrides the matching side of `inset`.
+    assert_eq!(placed("inset:0;left:30px"), (45.0, 25.0, 90.0, 100.0));
+}
+
+/// Under `direction: rtl` the inline-start inset is the right offset.
+#[test]
+fn inline_start_inset_follows_direction() {
+    let css = "@page { margin:0 } body { margin:0 } \
+         .parent { position:absolute;left:10px;top:20px;width:100px;height:80px;padding:10px;border:5px solid red } \
+         #child { position:absolute;width:20px;height:20px;background:green }";
+    let body = "<div class='parent'><div id='child'></div></div>";
+    let placed = |child_css: &str| {
+        let result = lay_out(body, &format!("{css} #child {{ {child_css} }}"));
+        paint_rect_of(&result, "child")
+    };
+    // The block offsets stay `auto`, so the box keeps its static position
+    // (the parent's content box starts at y = 35).
+    assert_eq!(placed("inset-inline-start:10px"), (25.0, 35.0, 20.0, 20.0));
+    assert_eq!(
+        placed("direction:rtl;inset-inline-start:10px"),
+        placed("right:10px"),
+    );
+    assert_eq!(
+        placed("direction:rtl;inset-inline-start:10px"),
+        (105.0, 35.0, 20.0, 20.0),
+    );
+}
+
 /// An overflow box that starts on the first page and ends there while its
 /// content runs on: on the later pages the box has no fragment, and the
 /// walker's clip for it lies wholly above the page, so nothing inside it is
