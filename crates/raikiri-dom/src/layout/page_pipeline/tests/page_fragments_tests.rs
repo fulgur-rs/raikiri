@@ -4179,8 +4179,8 @@ fn source_collection_keeps_text_roots_sorted_and_prepared() {
         document.fragment_tree.work_limit(document.nodes.len()),
     );
 
-    let sources = super::super::collect_page_fragment_sources(&document, &cascade, body, &mut work)
-        .expect("page sources");
+    let sources =
+        super::super::walk_sources(&document, &cascade, body, &mut work).expect("page sources");
 
     let source_ids: Vec<_> = sources.nodes.iter().map(|source| source.node_id).collect();
     assert!(source_ids.windows(2).all(|ids| ids[0] <= ids[1]));
