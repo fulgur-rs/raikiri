@@ -276,3 +276,62 @@ fn absolute_auto_width_respects_space_after_its_inset() {
     // CSS 2.2 10.3.7: min(max(40, 200 - 120), 140) = 80px, with three 10px lines.
     assert_eq!(absolute_rect(&doc, child), (120.0, 0.0, 80.0, 30.0));
 }
+
+#[test]
+fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use taffy::{AvailableSpace, LayoutInput, Line, RequestedAxis, RunMode, Size, SizingMode};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;width:100px;height:100px;border:2px solid;padding:10px;justify-items:center;align-items:center",
+        ),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+
+    let mut session = LayoutSession::new(&mut doc);
+    grid_layout(
+        &mut session,
+        taffy::NodeId::from(grid),
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(100.0),
+                height: Some(100.0),
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            parent_size: Size {
+                width: Some(100.0),
+                height: Some(100.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        },
+    );
+    drop(session);
+
+    let layout = doc.nodes[child].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (40.0, 40.0));
+}

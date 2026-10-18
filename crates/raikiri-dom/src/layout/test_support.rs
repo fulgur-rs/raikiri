@@ -6,7 +6,6 @@ use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
 thread_local! {
-    pub(crate) static GRID_PARENT_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static TEXT_LINE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static TABLE_CELL_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static IFC_ATOMIC_OUTPUT_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
