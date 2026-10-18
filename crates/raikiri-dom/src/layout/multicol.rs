@@ -2144,10 +2144,7 @@ fn record_nested_ifc_box_fragments(
             let mut current = node_id;
             while current != subtree_root {
                 path.push(current);
-                let Some(parent) = tree.parent_of(current) else {
-                    break;
-                };
-                current = parent;
+                current = tree.parent_of(current).unwrap_or(subtree_root);
             }
             path.reverse();
             let plain_block_path = !subtree_has_float
