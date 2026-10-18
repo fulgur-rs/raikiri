@@ -44,6 +44,7 @@ use raikiri_traits::{
 use std::f64::consts::{FRAC_PI_2, PI};
 
 mod box_paint;
+mod child_frames;
 mod element_box;
 mod frames;
 mod gradient;
