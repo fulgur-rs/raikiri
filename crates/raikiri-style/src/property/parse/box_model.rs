@@ -217,6 +217,7 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
             i.expect_function_matching("fit-content")?;
             i.parse_nested_block(|nested| {
                 parse_length_value(nested, true)
+                    .filter(|limit| limit.payload() >= 0.0)
                     .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
                 nested.expect_exhausted()?;
                 Ok::<_, cssparser::ParseError<'_, ()>>(())

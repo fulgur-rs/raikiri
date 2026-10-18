@@ -2127,6 +2127,21 @@ fn width_computes_the_fit_content_function_as_auto() {
 }
 
 #[test]
+fn width_drops_a_fit_content_function_with_a_negative_limit() {
+    // The limit is a `<length-percentage [0,∞]>`: a negative one invalidates
+    // the declaration, so it cannot override an earlier valid width.
+    for property in ["width", "inline-size"] {
+        assert_eq!(parse("fit-content(-10px)", property), None);
+        assert_eq!(parse("fit-content(-5%)", property), None);
+        assert_eq!(
+            parse("fit-content(0px)", property),
+            parse("fit-content(10px)", property)
+        );
+    }
+    assert!(parse("fit-content(0px)", "width").is_some());
+}
+
+#[test]
 fn width_rejects_unsupported_unit() {
     // (b) Unsupported: cqw / cap and similar units are valid per spec but
     // not implemented. parse_length_value drops them and propagates None.
