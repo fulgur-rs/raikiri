@@ -1,30 +1,21 @@
 //! The visit of a node: where its box lies on the page, what it paints of
 //! itself, and the frames that paint its children.
 
-use super::child_frames::{ChildFrames, ChildOrigin, ChildPlan, GeneratedOffsets};
-use super::element_box::{BoxInputs, ElementBox};
-use super::frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame};
+use super::frames::{PaintFrame, VisitFrame};
 use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
-use super::{
-    box_intersects_page, fixed_background_viewport, paint_generated_pseudo, push_overflow_clip,
-};
-use crate::text;
+use super::{box_intersects_page, fixed_background_viewport};
 use anyrender::PaintScene;
-use kurbo::{Affine, Rect};
-use peniko::Mix;
 use raikiri_dom::FragmentRect;
-use raikiri_style::property::{ColumnCountValue, DisplayValue};
-use raikiri_traits::{NodeId, NodeKind, PaintInsets, PaintRect};
+use raikiri_traits::NodeKind;
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Visit the node of `visit`: paint it and push the frames of its
     /// children, or skip it and its subtree.
-    pub(super) fn visit(&mut self, visit: VisitFrame) {
-        let (document, cascade, counter_snapshots, page_box, active_page_name) = (
+    pub(super) fn visit(&mut self, mut visit: VisitFrame) {
+        let (document, cascade, page_box, active_page_name) = (
             self.document,
             self.cascade,
-            self.counter_snapshots,
             self.page_box,
             self.active_page_name,
         );
@@ -66,10 +57,18 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         };
         let text_page_clip =
             |inside_fixed: bool| geometry.text_page_clip(cascade, page_box, inside_fixed);
+        if let Some(shift) =
+            document.repeated_table_header_root_shift(visit.node_id, content_origin_y)
+        {
+            let Some(shift) = shift else {
+                return;
+            };
+            visit.parent_abs_y += shift;
+        }
         let VisitFrame {
             node_id,
             parent_abs_x,
-            mut parent_abs_y,
+            parent_abs_y,
             parent_font_size,
             shift_y,
             transform_x,
@@ -82,18 +81,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fragment_origin_y,
             fragmentainer,
             fragment_rect,
-            fragment_clip,
+            fragment_clip: _,
             is_fragment_visit,
             inside_fixed,
             inside_fixed_containing_block,
-            decorations,
+            ref decorations,
         } = visit;
-        if let Some(shift) = document.repeated_table_header_root_shift(node_id, content_origin_y) {
-            let Some(shift) = shift else {
-                return;
-            };
-            parent_abs_y += shift;
-        }
         let Some(node) = document.get_node(node_id) else {
             return;
         };
@@ -170,387 +163,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         }
         match node.kind() {
             NodeKind::Element => {
-                // An atomic inline an ellipsis removed from its line is not
-                // painted (CSS Overflow 3 §5.1).
-                if node.is_display_none() || node.is_hidden_by_text_overflow() {
-                    return;
-                }
-                let layout = node_layout;
-                let cv = &cascade.computed[node_id];
-                let Some(element) = self.element_box(
-                    BoxInputs {
-                        node_id,
-                        parent_abs_x,
-                        parent_abs_y,
-                        parent_font_size,
-                        shift_y,
-                        transform_x,
-                        transform_y,
-                        fragment_clip_height,
-                        fragment_id,
-                        fragment_clip,
-                        is_fragment_visit,
-                        inside_fixed,
-                        inside_fixed_containing_block,
-                    },
-                    node,
-                    layout,
-                ) else {
-                    return;
-                };
-                let ElementBox {
-                    abs_x,
-                    abs_y,
-                    generates_box,
-                    child_shift_y,
-                    pos_dx,
-                    pos_dy,
-                    fixed_dx,
-                    fixed_dy,
-                    child_transform_x,
-                    child_transform_y,
-                    placed_in_column,
-                    fixed_in_viewport,
-                    establishes_fixed_containing_block,
-                    paint_x,
-                    paint_y,
-                    paint_height,
-                    multicol_clip_pushed,
-                    fragmentainer_clip_pushed,
-                    paints_on_page,
-                    paints_as_absolute_continuation,
-                    generated_x,
-                    generated_y,
-                    generated_content_advance,
-                    ..
-                } = element;
-                let scene = &mut *self.scene;
-                let trace = &mut self.trace;
-                let stack = &mut self.stack;
-                // CSS Color 4 §3.3: opacity applies to the complete
-                // element group, including its background, border, text,
-                // generated content, and descendants. Keep this layer open
-                // until the deferred `PaintAfter` and overflow clip frames
-                // have finished so overlapping descendants are composited as
-                // one group instead of being alpha-blended individually.
-                let has_opacity_layer = raikiri_dom::paint_rules::opacity_layer(cv).is_some();
-                if has_opacity_layer {
-                    let opacity_clip = Rect::new(
-                        0.0,
-                        0.0,
-                        page_box.width.max(0.0) as f64,
-                        page_box.height.max(0.0) as f64,
-                    );
-                    scene.scene.push_layer(
-                        Mix::Normal,
-                        cv.opacity,
-                        Affine::IDENTITY,
-                        &opacity_clip,
-                        None,
-                        None,
-                    );
-                    // This frame is pushed first so it closes after the
-                    // optional overflow clip and generated `::after` paint.
-                    stack.push(PaintFrame::PopOpacity);
-                    if let Some(t) = trace.as_deref_mut() {
-                        t.push(crate::PaintTraceEvent::PushOpacity(node_id, cv.opacity));
-                    }
-                }
-                let has_column_rules = document.column_rules(cascade, node_id).next().is_some();
-                let mut before_advance = if paints_on_page
-                    && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
-                {
-                    self.paint_box_decorations(&element);
-                    self.paint_replaced_content(&element);
-                    self.paint_column_rules(&element, has_column_rules);
-                    self.paint_list_marker(&element);
-                    self.paint_generated_before(&element, has_column_rules)
-                } else {
-                    0.0
-                };
-                // Paint positioned siblings in stacking order while keeping
-                // source order for equal stack levels. Flex/grid containers use
-                // order-modified document order within each stacking bucket,
-                // as required by CSS Display's `order` property behavior.
-                // This is intentionally local to the current parent; full
-                // nested stacking-context isolation remains outside this
-                // minimal painter.
-                let mut children = if node.is_inline_svg_root()
-                    || document.anonymous_table_contents_paint_only(node_id)
-                {
-                    Vec::new()
-                } else if node.is_ifc_root() {
-                    // The paragraph's own text and inline elements are drawn
-                    // from the lines; only the boxes laid out beside them are
-                    // visited like ordinary children.
-                    node.ifc_boxes()
-                } else if let Some(children) = document.anonymous_table_paint_sequence(node_id) {
-                    children
-                } else {
-                    node.children.clone()
-                };
-                raikiri_dom::paint_rules::sort_paint_children(&mut children, cv.display, cascade);
-                let GeneratedOffsets {
-                    inline: inline_offsets,
-                    vertical: vertical_generated_offsets,
-                } = self.generated_offsets(&element, &children);
-                let scene = &mut *self.scene;
-                let trace = &mut self.trace;
-                let stack = &mut self.stack;
-                // The fragmentainer clip encloses the element and its children;
-                // close it after any element-local overflow clip.
-                if multicol_clip_pushed {
-                    stack.push(PaintFrame::PopClip);
-                }
-                if fragmentainer_clip_pushed {
-                    stack.push(PaintFrame::PopClip);
-                }
-                // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
-                // the padding box. Min edges are floored outward so a fractional
-                // padding-box origin does not antialias-cut pixel-snapped descendant
-                // backgrounds (which round to integers); this mirrors the multicol
-                // clip origin flooring. The clip is pushed only after painting the
-                // element itself, then popped after its complete subtree via the
-                // explicit stack frame.
-                let mut overflow_clip_pushed = None;
-                if let Some(resolved) = raikiri_dom::paint_rules::overflow_clip(
-                    document,
-                    cascade,
-                    node_id,
-                    PaintRect::new(paint_x, paint_y, layout.size.width, paint_height),
-                    PaintInsets::new(
-                        layout.border.top,
-                        layout.border.right,
-                        layout.border.bottom,
-                        layout.border.left,
-                    ),
-                ) {
-                    let transform = scene.transform;
-                    let clip = push_overflow_clip(scene, resolved, &page_box);
-                    stack.push(PaintFrame::PopClip);
-                    overflow_clip_pushed = Some((resolved, transform));
-                    if let Some(t) = trace.as_deref_mut() {
-                        t.push(crate::PaintTraceEvent::PushOverflowClip(
-                            node_id,
-                            [clip.x0, clip.y0, clip.x1, clip.y1],
-                        ));
-                    }
-                }
-                // A column rule is below all content, including a standalone
-                // generated overlay that the inline engine did not lay out.
-                if has_column_rules
-                    && paints_on_page
-                    && !paints_as_absolute_continuation
-                    && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
-                {
-                    before_advance = paint_generated_pseudo(
-                        scene,
-                        document,
-                        cascade,
-                        node_id,
-                        raikiri_style::PseudoElem::Before,
-                        generated_x,
-                        generated_y,
-                        layout.size.width,
-                        paint_height,
-                        counter_snapshots,
-                    );
-                }
-                // Push this after the clip-pop frame and before children.
-                // Children therefore paint first, then `::after`, then the
-                // clip closes.  A full IFC would place the after run after
-                // laid-out inline descendants; this minimal path uses the
-                // generated-before advance as its only inline position.
-                let after_pushed = paints_on_page && !paints_as_absolute_continuation;
-                if after_pushed {
-                    stack.push(PaintFrame::PaintAfter {
-                        node_id,
-                        x: generated_x,
-                        y: generated_y,
-                        width: layout.size.width,
-                        height: paint_height,
-                        before_advance,
-                        content_advance: generated_content_advance,
-                    });
-                }
-                let paint_transform = scene.transform;
-                let child_font_size = cv.font_size.px();
-                // `text-decoration-line` is non-inherited at the computed-value
-                // layer, but its originating line is propagated to descendants
-                // by CSS Text Decoration. Keep that paint-only context separate
-                // from `CascadeResult`'s inheritance result.
-                let child_decorations = text::decorations_for_element(
-                    &decorations,
-                    NodeId::new(node_id as u64),
-                    cv,
-                    child_shift_y,
-                );
-
-                // Reverse push makes the lowest stack level paint first.
-                // Relative insets are already present in `layout.location`
-                // except for the manual placement paths identified above.
-                let child_parent_x = abs_x + pos_dx + fixed_dx;
-                let child_parent_y = abs_y + pos_dy + fixed_dy;
-                let child_paint_offset_y = paint_offset_y + pos_dy + fixed_dy;
-                // The descendants of a box that is placed in a column are
-                // placed from the origin of its fragment, which stands where
-                // layout left it. The offset that paint adds to the box moves
-                // them as well, as it does the descendants that follow the
-                // parent chain.
-                let (child_fragment_origin_x, child_fragment_origin_y) = if placed_in_column {
-                    (fragment_origin_x + pos_dx, fragment_origin_y + pos_dy)
-                } else {
-                    (fragment_origin_x, fragment_origin_y)
-                };
-                // A paragraph inside a fixed box, or a fixed box that is a
-                // paragraph itself, repeats on every page and is not clipped
-                // like flowed text, as the text branch below does.
-                let ifc_inside_fixed = inside_fixed || fixed_in_viewport;
-                let origin = ChildOrigin {
-                    parent_x: child_parent_x,
-                    parent_y: child_parent_y,
-                    font_size: child_font_size,
-                    shift_y: child_shift_y,
-                    transform_x: child_transform_x,
-                    transform_y: child_transform_y,
-                    paint_offset_y: child_paint_offset_y,
-                    inside_fixed: ifc_inside_fixed,
-                    inside_fixed_containing_block: inside_fixed_containing_block
-                        || establishes_fixed_containing_block,
-                    fragment_id,
-                    fragment_origin_x: child_fragment_origin_x,
-                    fragment_origin_y: child_fragment_origin_y,
-                    fragmentainer,
-                    decorations: &child_decorations,
-                };
-                let lines_frame =
-                    self.paragraph_lines(&element, &origin, &children, paint_transform);
-                let hold_lines = lines_frame.as_ref().is_some_and(|lines| lines.hold);
-                let lines_frame = lines_frame.map(PaintFrame::Lines);
-                let own_multicol_clip_height = match cv.column_count {
-                    ColumnCountValue::Count(count)
-                        if count > 1
-                            && node.is_multicol_container()
-                            && layout.size.height > 0.0 =>
-                    {
-                        Some(layout.size.height)
-                    }
-                    _ => None,
-                };
-                // A `display: contents` element has no box, so the columns of
-                // the container it sits in hold its children.
-                let own_multicol_clip_height = own_multicol_clip_height
-                    .or((cv.display == DisplayValue::Contents)
-                        .then_some(column_clip_height)
-                        .flatten());
-                // A plain block in a block container leaves its inline
-                // content to the end of the layer (CSS 2.1 Appendix E): its
-                // lines and the boxes laid out beside them paint after the
-                // backgrounds of the blocks that follow it.
-                let defers_here = !multicol_clip_pushed
-                    && !fragmentainer_clip_pushed
-                    && fragmentainer.is_none()
-                    && !is_fragment_visit
-                    && !fixed_in_viewport;
-                let defers = defers_here
-                    && overflow_clip_pushed.is_none()
-                    && raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id);
-                // A plain block that clips collects its inline content in a
-                // layer of its own, which it hands to the enclosing layer
-                // inside its clip.
-                let merge = overflow_clip_pushed
-                    .filter(|_| {
-                        defers_here
-                            && self
-                                .deferral_scopes
-                                .last()
-                                .is_some_and(|layer| layer.allowed)
-                            && raikiri_dom::paint_rules::merges_clipped_inline_content(
-                                document, cascade, node_id,
-                            )
-                    })
-                    .map(|(clip, transform)| LayerClose::Merge {
-                        node_id,
-                        clip,
-                        transform,
-                    });
-                // With content positioned below the blocks, the lines place
-                // the blocks between that content and the rest.
-                let negative_content = node.is_ifc_root()
-                    && raikiri_dom::paint_rules::holds_negative_stack_level(
-                        document, cascade, node_id,
-                    );
-                let ChildFrames {
-                    children: child_frames,
-                    below_lines: below_lines_frames,
-                    blocks: mut block_frames,
-                } = self.child_frames(
-                    &element,
-                    &origin,
-                    children,
-                    &GeneratedOffsets {
-                        inline: inline_offsets,
-                        vertical: vertical_generated_offsets,
-                    },
-                    &ChildPlan {
-                        fragment_clip_height,
-                        multicol_clip_height: own_multicol_clip_height,
-                        before_advance,
-                        defers,
-                        hold_lines,
-                        negative_content,
-                    },
-                );
-                let finish_lines = hold_lines.then_some(PaintFrame::FinishLines { root: node_id });
-                let stack = &mut self.stack;
-                let deferral_scopes = &mut self.deferral_scopes;
-                // A `display: contents` element has no box, so its children
-                // share the enclosing layer.
-                if !defers && generates_box {
-                    let allowed = deferral_scopes.last().is_some_and(|layer| layer.allowed)
-                        && !node.is_multicol_container();
-                    let close = merge.unwrap_or(
-                        if raikiri_dom::paint_rules::hoists_positioned_content(
-                            document, cascade, node_id,
-                        ) {
-                            LayerClose::Hoist
-                        } else {
-                            LayerClose::Paint
-                        },
-                    );
-                    let mut layer = DeferralLayer::new(allowed, close);
-                    layer.after = after_pushed;
-                    deferral_scopes.push(layer);
-                    stack.push(PaintFrame::EndDeferral);
-                }
-                if (defers || merge.is_some()) && node.is_ifc_root() {
-                    if let Some(layer) = deferral_scopes.last_mut() {
-                        let pending = &mut layer.pending;
-                        pending.extend(below_lines_frames.into_iter().rev());
-                        if negative_content && !block_frames.is_empty() {
-                            pending.push(PaintFrame::TraceBelowBlocks { root: node_id });
-                            pending.extend(std::mem::take(&mut block_frames).into_iter().rev());
-                        }
-                        pending.extend(lines_frame);
-                        pending.extend(child_frames.into_iter().rev());
-                        pending.extend(finish_lines);
-                        // A standalone `::after` still follows the content
-                        // it is generated after.
-                        if defers && after_pushed {
-                            pending.extend(stack.pop());
-                        }
-                    }
-                } else {
-                    stack.extend(finish_lines);
-                    stack.extend(child_frames);
-                    stack.extend(lines_frame);
-                    if negative_content && !block_frames.is_empty() {
-                        stack.extend(std::mem::take(&mut block_frames));
-                        stack.push(PaintFrame::TraceBelowBlocks { root: node_id });
-                    }
-                    stack.extend(below_lines_frames);
-                }
-                stack.extend(block_frames);
+                self.visit_element(&visit, node, node_layout);
             }
             NodeKind::Text => {
                 let scene = &mut *self.scene;
@@ -586,7 +199,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                                 y: abs_y + page_offset_y + transform_y,
                                 shift_y,
                             },
-                            &decorations,
+                            decorations,
                             fragmentainer,
                             custom_highlights,
                             pixel_source,

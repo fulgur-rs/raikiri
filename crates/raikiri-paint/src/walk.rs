@@ -43,6 +43,7 @@ use raikiri_traits::{
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
+mod box_layers;
 mod box_paint;
 mod child_frames;
 mod element_box;
@@ -53,6 +54,7 @@ mod lines_frames;
 mod page_geometry;
 mod paint_walk;
 mod visit;
+mod visit_element;
 pub(crate) use image_brush::ImageBrushCache;
 
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
