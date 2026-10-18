@@ -665,3 +665,87 @@ fn a_floated_relative_paragraph_in_a_column_is_painted_shifted_once() {
         "<div style='position:absolute;left:5px;top:0;width:40px'><p style='background:lime'>A<br>B</p></div>",
     );
 }
+
+#[test]
+fn a_column_child_with_horizontal_margins_fills_the_column_between_them() {
+    for margin in [
+        "margin-left:7px",
+        "margin-right:7px",
+        "margin:0 5px 0 3px",
+        "margin-left:10%",
+    ] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_column_child_with_a_margin_in_a_later_column_fills_the_column_between_them() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='margin-left:7px;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='margin-left:7px;background:lime'>C<br>D</p></div>",
+    );
+}
+
+#[test]
+fn a_column_child_with_a_margin_in_a_balanced_container_fills_the_column_between_them() {
+    compare(
+        "<div class=mc><p style='margin-left:7px;background:lime'>A</p><p>B</p><p style='margin-right:7px;background:lime'>C</p><p>D</p></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p style='margin-left:7px;background:lime'>A</p><p>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='margin-right:7px;background:lime'>C</p><p>D</p></div>",
+    );
+}
+
+#[test]
+fn a_right_to_left_column_child_with_a_margin_fills_the_column_between_them() {
+    for margin in [
+        "margin-left:7px",
+        "margin-right:7px",
+        "margin-left:10%",
+        "margin-right:10%",
+    ] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;left:60px;top:0;width:40px;direction:rtl'>{paragraph}</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_column_child_with_calc_negative_or_oversized_margins_matches_block_flow() {
+    for margin in [
+        "margin-left:calc(2px + 5px)",
+        "margin-left:-7px",
+        "margin:0 -4px 0 6px",
+        "margin-left:50px",
+        "margin-left:30px;margin-right:30px",
+    ] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}
+
+#[test]
+fn a_column_child_with_auto_margins_matches_block_flow() {
+    for margin in ["margin:0 auto", "margin-left:auto", "margin-right:auto"] {
+        let paragraph = format!("<p style='{margin};background:lime'>A<br>B</p>");
+        compare(
+            &format!("<div class=mc>{paragraph}</div>"),
+            ".mc{height:40px;column-fill:auto}",
+            &format!("<div style='width:40px'>{paragraph}</div>"),
+        );
+    }
+}

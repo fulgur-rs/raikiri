@@ -8,6 +8,7 @@ pub(super) mod spanning;
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
+use taffy::MaybeResolve;
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
@@ -487,12 +488,38 @@ fn column_child_input(
     }
 }
 
+/// The left and right margins of `child` in a column of `column_width`,
+/// with percentages resolved against the column. An auto margin keeps the
+/// value `flow` block flow gave it.
+fn column_horizontal_margins(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+    flow: (f32, f32),
+) -> (f32, f32) {
+    let margin = tree.layout_node_with_style(child).unwrap().style.margin;
+    let resolve = |value: LengthPercentageAuto, flow: f32| {
+        value
+            .maybe_resolve(Some(column_width), crate::taffy_impl::resolve_calc)
+            .unwrap_or(flow)
+    };
+    (resolve(margin.left, flow.0), resolve(margin.right, flow.1))
+}
+
 /// The width a column imposes on a child it lays out, or `None` when an
 /// element's authored width resolves against the column width instead.
 fn column_child_known_width(tree: &Document, child: usize, column_width: f32) -> Option<f32> {
     let node = &tree.layout_node_with_style(child).unwrap();
-    (node.kind() != NodeKind::Element || node.style.size.width == Dimension::auto())
-        .then_some(column_width)
+    if node.kind() != NodeKind::Element {
+        return Some(column_width);
+    }
+    if node.style.size.width != Dimension::auto() {
+        return None;
+    }
+    // An auto width fills the column between the horizontal margins; an auto
+    // margin counts as zero.
+    let (left, right) = column_horizontal_margins(tree, child, column_width, (0.0, 0.0));
+    Some((column_width - left - right).max(0.0))
 }
 
 pub(crate) fn multicol_definite_dimension(
@@ -1109,12 +1136,20 @@ fn layout_column_group(
             context.origin_x + context.column_offset_x(column),
             context.origin_y + cursor,
         );
+        // Percentage margins resolve against the column, not against the
+        // container block flow resolved them against.
+        let (margin_left, margin_right) = column_horizontal_margins(
+            tree,
+            child,
+            context.column_width,
+            (child_layout.margin.left, child_layout.margin.right),
+        );
         // A right-to-left container aligns its blocks to the right edge of
         // the column, leaving the room a narrower block does not use to its
         // left.
         let x = if context.rtl {
             content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
-                - child_layout.margin.right
+                - margin_right
         } else {
             // Block flow placed the child with its `position: relative`
             // inset. The painter adds that inset to the box and the lines of
@@ -1135,10 +1170,14 @@ fn layout_column_group(
             } else {
                 0.0
             };
-            child_layout.location.x - inset + context.column_offset_x(column)
+            child_layout.location.x - inset
+                + (margin_left - child_layout.margin.left)
+                + context.column_offset_x(column)
         };
         let y = content_origin.y + cursor + margin_top;
         child_layout.order = order as u32;
+        child_layout.margin.left = margin_left;
+        child_layout.margin.right = margin_right;
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
