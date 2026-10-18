@@ -5247,14 +5247,22 @@ fn paint_inline_svg(
     let content_y = (abs_y + bt + padding.top) as f64;
     let content_w = (border_box_width - bl - br - padding.left - padding.right).max(0.0);
     let content_h = (border_box_height - bt - bb - padding.top - padding.bottom).max(0.0);
-    if !visible || opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
+    if opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
         return true;
     }
 
-    let svg = document
-        .serialize_svg_subtree(node_id)
-        .ok()
-        .flatten()
+    let source = document.serialize_svg_subtree(node_id).ok().flatten();
+    // A root that is not visible shows only the descendants that set
+    // `visibility` themselves, so a source that never mentions it paints
+    // nothing.
+    if !visible
+        && source
+            .as_deref()
+            .is_none_or(|source| !source.contains("visibility"))
+    {
+        return true;
+    }
+    let svg = source
         .and_then(|source| raikiri_svg::SvgDocument::parse(source.as_bytes()).ok())
         .and_then(|svg| {
             svg.rasterize_at_css_pixel_scale(
@@ -5277,14 +5285,17 @@ fn paint_inline_svg(
             .ok()
         });
     let Some(decoded) = svg else {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: None,
-            },
-            node_id: Some(NodeId::new(node_id as u64)),
-            details: "inline SVG could not be parsed or rasterized".to_owned(),
-        });
+        // Nothing was expected to show from a root that is not visible.
+        if visible {
+            warnings.push(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: None,
+                },
+                node_id: Some(NodeId::new(node_id as u64)),
+                details: "inline SVG could not be parsed or rasterized".to_owned(),
+            });
+        }
         return true;
     };
 
@@ -5299,6 +5310,11 @@ fn paint_inline_svg(
             node_id: Some(NodeId::new(node_id as u64)),
             details: "inline SVG produced an empty raster size".to_owned(),
         });
+        return true;
+    }
+    // A root that is not visible draws only the descendants that are
+    // visible themselves, so most of these paint nothing at all.
+    if !visible && decoded.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0) {
         return true;
     }
     let image_data = peniko::ImageData {

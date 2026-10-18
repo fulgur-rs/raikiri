@@ -57,7 +57,9 @@ pub struct SvgRootStyle {
     /// The host controls the SVG root's `background-color`, including when it
     /// computes to transparent, so omit the source background from the raster.
     pub host_controls_root_background: bool,
-    /// Whether the host computed visibility permits painting.
+    /// Whether the host computed visibility permits painting the root. A root
+    /// that is not visible still lets a descendant that sets
+    /// `visibility: visible` itself paint when rasterized.
     pub visible: bool,
 }
 
@@ -550,6 +552,8 @@ impl SvgDocument {
     /// multiplication overflow and allocating a pixmap.
     /// When `root_style.neutralize_root_opacity` is set, the output excludes
     /// the host opacity so the caller can composite it with the SVG's box.
+    /// When `root_style.visible` is false, the root is hidden and the raster
+    /// holds only the descendants that set `visibility: visible` themselves.
     pub fn rasterize(
         &self,
         viewport: SvgViewport,
@@ -595,29 +599,14 @@ impl SvgDocument {
             }
         };
 
-        if root_style.visible && root_style.opacity > 0.0 {
-            let source =
-                self.prepare_source(viewport, root_style, SourceRootStyle::default(), false)?;
-            let raster_opacity = if root_style.neutralize_root_opacity {
-                1.0
-            } else {
-                root_style.opacity
-            };
-            let parsed_tree = (source != self.source)
-                .then(|| parse_tree(&source))
-                .transpose()?;
-            let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
-            render_tree(
-                tree,
-                width,
-                height,
-                viewport,
-                raster_opacity,
-                root_style
-                    .neutralize_root_opacity
-                    .then_some(root_style.opacity),
-                &mut pixels,
-            )?;
+        if root_style.opacity > 0.0 {
+            let drawn = self.draw(viewport, root_style, (width, height), &mut pixels);
+            // A root that is not visible keeps the blank raster it always
+            // had when its descendants cannot be drawn.
+            match drawn {
+                Err(_) if !root_style.visible => pixels = allocate_transparent_pixels(byte_len)?,
+                other => other?,
+            }
         }
 
         Ok(DecodedImage {
@@ -625,6 +614,45 @@ impl SvgDocument {
             height,
             rgba: pixels,
         })
+    }
+
+    /// Draws the SVG into `pixels`, a transparent buffer of `width` × `height`
+    /// pixels.
+    ///
+    /// A root that is not visible is hidden in the source, so only the
+    /// descendants that set `visibility: visible` themselves are drawn.
+    fn draw(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        (width, height): (u32, u32),
+        pixels: &mut Vec<u8>,
+    ) -> Result<(), SvgError> {
+        let source_style = SourceRootStyle {
+            visible: (!root_style.visible).then_some(false),
+            ..SourceRootStyle::default()
+        };
+        let source = self.prepare_source(viewport, root_style, source_style, false)?;
+        let raster_opacity = if root_style.neutralize_root_opacity {
+            1.0
+        } else {
+            root_style.opacity
+        };
+        let parsed_tree = (source != self.source)
+            .then(|| parse_tree(&source))
+            .transpose()?;
+        let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
+        render_tree(
+            tree,
+            width,
+            height,
+            viewport,
+            raster_opacity,
+            root_style
+                .neutralize_root_opacity
+                .then_some(root_style.opacity),
+            pixels,
+        )
     }
 }
 

@@ -149,6 +149,35 @@ fn an_inline_svg_that_is_not_visible_paints_nothing() {
 }
 
 #[test]
+fn an_inline_svg_that_is_not_visible_still_paints_its_visible_descendants() {
+    let visible_half = "<svg width=20 height=20><rect x=10 width=10 height=20 fill=blue /></svg>";
+    assert_ne!(differences(&raster(visible_half), &raster("")), 0);
+    for keyword in ["hidden", "collapse"] {
+        assert_paints_like(
+            &format!(
+                "<svg width=20 height=20 style='visibility:{keyword}'><rect width=10 height=20 fill=red /><rect x=10 width=10 height=20 fill=blue visibility=visible /></svg>"
+            ),
+            visible_half,
+        );
+    }
+}
+
+#[test]
+fn an_inline_svg_hidden_by_a_stylesheet_paints_only_what_sets_its_own_visibility() {
+    let hidden = "<style>svg{visibility:hidden}</style>";
+    assert_paints_like(
+        &format!("{hidden}<svg width=20 height=20><rect width=20 height=20 fill=red /></svg>"),
+        "",
+    );
+    assert_paints_like(
+        &format!(
+            "{hidden}<svg width=20 height=20><rect width=10 height=20 fill=red /><rect x=10 width=10 height=20 fill=blue visibility=visible /></svg>"
+        ),
+        "<svg width=20 height=20><rect x=10 width=10 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
 fn visible_descendants_of_a_box_that_is_not_visible_still_paint() {
     let child = "<div style='visibility:visible;width:10px;height:10px;background:blue'></div>";
     for keyword in ["hidden", "collapse"] {

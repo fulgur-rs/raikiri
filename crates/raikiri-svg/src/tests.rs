@@ -1184,6 +1184,38 @@ fn host_opacity_and_visibility_apply_to_the_completed_svg() {
 }
 
 #[test]
+fn a_root_that_is_not_visible_draws_only_its_visible_descendants() {
+    let viewport = SvgViewport {
+        width: 2.0,
+        height: 1.0,
+    };
+    let hidden = SvgRootStyle {
+        visible: false,
+        ..SvgRootStyle::default()
+    };
+    let svg = SvgDocument::parse(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="1" height="1" fill="#ff0000"/><rect x="1" width="1" height="1" fill="#0000ff" visibility="visible"/></svg>"##,
+    )
+    .unwrap();
+    assert_eq!(
+        svg.rasterize(viewport, hidden, None).unwrap().rgba,
+        [0, 0, 0, 0, 0, 0, 255, 255]
+    );
+    assert_eq!(
+        svg.rasterize(viewport, SvgRootStyle::default(), None)
+            .unwrap()
+            .rgba,
+        [255, 0, 0, 255, 0, 0, 255, 255]
+    );
+    // The host hides the root even when the source calls it visible.
+    let svg = SvgDocument::parse(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" visibility="visible"><rect width="1" height="1" fill="#ff0000"/></svg>"##,
+    )
+    .unwrap();
+    assert_eq!(svg.rasterize(viewport, hidden, None).unwrap().rgba, [0; 8]);
+}
+
+#[test]
 fn root_opacity_can_be_neutralized_for_outer_group_compositing() {
     let sources: [&[u8]; 5] = [
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.25"><rect width="1" height="1" fill="#ff0000"/></svg>"##,
