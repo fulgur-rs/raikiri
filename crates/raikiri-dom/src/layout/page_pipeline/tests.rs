@@ -17159,3 +17159,96 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
     assert!(overflow.grid_item && overflow.moves_box());
     assert!(!measure(&breaks, plain, grid_item, &margin_top).grid_item);
 }
+
+#[test]
+fn a_box_changes_the_page_type_unless_it_is_first_or_joins_a_zero_height_named_box() {
+    let body = Some("body".to_owned());
+    let cover = Some("cover".to_owned());
+    assert!(box_changes_page_name(true, &body, &cover, false));
+    // The same page type is no change.
+    assert!(!box_changes_page_name(true, &body, &body, false));
+    // Nothing of the flow was placed before the box.
+    assert!(!box_changes_page_name(false, &body, &cover, false));
+    // It joins the transition of the zero-height named box before it.
+    assert!(!box_changes_page_name(true, &body, &cover, true));
+}
+
+#[test]
+fn a_box_sets_the_page_type_when_it_stands_for_content_and_opens_a_page() {
+    let context = |set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext {
+            page_name_in_flow: true,
+            ..Default::default()
+        };
+        set(&mut context);
+        context
+    };
+    // Each kind of content box hands its page type on once it opened a page.
+    for content in [
+        context(|context| context.is_direct_body_element = true),
+        context(|context| context.is_named = true),
+        context(|context| context.is_rendered_leaf = true),
+        context(|context| context.deferred_named_break_after = true),
+    ] {
+        assert!(box_sets_page_name(&content, true, false));
+        // Or once its page type left the local flow of a flex item.
+        assert!(box_sets_page_name(&content, false, true));
+        assert!(!box_sets_page_name(&content, false, false));
+    }
+    // A box that is no content does not.
+    assert!(!box_sets_page_name(&context(|_| {}), true, true));
+    // Nor does one whose page type takes no part in the flow.
+    let parallel = candidates::BoxContext {
+        is_named: true,
+        ..Default::default()
+    };
+    assert!(!box_sets_page_name(&parallel, true, true));
+}
+
+#[test]
+fn a_named_box_joins_the_transition_of_a_zero_height_named_box_at_its_coordinate() {
+    let last = LastNamedBox {
+        raw_y: Some(10.0),
+        context: None,
+        was_zero_height: true,
+        had_display_none_descendant: false,
+    };
+    let candidate = |raw_y, named_flex_context, set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext {
+            is_named: true,
+            ..Default::default()
+        };
+        set(&mut context);
+        PageCandidate {
+            node_id: 0,
+            raw_y,
+            height: 10.0,
+            context,
+            page_name: None,
+            named_flex_context,
+            ifc_root: None,
+        }
+    };
+    let direct = |context: &mut candidates::BoxContext| context.is_direct_body_element = true;
+    assert!(last.joins_transition(&candidate(10.0, None, direct)));
+    // Elsewhere in the source, it starts its own transition.
+    assert!(!last.joins_transition(&candidate(20.0, None, direct)));
+    // Only a direct child of the body, or a box in a flex item's named flow,
+    // takes part.
+    assert!(!last.joins_transition(&candidate(10.0, None, |_| {})));
+    let flex_last = LastNamedBox {
+        context: Some(3),
+        ..last
+    };
+    assert!(flex_last.joins_transition(&candidate(10.0, Some(3), |_| {})));
+    assert!(!flex_last.joins_transition(&candidate(10.0, Some(4), |_| {})));
+    // So must the box be named.
+    let unnamed = PageCandidate {
+        context: candidates::BoxContext {
+            is_direct_body_element: true,
+            ..Default::default()
+        },
+        ..candidate(10.0, None, |_| {})
+    };
+    assert!(!last.joins_transition(&unnamed));
+}

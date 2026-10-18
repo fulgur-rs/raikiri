@@ -886,6 +886,15 @@ impl LastNamedBox {
                 .raw_y
                 .is_some_and(|previous| (raw_y - previous).abs() <= 0.001)
     }
+
+    /// Whether `candidate` is a named box of the page flow, or of a flex
+    /// item's named flow, that joins the page transition of this zero-height
+    /// named box.
+    fn joins_transition(&self, candidate: &PageCandidate) -> bool {
+        candidate.context.is_named
+            && (candidate.context.is_direct_body_element || candidate.named_flex_context.is_some())
+            && self.shares_transition(candidate.named_flex_context, candidate.raw_y)
+    }
 }
 
 /// Whether the fixed-height box `node_id`, placed at `top`, fits on the
@@ -4639,12 +4648,12 @@ fn paginate_flow(
         // break there would only leave the zero-height boxes alone on a page.
         // This matters for chains of empty named boxes with overflowing text,
         // including the first non-empty box that follows the chain.
-        let same_named_coordinate = candidate.context.is_named
-            && (candidate.context.is_direct_body_element || candidate.named_flex_context.is_some())
-            && last_named.shares_transition(candidate.named_flex_context, raw_y);
-        let named_page_change = name_context_seen
-            && candidate_page_name != comparison_page_name
-            && !same_named_coordinate;
+        let named_page_change = box_changes_page_name(
+            name_context_seen,
+            &candidate_page_name,
+            &comparison_page_name,
+            last_named.joins_transition(&candidate),
+        );
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
         // page. The forced break sits before the box's margin box, so the
@@ -4898,18 +4907,11 @@ fn paginate_flow(
         effective_y += header_delta;
         flow_shift += header_delta;
 
-        if name_participates_in_flow
-            && (candidate.context.is_direct_body_element
-                || candidate.context.is_named
-                || candidate.context.is_rendered_leaf
-                || candidate.context.deferred_named_break_after)
-            && (page_transition
-                || page_type_leaves_local_flow(
-                    keep_local_page_type,
-                    current_page,
-                    page_before_candidate,
-                ))
-        {
+        if box_sets_page_name(
+            &candidate.context,
+            page_transition,
+            page_type_leaves_local_flow(keep_local_page_type, current_page, page_before_candidate),
+        ) {
             page_names.current = candidate_page_name;
             if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
                 last_named = LastNamedBox::new(document, &candidate, node_id, raw_y, height);
@@ -7125,6 +7127,39 @@ fn text_sets_page_name(
         && !named_page_change
         && !consumes_pending_break
         && leaves_local_flow
+}
+
+/// Whether a box with page type `page_name` opens a page of another type
+/// than `comparison_page_name`, the one the flow compares it against (see
+/// [`PageNames::comparison`]). A box that comes before any content of its
+/// flow (`name_context_seen`), or that joins the page transition of a
+/// preceding zero-height named box (`joins_last_named`), does not.
+fn box_changes_page_name(
+    name_context_seen: bool,
+    page_name: &Option<String>,
+    comparison_page_name: &Option<String>,
+    joins_last_named: bool,
+) -> bool {
+    name_context_seen && page_name != comparison_page_name && !joins_last_named
+}
+
+/// Whether the box with `context` hands its page type on to the flow: it
+/// does when it takes part in page type transitions and stands for content
+/// (a direct child of the body, a named box, a rendered leaf, or a box with
+/// a named break deferred past its end), once it opened a page
+/// (`page_transition`) or its page type left the local flow of a flex item
+/// (`leaves_local_flow`).
+fn box_sets_page_name(
+    context: &candidates::BoxContext,
+    page_transition: bool,
+    leaves_local_flow: bool,
+) -> bool {
+    context.page_name_in_flow
+        && (context.is_direct_body_element
+            || context.is_named
+            || context.is_rendered_leaf
+            || context.deferred_named_break_after)
+        && (page_transition || leaves_local_flow)
 }
 
 /// Whether the text from `text_y` with `text_height` starts at or below the
