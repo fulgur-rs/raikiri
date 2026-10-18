@@ -263,6 +263,7 @@ css/css-backgrounds/background-color-body-propagation-001.html
 css/css-backgrounds/background-gradient-interpolation-001.html
 css/css-backgrounds/background-gradient-subpixel-fills-area.html
 css/css-backgrounds/background-image-centered.html
+css/css-backgrounds/background-image-centered-with-border-radius.html
 css/css-backgrounds/background-image-cover-zoomed-1.html
 css/css-backgrounds/background-image-gradient-interpolation-repaint.html
 css/css-backgrounds/background-image-large-with-auto.html
@@ -331,6 +332,7 @@ css/css-backgrounds/border-image-space-001.html
 css/css-backgrounds/border-image-width-001.htm
 css/css-backgrounds/border-image-width-008.html
 css/css-backgrounds/border-image-width-should-extend-to-padding.html
+css/css-backgrounds/border-radius-clip-002.htm
 css/css-backgrounds/border-radius-horizontal-value-is-zero.html
 # Both sides ignore elliptical radii; this PASS does not establish elliptical radius support.
 css/css-backgrounds/border-radius-shorthand-002.html

@@ -2414,6 +2414,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &border,
             &padding,
+            false,
             Some(&source),
             &mut warnings,
         );
@@ -2463,6 +2464,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &ring_border,
         &padding,
+        false,
         Some(&source),
         &mut ring_warnings,
     );
@@ -3040,6 +3042,251 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
 }
 
 #[test]
+fn background_rounded_color_and_image_are_clipped_to_the_curve_together() {
+    struct BluePixels;
+    impl raikiri_traits::ImagePixelSource for BluePixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: [0, 0, 255, 255].repeat(4),
+            }))
+        }
+    }
+    let border = resolve_border(
+        Border::new(),
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let sides = raikiri_style::property::Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    };
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let render = |color: CssColor| {
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &kurbo::Rect::new(0.0, 0.0, 20.0, 20.0),
+        );
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/blue.png".into());
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            color,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(8.0)),
+            &sides,
+            &padding,
+            false,
+            Some(&BluePixels),
+            &mut Vec::new(),
+        );
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
+            20,
+            20,
+        )
+    };
+    // The opaque blue image covers the red color, so the box looks the same
+    // with or without the color. Each clipped on its own, the antialiased
+    // edge would take the color and then the image over it, and show a red
+    // rim.
+    let image_only = render(CssColor::TRANSPARENT);
+    let with_color = render(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    assert!(
+        image_only
+            .chunks_exact(4)
+            .any(|pixel| pixel[0] > 0 && pixel[0] < 255),
+        "the curve antialiases some pixel"
+    );
+    for (index, (plain, colored)) in image_only.iter().zip(&with_color).enumerate() {
+        assert!(
+            plain.abs_diff(*colored) <= 1,
+            "byte {index}: {plain} vs {colored}"
+        );
+    }
+}
+
+fn bordered_sides(
+    width: f32,
+    style: BorderStyle,
+    color: BorderColor,
+) -> raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder> {
+    let mut authored = Border::new();
+    authored.width = Length::Px(width);
+    authored.style = style;
+    authored.color = color;
+    let border = resolve_border(
+        authored,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    raikiri_style::property::Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    }
+}
+
+#[test]
+fn border_hides_background_edge_needs_an_opaque_continuous_border_on_every_side() {
+    let green = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 255,
+    });
+    let translucent = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 128,
+    });
+    let hides = |sides: &_| border_hides_background_edge(sides, CssColor::BLACK);
+    for style in [
+        BorderStyle::Solid,
+        BorderStyle::Groove,
+        BorderStyle::Ridge,
+        BorderStyle::Inset,
+        BorderStyle::Outset,
+    ] {
+        assert!(hides(&bordered_sides(4.0, style, green)), "{style:?}");
+    }
+    assert!(hides(&bordered_sides(
+        4.0,
+        BorderStyle::Solid,
+        BorderColor::CurrentColor
+    )));
+    assert!(
+        !border_hides_background_edge(
+            &bordered_sides(4.0, BorderStyle::Solid, BorderColor::CurrentColor),
+            CssColor {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 128,
+            },
+        ),
+        "currentcolor takes the translucent text color"
+    );
+    assert!(!hides(&bordered_sides(
+        4.0,
+        BorderStyle::Solid,
+        translucent
+    )));
+    assert!(!hides(&bordered_sides(0.0, BorderStyle::Solid, green)));
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::None, green)));
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::Dotted, green)));
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::Dashed, green)));
+    // A double border has a gap between its lines until it is wide enough.
+    assert!(!hides(&bordered_sides(4.0, BorderStyle::Double, green)));
+    assert!(hides(&bordered_sides(6.0, BorderStyle::Double, green)));
+    let mut one_side_open = bordered_sides(4.0, BorderStyle::Solid, green);
+    one_side_open.left = bordered_sides(4.0, BorderStyle::Dashed, green).left;
+    assert!(!hides(&one_side_open));
+}
+
+#[test]
+fn background_is_pulled_in_from_a_rounded_edge_only_when_the_border_hides_it() {
+    let green = BorderColor::Resolved(CssColor {
+        r: 0,
+        g: 128,
+        b: 0,
+        a: 255,
+    });
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    // The red channel of the pixel at `(x, y)` of a 20x20 box painted over white.
+    let red_at = |sides: &_, radius: f32, border_hides_edge: bool, (x, y): (usize, usize)| {
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &kurbo::Rect::new(0.0, 0.0, 20.0, 20.0),
+        );
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            red,
+            &[raikiri_style::ComputedBackgroundLayer::initial()],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(radius)),
+            sides,
+            &padding,
+            border_hides_edge,
+            None,
+            &mut Vec::new(),
+        );
+        let buffer = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
+            20,
+            20,
+        );
+        // Blue drops from 255 to 0 as the red covers the white.
+        255 - buffer[(y * 20 + x) * 4 + 2]
+    };
+    let solid = bordered_sides(4.0, BorderStyle::Solid, green);
+    let double = bordered_sides(6.0, BorderStyle::Double, green);
+    // Along the straight top edge, the border covers the first four rows.
+    // Left alone, the background reaches the very edge.
+    assert_eq!(red_at(&solid, 8.0, false, (10, 0)), 255);
+    // Pulled in by half the border width, rows 0 and 1 stay clear and row 2
+    // is painted.
+    assert_eq!(red_at(&solid, 8.0, true, (10, 0)), 0);
+    assert_eq!(red_at(&solid, 8.0, true, (10, 1)), 0);
+    assert_eq!(red_at(&solid, 8.0, true, (10, 2)), 255);
+    // A double border pulls in by a sixth of its width: one row.
+    assert_eq!(red_at(&double, 8.0, true, (10, 0)), 0);
+    assert_eq!(red_at(&double, 8.0, true, (10, 1)), 255);
+    // Square corners have no antialiased fringe to avoid.
+    assert_eq!(red_at(&solid, 0.0, true, (10, 0)), 255);
+}
+
+#[test]
 fn background_element_origins_clips_and_rounded_images() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
@@ -3128,6 +3375,7 @@ fn background_element_origins_clips_and_rounded_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &zero_sides,
             &content_padding,
+            false,
             Some(&source),
             &mut warnings,
         );
@@ -3163,6 +3411,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
+        false,
         Some(&source),
         &mut warn_warnings,
     );
@@ -3196,6 +3445,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
+        false,
         Some(&source),
         &mut fallback_warnings,
     );
@@ -3230,6 +3480,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(8.0)),
         &zero_sides,
         &padding,
+        false,
         Some(&source),
         &mut rounded_warnings,
     );
@@ -4481,7 +4732,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
 }
 
 #[test]
-fn conic_paint_covers_empty_square_and_rounded_boxes() {
+fn conic_paint_covers_empty_and_square_boxes() {
     let mut document = Document::new();
     let square_id = document.append_element(
         Some(document.root_index()),
@@ -4489,16 +4740,9 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         taffy::Style::default(),
         Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
-    let round_id = document.append_element(
-        Some(document.root_index()),
-        "div",
-        taffy::Style::default(),
-        Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%); border-radius: 10px"),
-    );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let square = conic_of(&cascade.computed[square_id].background_layers()[0].image);
-    let round = conic_of(&cascade.computed[round_id].background_layers()[0].image);
     let current = CssColor {
         r: 0,
         g: 0,
@@ -4508,18 +4752,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
     let mut scene = Scene::new();
     let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
     let painting = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
-    let square_radius = cascade.computed[square_id].border_radius;
-    let round_radius = cascade.computed[round_id].border_radius;
-    paint_conic_gradient(
-        &mut scene,
-        &square,
-        positioning,
-        painting,
-        &square_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
-        current,
-    );
+    paint_conic_gradient(&mut scene, &square, positioning, painting, current);
     assert!(!scene.commands.is_empty());
     let before = scene.commands.len();
     paint_conic_gradient(
@@ -4527,23 +4760,9 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         &square,
         kurbo::Rect::new(0.0, 0.0, 0.0, 0.0),
         painting,
-        &square_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
         current,
     );
     assert_eq!(scene.commands.len(), before);
-    paint_conic_gradient(
-        &mut scene,
-        &round,
-        positioning,
-        painting,
-        &round_radius,
-        (0.0, 0.0, 0.0, 0.0),
-        (200.0, 200.0),
-        current,
-    );
-    assert!(scene.commands.len() > before);
 }
 
 #[test]
@@ -4623,6 +4842,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
+        false,
         None,
         &mut warnings,
     );
@@ -4647,6 +4867,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
+        false,
         None,
         &mut transparent_warnings,
     );
