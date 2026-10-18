@@ -917,21 +917,19 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     }
                 }
             }
-            NodeKind::Document => {
-                // The walk starts at the document element.
-                // A Document node may have children (unattached `<html>`), but
-                // they are not handled yet. Skip the subtree defensively.
-            }
-            _ => {
-                // NodeKind is #[non_exhaustive]: `Comment` / `ProcessingInstruction` /
-                // `DocumentFragment` arrives here (not paintable). In practice,
-                // mark_in_document_flags clears IS_IN_DOCUMENT for Comment/PI,
-                // so the earlier is_in_document() gate should filter those
-                // before this walker reaches them. Keep this kind gate as a
-                // second defense: if both gates fail, skip the whole subtree.
-                // Apply the same behavior to future CDATA / DocumentType kinds.
-                // Retain the defensive fallback for unknown node kinds.
-            }
+            // The walk starts at the document element. A Document node may
+            // have children (unattached `<html>`), but they are not handled
+            // yet. Skip the subtree defensively.
+            //
+            // NodeKind is #[non_exhaustive]: `Comment` / `ProcessingInstruction` /
+            // `DocumentFragment` arrives here (not paintable). In practice,
+            // mark_in_document_flags clears IS_IN_DOCUMENT for Comment/PI,
+            // so the earlier is_in_document() gate should filter those
+            // before this walker reaches them. Keep this kind gate as a
+            // second defense: if both gates fail, skip the whole subtree.
+            // Apply the same behavior to future CDATA / DocumentType kinds.
+            // Retain the defensive fallback for unknown node kinds.
+            _ => {}
         }
     }
 }
