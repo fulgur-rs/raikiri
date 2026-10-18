@@ -148,9 +148,10 @@ fn folded_math_dummy_keeps_the_folded_type_and_falls_back_to_a_length() {
     // with a value of that type, so an angle is no longer taken for a length.
     assert_eq!(folded_math_dummy("calc(10deg + 20deg)"), "1deg");
     assert_eq!(folded_math_dummy("calc(10% + 20%)"), "1%");
-    // A folded plain number, an unfoldable mixed-unit sum, and a source that
-    // folds to more than one token keep the length probe.
-    assert_eq!(folded_math_dummy("calc(1 + 2)"), "1px");
+    // A folded plain number is probed with a number, so `calc(0)` is no length.
+    assert_eq!(folded_math_dummy("calc(1 + 2)"), "1");
+    // An unfoldable mixed-unit sum and a source that folds to more than one
+    // token keep the length probe.
     assert_eq!(folded_math_dummy("calc(2em + 3ex)"), "1px");
     assert_eq!(folded_math_dummy("calc(1px) calc(2px)"), "1px");
     assert!(!deferred_dummy_is_valid_for_property("calc(20deg)", "left"));
@@ -175,10 +176,21 @@ fn math_dummy_types_each_function_of_a_value_list_by_its_own_result() {
             "{source}"
         );
     }
+    // A number-typed `calc()` is no length even when its folded value is a
+    // bare zero.
+    for source in ["calc(0) calc(1px)", "calc(1px) calc(0)"] {
+        for property in ["inset", "margin", "padding"] {
+            assert!(
+                parse_entire(source, property).is_none(),
+                "{property}: {source}"
+            );
+        }
+    }
     for source in [
         "calc(10px) 1px",
         "calc(10%) calc(2em)",
         "1px calc(5px + 10%)",
+        "calc(0px) calc(1px)",
     ] {
         assert!(
             deferred_dummy_is_valid_for_property(source, "inset"),

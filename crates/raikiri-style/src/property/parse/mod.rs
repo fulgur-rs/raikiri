@@ -304,8 +304,11 @@ fn parse_value_with_black_currentcolor(
             {
                 let mut reparsed_input = ParserInput::new(simplified.as_ref());
                 let mut reparsed = Parser::new(&mut reparsed_input);
+                // Folding drops each function's result type (`calc(0)` leaves a bare `0` that
+                // reads as a length), so the original must also pass the typed structural check.
                 if let Some(parsed) = parse_value(name, &mut reparsed)
                     && reparsed.expect_exhausted().is_ok()
+                    && deferred_dummy_is_valid_for_property(value.as_ref(), name)
                 {
                     return Some(parsed);
                 }

@@ -12952,10 +12952,11 @@ impl MathDummy {
 }
 
 /// The stand-in that replaces one math function `function` of a dimensioned value when its
-/// structure is checked: `1px`, unless the function folds to one dimension or percentage, whose
-/// unit the stand-in then keeps. `calc(20deg)` is an angle, so `top: calc(20deg)` is invalid
-/// whichever length terms an unfolded sum could have held. A function that does not fold to a
-/// single token, such as `calc(2em + 3ex)`, keeps `1px`.
+/// structure is checked: `1px`, unless the function folds to one dimension, percentage or number,
+/// whose type the stand-in then keeps. `calc(20deg)` is an angle and `calc(0)` a number, so
+/// `top: calc(20deg)` and `top: calc(0)` are invalid whichever length terms an unfolded sum could
+/// have held. A function that does not fold to a single token, such as `calc(2em + 3ex)`, keeps
+/// `1px`.
 pub(crate) fn folded_math_dummy(function: &str) -> String {
     const LENGTH: &str = "1px";
     let Some(folded) = crate::cascade::simplify_math_functions(function) else {
@@ -12968,6 +12969,7 @@ pub(crate) fn folded_math_dummy(function: &str) -> String {
     match token {
         Some(Token::Dimension { unit, .. }) if single => format!("1{unit}"),
         Some(Token::Percentage { .. }) if single => "1%".into(),
+        Some(Token::Number { .. }) if single => "1".into(),
         _ => LENGTH.into(),
     }
 }

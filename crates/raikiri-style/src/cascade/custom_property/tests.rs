@@ -26,6 +26,14 @@ fn inset_with_an_angle_calc_among_several_values_is_dropped_at_parse_time() {
         Some("position: relative; top: 5px; inset: calc(20deg) 1px"),
     );
     assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(5.0));
+
+    // A number-typed `calc(0)` is no length either, though it folds to a bare `0`.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("position: relative; top: 5px; inset: calc(0) calc(1px)"),
+    );
+    assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(5.0));
 }
 
 #[test]
