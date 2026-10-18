@@ -1327,7 +1327,7 @@ fn measure_ifc_root(
             .boxes
             .iter()
             .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
-        && (probe.boxes.is_empty() || tree.context.fragmentation_stack.len() <= 1);
+        && (probe.boxes.is_empty() || tree.context.fragmentation_stack.is_empty());
     let fragmentation = if vertical {
         None
     } else if nested_fragmentation.is_some() {

@@ -1325,3 +1325,18 @@ fn an_atomic_inline_moves_with_the_text_on_its_line() {
         [(20.0, 0.0), (20.0, 20.0), (80.0, 0.0), (80.0, 20.0)]
     );
 }
+
+#[test]
+fn atomic_inlines_in_a_nested_container_are_laid_out_once() {
+    // The inner container is not split by the paragraph code, so each atomic
+    // inline is painted once, not once more in the next column of the outer
+    // container.
+    let document = lay_out(
+        "<div style='width:200px;height:100px;column-count:2;column-gap:10px;column-fill:auto'>\
+         <div style='column-count:2;column-gap:10px'>\
+         <i></i><br><i></i><br><i></i><br><i></i>\
+         </div></div>",
+        "i{display:inline-block;vertical-align:top;width:20px;height:20px;background:green}",
+    );
+    assert_eq!(element_origins(&document, 0, "i").len(), 4);
+}
