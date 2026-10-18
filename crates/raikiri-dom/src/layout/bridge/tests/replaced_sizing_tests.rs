@@ -48,6 +48,19 @@ fn a_block_level_image_keeps_its_natural_width() {
 }
 
 #[test]
+fn a_decoded_image_keeps_its_own_natural_size_whatever_its_file_name() {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+        doc.set_element_attribute(image, "src", "green.png")
+            .unwrap();
+    });
+    // The 100×50 size that stands in for an image nobody decoded is not
+    // authored on this one.
+    assert_eq!(size(&doc, image), (25.0, 50.0));
+}
+
+#[test]
 fn replaced_content_without_a_natural_size_still_fills_the_width() {
     let mut boxes = Vec::new();
     let doc = laid_out(|doc, body| {
