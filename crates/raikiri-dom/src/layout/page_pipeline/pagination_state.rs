@@ -472,7 +472,6 @@ impl PaginationState {
         let CandidateEntry {
             keep_local_page_type,
             page_before_candidate,
-            participates_in_margin_adjacency,
             ..
         } = *entry;
         let node_id = candidate.node_id;
@@ -523,27 +522,14 @@ impl PaginationState {
             mut effective_y,
             starts_after_forced_break,
         } = position;
-        // Parallel flows do not interrupt adjoining normal-flow siblings.
-        if participates_in_margin_adjacency
-            && let Some(parent_id) =
-                BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
-        {
-            if !starts_after_forced_break {
-                self.sibling_margins.pass_on_forced_break(
-                    document,
-                    cascade,
-                    parent_id,
-                    node_id,
-                    page_break.collapses_with_previous_block && page_break.margins_collapse_through,
-                );
-            }
-            self.sibling_margins.record_bottom(
-                parent_id,
-                node_id,
-                page_break.collapses_with_previous_block,
-                raw_y + height,
-            );
-        }
+        self.record_box_among_siblings(
+            document,
+            env,
+            candidate,
+            entry,
+            &page_break,
+            starts_after_forced_break,
+        );
 
         let header_delta = make_room_for_table_header(
             document,
@@ -641,6 +627,43 @@ impl PaginationState {
         self.reach.include(placement.page, false);
         self.saw_child = true;
         Ok(())
+    }
+
+    /// Records the box `candidate` among the siblings whose margins adjoin
+    /// its own: passes a forced break on to the margin after the box unless
+    /// the box starts after one, and remembers where the box ends for the
+    /// sibling that follows it.
+    pub(super) fn record_box_among_siblings(
+        &mut self,
+        document: &LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        page_break: &BoxBreak,
+        starts_after_forced_break: bool,
+    ) {
+        let node_id = candidate.node_id;
+        // Parallel flows do not interrupt adjoining normal-flow siblings.
+        if entry.participates_in_margin_adjacency
+            && let Some(parent_id) =
+                BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
+        {
+            if !starts_after_forced_break {
+                self.sibling_margins.pass_on_forced_break(
+                    document,
+                    env.cascade,
+                    parent_id,
+                    node_id,
+                    page_break.collapses_with_previous_block && page_break.margins_collapse_through,
+                );
+            }
+            self.sibling_margins.record_bottom(
+                parent_id,
+                node_id,
+                page_break.collapses_with_previous_block,
+                candidate.raw_y + candidate.height,
+            );
+        }
     }
 
     /// Begins the placement of the box `candidate`: places the first header of

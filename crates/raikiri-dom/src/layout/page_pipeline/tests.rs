@@ -18713,6 +18713,30 @@ fn a_page_type_change_leaves_a_box_at_a_non_finite_position_where_it_is() {
     assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
 }
 
+/// The break of a box that meets none: it neither moves nor names a page type,
+/// and no margin adjoins it.
+fn box_meeting_no_break() -> pagination_state::BoxBreak {
+    pagination_state::BoxBreak {
+        margin_top: 0.0,
+        relative_offset: 0.0,
+        overflow: BoxOverflow {
+            page: false,
+            avoided_run: false,
+            table_row: false,
+            table_row_lead: 0.0,
+            row_group_lead: None,
+            flex_item: false,
+            grid_item: false,
+        },
+        forced_before: false,
+        forced_transition: false,
+        named_page_change: false,
+        margins_collapse_through: false,
+        collapses_with_previous_block: false,
+        pending_break_applies: false,
+    }
+}
+
 #[test]
 fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
     let (mut doc, cascade, root) =
@@ -18819,31 +18843,113 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
 }
 
 #[test]
+fn a_box_is_recorded_among_the_siblings_whose_margins_adjoin_its_own() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = PageCandidate {
+        node_id: root,
+        raw_y: 20.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = |participates_in_margin_adjacency| pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency,
+        uses_positioned_coordinates: false,
+    };
+    let page_break = |collapses_with_previous_block| pagination_state::BoxBreak {
+        collapses_with_previous_block,
+        ..box_meeting_no_break()
+    };
+    let node_count = doc.nodes.len();
+    let record = |doc: &mut Document,
+                  state: &mut PaginationState,
+                  participates,
+                  collapses,
+                  starts_after_forced_break| {
+        let session = crate::layout::context::LayoutSession::new(doc);
+        state.record_box_among_siblings(
+            &session,
+            &env,
+            &candidate,
+            &entry(participates),
+            &page_break(collapses),
+            starts_after_forced_break,
+        );
+    };
+
+    // A box that takes part in the margin adjacency leaves its bottom for
+    // the sibling after it, and ends the forced break before it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.sibling_margins.forced_break_box = Some(99);
+    record(&mut doc, &mut state, true, true, false);
+    assert_eq!(
+        state.sibling_margins.previous_bottoms.get(&body),
+        Some(&(root, 30.0))
+    );
+    assert_eq!(state.sibling_margins.forced_break_box, None);
+
+    // One whose margins do not collapse with the block before it forgets the
+    // bottom of its parent's last child.
+    record(&mut doc, &mut state, true, false, false);
+    assert!(state.sibling_margins.previous_bottoms.is_empty());
+
+    // One that starts after a forced break leaves the break to the margin
+    // after it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.sibling_margins.forced_break_box = Some(99);
+    record(&mut doc, &mut state, true, true, true);
+    assert_eq!(state.sibling_margins.forced_break_box, Some(99));
+    assert_eq!(
+        state.sibling_margins.previous_bottoms.get(&body),
+        Some(&(root, 30.0))
+    );
+
+    // One in a parallel flow leaves its siblings alone.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.sibling_margins.forced_break_box = Some(99);
+    record(&mut doc, &mut state, false, true, false);
+    assert!(state.sibling_margins.previous_bottoms.is_empty());
+    assert_eq!(state.sibling_margins.forced_break_box, Some(99));
+}
+
+#[test]
 fn a_box_that_avoids_a_break_inside_it_is_a_page_transition() {
-    let overflow = |page, flex_item| BoxOverflow {
-        page,
-        avoided_run: false,
-        table_row: false,
-        table_row_lead: 0.0,
-        row_group_lead: None,
-        flex_item,
-        grid_item: false,
+    let page_break = |forced_transition, page, flex_item| {
+        let mut page_break = box_meeting_no_break();
+        page_break.forced_transition = forced_transition;
+        page_break.overflow.page = page;
+        page_break.overflow.flex_item = flex_item;
+        page_break
     };
-    let page_break = |forced_transition, overflow| pagination_state::BoxBreak {
-        margin_top: 0.0,
-        relative_offset: 0.0,
-        overflow,
-        forced_before: false,
-        forced_transition,
-        named_page_change: false,
-        margins_collapse_through: false,
-        collapses_with_previous_block: false,
-        pending_break_applies: false,
-    };
-    assert!(!page_break(false, overflow(false, false)).is_page_transition());
-    assert!(page_break(true, overflow(false, false)).is_page_transition());
-    assert!(page_break(false, overflow(true, false)).is_page_transition());
-    assert!(page_break(false, overflow(false, true)).is_page_transition());
+    assert!(!page_break(false, false, false).is_page_transition());
+    assert!(page_break(true, false, false).is_page_transition());
+    assert!(page_break(false, true, false).is_page_transition());
+    assert!(page_break(false, false, true).is_page_transition());
 }
 
 #[test]
