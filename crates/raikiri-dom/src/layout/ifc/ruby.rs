@@ -34,6 +34,7 @@ use shodo::font::FontCollection;
 use shodo::limits::Limits;
 use shodo::node::{NodeId, OutOfFlowKind, TextSource};
 use shodo::{ParagraphBuilder, RubyContent};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// A ruby base or annotation: an element of its own, or an anonymous box
@@ -526,6 +527,30 @@ fn flattened_children(doc: &Document, cascade: &CascadeResult, container: usize)
     children
 }
 
+/// `nodes` with every `display: contents` element replaced by its children.
+fn flatten_contents<'a>(
+    doc: &Document,
+    cascade: &CascadeResult,
+    nodes: &'a [usize],
+) -> Cow<'a, [usize]> {
+    if !nodes
+        .iter()
+        .any(|&id| is_contents_wrapper(doc, cascade, id))
+    {
+        return Cow::Borrowed(nodes);
+    }
+    let mut flat = Vec::with_capacity(nodes.len());
+    let mut stack: Vec<usize> = nodes.iter().rev().copied().collect();
+    while let Some(id) = stack.pop() {
+        if is_contents_wrapper(doc, cascade, id) {
+            stack.extend(doc.nodes[id].children.iter().rev());
+        } else {
+            flat.push(id);
+        }
+    }
+    Cow::Owned(flat)
+}
+
 /// Whether `id` is an element with `display: contents` that its children
 /// replace in a ruby container (CSS Display 3 §2.5), whatever they are.
 fn is_contents_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
@@ -695,6 +720,9 @@ impl Content<'_, '_> {
         ends: (Option<usize>, Option<usize>),
         letter: Letter,
     ) -> Result<(), IfcError> {
+        // An element with `display: contents` generates no box, so its
+        // children are siblings of the nodes around it (CSS Display 3 §2.5).
+        let nodes = flatten_contents(self.doc, self.cascade, nodes);
         let mut next = 0;
         while let Some(&id) = nodes.get(next) {
             next += 1;
@@ -724,12 +752,8 @@ impl Content<'_, '_> {
                 continue;
             }
             if node.display() == DisplayValue::RubyText {
-                let run = self.annotation_run(nodes, &mut next, id);
+                let run = self.annotation_run(&nodes, &mut next, id);
                 self.anonymous_ruby(builder, &run, letter)?;
-                continue;
-            }
-            if node.display() == DisplayValue::Contents {
-                self.push_nodes(builder, &node.children, ends, letter)?;
                 continue;
             }
             let (edges, edge_percents) = style::inline_edges(cv, id, self.fonts)?;

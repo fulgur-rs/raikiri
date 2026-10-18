@@ -900,6 +900,32 @@ fn nodes_that_render_nothing_do_not_end_a_run_of_improper_annotations() {
 }
 
 #[test]
+fn display_contents_does_not_end_a_run_of_improper_annotations() {
+    // Two annotations in an inline box, each after preserved white space, and
+    // each optionally in a `display: contents` box, which generates no box of
+    // its own.
+    let positions = |wrap: [bool; 2]| {
+        glyph_positions(|doc, ruby| {
+            let span = element(doc, ruby, "span", "display:inline;white-space:pre");
+            doc.append_text(span, "B");
+            for (wrapped, text) in wrap.into_iter().zip(["A", "C"]) {
+                let parent = if wrapped {
+                    element(doc, span, "span", "display:contents")
+                } else {
+                    span
+                };
+                doc.append_text(parent, " ");
+                rt(doc, parent, text);
+            }
+        })
+    };
+    let plain = positions([false, false]);
+    for wrap in [[true, false], [false, true], [true, true]] {
+        assert_eq!(positions(wrap), plain, "{wrap:?}");
+    }
+}
+
+#[test]
 fn text_between_improper_annotations_ends_their_run() {
     let positions = glyph_positions(|doc, ruby| {
         let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
