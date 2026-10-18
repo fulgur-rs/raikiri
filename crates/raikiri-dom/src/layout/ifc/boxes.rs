@@ -6,7 +6,7 @@ use super::generated_blocks;
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
-use crate::layout::context::LayoutSession;
+use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
 use crate::taffy_impl::resolve_calc;
 use shodo::geometry::{Direction, WritingMode};
@@ -164,18 +164,22 @@ pub(crate) fn layout_with_boxes_in(
     // One inner function takes the context from both arms: the caller's
     // context and a local one cannot share a lifetime, because the pointee of
     // `&mut BlockContext<'_>` is invariant.
+    let outer_group = tree.context.text_group;
+    let own_group = root.options.text_group_align != TextGroupAlign::None;
     match block_ctx {
         Some(ctx) => {
-            root.options.group_padding = group_padding(
-                tree,
-                &root,
-                geometry,
-                ctx,
-                false,
-                top_margin_escapes,
-                bottom_margin_escapes,
-            );
-            run_boxes(
+            join_group(tree, &mut root);
+            if own_group {
+                root.options.group_padding = own_group_padding(
+                    tree,
+                    &root,
+                    geometry,
+                    ctx,
+                    (false, top_margin_escapes, bottom_margin_escapes),
+                    outer_group,
+                );
+            }
+            let lines = run_boxes(
                 tree,
                 idx,
                 &root,
@@ -185,18 +189,96 @@ pub(crate) fn layout_with_boxes_in(
                 false,
                 top_margin_escapes,
                 bottom_margin_escapes,
-            )
+            );
+            leave_group(tree, own_group, &lines, outer_group);
+            lines
         }
         None => {
             let mut bfc = BlockFormattingContext::new();
             let mut ctx = bfc.root_block_context();
             ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
-            root.options.group_padding =
-                group_padding(tree, &root, geometry, &mut ctx, true, false, false);
-            run_boxes(
+            join_group(tree, &mut root);
+            if own_group {
+                root.options.group_padding = own_group_padding(
+                    tree,
+                    &root,
+                    geometry,
+                    &mut ctx,
+                    (true, false, false),
+                    outer_group,
+                );
+            }
+            let lines = run_boxes(
                 tree, idx, &root, geometry, &mut ctx, perform, true, false, false,
-            )
+            );
+            leave_group(tree, own_group, &lines, outer_group);
+            lines
         }
+    }
+}
+
+/// Take the group the root's lines belong to, when it declares none of its
+/// own: a group rooted above reaches its lines through the block context.
+fn join_group(tree: &LayoutSession<'_>, root: &mut IfcRoot) {
+    if let (TextGroupAlign::None, TextGroupScope::Applying { align, padding }) =
+        (root.options.text_group_align, tree.context.text_group)
+    {
+        root.options.text_group_align = align;
+        root.options.group_padding = padding;
+    }
+}
+
+/// Report the root's lines to the group measuring them, and restore the
+/// scope the root's own group replaced.
+fn leave_group(
+    tree: &mut LayoutSession<'_>,
+    own_group: bool,
+    lines: &IfcLines,
+    outer: TextGroupScope,
+) {
+    if own_group {
+        // A root with its own group measures and pads itself.
+        tree.context.text_group = outer;
+    } else if matches!(tree.context.text_group, TextGroupScope::Probing) {
+        tree.context.text_group_shortest =
+            shortest_remaining(lines, tree.context.text_group_shortest);
+    }
+}
+
+/// The least space a non-empty line of `lines` leaves unfilled, or `other`
+/// when that is less.
+fn shortest_remaining(lines: &IfcLines, other: Option<f32>) -> Option<f32> {
+    let remaining = lines.lines.iter().filter(|line| !line.is_empty());
+    remaining
+        .map(shodo::Line::remaining_inline_size)
+        .chain(other)
+        .reduce(f32::min)
+}
+
+/// [`group_padding`] for a root that declares a group, unless it sits in a
+/// group being measured or skipped: its lines are not part of that group, so
+/// it is laid out once, unpadded, and its descendants do not join anything.
+fn own_group_padding(
+    tree: &mut LayoutSession<'_>,
+    root: &IfcRoot,
+    geometry: FlowGeometry,
+    ctx: &mut BlockContext<'_>,
+    (local, top_margin_escapes, bottom_margin_escapes): (bool, bool, bool),
+    outer: TextGroupScope,
+) -> f32 {
+    if matches!(outer, TextGroupScope::Probing | TextGroupScope::Skipping) {
+        tree.context.text_group = TextGroupScope::Skipping;
+        0.0
+    } else {
+        group_padding(
+            tree,
+            root,
+            geometry,
+            ctx,
+            local,
+            top_margin_escapes,
+            bottom_margin_escapes,
+        )
     }
 }
 
@@ -206,9 +288,10 @@ pub(crate) fn layout_with_boxes_in(
 /// the float context; group padding only takes space a line leaves, so the
 /// lines break the same with it.
 ///
-/// Only the root's own lines take part. Lines inside block children with
-/// their own inline formatting context are aligned on their own, and a root
-/// split across fragmentainers is not group-aligned.
+/// The lines of descendant blocks in the same block formatting context take
+/// part too, through the group scope of the layout context; a root split
+/// across fragmentainers is not group-aligned. The scope is left applying
+/// the padding for the real layout of the root's block children.
 fn group_padding(
     tree: &mut LayoutSession<'_>,
     root: &IfcRoot,
@@ -221,6 +304,9 @@ fn group_padding(
     if root.options.text_group_align == TextGroupAlign::None {
         return 0.0;
     }
+    let align = root.options.text_group_align;
+    tree.context.text_group = TextGroupScope::Probing;
+    tree.context.text_group_shortest = None;
     let saved = ctx.snapshot();
     let probe = run_boxes_segment(
         tree,
@@ -239,14 +325,12 @@ fn group_padding(
         LineStart::PARAGRAPH,
     );
     ctx.restore(&saved);
-    probe
-        .lines
-        .lines
-        .iter()
-        .filter(|line| !line.is_empty())
-        .map(shodo::Line::remaining_inline_size)
-        .reduce(f32::min)
-        .unwrap_or(0.0)
+    // The block children laid out by the probe reported their lines to the
+    // scope; the root's own lines join them.
+    let reported = tree.context.text_group_shortest.take();
+    let padding = shortest_remaining(&probe.lines, reported).unwrap_or(0.0);
+    tree.context.text_group = TextGroupScope::Applying { align, padding };
+    padding
 }
 
 /// Lay an IFC root across horizontal fragmentainers with a fresh float context per column.
@@ -1726,6 +1810,9 @@ fn layout_vertical_block_child(
     };
     let node_id = taffy::NodeId::from(node);
     let output = if in_the_roots_formatting_context(tree, node) {
+        // A group reaching the child is laid out through it, not answered
+        // from the size cache.
+        tree.context.keep_text_group = !matches!(tree.context.text_group, TextGroupScope::None);
         tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
     } else {
         tree.compute_child_layout(node_id, inputs)
