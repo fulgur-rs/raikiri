@@ -851,7 +851,8 @@ fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
 /// Whether a right-to-left parent aligns `child` to its right edge, which
 /// happens to a block narrower than the parent's content box. The streams of
 /// pieces that cut a block at the column edges place it from the left, so
-/// they leave such a block to the placement of each child.
+/// they leave such a block to the single chain or to the placement of each
+/// child.
 fn is_right_aligned_in_parent(tree: &Document, child: usize) -> bool {
     let rtl_parent = tree.taffy_parent_of(child).is_some_and(|parent| {
         tree.layout_node_with_style(parent).unwrap().style.direction == TaffyDirection::Rtl

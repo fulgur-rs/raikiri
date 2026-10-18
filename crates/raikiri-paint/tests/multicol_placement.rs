@@ -724,6 +724,67 @@ fn a_relative_box_below_a_wrapper_with_a_width_is_shifted_once() {
 }
 
 #[test]
+fn a_wrapper_with_a_width_splits_its_paragraph_in_a_right_to_left_container() {
+    // The wrapper keeps the right edge of its column, which is the right
+    // edge of the container for the first column and the left of it for the
+    // second. `first` and `second` give the control's `left` in each column.
+    for (style, width, first, second) in [
+        ("width:30px", 30, 70, 10),
+        ("width:30px;margin-right:5px", 30, 65, 5),
+        ("width:30px;margin-right:10%", 30, 66, 6),
+        ("width:30px;margin-left:auto", 30, 70, 10),
+        ("width:30px;margin-left:auto;margin-right:auto", 30, 65, 5),
+        ("width:30px;margin-right:auto", 30, 60, 0),
+        ("width:30px;position:relative;left:5px", 30, 75, 15),
+        // A box wider than its column overflows to the left, whichever
+        // margin is auto.
+        ("width:50px", 50, 50, -10),
+        ("width:50px;margin-left:auto", 50, 50, -10),
+        ("width:50px;margin-right:auto", 50, 50, -10),
+    ] {
+        compare(
+            &format!("<div class=mc><div style='{style}'><p>A<br>B<br>C<br>D</p></div></div>"),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;direction:rtl;left:{first}px;top:0;width:{width}px'><p>A<br>B</p></div><div style='position:absolute;direction:rtl;left:{second}px;top:0;width:{width}px'><p>C<br>D</p></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_wrapper_with_a_width_fills_three_right_to_left_columns_from_the_right() {
+    // 160px wide with 20px gaps leaves 40px columns at 120, 60 and 0.
+    compare(
+        "<div class=mc><div style='width:30px'><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div>",
+        ".mc{width:160px;column-count:3;height:40px;column-fill:auto;direction:rtl}",
+        "<div style='position:absolute;direction:rtl;left:130px;top:0;width:30px'><p>A<br>B</p></div><div style='position:absolute;direction:rtl;left:70px;top:0;width:30px'><p>C<br>D</p></div><div style='position:absolute;direction:rtl;left:10px;top:0;width:30px'><p>E<br>F</p></div>",
+    );
+}
+
+#[test]
+fn a_narrow_box_below_a_wrapper_with_a_width_keeps_the_right_edge_in_a_right_to_left_container() {
+    // The inner box fills the wrapper between its margins, so its text stays
+    // at the right edge of the room they leave.
+    for (inner, left, width) in [
+        ("width:30px", 70, 30),
+        ("margin-left:5px", 65, 35),
+        ("margin-right:5px", 60, 35),
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><div style='width:40px'><div style='{inner}'><p>A<br>B<br>C<br>D</p></div></div></div>"
+            ),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;direction:rtl;left:{left}px;top:0;width:{width}px'><p>A<br>B</p></div><div style='position:absolute;direction:rtl;left:{second}px;top:0;width:{width}px'><p>C<br>D</p></div>",
+                second = left - 60
+            ),
+        );
+    }
+}
+
+#[test]
 fn a_relative_column_container_is_painted_shifted_once() {
     compare(
         "<div class=mc style='position:relative;left:5px;top:3px;background:lime'><p>A<br>B<br>C<br>D</p></div>",
