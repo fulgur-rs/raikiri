@@ -1196,6 +1196,14 @@ const WRAPPED_CASES: &[(&[&str], &str)] = &[
         ],
         ".mc{height:50px;column-fill:auto}",
     ),
+    // Table rows outside a table stay blocks of the container, in a wrapper or not.
+    (
+        &[
+            "<div style='display:table-row'><div style='display:table-cell'>A</div></div>",
+            "<div style='display:table-row'><div style='display:table-cell'>B</div></div>",
+        ],
+        ".mc{height:40px;column-fill:auto}",
+    ),
 ];
 
 #[test]
