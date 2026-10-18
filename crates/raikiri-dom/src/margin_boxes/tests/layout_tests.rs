@@ -81,6 +81,65 @@ fn auto_side_boxes_share_a_column_by_the_height_of_their_lines() {
 }
 
 #[test]
+fn auto_side_boxes_share_a_column_by_the_lines_their_text_wraps_into() {
+    // The column is 40px wide, so each 20px word of the upper box is a line
+    // of its own: 30px against the 10px of the lower box, shared in the
+    // ratio of 3 to 1.
+    let wrapped = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @left-top {{ content: 'aa aa aa' }} @left-bottom {{ content: 'b' }} }}"
+    ));
+    assert_eq!(
+        rects(&wrapped),
+        [
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 165.0]),
+            (PageMarginBoxSlot::LeftBottom, [0.0, 205.0, 40.0, 55.0]),
+        ]
+    );
+    // 'aaaa' is exactly as wide as the column and stays on one line, so
+    // both boxes are one line tall and share the column equally.
+    let fitting = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @left-top {{ content: 'aaaa' }} @left-bottom {{ content: 'b' }} }}"
+    ));
+    assert_eq!(
+        rects(&fitting),
+        [
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 110.0]),
+            (PageMarginBoxSlot::LeftBottom, [0.0, 150.0, 40.0, 110.0]),
+        ]
+    );
+}
+
+#[test]
+fn an_empty_box_counts_its_padding_along_horizontal_and_vertical_edges() {
+    // The empty box asks for the 20px of its padding along the edge, the
+    // other box for the 40px (or 10px) of its text.
+    let row = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: ''; padding: 10px }} @top-right {{ content: 'aaaa' }} }}"
+    ));
+    assert_eq!(
+        rects(&row),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 106.67, 40.0]),
+            (PageMarginBoxSlot::TopRight, [146.67, 0.0, 213.33, 40.0]),
+        ]
+    );
+    let column = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @left-top {{ content: ''; padding: 10px }} @left-bottom {{ content: 'a' }} }}"
+    ));
+    assert_eq!(
+        rects(&column),
+        [
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 146.67]),
+            (PageMarginBoxSlot::LeftBottom, [0.0, 186.67, 40.0, 73.33]),
+        ]
+    );
+}
+
+#[test]
 fn a_unitless_line_height_multiplies_a_zero_font_size() {
     // A zero font size is shaped at a size too small to see, but a unitless
     // line height still multiplies the zero, so the upper box has no height
