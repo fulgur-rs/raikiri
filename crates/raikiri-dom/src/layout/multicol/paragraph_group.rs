@@ -378,12 +378,27 @@ pub(super) struct Rows {
     pub(super) heights: Vec<f32>,
 }
 
+/// Why [`fill_rows`] made no rows.
+#[derive(Debug, PartialEq)]
+pub(super) enum RowsStop {
+    /// The entries are not plain paragraphs or do not fit.
+    Unsupported,
+    /// The records of the rows outgrow the fragment budget.
+    Exhausted,
+}
+
 /// Fill the paragraphs of a nested column container into rows of its
 /// columns: the first row holds `first` of block size, every later row
-/// `later`, and at most `rows` rows exist. The last row is balanced unless
-/// the container fills its columns sequentially, and every row with
-/// `column-fill: balance-all`. `None` when the entries are
-/// not plain paragraphs or do not fit.
+/// `later`. The last row is balanced unless the container fills its columns
+/// sequentially, and every row with `column-fill: balance-all`. Fails when the
+/// entries are not plain paragraphs or do not fit.
+///
+/// Rows after the first need a box record each, and every fragment needs one;
+/// `budget` is the number of records left. Planning stops as soon as the rows
+/// outgrow it, so the work and memory of a plan stay within the budget and one
+/// row, however many lines follow. This reports exhaustion whether or not the
+/// rows past that point could have been placed, as telling the two apart
+/// would take the planning the budget is there to stop.
 pub(super) fn fill_rows(
     tree: &Document,
     parent: usize,
@@ -391,23 +406,25 @@ pub(super) fn fill_rows(
     context: FragmentationContext,
     first: f32,
     later: f32,
-    rows: usize,
-) -> Option<Rows> {
-    let (paragraphs, count, _, _) = collect(tree, parent, entries)?;
+    budget: usize,
+) -> Result<Rows, RowsStop> {
+    let (paragraphs, count, _, _) = collect(tree, parent, entries).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
-        return None;
+        return Err(RowsStop::Unsupported);
     }
     let mut result = Rows {
         fragments: Vec::new(),
         heights: Vec::new(),
     };
     let mut resume = FlowCursor::default();
-    for row in 0..rows {
+    loop {
+        let row = result.heights.len();
         let capacity = if row == 0 { first } else { later };
         if !capacity.is_finite() || capacity <= 0.0 {
-            return None;
+            return Err(RowsStop::Unsupported);
         }
-        let mut chunk = fill_chunk(&paragraphs, context, capacity, resume)?;
+        let mut chunk =
+            fill_chunk(&paragraphs, context, capacity, resume).ok_or(RowsStop::Unsupported)?;
         // `balance` balances the last row only, `balance-all` every row; a
         // balanced row keeps the content the full row would hold.
         let balance = context.column_fill == ColumnFillValue::BalanceAll
@@ -461,13 +478,22 @@ pub(super) fn fill_rows(
             }
         }
         result.heights.push(height);
-        match chunk.next {
-            None => return Some(result),
-            Some(next) if next != resume => resume = next,
-            Some(_) => return None, // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
+        // One row needs no records, as the container keeps its own. Longer
+        // plans need a box record for each row after the first and one for
+        // each fragment, and at least one more fragment for every row still
+        // to come.
+        let still_to_come = usize::from(chunk.next.is_some());
+        let rows = result.heights.len() + still_to_come;
+        if rows > 1 && rows - 1 + result.fragments.len() + still_to_come > budget {
+            return Err(RowsStop::Exhausted);
         }
+        let Some(next) = chunk.next else {
+            return Ok(result);
+        };
+        // A continuation only follows an advanced line or paragraph.
+        debug_assert!(next != resume);
+        resume = next;
     }
-    None
 }
 
 pub(super) struct PagedFragment {

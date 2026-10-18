@@ -1024,39 +1024,51 @@ fn layout_column_group(
                 tree,
                 child,
                 context,
-                column,
                 cursor,
                 height,
                 margin_top,
                 child_output.size,
                 !avoid_column_break,
             );
+            // Running out of fragments while planning from here ends the
+            // layout only if starting in the next column does not help, so
+            // it is held back until that has been tried. A container that
+            // fits a column whole needs no rows there, and moves below.
+            let mut exhausted = std::mem::take(&mut tree.fragment_tree.limit_exceeded);
+            let mut fits_next_column = false;
             if continuation.is_none()
                 && cursor > 0.0
                 && cursor + needed > height
                 && !avoid_column_break
-                && let Some(plan) = plan_nested_continuation(
+            {
+                fits_next_column = needed <= height;
+                let moved = plan_nested_continuation(
                     tree,
                     child,
                     context,
-                    column + 1,
                     0.0,
                     height,
                     margin_top,
                     child_output.size,
                     false,
-                )
-            {
-                maximum = maximum.max(cursor);
-                tree.fragment_tree
-                    .record_break(crate::fragment::BreakToken {
-                        node_id: index,
-                        child_index: order,
-                        line_index: 0,
-                    });
-                column += 1;
-                cursor = 0.0;
-                continuation = Some(plan);
+                );
+                exhausted |= std::mem::take(&mut tree.fragment_tree.limit_exceeded);
+                if let Some(plan) = moved {
+                    maximum = maximum.max(cursor);
+                    tree.fragment_tree
+                        .record_break(crate::fragment::BreakToken {
+                            node_id: index,
+                            child_index: order,
+                            line_index: 0,
+                        });
+                    column += 1;
+                    cursor = 0.0;
+                    continuation = Some(plan);
+                }
+            }
+            if exhausted && continuation.is_none() && !fits_next_column {
+                tree.fragment_tree.limit_exceeded = true;
+                return fallback_height;
             }
         }
         if let Some(plan) = &continuation {
@@ -1317,20 +1329,21 @@ impl NestedContinuation {
     }
 }
 
-/// Plan how the nested column container `child`, laid out at `cursor` in
-/// column `column` of `outer`, continues in the following outer columns.
-/// Children that hold no lines continue in outer overflow columns past the
-/// last one. `break_before` says a break before the container is allowed,
-/// which is preferred to cutting one of those children at the end of this
-/// column. `None` when it fits in the rest of the column, when its content
-/// is neither plain paragraphs nor children without lines, or when the
-/// outer columns run out for paragraphs.
+/// Plan how the nested column container `child`, laid out at `cursor` in a
+/// column of `outer`, continues in the following outer columns.
+/// Rows continue in outer overflow columns past the last one, as the outer
+/// container has a definite height (CSS Multi-column 1, 8.2). `break_before`
+/// says a break before the container is allowed, which is preferred to
+/// cutting a child that holds no lines at the end of this column. `None`
+/// when it fits in the rest of the column, or when its content is neither
+/// plain paragraphs nor children without lines, or when the fragment budget
+/// cannot hold the rows, which also sets `limit_exceeded` for the caller to
+/// weigh against another placement.
 #[allow(clippy::too_many_arguments)]
 fn plan_nested_continuation(
-    tree: &Document,
+    tree: &mut LayoutSession<'_>,
     child: usize,
     outer: FragmentationContext,
-    column: usize,
     cursor: f32,
     fragmentainer_height: f32,
     margin_top: f32,
@@ -1346,12 +1359,10 @@ fn plan_nested_continuation(
         .horizontal
         .then(|| lineless::supported(tree, child, false))
         .flatten();
-    let rows = outer.column_count.saturating_sub(column);
     // A box that avoids breaks inside, has a minimum height or generated
     // content keeps its previous layout: the rows below hold its paragraph
     // lines only.
-    if (lineless_children.is_none()
-        && (rows < 2 || style.height_definite || !node.style.size.height.is_auto()))
+    if (lineless_children.is_none() && (style.height_definite || !node.style.size.height.is_auto()))
         || !style.horizontal
         || !node.style.min_size.height.is_auto()
         || !node.style.max_size.height.is_auto()
@@ -1395,11 +1406,11 @@ fn plan_nested_continuation(
     let context = FragmentationContext::resolve(content_width, None, style)?;
     let row_top = -(cursor + margin_top);
     let row_step = outer.column_offset_x(1);
+    let max_pieces = tree
+        .fragment_tree
+        .limit
+        .saturating_sub(tree.fragment_tree.fragments.len());
     if let Some(children) = lineless_children {
-        let max_pieces = tree
-            .fragment_tree
-            .limit
-            .saturating_sub(tree.fragment_tree.fragments.len());
         let rows = lineless::fill_rows(
             tree,
             &children,
@@ -1466,7 +1477,26 @@ fn plan_nested_continuation(
             )
         })
         .collect();
-    let rows = paragraph_group::fill_rows(tree, child, &entries, context, first, later, rows)?;
+    // The outer container has a definite height here, so the rows may also
+    // fill overflow columns past its last one. Rows whose records outgrow the
+    // fragment budget stop the planning, which reports the exhaustion. The
+    // container's own record in the outer column comes before the rows'.
+    let rows = match paragraph_group::fill_rows(
+        tree,
+        child,
+        &entries,
+        context,
+        first,
+        later,
+        max_pieces.saturating_sub(1),
+    ) {
+        Ok(rows) => rows,
+        Err(paragraph_group::RowsStop::Unsupported) => return None,
+        Err(paragraph_group::RowsStop::Exhausted) => {
+            tree.fragment_tree.limit_exceeded = true;
+            return None;
+        }
+    };
     let columns = rows.heights.len().checked_sub(1).filter(|&n| n > 0)?;
     // The block-end padding and border must fit in the last outer column too.
     let end = continued_origin_y + rows.heights[columns] + block_end_inset;
