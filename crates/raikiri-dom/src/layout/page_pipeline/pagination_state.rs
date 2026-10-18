@@ -1,15 +1,15 @@
 //! What pagination carries from one candidate of the flow to the next.
 
 use super::{
-    CascadeResult, DeferredShifts, FloatShifts, IfcBoxShifts, PageCandidate, PageOrigins,
-    SubtreeShifts, TextLineIndex, grow_ancestors_for_shift,
+    CascadeResult, CheckedParagraphs, ColumnContexts, DeferredShifts, EnteredParagraphs,
+    FloatShifts, FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, PageCandidate,
+    PageNames, PageOrigins, PageReach, PendingBreak, PrecedingFlexItems, SiblingMargins,
+    SubtreeShifts, TextLineIndex, TrailingFlexChildren, grow_ancestors_for_shift,
 };
 use crate::layout::context::LayoutSession;
 
-/// Where the flow stands while its candidates are placed in source order: how
-/// far it has moved down, the page it is on, and the shifts waiting for it to
-/// leave a subtree or reach a moved line.
-#[derive(Default)]
+/// Where pagination stands while the candidates of the flow are placed in
+/// source order, and what it has to remember from the ones placed so far.
 pub(super) struct PaginationState {
     /// How far the flow after the candidates placed so far has moved down.
     pub(super) flow_shift: f32,
@@ -18,9 +18,57 @@ pub(super) struct PaginationState {
     pub(super) deferred_shifts: DeferredShifts,
     pub(super) subtree_shifts: SubtreeShifts,
     pub(super) float_shifts: FloatShifts,
+    pub(super) reach: PageReach,
+    pub(super) page_names: PageNames,
+    pub(super) pending_break: PendingBreak,
+    pub(super) sibling_margins: SiblingMargins,
+    pub(super) last_named: LastNamedBox,
+    /// Whether any box was placed yet.
+    pub(super) saw_child: bool,
+    pub(super) checked_paragraphs: CheckedParagraphs,
+    /// Footnotes are collected in source order and stacked upward from the
+    /// bottom edge of their anchor page. The normal-flow height is removed
+    /// from `flow_shift`, leaving the box only in this page-local area.
+    pub(super) footnote_areas: FootnoteAreas,
+    pub(super) column_contexts: ColumnContexts,
+    pub(super) preceding_flex_items: PrecedingFlexItems,
+    pub(super) trailing_flex_children: TrailingFlexChildren,
+    pub(super) entered_paragraphs: EnteredParagraphs,
+    pub(super) table_headers: HeaderRepeats,
 }
 
 impl PaginationState {
+    /// The state before the first candidate: the flow is on the first page,
+    /// unshifted, and nothing is pending. `page_names` starts with the page
+    /// type of the first page, and `column_contexts` with the nodes of the
+    /// document.
+    pub(super) fn new(
+        table_headers: HeaderRepeats,
+        page_names: PageNames,
+        column_contexts: ColumnContexts,
+    ) -> Self {
+        Self {
+            flow_shift: 0.0,
+            current_page: 0,
+            deferred_shifts: DeferredShifts::default(),
+            subtree_shifts: SubtreeShifts::default(),
+            float_shifts: FloatShifts::default(),
+            reach: PageReach::default(),
+            page_names,
+            pending_break: PendingBreak::default(),
+            sibling_margins: SiblingMargins::default(),
+            last_named: LastNamedBox::default(),
+            saw_child: false,
+            checked_paragraphs: CheckedParagraphs::default(),
+            footnote_areas: FootnoteAreas::default(),
+            column_contexts,
+            preceding_flex_items: PrecedingFlexItems::default(),
+            trailing_flex_children: TrailingFlexChildren::default(),
+            entered_paragraphs: EnteredParagraphs::default(),
+            table_headers,
+        }
+    }
+
     /// Settles the shifts that end or begin at `candidate`, before it is
     /// placed: those it has reached, those of the subtrees and the moved
     /// float it is outside of, and the clearance below the moved floats of
