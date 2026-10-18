@@ -1210,10 +1210,21 @@ fn draw_shadow(
     if use_blur_layer {
         let extent = f64::from((blur * 3.0).max(1.0));
         let (x, y) = (f64::from(position.x), f64::from(position.y));
+        // Text that overflows its paragraph (`nowrap`, a negative
+        // `text-indent`) lies outside the paragraph's own width, and its
+        // shadow with it, so the clip also covers the run's glyphs.
+        let (ink_left, ink_right) =
+            run.draw
+                .glyphs
+                .iter()
+                .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
+                    let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
+                    (left.min(start).min(end), right.max(start).max(end))
+                });
         let clip = Rect::new(
-            x + dx - extent,
+            x + ink_left + dx - extent,
             y + dy - extent,
-            x + f64::from(width) + dx + extent,
+            x + ink_right + dx + extent,
             y + f64::from(height) + dy + extent,
         );
         scene.push_layer(
