@@ -1020,3 +1020,32 @@ fn display_contents_children_of_a_balanced_container_are_painted() {
         "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
     );
 }
+
+fn compare_bodies(body: &str, plain: &str, css: &str) {
+    assert_eq!(raster(body, css), raster(plain, css));
+}
+
+#[test]
+fn a_display_contents_wrapper_keeps_the_column_clip_of_its_children() {
+    // The blocks that columns clip to their height are clipped the same way
+    // when an element without a box wraps them.
+    let css = ".mc{height:40px;column-fill:auto}";
+    for inner in [
+        "<div style='display:grid;height:80px;background:blue'></div>",
+        "<div style='display:table;background:blue'><div style='display:table-row'><div style='display:table-cell;width:20px;height:80px'></div></div></div>",
+        "<div style='height:0'><div style='height:80px;background:blue'></div></div>",
+    ] {
+        compare_bodies(
+            &format!("<div class=mc><div style='display:contents'>{inner}</div></div><p>X</p>"),
+            &format!("<div class=mc>{inner}</div><p>X</p>"),
+            css,
+        );
+        compare_bodies(
+            &format!(
+                "<div class=mc><div style='display:contents'><div style='display:contents'>{inner}</div></div></div><p>X</p>"
+            ),
+            &format!("<div class=mc>{inner}</div><p>X</p>"),
+            css,
+        );
+    }
+}

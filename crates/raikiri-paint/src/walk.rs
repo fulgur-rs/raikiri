@@ -2144,6 +2144,10 @@ pub(crate) fn paint_document_impl(
             /// ancestors move `parent_abs_y` from where layout placed it.
             paint_offset_y: f32,
             fragment_clip_height: Option<f32>,
+            /// On a `display: contents` child of a multicolumn container, the
+            /// column height that container clips its blocks to. The element
+            /// has no box, so its children are the ones the columns hold.
+            column_clip_height: Option<f32>,
             fragment_id: Option<usize>,
             fragment_origin_x: f32,
             fragment_origin_y: f32,
@@ -2538,6 +2542,7 @@ pub(crate) fn paint_document_impl(
             transform_y: 0.0,
             paint_offset_y: 0.0,
             fragment_clip_height: None,
+            column_clip_height: None,
             fragment_id: None,
             fragment_origin_x: 0.0,
             fragment_origin_y: 0.0,
@@ -2644,6 +2649,7 @@ pub(crate) fn paint_document_impl(
             transform_y,
             paint_offset_y,
             fragment_clip_height,
+            column_clip_height,
             fragment_id,
             fragment_origin_x,
             fragment_origin_y,
@@ -3239,6 +3245,7 @@ pub(crate) fn paint_document_impl(
                 transform_y,
                 paint_offset_y,
                 fragment_clip_height,
+                column_clip_height,
                 fragment_id,
                 fragment_origin_x,
                 fragment_origin_y,
@@ -3259,6 +3266,7 @@ pub(crate) fn paint_document_impl(
                 transform_y,
                 paint_offset_y,
                 fragment_clip_height,
+                column_clip_height,
                 fragment_id,
                 fragment_origin_x,
                 fragment_origin_y,
@@ -3307,6 +3315,7 @@ pub(crate) fn paint_document_impl(
                     transform_y,
                     paint_offset_y,
                     fragment_clip_height,
+                    column_clip_height,
                     fragment_id: Some(current_fragment_id),
                     fragment_origin_x: node_abs_x,
                     fragment_origin_y: node_abs_y,
@@ -4599,6 +4608,12 @@ pub(crate) fn paint_document_impl(
                     }
                     _ => None,
                 };
+                // A `display: contents` element has no box, so the columns of
+                // the container it sits in hold its children.
+                let own_multicol_clip_height = own_multicol_clip_height
+                    .or((cv.display == DisplayValue::Contents)
+                        .then_some(column_clip_height)
+                        .flatten());
                 // A plain block in a block container leaves its inline
                 // content to the end of the layer (CSS 2.1 Appendix E): its
                 // lines and the boxes laid out beside them paint after the
@@ -4773,6 +4788,10 @@ pub(crate) fn paint_document_impl(
                         transform_y: child_transform_y,
                         paint_offset_y: child_paint_offset_y,
                         fragment_clip_height: child_fragment_clip_height,
+                        column_clip_height: (cascade.computed[child].display
+                            == DisplayValue::Contents)
+                            .then_some(own_multicol_clip_height)
+                            .flatten(),
                         fragment_id,
                         fragment_origin_x,
                         fragment_origin_y,
