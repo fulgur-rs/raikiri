@@ -504,6 +504,13 @@ pub(crate) fn hold_ifc_lines<'a>(
             );
             let Some(cv) = retained
                 .map(|(style, _)| style)
+                .or_else(|| {
+                    // The first line's boxes take their values from the
+                    // `::first-line` around them.
+                    root_node
+                        .ifc_first_line_element_style(piece.node)
+                        .filter(|_| line_index == 0)
+                })
                 .or_else(|| computed_for_id(cascade, piece.node))
             else {
                 continue;

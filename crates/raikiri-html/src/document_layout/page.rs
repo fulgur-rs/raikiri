@@ -637,8 +637,10 @@ impl<'a> Page<'a> {
     /// the first line and on later ones is split by line: in place of its
     /// [`PaintEvent::Box`], its piece on the first line is a
     /// [`PaintEvent::LineBox`] in the group, and its other pieces are
-    /// [`PaintEvent::LineBox`] events with the other lines. Floats and atomic
-    /// inlines not on the first line stay with the other lines.
+    /// [`PaintEvent::LineBox`] events with the other lines. The piece on the
+    /// first line carries the values the `::first-line` gives the element, in
+    /// [`crate::LineBox::style`]. Floats and atomic inlines not on the first
+    /// line stay with the other lines.
     /// [`Self::text_run_opacity_group`] tells
     /// which line event draws a run: a run of no group belongs to the
     /// `TextLine` event of its line, and any other run to the `GroupTextLine`

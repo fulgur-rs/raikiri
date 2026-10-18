@@ -14,7 +14,8 @@ use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_style::property::BreakInside;
 
 /// The rendered children of `parent` when every one of them is a plain
-/// block with no content, and at least one of them has a block size.
+/// block with no content, and at least one of them has a block size (or, with
+/// `out_of_flow`, holds an absolutely positioned box).
 ///
 /// Inline margins, generated content, forced or avoided breaks between
 /// boxes, positioned or floated boxes, scroll containers and replaced
@@ -51,14 +52,22 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
         }
         children.push(child);
     }
-    boxes
-        .iter()
-        .any(|&child| {
-            let style = &tree.layout_node_with_style(child).unwrap().style;
-            style_dimension_length(style.size.height).is_some()
-                || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
-        })
-        .then_some(children)
+    let sized = boxes.iter().any(|&child| {
+        let style = &tree.layout_node_with_style(child).unwrap().style;
+        style_dimension_length(style.size.height).is_some()
+            || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
+    });
+    // An empty containing block has no block size, but the absolutely
+    // positioned boxes it holds still break across the columns, past the
+    // last one if they start there.
+    let holds_absolute_boxes = out_of_flow
+        && children.iter().any(|&child| {
+            tree.layout_node_with_style(child)
+                .unwrap()
+                .contains_absolute_boxes
+                && !absolute_children(tree, child).is_empty()
+        });
+    (sized || holds_absolute_boxes).then_some(children)
 }
 
 /// The rendered element children of `parent`. Text that renders gives a

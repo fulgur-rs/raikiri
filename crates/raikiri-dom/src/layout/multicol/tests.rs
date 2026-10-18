@@ -2082,6 +2082,147 @@ fn a_nested_multicol_taller_than_the_outer_column_continues_in_the_next_one() {
         || fragment.fragment_index > 0 && fragment.fragment_count == records.len()));
 }
 
+/// A 300px outer column holding a nested column container with `inner_css`,
+/// whose 500px of content is cut at the end of the outer column. Returns the
+/// container, its child, and the border-box heights of the container's boxes
+/// in the outer columns, from the first.
+fn continued_nested_multicol(inner_css: &str) -> (Document, usize, usize, Vec<f32>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:300px;column-count:1"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;height:500px;column-count:1;padding:10px 0;{inner_css}"
+        )),
+    );
+    let child = doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some("display:block;height:500px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    // The container's own record numbers its first box 0 of 3 and holds the
+    // outer column's share, so the later records are the boxes of the rows.
+    let heights = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == inner && fragment.fragment_index > 0)
+        .map(|fragment| fragment.rect.height)
+        .collect();
+    (doc, inner, child, heights)
+}
+
+#[test]
+fn a_cloned_nested_multicol_keeps_its_padding_in_every_outer_column() {
+    // A box that slices holds content up to the end of each outer column and
+    // has no padding in the rows after the first.
+    let (doc, _, child, boxes) = continued_nested_multicol("");
+    assert_eq!(
+        fragment_rects(&doc, child),
+        vec![(0, 0.0, 10.0, 290.0), (1, 0.0, 0.0, 210.0)]
+    );
+    assert_eq!(boxes, vec![300.0, 220.0]);
+
+    // A box that clones has the padding in both rows, so each holds 20px
+    // less content and the content starts below the padding.
+    let (doc, _, child, boxes) = continued_nested_multicol("box-decoration-break:clone");
+    assert_eq!(
+        fragment_rects(&doc, child),
+        vec![(0, 0.0, 10.0, 280.0), (1, 0.0, 10.0, 220.0)]
+    );
+    assert_eq!(boxes, vec![300.0, 240.0]);
+}
+
+#[test]
+fn a_cloned_nested_multicol_fills_its_rows_with_paragraph_lines_between_its_padding() {
+    // Twenty 10px lines in a container with 10px of padding on each side
+    // fill 80px of a 100px outer column, so the rows hold 8, 8 and 4 lines.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:300px;height:100px;columns:3;column-gap:0;column-fill:auto"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;columns:1;padding:10px 0;box-decoration-break:clone;\
+             font-size:10px;line-height:10px",
+        ),
+    );
+    let paragraph = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    for _ in 0..20 {
+        doc.append_text(paragraph, "a");
+        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+    }
+    layout_nested_flex_float_fixture(&mut doc);
+    let ranges: Vec<_> = doc.nodes[paragraph]
+        .ifc_multicol_fragments()
+        .expect("column ranges")
+        .iter()
+        .map(|range| (range.line_start, range.line_end, range.fragmentainer))
+        .collect();
+    assert_eq!(ranges, [(0, 8, 0), (8, 16, 1), (16, 20, 2)]);
+    let heights: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == inner && fragment.fragment_index > 0)
+        .map(|fragment| fragment.rect.height)
+        .collect();
+    assert_eq!(heights, [100.0, 100.0, 60.0]);
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+}
+
+#[test]
+fn the_rows_of_a_cloned_nested_multicol_start_their_column_rules_below_the_padding() {
+    let (doc, inner, ..) = continued_nested_multicol("box-decoration-break:clone");
+    let rows = &doc.nodes[inner].multicol_rows;
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.context.origin_y, row.height))
+            .collect::<Vec<_>>(),
+        vec![(10.0, 280.0), (10.0, 220.0)]
+    );
+    // Every row's box is a whole box, so none is a slice of one.
+    assert!(rows.iter().all(|row| row.slice.is_none()));
+
+    let (doc, inner, ..) = continued_nested_multicol("");
+    let slices: Vec<_> = doc.nodes[inner]
+        .multicol_rows
+        .iter()
+        .map(|row| row.slice)
+        .collect();
+    assert_eq!(slices, [Some((0.0, 300.0)), Some((300.0, 520.0))]);
+}
+
+#[test]
+fn a_cloned_nested_multicol_whose_padding_leaves_a_row_no_room_is_not_continued_in_rows() {
+    // The padding above and below fills the 300px outer column, so a row has
+    // no room for content. A box that slices gives up only its first row's
+    // padding, and continues in three.
+    let (doc, inner, ..) = continued_nested_multicol("padding:150px 0;box-decoration-break:clone");
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
+    let (doc, inner, ..) = continued_nested_multicol("padding:150px 0");
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+}
+
 #[test]
 fn content_past_the_last_column_of_a_definite_height_multicol_overflows_inline() {
     let mut doc = Document::new();
@@ -3436,4 +3577,61 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     ] {
         assert!(!paragraphs(style), "{style}");
     }
+}
+
+#[test]
+fn an_absolute_box_in_an_empty_containing_block_starts_in_an_overflow_column() {
+    let (doc, _, ids) = absolute_fixture(
+        "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+        &[(
+            "display:block;position:relative",
+            &["position:absolute;top:300px;width:50px;height:200px"],
+        )],
+    );
+    assert_eq!(
+        fragment_rects(&doc, ids[0].1[0]),
+        vec![(3, 150.0, 0.0, 200.0), (4, 200.0, -100.0, 200.0)]
+    );
+}
+
+#[test]
+fn an_absolute_box_in_an_empty_containing_block_starts_in_the_first_column() {
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative",
+            &["position:absolute;top:0;width:10px;height:250px"],
+        )],
+    );
+    assert_eq!(
+        fragment_rects(&doc, ids[0].1[0]),
+        vec![
+            (0, 0.0, 0.0, 250.0),
+            (1, 100.0, -100.0, 250.0),
+            (2, 200.0, -200.0, 250.0),
+        ]
+    );
+}
+
+#[test]
+fn a_containing_block_with_no_block_size_is_sliced_for_the_absolute_boxes_it_holds() {
+    let supported = |block: &str, absolute: Option<&str>, out_of_flow: bool| {
+        let boxes: Vec<&str> = absolute.into_iter().collect();
+        let (doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &boxes)]);
+        lineless::supported(&doc, parent, out_of_flow).is_some()
+    };
+    let absolute = "position:absolute;top:0;width:10px;height:20px";
+    let block = "display:block;position:relative";
+    assert!(supported(block, Some(absolute), true));
+    assert!(!supported(block, Some(absolute), false));
+    // Without an absolute box there is nothing to break.
+    assert!(!supported(block, None, true));
+    // A static block is not their containing block.
+    assert!(!supported("display:block", Some(absolute), true));
+    // A fixed box has the viewport as its containing block.
+    assert!(!supported(
+        block,
+        Some("position:fixed;top:0;width:10px;height:20px"),
+        true,
+    ));
 }

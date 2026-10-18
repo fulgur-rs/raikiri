@@ -89,12 +89,13 @@ fn a_middle_row_box_of_a_continued_nested_container_has_no_block_border() {
 
 #[test]
 fn cloned_decorations_draw_both_borders_on_every_row_box() {
+    // Each 60px outer column holds the 5px borders and 50px of the content.
     let actual = raster(&format!(
         "<div style='{OUTER}'><div style='column-count:1;background:green;border:solid blue;border-width:5px 0;box-decoration-break:clone'><div style='height:100px'></div></div></div>"
     ));
     let expected = raster(
         "<div style='position:absolute;left:0;top:0;width:80px;height:50px;background:green;border:solid blue;border-width:5px 0'></div>\
-         <div style='position:absolute;left:90px;top:0;width:80px;height:40px;background:green;border:solid blue;border-width:5px 0'></div>",
+         <div style='position:absolute;left:90px;top:0;width:80px;height:50px;background:green;border:solid blue;border-width:5px 0'></div>",
     );
     assert_eq!(differing_pixels(&actual, &expected), 0);
 }

@@ -1768,6 +1768,18 @@ css/css-break/break-inside-avoid-min-block-size-1.html
 # KEEP in two audit-vacuous-passes runs.
 css/css-pseudo/first-line-opacity-001.html
 
+# --- ::first-line text and inline box styles (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-18) ---
+# KEEP in two audit-vacuous-passes runs.
+css/css-pseudo/first-line-below-float.html
+css/css-pseudo/first-line-change-inline-color-nested.html
+css/css-pseudo/first-line-change-inline-color.html
+css/css-pseudo/first-line-nested-gcs.html
+css/css-pseudo/first-line-on-ancestor-block.html
+css/css-pseudo/first-line-with-inline-block.html
+css/css-pseudo/first-line-with-out-of-flow-and-nested-div.html
+css/css-pseudo/first-line-with-out-of-flow-and-nested-span.html
+css/css-pseudo/first-line-with-out-of-flow.html
+
 # --- vacuity-audited sweep promotion (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-12) ---
 # Every id passed and was KEEP in two audit-vacuous-passes runs (see README.md).
 css/CSS2/abspos/between-float-and-text.html
@@ -4597,6 +4609,7 @@ css/css-ruby/abs-in-ruby-container.html
 css/css-ruby/empty-ruby-text-container-abs.html
 css/css-ruby/empty-ruby-text-container-float.html
 css/css-ruby/empty-ruby-text-container.html
+css/css-ruby/improperly-contained-annotation-001.html
 css/css-ruby/pseudo-first-letter.html
 css/css-ruby/ruby-bidi-001.html
 css/css-ruby/ruby-dynamic-removal-001.html
@@ -4763,6 +4776,14 @@ css/css-multicol/broken-column-rule-1.html
 css/css-multicol/multicol-nested-030.html
 css/css-multicol/multicol-nested-031.html
 css/css-multicol/multicol-rule-nested-balancing-004.html
+
+# --- absolute boxes broken across the columns of an empty containing block (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
+# Pass once a multicol container whose child is an empty containing block holds absolutely positioned boxes that break at the column ends, also when they start past the last column, and boxes nested in each other break the same way; KEEP in two audit-vacuous-passes runs.
+css/css-break/out-of-flow-in-multicolumn-003.html
+css/css-break/out-of-flow-in-multicolumn-008.html
+css/css-break/out-of-flow-in-multicolumn-013.html
+css/css-break/out-of-flow-in-multicolumn-022.html
+css/css-break/out-of-flow-in-multicolumn-025.html
 
 # --- body background across pages in vertical and sideways writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-16) ---
 # Pass once sideways roots paginate along x, the body's block-end margin is truncated at the end of the flow, and a right-to-left root box is stitched from its left end; KEEP in two audit-vacuous-passes runs.
