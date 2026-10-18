@@ -1337,6 +1337,26 @@ fn margin_box_rescales_a_keyword_page_font_size_when_it_changes_family() {
         ),
         20.0
     );
+    // `inherit` and `unset` keep the keyword too; `initial` is the 16px `medium`.
+    for keyword in ["inherit", "unset"] {
+        assert_eq!(
+            margin_box_font_size_with(
+                &initial,
+                "font-family: monospace; font-size: 0.7em",
+                &format!("font-family: serif; font-size: {keyword}")
+            ),
+            16.0 * 0.7,
+            "{keyword}"
+        );
+    }
+    assert_eq!(
+        margin_box_font_size_with(
+            &initial,
+            "font-family: monospace; font-size: 0.7em",
+            "font-family: serif; font-size: initial"
+        ),
+        16.0
+    );
 }
 
 #[test]

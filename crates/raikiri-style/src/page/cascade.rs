@@ -364,6 +364,7 @@ impl PageMarginBoxCascadeResult {
                     return None;
                 };
                 let value = margin_box_text_shadow_default(resolved)?;
+                let value = margin_box_font_size_default(value)?;
                 Some(Declaration::new(
                     resolve_css_wide_color_font(
                         value,
@@ -416,6 +417,23 @@ fn margin_box_text_shadow_default(value: PropertyValue) -> Option<PropertyValue>
     {
         return (keyword == crate::property::CssWideKeyword::Initial)
             .then(|| PropertyValue::TextShadow(crate::property::empty_text_shadow_list()));
+    }
+    Some(value)
+}
+
+/// Settle a CSS-wide keyword on a margin box's `font-size`, other than
+/// `initial`. The property is inherited, so dropping the declaration leaves the
+/// page context's size in place together with the keyword it derives from; a
+/// pixel copy would lose it, and a margin box that changes `font-family` could
+/// not rescale it as a child element does.
+fn margin_box_font_size_default(value: PropertyValue) -> Option<PropertyValue> {
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.key == PropertyKey::FontSize
+        && marker
+            .css_wide_keyword()
+            .is_some_and(|keyword| keyword != crate::property::CssWideKeyword::Initial)
+    {
+        return None;
     }
     Some(value)
 }
