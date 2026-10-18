@@ -8711,6 +8711,231 @@ fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
     assert_eq!(positioned_box_location("right:5px;top:0").0, 185.0);
 }
 
+/// `root(position:relative) > ["aaaa ", outer(position:relative;outer_css) >
+/// ["bb", child(position:absolute;child_css)]]` in a 200px Ahem paragraph:
+/// "bb" is the 20px from x 50 to x 70. Returns the child's border-box
+/// location from the root's border box.
+fn child_of_relative_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
+    let mut child = 0;
+    let (mut doc, cascade, root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some(&format!("display:inline;position:relative;{outer_css}")),
+            );
+            doc.append_text(outer, "bb");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some(&format!(
+                    "position:absolute;width:10px;height:10px;{child_css}"
+                )),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root(), "{outer_css} {child_css}");
+    let location = doc.nodes[child].unrounded_layout.location;
+    (location.x, location.y)
+}
+
+#[test]
+fn insets_of_a_box_in_a_relative_inline_resolve_against_the_inline() {
+    // Hand-computed (CSS 2.1 10.1): the containing block is the padding box
+    // of "bb", x 50 to 70 and y 0 to 10, not the 200px paragraph.
+    assert_eq!(
+        child_of_relative_inline_location("", "left:50%;top:50%"),
+        (60.0, 5.0)
+    );
+    // From the right edge, 70 - 10% of 20 - 10.
+    assert_eq!(
+        child_of_relative_inline_location("", "right:10%;bottom:0").0,
+        58.0
+    );
+    assert_eq!(
+        child_of_relative_inline_location("", "right:0;bottom:0"),
+        (60.0, 0.0)
+    );
+}
+
+#[test]
+fn the_containing_block_of_a_relative_inline_is_its_padding_box() {
+    // The border box is x 50 to 82; the padding box x 52 to 80, 28px wide,
+    // and 50% of it is 14.
+    assert_eq!(
+        child_of_relative_inline_location("padding:0 4px;border:2px solid", "left:50%;top:50%"),
+        (66.0, 5.0)
+    );
+}
+
+#[test]
+fn an_offset_moves_the_containing_block_of_a_relative_inline() {
+    assert_eq!(
+        child_of_relative_inline_location("left:5px;top:3px", "left:50%;top:50%"),
+        (65.0, 8.0)
+    );
+}
+
+#[test]
+fn the_nearest_positioned_inline_is_the_containing_block() {
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            // A static inline between the two does not contain the child.
+            let middle = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("display:inline"),
+            );
+            let inner = doc.append_element(
+                Some(middle),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(inner, "cccc");
+            child = doc.append_element(
+                Some(inner),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // "cccc" is x 70 to 110, so 50% of it is 20.
+    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 90.0);
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            let middle = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(middle, "cccc");
+            child = doc.append_element(
+                Some(middle),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // "bbcccc" is x 50 to 110, so the static inline gives way to the outer
+    // one and 50% is 30.
+    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 80.0);
+}
+
+#[test]
+fn a_relative_inline_split_over_lines_contains_its_fragments() {
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:100px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bbbb cccc");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%;top:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // Hand-computed: "aaaa bbbb" fills the first line to x 90 and "cccc" is
+    // x 0 to 40 on the second, so the fragments span x 0 to 90 and y 0 to 20.
+    let location = doc.nodes[child].unrounded_layout.location;
+    assert_eq!((location.x, location.y), (45.0, 10.0));
+}
+
+#[test]
+fn a_relative_inline_in_a_vertical_paragraph_contains_the_box_physically() {
+    let (mut outer, mut child) = (0, 0);
+    let (mut doc, cascade, root) = ahem_paragraph_with(
+        "width:100px;height:200px;writing-mode:vertical-rl;position:relative",
+        |doc, root| {
+            doc.append_text(root, "aaaa ");
+            outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("position:absolute;width:10px;height:10px;left:50%;top:50%"),
+            );
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    assert!(doc.nodes[root].is_ifc_root());
+    // The element is a 10px wide and 20px tall box along the line, which
+    // runs down the right edge from y 50, and the child sits at its middle.
+    let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+    let piece = pieces.iter().find(|piece| piece.node == outer).unwrap();
+    let rect = piece.border_box;
+    assert_eq!((rect.width, rect.height, rect.y), (10.0, 20.0, 50.0));
+    let location = doc.nodes[child].unrounded_layout.location;
+    assert_eq!(
+        (location.x, location.y),
+        (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
+    );
+}
+
+#[test]
+fn a_fixed_box_in_a_relative_inline_keeps_the_page_area() {
+    let mut child = 0;
+    let (mut doc, cascade, _root) =
+        ahem_paragraph_with("width:200px;position:relative", |doc, root| {
+            doc.append_text(root, "aaaa ");
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative"),
+            );
+            doc.append_text(outer, "bb");
+            child = doc.append_element(
+                Some(outer),
+                "span",
+                Style::default(),
+                Some("position:fixed;width:10px;height:10px;left:50%"),
+            );
+        });
+    lay_out(&mut doc, &cascade);
+    // The page area is 800px wide, and the paragraph starts at its left edge.
+    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 400.0);
+}
+
 #[test]
 fn an_absolute_box_does_not_take_up_inline_space() {
     for css in [
@@ -16928,6 +17153,38 @@ fn a_block_fits_a_page_step_within_a_thousandth() {
 }
 
 #[test]
+fn a_text_reaches_a_line_when_its_last_line_is_that_line_or_later() {
+    let owned = IfcTextLines {
+        root: 1,
+        width: 100.0,
+        lines: vec![
+            IfcTextLine {
+                line: 1,
+                top: 10.0,
+                bottom: 20.0,
+            },
+            IfcTextLine {
+                line: 2,
+                top: 20.0,
+                bottom: 30.0,
+            },
+        ],
+    };
+    // The text ends on or after the line, so a move from that line grows it.
+    assert!(reaches_line(Some(&owned), 0));
+    assert!(reaches_line(Some(&owned), 2));
+    // The text ends before the line, so the move leaves it alone.
+    assert!(!reaches_line(Some(&owned), 3));
+    // Text without lines of its own is never reached.
+    assert!(!reaches_line(None, 0));
+    let empty = IfcTextLines {
+        lines: Vec::new(),
+        ..owned
+    };
+    assert!(!reaches_line(Some(&empty), 0));
+}
+
+#[test]
 fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
     let pages = PageOrigins::new(&[], 100.0);
     // Four 10px lines from y=70 on a page that ends at 100 leave one widow.
@@ -17675,4 +17932,249 @@ fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
         .find(|edge| edge.node == floater)
         .unwrap();
     assert_eq!((edge.side, edge.top, edge.bottom), (0, 140.0, 154.0));
+    // While that shift is pending, no other box is cleared or looks at the
+    // edges of its context.
+    assert!(clearance(&shifts, clearing, 130.0, 0.0).is_none());
+    assert!(shifts.edges_for(&doc, &cascade, clearing, body).is_none());
+    shifts.pending = None;
+    let (context, edges) = shifts.edges_for(&doc, &cascade, clearing, body).unwrap();
+    assert_eq!(context, body);
+    assert_eq!(edges.len(), 2);
+}
+
+#[test]
+fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
+    // `body > wrapper > floater` and `body > plain`: the wrapper is a
+    // formatting context of its own that holds its float.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;overflow:hidden"),
+    );
+    let floater = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;float:left"),
+    );
+    let plain = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    for id in [html, body, wrapper] {
+        doc.nodes[id].unrounded_layout.location.y = 0.0;
+    }
+    doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
+    doc.nodes[floater].unrounded_layout.location.y = 30.0;
+    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+        width: 60.0,
+        height: 10.0,
+    };
+    let candidate = |node_id, set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        PageCandidate {
+            node_id,
+            raw_y: 0.0,
+            height: 10.0,
+            context,
+            page_name: None,
+            named_flex_context: None,
+            ifc_root: None,
+        }
+    };
+    let moved = |page_overflow, moved_in_bounded_ancestor, target_y| FloatTransition {
+        page_overflow,
+        forced_transition: false,
+        delta: 30.0,
+        target_y,
+        relative_offset: 20.0,
+        flow_page: 2,
+        height: 10.0,
+        margin_top: 4.0,
+        moved_in_bounded_ancestor,
+    };
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+
+    // A float that moved across a page edge it avoids is recorded for the
+    // floats after it in its context, and the context grows to hold it.
+    let mut floats = FloatShifts::default();
+    let mut subtree = SubtreeShifts::default();
+    floats.settle_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(floater, |_| {}),
+        &moved(true, false, 150.0),
+        &mut subtree,
+    );
+    assert_eq!(floats.pending, Some((floater, 30.0, 2)));
+    assert_eq!(floats.later, 34.0);
+    let edge = &floats.edges[&wrapper][0];
+    assert_eq!((edge.node, edge.side), (floater, 0));
+    // Floors are in normal-flow coordinates, without the relative offset.
+    assert_eq!((edge.top, edge.bottom), (130.0, 140.0));
+    assert_eq!(subtree.growth, vec![(wrapper, 20.0)]);
+    assert_eq!(session.nodes[wrapper].unrounded_layout.size.height, 40.0);
+
+    // Two floats of the body: one that ends above 130 and one that reaches
+    // below it.
+    let edge = |node, bottom| FloatEdge {
+        node,
+        side: 0,
+        top: 100.0,
+        bottom,
+        width: 50.0,
+    };
+    let fresh = || {
+        let mut floats = FloatShifts {
+            later: 20.0,
+            ..Default::default()
+        };
+        floats.record_edge(body, edge(98, 120.0));
+        floats.record_edge(body, edge(99, 160.0));
+        floats
+    };
+    let bottoms = |floats: &FloatShifts| {
+        floats
+            .edges
+            .get(&body)
+            .map(|edges| edges.iter().map(|edge| edge.bottom).collect::<Vec<_>>())
+    };
+    let mut settle = |floats: &mut FloatShifts, node_id, set, moved: &FloatTransition| {
+        floats.settle_transition(
+            &mut session,
+            &cascade,
+            body,
+            &candidate(node_id, set),
+            moved,
+            &mut SubtreeShifts::default(),
+        );
+    };
+
+    // A box of the normal flow that opened a page ends the floats above it,
+    // and the shift later floats may need once none remain.
+    let mut floats = fresh();
+    settle(&mut floats, plain, |_| {}, &moved(true, false, 150.0));
+    assert_eq!(bottoms(&floats), Some(vec![160.0]));
+    assert_eq!(floats.later, 20.0);
+    settle(&mut floats, plain, |_| {}, &moved(false, false, 200.0));
+    assert_eq!(bottoms(&floats), None);
+    assert_eq!(floats.later, 0.0);
+    // Inside an ancestor that could not hold the moved box, the outer flow
+    // stays where it was, so the floors stay.
+    let mut floats = fresh();
+    settle(&mut floats, plain, |_| {}, &moved(true, true, 200.0));
+    assert_eq!(bottoms(&floats), Some(vec![120.0, 160.0]));
+    // A box inside a float moves with it and changes nothing.
+    settle(
+        &mut floats,
+        plain,
+        |context| context.is_float_descendant = true,
+        &moved(true, false, 200.0),
+    );
+    assert_eq!(bottoms(&floats), Some(vec![120.0, 160.0]));
+    // Nor does a float that moved for another reason than a page edge.
+    settle(&mut floats, floater, |_| {}, &moved(false, false, 200.0));
+    assert_eq!(bottoms(&floats), Some(vec![120.0, 160.0]));
+    assert_eq!(floats.pending, None);
+}
+
+#[test]
+fn a_transition_landing_moves_the_box_and_the_flow_by_their_own_distances() {
+    let overflow = |table_row_lead: f32| BoxOverflow {
+        page: false,
+        avoided_run: false,
+        table_row: false,
+        table_row_lead,
+        row_group_lead: None,
+        flex_item: false,
+        grid_item: false,
+    };
+    // A forced break keeps a positive block-start margin and the table's
+    // lead, so the box lands below the page top and the flow follows the
+    // page boundary.
+    let kept = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, true, &overflow(5.0));
+    assert_eq!(kept.page_top, 100.0);
+    assert_eq!(kept.target_y, 113.0);
+    assert_eq!(kept.node_delta, 23.0);
+    assert_eq!(kept.shift_delta, 10.0);
+    assert!(kept.is_finite());
+    assert_eq!(kept.underflow_correction(), None);
+
+    // A negative margin after a forced break pulls the box above the page
+    // top, and the flow after it keeps the distance the box did not move.
+    let underflow = TransitionLanding::new(100.0, 90.0, -6.0, 3.0, true, &overflow(0.0));
+    assert_eq!(underflow.target_y, 94.0);
+    assert_eq!(underflow.node_delta, 4.0);
+    assert_eq!(underflow.shift_delta, 10.0);
+    assert_eq!(underflow.underflow_correction(), Some(6.0));
+
+    // An unforced move truncates the margin and keeps the relative offset.
+    let unforced = TransitionLanding::new(100.0, 90.0, 8.0, 3.0, false, &overflow(5.0));
+    assert_eq!(unforced.target_y, 103.0);
+    assert_eq!(unforced.node_delta, 13.0);
+    assert_eq!(unforced.underflow_correction(), None);
+
+    // A position that is not a number never moves the box.
+    let unresolved = TransitionLanding::new(100.0, f32::NAN, 8.0, 3.0, true, &overflow(0.0));
+    assert!(!unresolved.is_finite());
+    let unbounded = TransitionLanding::new(f32::INFINITY, 90.0, 8.0, 3.0, true, &overflow(0.0));
+    assert!(!unbounded.is_finite());
+}
+
+#[test]
+fn a_forced_page_start_lands_on_the_later_of_the_next_and_the_natural_page() {
+    // A box on the current page opens the page after it.
+    assert_eq!(forced_target_page(2, 2), 3);
+    assert_eq!(forced_target_page(2, 0), 3);
+    // Content that overflowed past the current page puts the box on a later
+    // page already, and the break does not add another one.
+    assert_eq!(forced_target_page(2, 5), 5);
+    // The last page index has no next page to open.
+    assert_eq!(forced_target_page(u32::MAX, 0), u32::MAX);
+}
+
+#[test]
+fn a_box_runs_on_to_the_page_its_flow_end_falls_on() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // A box inside its first page stays on it, even when it ends at the edge.
+    assert_eq!(pages.end_page(20.0, 50.0), Some(0));
+    assert_eq!(pages.end_page(0.0, 100.0), Some(0));
+    // One that crosses the edge runs on to the page its end falls on.
+    assert_eq!(pages.end_page(50.0, 100.0), Some(1));
+    assert_eq!(pages.end_page(50.0, 260.0), Some(3));
+    // A box ending exactly at an edge belongs to the page before it.
+    assert_eq!(pages.end_page(50.0, 250.0), Some(2));
+    // A box with no block size or no usable position runs on nowhere.
+    assert_eq!(pages.end_page(50.0, 0.0), None);
+    assert_eq!(pages.end_page(-10.0, 50.0), None);
+    assert_eq!(pages.end_page(f32::NAN, 50.0), None);
+}
+
+#[test]
+fn only_a_named_box_or_a_sized_leaf_holds_content_in_its_columns() {
+    let context = |set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        context
+    };
+    let plain = context(|_| {});
+    let named = context(|context| context.is_named = true);
+    let leaf = context(|context| context.is_rendered_leaf = true);
+    // A named box counts whatever its size.
+    assert!(box_occupies_column(&named, true, 0.0));
+    // A rendered leaf needs a block size.
+    assert!(box_occupies_column(&leaf, true, 10.0));
+    assert!(!box_occupies_column(&leaf, true, 0.0));
+    // Any other box leaves the columns empty.
+    assert!(!box_occupies_column(&plain, true, 10.0));
+    // So does one that does not take part in the flow's page names.
+    assert!(!box_occupies_column(&named, false, 10.0));
+    assert!(!box_occupies_column(&leaf, false, 10.0));
 }

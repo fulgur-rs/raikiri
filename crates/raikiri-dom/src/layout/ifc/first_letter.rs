@@ -640,8 +640,11 @@ fn typographic_origins_in(
         let Some(parent) = doc.parent_of(id) else {
             break; // cov:ignore: eligible IFC element roots have a document parent; the document root is not a block-container cascade node.
         };
-        if crate::generated_content::is_in_flow_generated_text(cascade, parent, PseudoElem::Before)
-        {
+        if crate::generated_content::is_line_making_generated_text(
+            cascade,
+            parent,
+            PseudoElem::Before,
+        ) {
             break;
         }
         let blocked = predecessors.has_preceding(doc, cascade, boxes, id);
@@ -725,7 +728,7 @@ impl PredecessorCache {
                 [PseudoElem::Before, PseudoElem::After]
                     .iter()
                     .any(|&pseudo| {
-                        crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
+                        crate::generated_content::is_line_making_generated_text(cascade, id, pseudo)
                     })
                     || child_contributes()
             } else if outside_ancestor_line(cv, properties) {
@@ -739,7 +742,7 @@ impl PredecessorCache {
                             || [PseudoElem::Before, PseudoElem::After]
                                 .iter()
                                 .any(|&pseudo| {
-                                    crate::generated_content::is_in_flow_generated_text(
+                                    crate::generated_content::is_line_making_generated_text(
                                         cascade, id, pseudo,
                                     )
                                 })

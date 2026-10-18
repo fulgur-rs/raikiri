@@ -573,7 +573,11 @@ impl<'a> Page<'a> {
     /// follow the built-in painter: negative `z-index` first, then in-flow
     /// boxes, floats, and positioned boxes with `z-index: auto` or a
     /// non-negative `z-index`; flex and grid items use `order` within a
-    /// stacking level. A paragraph's inline boxes come before its text.
+    /// stacking level. A paragraph's inline boxes come before its text. An
+    /// inline element on the first line to which a `::first-line` gives a
+    /// color or font size other than its own is listed by
+    /// [`PaintEvent::LineBox`] pieces in place of its [`PaintEvent::Box`], as
+    /// [`Self::paint_order_for_text_runs`] describes.
     /// Clip rectangles are in the same space as [`Fragment::paint_rect`]; an
     /// overflow clip is built from the element's whole box, so it runs past
     /// the page where a page break cuts the box.
@@ -637,8 +641,14 @@ impl<'a> Page<'a> {
     /// the first line and on later ones is split by line: in place of its
     /// [`PaintEvent::Box`], its piece on the first line is a
     /// [`PaintEvent::LineBox`] in the group, and its other pieces are
-    /// [`PaintEvent::LineBox`] events with the other lines. Floats and atomic
-    /// inlines not on the first line stay with the other lines.
+    /// [`PaintEvent::LineBox`] events with the other lines. The piece on the
+    /// first line carries the values the `::first-line` gives the element, in
+    /// [`crate::LineBox::style`]. Floats and atomic inlines not on the first
+    /// line stay with the other lines.
+    /// Whether or not the `::first-line` is translucent, an inline element
+    /// on the first line to which it gives a color or font size other than
+    /// the element's own is listed by [`PaintEvent::LineBox`] pieces in the
+    /// same way, also when it has no box on later lines.
     /// [`Self::text_run_opacity_group`] tells
     /// which line event draws a run: a run of no group belongs to the
     /// `TextLine` event of its line, and any other run to the `GroupTextLine`

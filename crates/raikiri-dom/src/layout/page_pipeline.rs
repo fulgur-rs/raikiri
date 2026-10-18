@@ -932,6 +932,17 @@ fn has_fixed_height(document: &Document, node_id: usize) -> bool {
     .is_some_and(|value| value >= 0.0)
 }
 
+/// Whether a box that took its page position holds content in the columns
+/// around it: it takes part in the flow's page names and is named itself, or
+/// is a rendered leaf with a block size.
+fn box_occupies_column(
+    context: &candidates::BoxContext,
+    name_participates_in_flow: bool,
+    height: f32,
+) -> bool {
+    name_participates_in_flow && (context.is_named || (context.is_rendered_leaf && height > 0.0))
+}
+
 /// The flow end of a candidate box placed at `effective_y`, or `None` when
 /// the box has no height or no usable position and so cannot run on past
 /// its start page.
@@ -1436,7 +1447,7 @@ impl PageOrigins {
         )
         .then(|| {
             let natural_page = self.page_index_for_y(text_y + text_height);
-            current_page.saturating_add(1).max(natural_page)
+            forced_target_page(current_page, natural_page)
         })
     }
 
@@ -1508,6 +1519,13 @@ impl PageOrigins {
         } else {
             page.saturating_add(1)
         }
+    }
+
+    /// The last page that a box of block size `height` whose top is at `y`
+    /// runs on, or `None` when it cannot run on past its start page (see
+    /// [`candidate_flow_end`]).
+    fn end_page(&self, y: f32, height: f32) -> Option<u32> {
+        candidate_flow_end(y, height).map(|end| self.page_index_for_end(end))
     }
 
     fn page_index_for_end(&self, end: f32) -> u32 {
@@ -1677,6 +1695,14 @@ pub(crate) fn resolve_page_fragment_geometry(
         content_box,
         orientation,
     )
+}
+
+/// Whether a text node with the lines `owned` has glyphs on `line` or on a
+/// later line of its paragraph.
+fn reaches_line(owned: Option<&IfcTextLines>, line: usize) -> bool {
+    owned
+        .and_then(|owned| owned.lines.last())
+        .is_some_and(|last| last.line >= line)
 }
 
 /// Block-start and block-end edges of every line of the ifc paragraph a text
@@ -4002,7 +4028,6 @@ fn paginate_flow(
     let page_origin = |page_index: u32| page_origins.origin(page_index);
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
     let page_index_in_flow = |y: f32| page_origins.page_index_in_flow(y);
-    let page_index_for_end = |end: f32| page_origins.page_index_for_end(end);
     let leading_margins_moved =
         leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
     let root_flow_offset = 0.0;
@@ -4388,25 +4413,20 @@ fn paginate_flow(
                     LineBreakFix::MoveLines(moves) => {
                         for (line, shift, page) in moves.into_iter().flatten() {
                             check_candidate_page!('candidate_loop, page);
-                            shift_ifc_lines_from(document, block_id, line, shift);
-                            if let Some((item, container)) = flex_line_paragraph {
-                                shift_later_flex_lines(document, container, item, shift);
-                            }
-                            grow_ancestors_for_shift(
+                            move_paragraph_lines(
                                 document,
                                 cascade,
-                                block_id,
-                                shift,
                                 body_id,
+                                &LineMove {
+                                    block_id,
+                                    flex_line: flex_line_paragraph,
+                                    line,
+                                    shift,
+                                },
                                 &mut subtree_shifts,
                                 page_before_candidate,
-                                &IfcBoxShifts::default(),
                             );
-                            if text_lines
-                                .get(node_id)
-                                .and_then(|owned| owned.lines.last())
-                                .is_some_and(|last| last.line >= line)
-                            {
+                            if reaches_line(text_lines.get(node_id), line) {
                                 height += shift;
                             }
                             deferred_shifts.line_splits.push((block_id, line, shift));
@@ -4461,7 +4481,7 @@ fn paginate_flow(
             if saw_child {
                 if consumes_pending_break || named_page_change {
                     let natural_page = page_index_in_flow(effective_y).unwrap_or(current_page);
-                    let target_page = current_page.saturating_add(1).max(natural_page);
+                    let target_page = forced_target_page(current_page, natural_page);
                     check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
                     // The candidate was materialized to `effective_y` above,
@@ -4511,7 +4531,7 @@ fn paginate_flow(
             if name_participates_in_flow && height > 0.0 {
                 column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
             }
-            let end_page = candidate_flow_end(effective_y, height).map(page_index_for_end);
+            let end_page = page_origins.end_page(effective_y, height);
             let in_flow = !candidate.context.is_out_of_flow_descendant;
             record_candidate_pages(
                 &mut reach,
@@ -4653,40 +4673,32 @@ fn paginate_flow(
                     reach.flow_max,
                     named_page_change,
                 );
-                let target_page = current_page.saturating_add(1).max(natural_page);
+                let target_page = forced_target_page(current_page, natural_page);
                 check_candidate_page!('candidate_loop, target_page);
-                let target_y = page_origin(target_page);
                 // A negative block-start margin can pull a forced-break box
                 // back into the preceding page.  Keep the break boundary for
                 // following siblings (and for page count), but materialize
                 // this box at the underflowed coordinate.  This is the
                 // `underflow-from-next-page` case from CSS Break.
-                let node_target_y = transition_target_y(
-                    target_y,
+                let landing = TransitionLanding::new(
+                    page_origin(target_page),
+                    effective_y,
                     margin_top,
                     relative_offset,
-                    overflow.table_row_lead,
                     forced_transition,
-                    overflow.row_group_lead,
-                    overflow.table_row,
+                    &overflow,
                 );
-                // The candidate was materialized to `effective_y` above,
-                // so this is the additional movement for this boundary.
-                // Keep `flow_shift` at the page boundary even when the
-                // candidate itself underflows into the preceding page.
-                let node_delta = node_target_y - effective_y;
-                let shift_delta = target_y - effective_y;
                 let row_flex_break_before =
                     forced_before && in_row_flex_container(document, cascade, node_id);
-                if node_delta.is_finite() && shift_delta.is_finite() {
+                if landing.is_finite() {
                     let moved_in_bounded_ancestor = move_box_for_transition(
                         document,
                         cascade,
                         body_id,
                         &candidate,
                         &TransitionMove {
-                            node_delta,
-                            shift_delta,
+                            node_delta: landing.node_delta,
+                            shift_delta: landing.shift_delta,
                             page_overflow: overflow.page,
                             forced_transition,
                         },
@@ -4697,55 +4709,39 @@ fn paginate_flow(
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
                     if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
-                        move_flex_line_siblings(document, parent_id, node_id, raw_y, shift_delta);
+                        move_flex_line_siblings(
+                            document,
+                            parent_id,
+                            node_id,
+                            raw_y,
+                            landing.shift_delta,
+                        );
                     }
                     // A kept margin moves the box's descendants and its
                     // later siblings along with the box.
-                    flow_shift += node_delta;
-                    if node_target_y < target_y {
-                        deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
+                    flow_shift += landing.node_delta;
+                    if let Some(correction) = landing.underflow_correction() {
+                        deferred_shifts.underflow = Some((node_id, correction));
                     }
-                    if overflow.page && is_floating_box_for_pagination(document, cascade, node_id) {
-                        float_shifts.record_moved_float(
-                            document,
-                            cascade,
-                            body_id,
-                            &MovedFloat {
-                                node_id,
-                                side: float_side_index(computed.float),
-                                delta: node_delta,
-                                flow_page: page_before_candidate,
-                                // Floors are kept in normal-flow coordinates,
-                                // without the relative offsets of the ancestors.
-                                flow_target_y: node_target_y - relative_offset,
-                                height,
-                                margin_top,
-                                forced_transition,
-                            },
-                        );
-                        grow_float_context_to_moved_float(
-                            document,
-                            cascade,
-                            node_id,
-                            body_id,
+                    float_shifts.settle_transition(
+                        document,
+                        cascade,
+                        body_id,
+                        &candidate,
+                        &FloatTransition {
+                            page_overflow: overflow.page,
+                            forced_transition,
+                            delta: landing.node_delta,
+                            target_y: landing.target_y,
+                            relative_offset,
+                            flow_page: page_before_candidate,
                             height,
-                            &mut subtree_shifts,
-                            page_before_candidate,
-                        );
-                    } else if !candidate.context.is_float_descendant
-                        && !is_floating_box_for_pagination(document, cascade, node_id)
-                    {
-                        let flow_top = node_target_y - relative_offset;
-                        float_shifts.drop_edges_for_in_flow_candidate(
-                            document,
-                            cascade,
-                            node_id,
-                            body_id,
-                            flow_top,
+                            margin_top,
                             moved_in_bounded_ancestor,
-                        );
-                    }
-                    effective_y += node_delta;
+                        },
+                        &mut subtree_shifts,
+                    );
+                    effective_y += landing.node_delta;
                 }
                 current_page = target_page;
                 if forced_transition {
@@ -4869,9 +4865,9 @@ fn paginate_flow(
                     height,
                 )
         };
-        let end_page = candidate_flow_end(effective_y, height)
-            .filter(|_| !monolithic_paper_fit())
-            .map(page_index_for_end);
+        let end_page = page_origins
+            .end_page(effective_y, height)
+            .filter(|_| !monolithic_paper_fit());
         let in_flow = !candidate.context.is_out_of_flow_descendant;
         record_candidate_pages(
             &mut reach,
@@ -4882,9 +4878,7 @@ fn paginate_flow(
             in_flow,
         )?;
 
-        if name_participates_in_flow
-            && (candidate.context.is_named || (candidate.context.is_rendered_leaf && height > 0.0))
-        {
+        if box_occupies_column(&candidate.context, name_participates_in_flow, height) {
             column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
         }
         if candidate.context.is_flex_item
@@ -4923,7 +4917,7 @@ fn paginate_flow(
         let end =
             content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
         if end.is_finite() && end > 0.0 {
-            reach.include_checked(control, page_index_for_end(end), false)?;
+            reach.include_checked(control, page_origins.page_index_for_end(end), false)?;
         }
     }
     // Pages past the last one the normal flow reached hold only boxes outside
@@ -6617,6 +6611,13 @@ fn margin_box_starts_page(
         || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
 }
 
+/// The page that a box which has to start a new page lands on: the page after
+/// `current_page`, or `natural_page` when the box's position already falls on
+/// a later page.
+fn forced_target_page(current_page: u32, natural_page: u32) -> u32 {
+    current_page.saturating_add(1).max(natural_page)
+}
+
 /// Where a box that crosses a page transition is placed, given the
 /// `target_y` top of the page it moves to.
 ///
@@ -6649,6 +6650,66 @@ fn transition_target_y(
         target_y + table_row_lead + relative_offset
     } else {
         target_y + relative_offset
+    }
+}
+
+/// Where a page transition places a box, and how far that moves the box and
+/// the flow after it.
+struct TransitionLanding {
+    /// The top of the page the box moves to.
+    page_top: f32,
+    /// Where the box's border box starts after the move (see
+    /// [`transition_target_y`]).
+    target_y: f32,
+    /// How far the box itself moves down.
+    node_delta: f32,
+    /// How far the flow after the box moves down.
+    shift_delta: f32,
+}
+
+impl TransitionLanding {
+    /// The landing of a box that was materialized at `effective_y` and moves
+    /// to the page that starts at `page_top`.
+    ///
+    /// Both distances are the additional movement for this boundary, since the
+    /// box already sits at `effective_y`. The flow shift stays at the page
+    /// boundary even when the box itself underflows into the preceding page.
+    fn new(
+        page_top: f32,
+        effective_y: f32,
+        margin_top: f32,
+        relative_offset: f32,
+        forced_transition: bool,
+        overflow: &BoxOverflow,
+    ) -> Self {
+        let target_y = transition_target_y(
+            page_top,
+            margin_top,
+            relative_offset,
+            overflow.table_row_lead,
+            forced_transition,
+            overflow.row_group_lead,
+            overflow.table_row,
+        );
+        Self {
+            page_top,
+            target_y,
+            node_delta: target_y - effective_y,
+            shift_delta: page_top - effective_y,
+        }
+    }
+
+    /// Whether both distances are usable numbers, so that the box can move.
+    fn is_finite(&self) -> bool {
+        self.node_delta.is_finite() && self.shift_delta.is_finite()
+    }
+
+    /// The correction that later siblings still need when the box underflows
+    /// into the page above the one it moves to: its descendants follow the
+    /// box, while the flow after it begins at the page boundary. It is only
+    /// meaningful when [`is_finite`](Self::is_finite) holds.
+    fn underflow_correction(&self) -> Option<f32> {
+        (self.target_y < self.page_top).then_some(self.shift_delta - self.node_delta)
     }
 }
 
@@ -7608,6 +7669,48 @@ fn make_room_for_table_header(
     0.0
 }
 
+/// The lines of a paragraph that move down inside it, away from a break
+/// that would leave too few of them on one page.
+struct LineMove {
+    /// The paragraph root that holds the lines.
+    block_id: usize,
+    /// The paragraph's flex item and its container, when the paragraph is a
+    /// flex item alone on its line.
+    flex_line: Option<(usize, usize)>,
+    /// The first line that moves.
+    line: usize,
+    /// How far the lines move down.
+    shift: f32,
+}
+
+/// Moves the lines of a paragraph from `moved.line` on down by `moved.shift`
+/// and brings along what has to follow them: the flex lines after a flex
+/// item paragraph, and the ancestors that hold the paragraph, which grow to
+/// keep it.
+fn move_paragraph_lines(
+    document: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    body_id: usize,
+    moved: &LineMove,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) {
+    shift_ifc_lines_from(document, moved.block_id, moved.line, moved.shift);
+    if let Some((item, container)) = moved.flex_line {
+        shift_later_flex_lines(document, container, item, moved.shift);
+    }
+    grow_ancestors_for_shift(
+        document,
+        cascade,
+        moved.block_id,
+        moved.shift,
+        body_id,
+        shifts,
+        flow_page,
+        &IfcBoxShifts::default(),
+    );
+}
+
 /// Moves `block_id`, which sits at `from_y`, so that its flow position starts
 /// at `target_y`, and returns how far it moved. Its relative offsets move
 /// along with it. A `nested` block that begins its ancestors, with no border
@@ -8399,6 +8502,29 @@ struct MovedFloat {
     forced_transition: bool,
 }
 
+/// A box that a page transition moved down, as the floats of its formatting
+/// context see it.
+struct FloatTransition {
+    /// Whether the box moved because it would cross a page edge it avoids.
+    page_overflow: bool,
+    /// Whether a forced or page-type break moved the box.
+    forced_transition: bool,
+    /// How far the box moved down.
+    delta: f32,
+    /// Where the box's border box starts after the move.
+    target_y: f32,
+    /// The relative offset of the box and its ancestors.
+    relative_offset: f32,
+    /// The page the flow was on before the box moved.
+    flow_page: u32,
+    /// The box's border-box height.
+    height: f32,
+    /// The box's block-start margin.
+    margin_top: f32,
+    /// Whether an ancestor's height kept it from holding the moved content.
+    moved_in_bounded_ancestor: bool,
+}
+
 /// A box that has to start below the moved floats of its formatting context.
 struct FloatClearance {
     /// The formatting context the floats are in.
@@ -8430,7 +8556,7 @@ impl FloatShifts {
         let floor = if !floating && candidate.context.is_float_descendant {
             None
         } else {
-            float_floor(document, cascade, node_id, context, &edges, floating)
+            float_floor(document, cascade, node_id, context, edges, floating)
         };
         let margin_top = if floating {
             document.nodes[node_id].unrounded_layout.margin.top
@@ -8512,6 +8638,64 @@ impl FloatShifts {
         }
     }
 
+    /// Settles the floats of the formatting context after a page transition
+    /// moved the box `candidate`. A float that moved across a page edge it
+    /// avoids is recorded for the floats and clearing boxes after it, and
+    /// grows the context that holds it. A box in the normal flow that opened
+    /// a page ends the float edges above it. A box inside a float moves with
+    /// it and changes nothing.
+    fn settle_transition(
+        &mut self,
+        document: &mut super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        candidate: &PageCandidate,
+        moved: &FloatTransition,
+        shifts: &mut SubtreeShifts,
+    ) {
+        let node_id = candidate.node_id;
+        if moved.page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
+            self.record_moved_float(
+                document,
+                cascade,
+                body_id,
+                &MovedFloat {
+                    node_id,
+                    side: float_side_index(cascade.computed[node_id].float),
+                    delta: moved.delta,
+                    flow_page: moved.flow_page,
+                    // Floors are kept in normal-flow coordinates, without the
+                    // relative offsets of the ancestors.
+                    flow_target_y: moved.target_y - moved.relative_offset,
+                    height: moved.height,
+                    margin_top: moved.margin_top,
+                    forced_transition: moved.forced_transition,
+                },
+            );
+            grow_float_context_to_moved_float(
+                document,
+                cascade,
+                node_id,
+                body_id,
+                moved.height,
+                shifts,
+                moved.flow_page,
+            );
+        } else if !candidate.context.is_float_descendant
+            && !is_floating_box_for_pagination(document, cascade, node_id)
+        {
+            let flow_top = moved.target_y - moved.relative_offset;
+            self.drop_edges_for_in_flow_candidate(
+                document,
+                cascade,
+                node_id,
+                body_id,
+                flow_top,
+                moved.moved_in_bounded_ancestor,
+            );
+        }
+    }
+
     /// Add `delta` to the pending shift of the float `node_id`, and return
     /// the shift the float already had.
     ///
@@ -8549,13 +8733,13 @@ impl FloatShifts {
         cascade: &CascadeResult,
         node_id: usize,
         body_id: usize,
-    ) -> Option<(usize, Vec<FloatEdge>)> {
+    ) -> Option<(usize, &[FloatEdge])> {
         (self.later != 0.0 && self.pending.is_none())
             .then(|| {
                 let context = float_context_root(document, cascade, node_id, body_id);
                 self.edges
                     .get(&context)
-                    .map(|edges| (context, edges.clone()))
+                    .map(|edges| (context, edges.as_slice()))
             })
             .flatten()
     }

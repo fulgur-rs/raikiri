@@ -970,7 +970,9 @@ fn review_generated_inline_predecessors_keep_before_after_atomic_barriers() {
 
 #[test]
 fn review_empty_generated_ancestors_and_predecessors_keep_the_block_child_boundary() {
-    for content in ["''", "attr(missing)", "no-open-quote", "no-close-quote"] {
+    // Contents that are only known while the paragraph is laid out still
+    // count as text, though they may turn out empty.
+    for content in ["attr(missing)", "no-open-quote", "no-close-quote"] {
         for ancestor in [true, false] {
             let target = if ancestor { "div" } else { "span" };
             let sheet = format!(
@@ -996,6 +998,84 @@ fn review_empty_generated_ancestors_and_predecessors_keep_the_block_child_bounda
             });
             let selected = ancestor_letter_projection(&fixture, child);
             assert_eq!(selected.len(), 0, "{content}: ancestor={ancestor}");
+        }
+    }
+}
+
+/// The root `div` and the blocks whose `::first-letter` and `::first-line`
+/// reach the first line of its block child, for a `div` styled by `sheet`.
+/// With `follows_contents_span`, the block child comes after a
+/// `display: contents` span.
+fn child_origins(sheet: &str, follows_contents_span: bool) -> (usize, Vec<usize>, Vec<usize>) {
+    let mut child = 0;
+    let fixture = sheet_fixture(sheet, "", |doc, root| {
+        if follows_contents_span {
+            doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:contents"),
+            );
+        }
+        child = doc.append_element(
+            Some(root),
+            "p",
+            taffy::Style::default(),
+            Some("display:block"),
+        );
+        doc.append_text(child, "A");
+    });
+    let (letters, lines) = typographic_origins(
+        &fixture.doc,
+        &fixture.cascade,
+        child,
+        &PredecessorCache::default(),
+        true,
+    );
+    (fixture.root, letters, lines)
+}
+
+#[test]
+fn a_blank_inline_pseudo_element_does_not_stop_the_ancestor_first_line_or_letter() {
+    for content in ["''", "'' ''", "\"\""] {
+        for (ancestor, pseudo) in [(true, "before"), (false, "before"), (false, "after")] {
+            let target = if ancestor { "div" } else { "span" };
+            let sheet = format!(
+                "div::first-letter{{font-size:20px}} div::first-line{{color:blue}} \
+                 {target}::{pseudo}{{content:{content}}}"
+            );
+            let (root, letters, lines) = child_origins(&sheet, !ancestor);
+            assert_eq!(letters, [root], "{content} {target}::{pseudo}");
+            assert_eq!(lines, [root], "{content} {target}::{pseudo}");
+        }
+    }
+}
+
+#[test]
+fn a_blank_pseudo_element_with_box_edges_or_a_block_display_still_stops_them() {
+    for declarations in [
+        "padding-left:1px",
+        "padding-top:1px",
+        "margin-right:1px",
+        "margin-left:auto",
+        "border:1px solid",
+        "border-bottom:2px solid",
+        "padding:calc(1% + 1px)",
+        "display:block",
+        "display:inline-block",
+    ] {
+        for (ancestor, pseudo) in [(true, "before"), (false, "before"), (false, "after")] {
+            let target = if ancestor { "div" } else { "span" };
+            let sheet = format!(
+                "div::first-letter{{font-size:20px}} div::first-line{{color:blue}} \
+                 {target}::{pseudo}{{content:'';{declarations}}}"
+            );
+            let (root, letters, lines) = child_origins(&sheet, !ancestor);
+            assert!(
+                !letters.contains(&root),
+                "{declarations} {target}::{pseudo}"
+            );
+            assert!(!lines.contains(&root), "{declarations} {target}::{pseudo}");
         }
     }
 }
