@@ -143,6 +143,119 @@ fn a_lone_fixed_height_middle_box_centers_in_the_column() {
 }
 
 #[test]
+fn fixed_width_top_boxes_sit_at_the_start_the_middle_and_the_end() {
+    // 320px lie between the corners, from x = 40 to x = 360.
+    let boxes = boxes_for(
+        "@page { margin: 40px; \
+           @top-left { content: 'x'; width: 50px } \
+           @top-center { content: 'x'; width: 100px } \
+           @top-right { content: 'x'; width: 60px } }",
+    );
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 50.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [150.0, 0.0, 100.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [300.0, 0.0, 60.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn boxes_that_fill_the_edge_stay_one_after_another() {
+    // The auto widths add up to the whole edge, so there is no room to move
+    // the center away from the box before it.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'aaaa' }} \
+           @top-center {{ content: 'bbbbbbbbbbbbbbbb' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 64.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [104.0, 0.0, 256.0, 40.0]),
+        ]
+    );
+    let fixed_sides = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'x'; width: 50px }} \
+           @top-center {{ content: 'x' }} \
+           @top-right {{ content: 'x'; width: 150px }} }}"
+    ));
+    assert_eq!(
+        rects(&fixed_sides),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 50.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [90.0, 0.0, 120.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [210.0, 0.0, 150.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn a_wide_side_box_pushes_a_fixed_center_off_the_middle() {
+    // The center would start at x = 150 but the left box runs up to x = 190.
+    let boxes = boxes_for(
+        "@page { margin: 40px; \
+           @top-left { content: 'x'; width: 150px } \
+           @top-center { content: 'x'; width: 100px } }",
+    );
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 150.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [190.0, 0.0, 100.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn a_lone_fixed_width_box_keeps_to_its_slot_on_the_bottom_edge() {
+    let end = boxes_for("@page { margin: 40px; @bottom-right { content: 'x'; width: 100px } }");
+    assert_eq!(
+        rects(&end),
+        [(PageMarginBoxSlot::BottomRight, [260.0, 260.0, 100.0, 40.0])]
+    );
+    let middle = boxes_for("@page { margin: 40px; @bottom-center { content: 'x'; width: 100px } }");
+    assert_eq!(
+        rects(&middle),
+        [(PageMarginBoxSlot::BottomCenter, [150.0, 260.0, 100.0, 40.0])]
+    );
+}
+
+#[test]
+fn fixed_height_side_boxes_sit_at_the_start_and_the_end_of_the_column() {
+    // 220px lie between the corners, from y = 40 to y = 260.
+    let both = boxes_for(
+        "@page { margin: 40px; \
+           @left-top { content: 'x'; height: 20px } \
+           @left-bottom { content: 'x'; height: 30px } }",
+    );
+    assert_eq!(
+        rects(&both),
+        [
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 20.0]),
+            (PageMarginBoxSlot::LeftBottom, [0.0, 230.0, 40.0, 30.0]),
+        ]
+    );
+    let end = boxes_for("@page { margin: 40px; @right-bottom { content: 'x'; height: 20px } }");
+    assert_eq!(
+        rects(&end),
+        [(PageMarginBoxSlot::RightBottom, [360.0, 240.0, 40.0, 20.0])]
+    );
+}
+
+#[test]
+fn a_fixed_size_box_longer_than_its_edge_starts_at_the_start() {
+    let boxes = boxes_for("@page { margin: 40px; @top-right { content: 'x'; width: 400px } }");
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::TopRight, [40.0, 0.0, 400.0, 40.0])]
+    );
+}
+
+#[test]
 fn empty_side_boxes_split_the_column_evenly() {
     let boxes = boxes_for(
         "@page { margin: 40px; @right-top { content: '' } @right-bottom { content: '' } }",
@@ -167,7 +280,7 @@ fn fixed_width_left_boxes_hug_the_page_area_unless_centered() {
         rects(&boxes),
         [
             (PageMarginBoxSlot::LeftTop, [20.0, 40.0, 20.0, 20.0]),
-            (PageMarginBoxSlot::LeftBottom, [10.0, 60.0, 20.0, 20.0]),
+            (PageMarginBoxSlot::LeftBottom, [10.0, 240.0, 20.0, 20.0]),
         ]
     );
 }

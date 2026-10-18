@@ -256,7 +256,12 @@ fn margin_row_lays_out_fixed_width_background() {
         margin_row_margins(10.0),
     );
     assert_eq!(boxes.len(), 1);
-    assert_eq!(boxes[0].rect, PaintRect::new(10.0, 0.0, 100.0, 10.0));
+    // The lone center box is centered on the edge between the side margins.
+    let available = PageBox::A4.width - 10.0 - 10.0;
+    assert_eq!(
+        boxes[0].rect,
+        PaintRect::new(10.0 + (available - 100.0) / 2.0, 0.0, 100.0, 10.0)
+    );
     assert_eq!(boxes[0].background_color, fixed_margin_spec().background);
     assert!(boxes[0].text.is_none());
 }

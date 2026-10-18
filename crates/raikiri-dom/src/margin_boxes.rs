@@ -1560,6 +1560,33 @@ fn edge_track_sizes<'s>(
         .collect()
 }
 
+/// Where each of `tracks` starts along its edge, counted from the start of
+/// the `available` length between the corners. CSS Page 3 puts the first slot
+/// flush with the start, the middle one in the center and the last one flush
+/// with the end, whichever of the other boxes are present. A box does not
+/// move back over the one before it, nor out past the end of the edge while
+/// the boxes from it on still fit, so boxes that fill the edge stay one after
+/// another.
+fn edge_offsets(edge: Edge, tracks: &[(&MarginBoxSpec, f32)], available: f32) -> Vec<f32> {
+    let mut remaining = tracks.iter().map(|&(_, size)| size).sum::<f32>();
+    let mut cursor = 0.0;
+    tracks
+        .iter()
+        .map(|&(spec, size)| {
+            let free = available - size;
+            let wanted = match edge.slots.iter().position(|slot| *slot == spec.slot) {
+                Some(0) => 0.0,
+                Some(1) => free / 2.0,
+                _ => free,
+            };
+            let offset = wanted.min(available - remaining).max(cursor);
+            remaining -= size;
+            cursor = offset + size;
+            offset
+        })
+        .collect()
+}
+
 fn layout_horizontal_margin_boxes(
     document: &Document,
     specs: &[MarginBoxSpec],
@@ -1578,12 +1605,13 @@ fn layout_horizontal_margin_boxes(
         return;
     }
     let available = (page_width - margins.left - margins.right).max(0.0);
-    let mut x = margins.left;
-    for (spec, outer_width) in edge_track_sizes(document, specs, edge, available, row_height) {
+    let tracks = edge_track_sizes(document, specs, edge, available, row_height);
+    let offsets = edge_offsets(edge, &tracks, available);
+    for (&(spec, outer_width), offset) in tracks.iter().zip(offsets) {
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
         let width = (outer_width - margin_left - margin_right).max(0.0);
-        let paint_x = x + margin_left;
+        let paint_x = margins.left + offset + margin_left;
         let outer_height = if spec.height.is_some() {
             spec.outer_size(Axis::Vertical, 0.0)
                 .min(row_height)
@@ -1606,7 +1634,6 @@ fn layout_horizontal_margin_boxes(
             spec,
             PaintRect::new(paint_x, y, width, height),
         ));
-        x += outer_width;
     }
 }
 
@@ -1629,14 +1656,11 @@ fn layout_vertical_margin_boxes(
     }
     let available = (page_height - margins.top - margins.bottom).max(0.0);
     let tracks = edge_track_sizes(document, specs, edge, available, column_width);
-    let has_slot = |slot: PageMarginBoxSlot| tracks.iter().any(|(spec, _)| spec.slot == slot);
-    let has_top = has_slot(edge.slots[0]);
-    let has_bottom = has_slot(edge.slots[2]);
     let all_fixed_heights =
         tracks.len() == 3 && tracks.iter().all(|(spec, _)| spec.height.is_some());
     let segment_height = available / 3.0;
-    let mut y = margins.top;
-    for &(spec, outer_height) in &tracks {
+    let offsets = edge_offsets(edge, &tracks, available);
+    for (&(spec, outer_height), offset) in tracks.iter().zip(offsets) {
         let margin_top = spec.margin[0];
         let margin_bottom = spec.margin[2];
         let height = (outer_height - margin_top - margin_bottom).max(0.0);
@@ -1650,10 +1674,8 @@ fn layout_vertical_margin_boxes(
                 + slot_index * segment_height
                 + (segment_height - outer_height).max(0.0) / 2.0
                 + margin_top
-        } else if spec.height.is_some() && spec.slot == edge.slots[1] && !has_top && !has_bottom {
-            margins.top + (available - outer_height).max(0.0) / 2.0 + margin_top
         } else {
-            y + margin_top
+            margins.top + offset + margin_top
         };
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
@@ -1675,7 +1697,6 @@ fn layout_vertical_margin_boxes(
             spec,
             PaintRect::new(paint_x, paint_y, width, height),
         ));
-        y += outer_height;
     }
 }
 
