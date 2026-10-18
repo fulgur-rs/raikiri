@@ -2934,6 +2934,35 @@ fn background_page_image_origin_starts_at_the_page_box_inside_the_margins() {
         fill.transform.as_coeffs(),
         [45.0, 0.0, 0.0, 20.0, 10.0, 10.0]
     );
+
+    // A fixed layer is positioned in the page box with its margins, the whole
+    // paper, whatever its origin.
+    for origin in ["border-box", "padding-box", "content-box"] {
+        let (document, cascade) = canvas_fixture(
+            Some(&format!(
+                "@page {{ margin: 10px; border: 4px solid black; padding: 3px; background-image: url('https://example.test/red.png'); background-repeat: no-repeat; background-attachment: fixed; background-origin: {origin}; }}"
+            )),
+            None,
+        );
+        let mut scene = Scene::new();
+        paint_page_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            PageBackgroundAreas {
+                paper,
+                border_box: page_box,
+            },
+            Some(&RedPixels),
+            &mut Vec::new(),
+        );
+        assert_eq!(
+            background_fill_origins(&scene),
+            vec![(0.0, 0.0)],
+            "fixed, {origin}"
+        );
+    }
 }
 
 #[test]

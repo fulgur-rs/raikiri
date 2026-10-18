@@ -576,6 +576,16 @@ fn page_background_origins(cascade: &CascadeResult) -> Option<&[VisualBox]> {
     }
 }
 
+/// The page `background-attachment` list, one entry per layer.
+fn page_background_attachments(
+    cascade: &CascadeResult,
+) -> Option<&[raikiri_style::property::BackgroundAttachment]> {
+    match page_property(cascade, PropertyKey::BackgroundAttachment) {
+        Some(PropertyValue::BackgroundAttachment(attachments)) => Some(attachments),
+        _ => None,
+    }
+}
+
 /// The page `background-clip` of the first layer.
 #[cfg(test)]
 fn page_background_clip(cascade: &CascadeResult) -> VisualBox {
@@ -797,6 +807,7 @@ fn paint_page_background_image(
         _ => None,
     };
     let origins = page_background_origins(cascade);
+    let attachments = page_background_attachments(cascade);
     let border = page_border_widths(cascade, area);
     let padding = page_padding_widths(cascade, area);
     // The page context inherits `color` from the root element.
@@ -832,6 +843,7 @@ fn paint_page_background_image(
         });
         layer.repeat = page_layer_item(repeats, index, initial_layer.repeat);
         layer.origin = page_layer_item(origins, index, initial_layer.origin);
+        layer.attachment = page_layer_item(attachments, index, initial_layer.attachment);
         paint_page_background_layer(
             image_cache,
             scene,
@@ -883,8 +895,13 @@ fn paint_page_background_layer(
     // the positioning box. The page background painting area covers the
     // whole paper regardless of `background-clip` (CSS Page 3, "Page
     // Backgrounds and Painting Order"), so every layer paints over all of
-    // `area`.
-    let positioning = origin_inset_rect(border_box, layer.origin, border, padding, url, warnings);
+    // `area`. A `fixed` layer is instead fixed to the page box including its
+    // margins (CSS Backgrounds 3 section 2.5), whatever its origin.
+    let positioning = if layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed {
+        area
+    } else {
+        origin_inset_rect(border_box, layer.origin, border, padding, url, warnings)
+    };
     let painting = area;
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
