@@ -1646,8 +1646,9 @@ fn border_top_width_parse_px() {
 //         fit-content(<length-percentage>)`
 // Initial: auto, Inherited: no.
 //
-// This task accepts only `auto` and nonnegative `<length-percentage>`;
-// min-content / max-content / fit-content() remain unsupported (b).
+// This task accepts `auto`, `min-content`, `max-content`, the bare
+// `fit-content` and nonnegative `<length-percentage>`; the `fit-content()`
+// limit is checked but not carried yet (b).
 
 #[test]
 fn width_parse_auto_keyword() {
@@ -2080,23 +2081,64 @@ fn width_and_inline_size_keep_the_min_content_keyword() {
 }
 
 #[test]
-fn width_rejects_max_content_keyword() {
+fn width_and_inline_size_keep_the_max_content_keyword() {
+    // CSS Sizing 3 §3.1.1 intrinsic sizing keyword, kept for layout.
     assert_eq!(
         parse("max-content", "width"),
-        Some(PropertyValue::Width(LengthOrAuto::Auto))
+        Some(PropertyValue::Width(LengthOrAuto::MaxContent))
+    );
+    assert_eq!(
+        parse("MAX-CONTENT", "inline-size"),
+        Some(PropertyValue::InlineSize(LengthOrAuto::MaxContent))
+    );
+    // Height and the min/max sizes still fold the keyword into `auto`.
+    assert_eq!(
+        parse("max-content", "height"),
+        Some(PropertyValue::Height(LengthOrAuto::Auto))
     );
 }
 
 #[test]
-fn width_rejects_fit_content_function() {
+fn width_and_inline_size_keep_the_fit_content_keyword() {
+    assert_eq!(
+        parse("fit-content", "width"),
+        Some(PropertyValue::Width(LengthOrAuto::FitContent))
+    );
+    assert_eq!(
+        parse("Fit-Content", "inline-size"),
+        Some(PropertyValue::InlineSize(LengthOrAuto::FitContent))
+    );
+    assert_eq!(
+        parse("fit-content", "height"),
+        Some(PropertyValue::Height(LengthOrAuto::Auto))
+    );
+}
+
+#[test]
+fn width_computes_the_fit_content_function_as_auto() {
+    // The limit is checked but not carried to layout yet.
     assert_eq!(
         parse("fit-content(50%)", "width"),
         Some(PropertyValue::Width(LengthOrAuto::Auto))
     );
-    assert_eq!(
-        parse("fit-content", "width"),
-        Some(PropertyValue::Width(LengthOrAuto::Auto))
-    );
+    // A bare keyword followed by a parenthesis is not the function: the
+    // keyword leaves the block unconsumed, which no declaration accepts.
+    assert_eq!(parse_entire("fit-content (50%)", "width"), None);
+}
+
+#[test]
+fn width_drops_a_fit_content_function_with_a_negative_limit() {
+    // The limit is a `<length-percentage [0,∞]>`: a negative one invalidates
+    // the declaration, so it cannot override an earlier valid width.
+    for property in ["width", "inline-size"] {
+        assert_eq!(parse("fit-content(-10px)", property), None);
+        assert_eq!(parse("fit-content(-5%)", property), None);
+        assert_eq!(
+            parse("fit-content(0px)", property),
+            parse("fit-content(10px)", property)
+        );
+    }
+    assert!(parse("fit-content(0px)", "width").is_some());
 }
 
 #[test]

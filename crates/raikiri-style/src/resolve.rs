@@ -499,6 +499,20 @@ pub enum ComputedLengthPercentageOrAuto {
     Auto,
     /// The `min-content` sizing keyword, kept as specified.
     MinContent,
+    /// The `max-content` sizing keyword, kept as specified.
+    MaxContent,
+    /// The bare `fit-content` sizing keyword, kept as specified.
+    FitContent,
+}
+
+impl ComputedLengthPercentageOrAuto {
+    /// Whether this is one of the sizing keywords (`min-content`,
+    /// `max-content`, `fit-content`) that take the size from the box's
+    /// content rather than from its containing block (CSS Sizing 3 §3.1.1).
+    #[must_use]
+    pub const fn is_content_keyword(self) -> bool {
+        matches!(self, Self::MinContent | Self::MaxContent | Self::FitContent)
+    }
 }
 
 /// Computed `column-width`: an absolute length or `auto`.
@@ -2726,6 +2740,8 @@ pub fn resolve_length_percentage_or_auto(
     match specified {
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
         LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::MinContent,
+        LengthOrAuto::MaxContent => ComputedLengthPercentageOrAuto::MaxContent,
+        LengthOrAuto::FitContent => ComputedLengthPercentageOrAuto::FitContent,
         LengthOrAuto::Calc(value) => ComputedLengthPercentageOrAuto::Calc(value),
         LengthOrAuto::RelativeCalc(value) => {
             resolve_relative_calc(value, font_size, own_line_height, ctx)
@@ -2931,7 +2947,10 @@ fn resolve_css_position_offset(
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(percent))
             }
             ComputedLengthPercentageOrAuto::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
-            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
+            ComputedLengthPercentageOrAuto::Auto
+            | ComputedLengthPercentageOrAuto::MinContent
+            | ComputedLengthPercentageOrAuto::MaxContent
+            | ComputedLengthPercentageOrAuto::FitContent => {
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)) // cov:ignore: a relative calc resolves only to Px, Percent or Calc
             }
         },
@@ -3245,7 +3264,10 @@ fn computed_flex_basis(
         // percentage, which is clamped to the `[0,∞]` range as well.
         ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p.max(0.0)),
         ComputedLengthPercentageOrAuto::Calc(calc) => ComputedFlexBasis::Calc(calc),
-        ComputedLengthPercentageOrAuto::MinContent => ComputedFlexBasis::Auto, // cov:ignore: only the width / inline-size parser produces min-content
+        // cov:ignore: only the width / inline-size parser produces sizing keywords
+        ComputedLengthPercentageOrAuto::MinContent
+        | ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent => ComputedFlexBasis::Auto,
     }
 }
 
@@ -3511,6 +3533,13 @@ pub fn resolve_length_percentage_or_calc(
         )
         .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0)),
     };
+    fold_resolved_calc(resolved)
+}
+
+/// A resolved `<length-percentage>` or `calc()` as a [`ComputedLengthPercentageOrCalc`]:
+/// a `calc()` without a percentage folds to a length. `auto` and the sizing
+/// keywords are no length; they fall back to zero.
+fn fold_resolved_calc(resolved: ComputedLengthPercentageOrAuto) -> ComputedLengthPercentageOrCalc {
     match resolved {
         ComputedLengthPercentageOrAuto::Percent(percent) => {
             ComputedLengthPercentageOrCalc::Percent(percent)
@@ -3520,10 +3549,10 @@ pub fn resolve_length_percentage_or_calc(
         }
         ComputedLengthPercentageOrAuto::Calc(calc) => ComputedLengthPercentageOrCalc::Px(calc.px),
         ComputedLengthPercentageOrAuto::Px(px) => ComputedLengthPercentageOrCalc::Px(px),
-        // cov:ignore: a calc resolves to a length, a percentage or a sum
-        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
-            ComputedLengthPercentageOrCalc::Px(0.0)
-        }
+        ComputedLengthPercentageOrAuto::Auto
+        | ComputedLengthPercentageOrAuto::MinContent
+        | ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent => ComputedLengthPercentageOrCalc::Px(0.0),
     }
 }
 
@@ -3555,9 +3584,11 @@ pub fn resolve_margin_length_or_auto(
             resolve_relative_calc(value, font_size, own_line_height, ctx)
                 .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0))
         }
-        // Only `width` / `inline-size` parse `min-content`; a margin never
-        // holds it.
-        LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::Px(0.0), // cov:ignore: only the width / inline-size parser produces min-content
+        // Only `width` / `inline-size` parse the sizing keywords; a margin
+        // never holds one.
+        LengthOrAuto::MinContent | LengthOrAuto::MaxContent | LengthOrAuto::FitContent => {
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        }
         LengthOrAuto::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),

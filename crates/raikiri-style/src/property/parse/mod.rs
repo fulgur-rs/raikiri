@@ -715,11 +715,11 @@ pub(crate) fn parse_property_grammar(
         "border-width" => parse_border_width_shorthand(input).map(PropertyValue::BorderWidth),
         "border-color" => parse_border_color_shorthand(input).map(PropertyValue::BorderColor),
         // CSS Sizing 3 §3.1.1 preferred size property.
-        // Of `auto | <length-percentage [0,∞]> | min-content | max-content
-        // | fit-content(<length-percentage>)`, accept only `auto` and non-negative
-        // `<length-percentage>`. Silently drop the unimplemented min-content,
-        // max-content, and fit-content() forms; parse_width rejects negative
-        // values under the spec's `[0,∞]` constraint.
+        // `auto | <length-percentage [0,∞]> | min-content | max-content
+        // | fit-content(<length-percentage>)`. The `fit-content()` limit is
+        // checked but not carried yet, so that form computes to `auto`;
+        // parse_width rejects negative values under the spec's `[0,∞]`
+        // constraint.
         "width" => parse_width(input).map(PropertyValue::Width),
         // CSS Sizing 3 §3.1.1 preferred size — height.
         "height" => parse_height(input).map(PropertyValue::Height),

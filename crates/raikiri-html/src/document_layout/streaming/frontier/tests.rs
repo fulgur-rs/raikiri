@@ -185,6 +185,12 @@ fn open_boxes_sized_by_their_content_hold_from_their_start() {
         frontier_of("<p>a</p><div style='width:min-content'><p>x</p>"),
         "<div>"
     );
+    for width in ["max-content", "fit-content"] {
+        assert_eq!(
+            frontier_of(&format!("<p>a</p><div style='width:{width}'><p>x</p>")),
+            "<div>"
+        );
+    }
     assert_eq!(
         frontier_of("<p>a</p><div style='float:left'><p>x</p>"),
         "<div>"
@@ -203,6 +209,27 @@ fn open_boxes_sized_by_their_content_hold_from_their_start() {
         frontier_of("<p>a</p><div style='width:10em'><p>x</p>"),
         "end"
     );
+}
+
+#[test]
+fn a_content_sized_width_on_a_box_it_does_not_size_moves_nothing() {
+    // `width` sizes no box of a `display: contents` element, nor an inline
+    // box that stays in flow. Both already belong to the surrounding run, so
+    // the keyword leaves the frontier where it was.
+    for width in ["min-content", "max-content", "fit-content"] {
+        assert_eq!(
+            frontier_of(&format!(
+                "<p>a</p><div style='display:contents;width:{width}'><p>x</p>"
+            )),
+            frontier_of("<p>a</p><div style='display:contents'><p>x</p>"),
+            "contents {width}"
+        );
+        assert_eq!(
+            frontier_of(&format!("<div>prefix <span style='width:{width}'>inside")),
+            frontier_of("<div>prefix <span>inside"),
+            "inline {width}"
+        );
+    }
 }
 
 #[test]

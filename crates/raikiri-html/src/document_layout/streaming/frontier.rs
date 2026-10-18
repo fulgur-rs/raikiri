@@ -299,13 +299,12 @@ fn paints_from_whole_height(values: &ComputedValues) -> bool {
 }
 
 /// Whether the box's width depends on the size of its content: a
-/// `min-content` width, or the shrink-to-fit width of a float
-/// or an absolutely positioned box (CSS 2 §10.3.5, §10.3.7). A later child
-/// with a wider unbreakable line can widen the box and reflow every earlier
-/// line in it.
+/// `min-content`, `max-content` or `fit-content` width, or the shrink-to-fit
+/// width of a float or an absolutely positioned box (CSS 2 §10.3.5,
+/// §10.3.7). A later child with a wider unbreakable line can widen the box
+/// and reflow every earlier line in it.
 fn has_intrinsic_width(values: &ComputedValues) -> bool {
     match values.width {
-        ComputedLengthPercentageOrAuto::MinContent => true,
         ComputedLengthPercentageOrAuto::Auto => {
             values.float != FloatValue::None
                 || matches!(
@@ -313,7 +312,7 @@ fn has_intrinsic_width(values: &ComputedValues) -> bool {
                     PositionValue::Absolute | PositionValue::Fixed
                 )
         }
-        _ => false,
+        width => width.is_content_keyword(),
     }
 }
 

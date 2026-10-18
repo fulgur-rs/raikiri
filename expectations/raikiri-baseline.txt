@@ -3254,7 +3254,6 @@ css/css-tables/absolute-tables-013.html
 css/css-tables/absolute-tables-014.html
 css/css-tables/absolute-tables-015.html
 css/css-tables/abspos-container-change-dynamic-001.html
-css/css-tables/baseline-vertical.html
 css/css-tables/collapsed-border-paint-phase-001.html
 css/css-tables/collapsed-border-remove-cell.html
 css/css-tables/colspan-004.html
@@ -4884,6 +4883,42 @@ css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-001.html
 css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-002.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-001.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-002.html
+
+# --- max-content and fit-content width sizing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
+# Pass once width and inline-size take max-content and fit-content as the intrinsic sizes of a block, flex or grid container, float, absolutely positioned box and table instead of auto; KEEP in two audit-vacuous-passes runs.
+css/css-contain/contain-inline-size-flex.html
+css/css-contain/contain-inline-size-grid.html
+css/css-contain/contain-inline-size-regular-container.html
+css/css-flexbox/gap-016.html
+css/css-flexbox/gap-019.html
+css/css-flexbox/gap-020.html
+css/css-flexbox/gap-021.html
+css/css-flexbox/intrinsic-size/col-wrap-001.html
+css/css-flexbox/intrinsic-size/col-wrap-002.html
+css/css-flexbox/intrinsic-size/col-wrap-003.html
+css/css-flexbox/intrinsic-size/col-wrap-006.html
+css/css-flexbox/intrinsic-size/col-wrap-007.html
+css/css-flexbox/intrinsic-size/col-wrap-008.html
+css/css-flexbox/intrinsic-size/col-wrap-012.html
+css/css-flexbox/intrinsic-size/col-wrap-013.html
+css/css-flexbox/intrinsic-size/col-wrap-014.html
+css/css-flexbox/intrinsic-size/col-wrap-015.html
+css/css-flexbox/intrinsic-size/col-wrap-016.html
+css/css-flexbox/intrinsic-size/col-wrap-017.html
+css/css-flexbox/intrinsic-size/col-wrap-020.html
+css/css-flexbox/intrinsic-size/row-006.html
+css/css-flexbox/intrinsic-size/row-wrap-002.tentative.html
+css/css-flexbox/table-as-flex-item-max-content.html
+css/css-grid/child-border-box-and-max-content-002.html
+css/css-grid/subgrid/standalone-axis-size-005.html
+css/css-sizing/clone-nowrap-intrinsic-size-bidi.html
+css/css-sizing/float-clearance-with-margin-collapse-and-fit-content-and-padding-percentage-001.html
+css/css-sizing/float-clearance-with-margin-collapse-and-fit-content-and-padding-percentage-003.html
+css/css-sizing/slice-nowrap-intrinsic-size-bidi.html
+css/css-sizing/whitespace-and-break.html
+css/css-text/white-space/pre-wrap-017.html
+css/css-text/white-space/white-space-intrinsic-size-022.html
+css/css-text/white-space/white-space-intrinsic-size-023.html
 
 # --- margin box text sized from the monospace medium of the page context (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
 css/css-page/margin-boxes/alignment-001-print.html

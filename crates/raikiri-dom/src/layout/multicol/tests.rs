@@ -3137,7 +3137,7 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
         Some(half),
         "div",
         Style::default(),
-        Some("width:min-content"),
+        Some("display:block;width:min-content"),
     );
     let text = doc.append_text(intrinsic, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -3145,10 +3145,136 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
     let widths = AncestorFacts::new(&doc, &cascade, 800.0);
     assert_eq!(widths.authored_containing_width(half), Some(400.0));
     assert_eq!(widths.authored_containing_width(text), Some(200.0));
-    assert!(!widths.in_min_content(half));
-    assert!(widths.in_min_content(intrinsic));
-    assert!(widths.in_min_content(text));
+    assert!(!widths.in_intrinsic_width(half));
+    assert!(widths.in_intrinsic_width(intrinsic));
+    assert!(widths.in_intrinsic_width(text));
     assert_eq!(widths.authored_containing_width(doc.nodes.len()), None);
+}
+
+#[test]
+fn ancestor_width_table_treats_max_and_fit_content_as_intrinsic() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
+    let max = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:max-content"),
+    );
+    let max_text = doc.append_text(max, "test");
+    let fit = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:fit-content"),
+    );
+    let fit_text = doc.append_text(fit, "test");
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    for (node, text) in [(max, max_text), (fit, fit_text)] {
+        assert!(widths.in_intrinsic_width(node));
+        assert!(widths.in_intrinsic_width(text));
+        // A keyword width is not an authored containing width: the text
+        // looks further up, to the body.
+        assert_eq!(widths.authored_containing_width(text), Some(400.0));
+    }
+}
+
+#[test]
+fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
+    let mut texts = Vec::new();
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        let contents = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:contents;width:{keyword}")),
+        );
+        texts.push((contents, doc.append_text(contents, "test")));
+    }
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    // The element has no box, so nothing below it is inside an intrinsic width.
+    for (contents, text) in texts {
+        assert!(!widths.in_intrinsic_width(contents));
+        assert!(!widths.in_intrinsic_width(text));
+    }
+}
+
+#[test]
+fn ancestor_width_table_ignores_a_keyword_width_on_a_non_replaced_inline() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
+    let mut boxes = Vec::new();
+    // `width` does not apply to an inline box, but it does once the box is
+    // blockified, atomic or floated.
+    for (css, applies) in [
+        ("display:inline", false),
+        ("display:inline;float:left", true),
+        ("display:inline-block", true),
+        ("display:inline;position:absolute", true),
+    ] {
+        for keyword in ["min-content", "max-content", "fit-content"] {
+            let outer = doc.append_element(
+                Some(body),
+                "span",
+                Style::default(),
+                Some(&format!("{css};width:{keyword}")),
+            );
+            let block =
+                doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
+            let text = doc.append_text(block, "test");
+            boxes.push((css, keyword, applies, outer, text));
+        }
+    }
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    for (css, keyword, applies, outer, text) in boxes {
+        assert_eq!(widths.in_intrinsic_width(outer), applies, "{css} {keyword}");
+        assert_eq!(widths.in_intrinsic_width(text), applies, "{css} {keyword}");
+    }
+}
+
+#[test]
+fn ancestor_width_table_ignores_a_keyword_width_the_layout_does_not_use() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:flex;width:400px"),
+    );
+    // A flex item is sized as `auto`, so its text takes the width a page
+    // gives the nearest authored ancestor like any other.
+    let item = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:max-content"),
+    );
+    let text = doc.append_text(item, "test");
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    assert!(!widths.in_intrinsic_width(item));
+    assert!(!widths.in_intrinsic_width(text));
 }
 
 #[test]

@@ -692,7 +692,9 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
             layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
             (parsed.dom, computed)
         };
-        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}.box{width:fit-content}";
+        // The reference boxes fill their line. A vertical table is not yet as wide as
+        // its content, so `width: fit-content` boxes would not match it.
+        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}";
         let source = format!(
             "<!doctype html><style>{css}</style><table style='writing-mode:{mode}'><tr><td><div class=ink></div></td><td><div class=ink></div></td></tr></table>"
         );

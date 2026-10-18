@@ -103,9 +103,10 @@ fn relative_insets_with_box_tree(
     let (right_wins, bottom_wins) = inset_precedence(mode, rtl);
     let length = |value| match value {
         ComputedLengthPercentageOrAuto::Px(px) => Some(Some(px)),
-        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
-            Some(None)
-        }
+        ComputedLengthPercentageOrAuto::Auto
+        | ComputedLengthPercentageOrAuto::MinContent
+        | ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent => Some(None),
         ComputedLengthPercentageOrAuto::Percent(_) | ComputedLengthPercentageOrAuto::Calc(_) => {
             None
         }

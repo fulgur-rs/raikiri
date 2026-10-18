@@ -2509,6 +2509,221 @@ fn apply_computed_to_style_bridges_min_content_width_to_taffy() {
 }
 
 #[test]
+fn apply_computed_to_style_bridges_max_and_fit_content_width_to_taffy() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let max = doc.append_element(
+        Some(html),
+        "div",
+        Style::default(),
+        Some("display:block;width:max-content"),
+    );
+    let fit = doc.append_element(
+        Some(html),
+        "div",
+        Style::default(),
+        Some("display:block;inline-size:fit-content"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+
+    assert_eq!(
+        doc.layout_node_with_style(max).unwrap().style.size.width,
+        Dimension::max_content()
+    );
+    assert_eq!(
+        doc.layout_node_with_style(fit).unwrap().style.size.width,
+        Dimension::fit_content()
+    );
+}
+
+/// The Taffy size bridged for each `(parent css, child tag, child css)`.
+fn bridged_sizes(cases: &[(&str, &str, &str)]) -> Vec<taffy::Size<Dimension>> {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let children: Vec<usize> = cases
+        .iter()
+        .map(|&(parent_css, tag, child_css)| {
+            let parent = doc.append_element(Some(html), "div", Style::default(), Some(parent_css));
+            doc.append_element(Some(parent), tag, Style::default(), Some(child_css))
+        })
+        .collect();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+    children
+        .into_iter()
+        .map(|child| doc.layout_node_with_style(child).unwrap().style.size)
+        .collect()
+}
+
+/// The Taffy `width` bridged for each `(parent css, child tag, child css)`.
+fn bridged_widths(cases: &[(&str, &str, &str)]) -> Vec<Dimension> {
+    bridged_sizes(cases)
+        .into_iter()
+        .map(|size| size.width)
+        .collect()
+}
+
+#[test]
+fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
+    for keyword in ["max-content", "fit-content"] {
+        let width = format!("display:block;width:{keyword}");
+        let widths = bridged_widths(&[
+            // A flex or grid item is sized by the container's algorithm.
+            ("display:flex", "div", &width),
+            ("display:inline-flex", "div", &width),
+            ("display:grid", "div", &width),
+            // A replaced element takes its natural size, also when it is
+            // absolutely positioned.
+            ("display:block", "img", &width),
+            ("display:block", "canvas", &width),
+            (
+                "display:block",
+                "img",
+                &format!("{width};position:absolute"),
+            ),
+            // A multicol container has no intrinsic inline size yet.
+            ("display:block", "div", &format!("{width};column-count:2")),
+            (
+                "display:block",
+                "div",
+                &format!("{width};column-width:10px"),
+            ),
+        ]);
+        assert!(
+            widths.iter().all(|width| *width == Dimension::auto()),
+            "{keyword}: {widths:?}"
+        );
+    }
+}
+
+#[test]
+fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
+    let width = "display:block;width:max-content";
+    let keyword = Dimension::max_content();
+    assert_eq!(
+        bridged_widths(&[
+            ("display:block", "div", width),
+            ("display:flow-root", "div", width),
+            ("display:block", "div", "display:flex;width:max-content"),
+            ("display:block", "div", "display:grid;width:max-content"),
+            ("display:flex", "div", "position:absolute;width:max-content"),
+            ("display:flex", "div", "position:fixed;width:max-content"),
+            (
+                "display:block",
+                "div",
+                "display:block;column-width:10px;width:max-content;"
+            ),
+        ]),
+        [
+            keyword,
+            keyword,
+            keyword,
+            keyword,
+            keyword,
+            keyword,
+            Dimension::auto()
+        ],
+    );
+}
+
+#[test]
+fn a_vertical_box_takes_its_inline_size_keyword_from_the_height() {
+    for keyword in ["max-content", "fit-content"] {
+        let vertical = format!("display:block;writing-mode:vertical-rl;inline-size:{keyword}");
+        let sizes = bridged_sizes(&[
+            ("display:block", "div", &vertical),
+            ("display:flex", "div", &vertical),
+            ("display:block", "img", &vertical),
+        ]);
+        let expected = if keyword == "max-content" {
+            Dimension::max_content()
+        } else {
+            Dimension::fit_content()
+        };
+        assert_eq!(sizes[0].height, expected, "{keyword} in a block");
+        // A flex item or a replaced element is not sized by the keyword.
+        assert_eq!(sizes[1].height, Dimension::auto(), "{keyword} in a flex");
+        assert_eq!(sizes[2].height, Dimension::auto(), "{keyword} on an image");
+    }
+}
+
+#[test]
+fn a_display_contents_parent_passes_its_own_parent_to_the_children() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let child_css = "display:block;width:max-content";
+    let mut items = Vec::new();
+    for container in ["display:flex", "display:block"] {
+        let outer = doc.append_element(Some(html), "div", Style::default(), Some(container));
+        let contents = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        let nested = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        items.push(doc.append_element(Some(nested), "div", Style::default(), Some(child_css)));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+
+    let widths: Vec<Dimension> = items
+        .iter()
+        .map(|item| doc.layout_node_with_style(*item).unwrap().style.size.width)
+        .collect();
+    assert_eq!(widths, [Dimension::auto(), Dimension::max_content()]);
+}
+
+#[test]
+fn a_sizing_keyword_is_no_min_max_constraint_and_no_margin() {
+    // Only `width` / `inline-size` keep a sizing keyword; where one reaches a
+    // min/max size or a margin, it is no constraint and no margin.
+    for keyword in [
+        ComputedLengthPercentageOrAuto::MinContent,
+        ComputedLengthPercentageOrAuto::MaxContent,
+        ComputedLengthPercentageOrAuto::FitContent,
+    ] {
+        let mut calc_values = Vec::new();
+        let mut diag = Vec::new();
+        assert_eq!(
+            computed_length_percentage_or_auto_to_taffy_min_max(
+                &mut calc_values,
+                keyword,
+                true,
+                "test",
+                &mut diag,
+            ),
+            LengthPercentageAuto::auto()
+        );
+        assert_eq!(
+            computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+                &mut calc_values,
+                keyword,
+                "test",
+                &mut diag,
+            ),
+            LengthPercentageAuto::length(0.0)
+        );
+        assert!(diag.is_empty());
+    }
+}
+
+#[test]
 fn a_multicol_container_establishes_a_block_formatting_context() {
     // CSS Multi-column Layout 1, 2: the first child's top margin stays
     // inside the multicol container instead of collapsing with its own.

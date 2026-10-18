@@ -83,7 +83,10 @@ pub(crate) fn used_computed_length_percentage_or_auto(
         ComputedLengthPercentageOrAuto::Px(px) => px,
         ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
         ComputedLengthPercentageOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
-        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
+        ComputedLengthPercentageOrAuto::Auto
+        | ComputedLengthPercentageOrAuto::MinContent
+        | ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent => {
             return None;
         }
     };

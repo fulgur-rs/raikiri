@@ -48,6 +48,14 @@ fn serialize_length_or_auto_formats_length_and_auto() {
         serialize_length_or_auto(&LengthOrAuto::MinContent),
         "min-content"
     );
+    assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::MaxContent),
+        "max-content"
+    );
+    assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::FitContent),
+        "fit-content"
+    );
 }
 
 #[test]

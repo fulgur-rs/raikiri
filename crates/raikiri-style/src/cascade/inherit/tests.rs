@@ -532,6 +532,31 @@ fn min_content_preferred_width_survives_the_cascade() {
 }
 
 #[test]
+fn max_content_and_fit_content_preferred_widths_survive_the_cascade() {
+    let max = cascade_doc("", "div", Some("width: max-content"));
+    assert_eq!(max.width, ComputedLengthPercentageOrAuto::MaxContent);
+    let fit = cascade_doc("", "div", Some("inline-size: fit-content"));
+    assert_eq!(fit.width, ComputedLengthPercentageOrAuto::FitContent);
+    let vertical = cascade_doc(
+        "",
+        "div",
+        Some("inline-size: max-content; writing-mode: vertical-rl"),
+    );
+    assert_eq!(
+        vertical
+            .vertical_logical_size
+            .as_ref()
+            .map(|size| size.height),
+        Some(ComputedLengthPercentageOrAuto::MaxContent)
+    );
+    assert!(ComputedLengthPercentageOrAuto::MinContent.is_content_keyword());
+    assert!(max.width.is_content_keyword());
+    assert!(fit.width.is_content_keyword());
+    assert!(!ComputedLengthPercentageOrAuto::Auto.is_content_keyword());
+    assert!(!ComputedLengthPercentageOrAuto::Px(1.0).is_content_keyword());
+}
+
+#[test]
 fn an_invalid_later_preferred_size_still_wins_the_axis() {
     let physical_invalid = cascade_doc("", "div", Some("inline-size: 10px; width: var(--missing)"));
     assert_eq!(physical_invalid.width, ComputedLengthPercentageOrAuto::Auto);
@@ -6056,7 +6081,9 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
             }
             ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
-            ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::Length(Length::Px(0.0)),
+            ComputedLengthPercentageOrAuto::MinContent
+            | ComputedLengthPercentageOrAuto::MaxContent
+            | ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::Length(Length::Px(0.0)),
         })))
     );
 }
@@ -11853,4 +11880,22 @@ fn apply_value_direct_inset_shorthands() {
         &mut cv,
     );
     assert_eq!((cv.top, cv.bottom), (px(7.0), px(8.0)));
+}
+
+#[test]
+fn an_inherited_margin_that_is_a_sizing_keyword_falls_back_to_zero() {
+    for keyword in [
+        ComputedLengthPercentageOrAuto::MinContent,
+        ComputedLengthPercentageOrAuto::MaxContent,
+        ComputedLengthPercentageOrAuto::FitContent,
+    ] {
+        assert_eq!(
+            inherited_margin_length(keyword),
+            LengthOrAuto::Length(Length::Px(0.0))
+        );
+    }
+    assert_eq!(
+        inherited_margin_length(ComputedLengthPercentageOrAuto::Auto),
+        LengthOrAuto::Auto
+    );
 }

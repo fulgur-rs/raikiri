@@ -2833,11 +2833,12 @@ pub(crate) struct AncestorFacts {
     /// measured `ch` widths include their calc percentage and `contents` inherits.
     content_width: Vec<f32>,
     /// The nearest strict ancestor whose authored width is neither `auto`
-    /// nor `min-content`; a `min-content` width is intrinsic, not an
-    /// authored containing width.
+    /// nor a sizing keyword; a `min-content`, `max-content` or `fit-content`
+    /// width is intrinsic, not an authored containing width.
     authored_ancestor: Vec<Option<usize>>,
-    /// The node or an ancestor has a `min-content` width.
-    min_content: Vec<bool>,
+    /// The node or an ancestor has a `min-content`, `max-content` or
+    /// `fit-content` width.
+    intrinsic_width: Vec<bool>,
 }
 
 impl AncestorFacts {
@@ -2850,7 +2851,7 @@ impl AncestorFacts {
             non_block_flow_ancestor: vec![false; count],
             content_width: vec![0.0; count],
             authored_ancestor: vec![None; count],
-            min_content: vec![false; count],
+            intrinsic_width: vec![false; count],
         };
         visit_top_down(doc, |parent, id| {
             facts.resolve(doc, cascade, parent, id, fallback_width);
@@ -2888,8 +2889,8 @@ impl AncestorFacts {
             }
             _ => parent_width.max(0.0),
         };
-        self.min_content[id] = cv.width == ComputedLengthPercentageOrAuto::MinContent
-            || parent.is_some_and(|parent| self.min_content[parent]);
+        self.intrinsic_width[id] = super::bridge::width_sized_by_keyword(doc, cascade, id)
+            || parent.is_some_and(|parent| self.intrinsic_width[parent]);
         let Some(parent) = parent else {
             self.vertical[id] = vertical_self;
             return;
@@ -2919,10 +2920,9 @@ impl AncestorFacts {
                         | DisplayValue::TableCaption
                 ));
         self.authored_ancestor[id] = if doc.nodes[parent].display() == DisplayValue::Contents
-            || matches!(
-                values.width,
-                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
-            ) {
+            || values.width == ComputedLengthPercentageOrAuto::Auto
+            || values.width.is_content_keyword()
+        {
             self.authored_ancestor[parent]
         } else {
             Some(parent)
@@ -2938,9 +2938,10 @@ impl AncestorFacts {
             .map(|ancestor| self.content_width[ancestor])
     }
 
-    /// `id` or one of its ancestors has a `min-content` width.
-    pub(crate) fn in_min_content(&self, id: usize) -> bool {
-        self.min_content[id]
+    /// `id` or one of its ancestors has a `min-content`, `max-content` or
+    /// `fit-content` width.
+    pub(crate) fn in_intrinsic_width(&self, id: usize) -> bool {
+        self.intrinsic_width[id]
     }
 }
 
