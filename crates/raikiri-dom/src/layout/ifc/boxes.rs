@@ -2358,34 +2358,33 @@ fn place_atomics(
         #[cfg(test)]
         crate::layout::test_support::IFC_ATOMIC_OUTPUT_LOOKUP_STEPS
             .with(|steps| steps.set(steps.get() + 1));
-        let Some(output) = outputs_by_node.get(&node).copied() else {
-            return; // cov:ignore: every atomic fragment is a box that was measured.
-        };
-        // The fragment is relative to the line's top and the content-box
-        // start; the layout is relative to the root's border box. A
-        // relatively positioned atomic is drawn offset from that place,
-        // which taffy's layout location carries for inline-level boxes.
-        let (dx, dy) = relative_inset(
-            tree,
-            node,
-            geometry.content_size.width,
-            relative_height(&geometry),
-            geometry.axes,
-        );
-        // An atomic in a ruby annotation is placed with its annotation.
-        let rect = placed(atomic.border_rect, line_top, placement);
-        // A right-to-left line runs from the right edge: its inline axis
-        // is mirrored inside the content box.
-        let start = if rtl {
-            geometry.width - (rect.inline_start + rect.inline_size)
-        } else {
-            rect.inline_start
-        };
-        let location = taffy::Point {
-            x: geometry.edges.0 + start + dx,
-            y: geometry.top_edge + rect.block_start + dy,
-        };
-        commit_child_layout(tree, node, output, location, geometry.width);
+        if let Some(output) = outputs_by_node.get(&node).copied() {
+            // The fragment is relative to the line's top and the content-box
+            // start; the layout is relative to the root's border box. A
+            // relatively positioned atomic is drawn offset from that place,
+            // which taffy's layout location carries for inline-level boxes.
+            let (dx, dy) = relative_inset(
+                tree,
+                node,
+                geometry.content_size.width,
+                relative_height(&geometry),
+                geometry.axes,
+            );
+            // An atomic in a ruby annotation is placed with its annotation.
+            let rect = placed(atomic.border_rect, line_top, placement);
+            // A right-to-left line runs from the right edge: its inline axis
+            // is mirrored inside the content box.
+            let start = if rtl {
+                geometry.width - (rect.inline_start + rect.inline_size)
+            } else {
+                rect.inline_start
+            };
+            let location = taffy::Point {
+                x: geometry.edges.0 + start + dx,
+                y: geometry.top_edge + rect.block_start + dy,
+            };
+            commit_child_layout(tree, node, output, location, geometry.width);
+        }
     });
 }
 
