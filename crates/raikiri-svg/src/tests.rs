@@ -2930,7 +2930,7 @@ fn rasterizing_with_resolved_styles_rejects_an_invalid_font() {
 }
 
 #[test]
-fn rasterizing_with_resolved_styles_checks_descendants_at_zero_opacity() {
+fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_root() {
     let source = format!(
         "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><rect width='20' height='10'/></svg>"
     );
@@ -2939,17 +2939,13 @@ fn rasterizing_with_resolved_styles_checks_descendants_at_zero_opacity() {
         width: 20.0,
         height: 10.0,
     };
-    let root_style = SvgRootStyle {
-        opacity: 0.0,
-        ..SvgRootStyle::default()
-    };
     let font = super::SvgRootFont {
         size: 12.0,
         family: "sans-serif",
         weight: 400.0,
         style: "normal",
     };
-    let rasterize = |declarations| {
+    let rasterize = |root_style: SvgRootStyle, declarations| {
         let elements = [super::SvgElementStyle {
             element_index: 1,
             declarations,
@@ -2965,10 +2961,24 @@ fn rasterizing_with_resolved_styles_checks_descendants_at_zero_opacity() {
             None,
         )
     };
-    let blank = rasterize("display:none!important").unwrap();
-    assert!(blank.rgba.iter().all(|&byte| byte == 0));
-    assert!(matches!(
-        rasterize("fill:red!important"),
-        Err(SvgError::InvalidDocument(_))
-    ));
+    // Nothing is drawn at zero opacity, and a hidden root turns draw errors
+    // into a blank raster; neither accepts what a visible root rejects.
+    let transparent = SvgRootStyle {
+        opacity: 0.0,
+        ..SvgRootStyle::default()
+    };
+    let hidden = SvgRootStyle {
+        visible: false,
+        ..SvgRootStyle::default()
+    };
+    for root_style in [SvgRootStyle::default(), transparent, hidden] {
+        assert!(matches!(
+            rasterize(root_style, "fill:red!important"),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+    for root_style in [transparent, hidden] {
+        let blank = rasterize(root_style, "display:none!important").unwrap();
+        assert!(blank.rgba.iter().all(|&byte| byte == 0));
+    }
 }

@@ -584,11 +584,9 @@ impl SvgDocument {
     ///
     /// The host's resolved root color and font, its `visibility` and the
     /// descendant declarations are applied exactly as that method does, so the
-    /// raster and the exported source agree. An invalid font is returned
-    /// before anything is allocated. Malformed descendant declarations are
-    /// returned whatever `root_style.opacity` is: at zero opacity, where
-    /// nothing is drawn, they are checked before the output is allocated;
-    /// otherwise they are checked when the source is prepared for drawing.
+    /// raster and the exported source agree. An invalid font or malformed
+    /// descendant declarations are returned before the output is allocated,
+    /// whatever the root's opacity or visibility.
     pub fn rasterize_at_css_pixel_scale_with_resolved_styles(
         &self,
         viewport: SvgViewport,
@@ -627,23 +625,16 @@ impl SvgDocument {
                 height: height as f32,
             }
         };
-        if root_style.opacity == 0.0
-            && let Some(source_style) = source_style.filter(|style| !style.elements.is_empty())
-        {
-            // Nothing is drawn, but malformed descendant styles are rejected
-            // as they are at any other opacity.
-            self.prepare_source(viewport, root_style, source_style, false)?;
-        }
+        // Malformed descendant styles are rejected whatever the root's
+        // opacity or visibility, and before the output is allocated, so the
+        // fallback below never hides them.
+        let prepared = source_style
+            .map(|style| self.prepare_source(viewport, root_style, style, false))
+            .transpose()?;
         let mut pixels = allocate_transparent_pixels(byte_len)?;
 
         if root_style.opacity > 0.0 {
-            let drawn = self.draw(
-                viewport,
-                root_style,
-                source_style,
-                (width, height),
-                &mut pixels,
-            );
+            let drawn = self.draw(viewport, root_style, prepared, (width, height), &mut pixels);
             // A root that is not visible keeps the blank raster it always
             // had when its descendants cannot be drawn.
             match drawn {
@@ -660,7 +651,8 @@ impl SvgDocument {
     }
 
     /// Draws the SVG into `pixels`, a transparent buffer of `width` × `height`
-    /// pixels.
+    /// pixels, from `prepared` or, without one, from the source prepared for
+    /// `root_style`.
     ///
     /// A root that is not visible is hidden in the source, so only the
     /// descendants that set `visibility: visible` themselves are drawn.
@@ -668,15 +660,22 @@ impl SvgDocument {
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
-        source_style: Option<SourceRootStyle<'_>>,
+        prepared: Option<String>,
         (width, height): (u32, u32),
         pixels: &mut Vec<u8>,
     ) -> Result<(), SvgError> {
-        let source_style = source_style.unwrap_or(SourceRootStyle {
-            visible: (!root_style.visible).then_some(false),
-            ..SourceRootStyle::default()
-        });
-        let source = self.prepare_source(viewport, root_style, source_style, false)?;
+        let source = match prepared {
+            Some(source) => source,
+            None => self.prepare_source(
+                viewport,
+                root_style,
+                SourceRootStyle {
+                    visible: (!root_style.visible).then_some(false),
+                    ..SourceRootStyle::default()
+                },
+                false,
+            )?,
+        };
         let raster_opacity = if root_style.neutralize_root_opacity {
             1.0
         } else {
