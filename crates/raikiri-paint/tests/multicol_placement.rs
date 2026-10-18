@@ -1264,3 +1264,12 @@ fn a_floated_box_that_does_not_fit_the_first_column_goes_to_the_next_one() {
         "<p style='position:absolute;left:0;top:0'>A</p><div style='position:absolute;left:75px;top:0;width:20px;height:20px;background:blue'></div>",
     );
 }
+
+#[test]
+fn adjoining_margins_before_a_trailing_float_still_collapse() {
+    compare(
+        "<div class=mc><p style='margin-bottom:20px'>A</p><p style='margin-top:20px'>B</p><div style='float:right;width:20px;height:20px'></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0'>A</p><p style='position:absolute;left:0;top:40px'>B</p>",
+    );
+}

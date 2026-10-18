@@ -686,11 +686,12 @@ fn multicol_has_direct_break_flow(tree: &Document, node_id: usize) -> bool {
         })
 }
 
-/// Whether the last rendered child of `node_id` is a float, no float is
-/// inside an earlier child, and the container holds no inline content of its
-/// own. Nothing then wraps beside the float and no other float shares its
-/// line, so the column strategies can place it like a block of its own:
-/// shrunk to its content within the column, at the edge of its own side.
+/// Whether the last rendered child of `node_id` is a float, the earlier
+/// children hold no float and no block-direction margin, and the container
+/// holds no inline content of its own. Nothing then wraps beside the float, no
+/// other float shares its line, and no adjoining margins collapse, so the
+/// column strategies can place it like a block of its own: shrunk to its
+/// content within the column, at the edge of its own side.
 fn multicol_ends_with_its_only_float(tree: &Document, node_id: usize) -> bool {
     if tree.nodes[node_id].ifc.is_some() {
         return false;
@@ -715,7 +716,7 @@ fn multicol_ends_with_its_only_float(tree: &Document, node_id: usize) -> bool {
         is_float(last)
             && !before
                 .iter()
-                .any(|&child| multicol_subtree_has_float(tree, child))
+                .any(|&child| multicol_subtree_has_float_or_block_margin(tree, child))
     })
 }
 
@@ -2482,6 +2483,28 @@ fn multicol_subtree_has_float(tree: &Document, subtree_root: usize) -> bool {
             continue;
         }
         if node.style.float.is_floated() {
+            return true;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    false
+}
+
+/// Whether `subtree_root` or a rendered descendant is a float or has a
+/// block-direction margin, which adjoins and collapses with the margin of a
+/// sibling on the block layout but not on the column strategies.
+fn multicol_subtree_has_float_or_block_margin(tree: &Document, subtree_root: usize) -> bool {
+    let zero = LengthPercentageAuto::length(0.0);
+    let mut pending = vec![subtree_root];
+    while let Some(node_id) = pending.pop() {
+        let node = &tree.layout_node_with_style(node_id).unwrap();
+        if !node.is_in_document() || node.is_display_none() {
+            continue;
+        }
+        if node.style.float.is_floated()
+            || node.style.margin.top != zero
+            || node.style.margin.bottom != zero
+        {
             return true;
         }
         pending.extend(node.children.iter().copied());
