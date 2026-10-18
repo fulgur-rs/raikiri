@@ -924,3 +924,78 @@ fn a_floated_column_child_fits_the_room_its_margin_leaves() {
         "<p style='position:absolute;left:0;top:0;margin-left:10px;width:30px;background:lime'>A B<br>C</p>",
     );
 }
+
+#[test]
+fn a_relative_box_with_an_inset_is_assigned_to_a_column_of_a_definite_height_container() {
+    compare(
+        "<div class=mc><div style='position:relative;left:5px;height:40px;background:lime'></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:5px;top:0;width:40px;height:40px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_relative_paragraph_after_a_full_column_moves_to_the_next_column_of_a_definite_height_container()
+ {
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;color:lime'>A</p><p>B</p><p style='position:relative;left:5px;color:blue'>C</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p style='margin-left:5px;margin-right:-5px;color:lime'>A</p><p>B</p></div><div style='position:absolute;left:60px;top:0;width:40px'><p style='margin-left:5px;margin-right:-5px;color:blue'>C</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_box_with_each_inline_inset_is_painted_shifted_once_in_a_definite_height_container() {
+    for (inset, shift) in [
+        ("left:5px", "left:5px;top:0"),
+        ("right:5px", "left:-5px;top:0"),
+        ("left:5px;right:20px", "left:5px;top:0"),
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><div style='position:relative;{inset};height:20px;background:lime'></div></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div style='position:absolute;{shift};width:40px;height:20px;background:lime'></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_relative_box_in_a_later_column_of_a_definite_height_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><div style='height:40px;background:blue'></div><div style='position:relative;left:5px;height:20px;background:lime'></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:40px;background:blue'></div><div style='position:absolute;left:65px;top:0;width:40px;height:20px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_relative_box_in_a_right_to_left_definite_height_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><div style='position:relative;left:5px;height:20px;background:lime'></div></div>",
+        ".mc{height:40px;column-fill:auto;direction:rtl}",
+        "<div style='position:absolute;left:65px;top:0;width:40px;height:20px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn relative_paragraphs_with_each_inline_inset_are_painted_shifted_once_in_a_definite_height_container()
+ {
+    for (inset, shift) in [
+        ("right:5px", "left:-5px;top:0"),
+        ("left:5px", "left:5px;top:0"),
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><p style='position:relative;{inset};color:lime'>A</p><p>B</p></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div style='position:absolute;left:0;top:20px;width:40px'><p>B</p></div><div style='position:absolute;{shift};width:40px'><p style='color:lime'>A</p></div>"
+            ),
+        );
+    }
+}

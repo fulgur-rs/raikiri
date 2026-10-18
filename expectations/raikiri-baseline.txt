@@ -4916,3 +4916,6 @@ css/css-sizing/whitespace-and-break.html
 css/css-text/white-space/pre-wrap-017.html
 css/css-text/white-space/white-space-intrinsic-size-022.html
 css/css-text/white-space/white-space-intrinsic-size-023.html
+
+# --- margin box text sized from the monospace medium of the page context (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
+css/css-page/margin-boxes/alignment-001-print.html

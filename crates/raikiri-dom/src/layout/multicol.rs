@@ -742,21 +742,26 @@ fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool
                     .into_iter()
                     .all(|edge| edge == zero_margin)
                 && node.taffy_position() != TaffyPosition::Absolute
-                // A relative offset is applied after the columns place the
-                // box, so it must not be carried into its column location.
-                && [
-                    style.inset.left,
-                    style.inset.right,
-                    style.inset.top,
-                    style.inset.bottom,
-                ]
-                .iter()
-                .all(|inset| inset.is_auto())
+                && insets_are_a_relative_inline_offset(tree, child)
                 && !style.float.is_floated()
                 && style.size.height.is_auto()
                 && style.min_size.height.is_auto()
                 && style.max_size.height.is_auto()
         })
+}
+
+/// Whether the insets of `child` can be left to the painter once the columns
+/// place the box: it has none, or it is `position: relative` with only inline
+/// insets, whose offset the painter adds to the location the column strategy
+/// gives it. A block-axis inset moves the box across pages, which pagination
+/// measures from the location layout gave it, and the offset of any other
+/// positioned box is already part of that location.
+fn insets_are_a_relative_inline_offset(tree: &Document, child: usize) -> bool {
+    let inset = tree.layout_node_with_style(child).unwrap().style.inset;
+    inset.top.is_auto()
+        && inset.bottom.is_auto()
+        && (inset.left.is_auto() && inset.right.is_auto()
+            || tree.nodes[child].taffy_position() == TaffyPosition::Relative)
 }
 
 // A logical non-auto child minimum paired with break avoidance participates

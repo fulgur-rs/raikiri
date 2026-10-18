@@ -298,6 +298,49 @@ fn marker_render_info_resolves_named_counters_from_element_scopes() {
 }
 
 #[test]
+fn marker_render_info_reuses_shared_list_item_counters_when_snapshots_are_missing() {
+    let mut document = Document::new();
+    let style = document.append_element(
+        Some(document.root_index()),
+        "style",
+        Style::default(),
+        None::<&str>,
+    );
+    document.append_text(
+        style,
+        "ol { counter-reset: list-item 4 } li { display: list-item; list-style-type: decimal } li::marker { content: counter(list-item) }",
+    );
+    let list = document.append_element(
+        Some(document.root_index()),
+        "ol",
+        Style::default(),
+        None::<&str>,
+    );
+    let first = document.append_element(Some(list), "li", Style::default(), None::<&str>);
+    let second = document.append_element(
+        Some(list),
+        "li",
+        Style::default(),
+        Some("counter-set: list-item 18"),
+    );
+    let third = document.append_element(Some(list), "li", Style::default(), None::<&str>);
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let empty_snapshots: [CounterSnapshot; 0] = [];
+
+    let render = |node| {
+        marker_render_info_with_snapshots(&document, &cascade, node, &empty_snapshots)
+            .expect("list marker")
+            .1
+    };
+
+    assert_eq!(render(first), "5");
+    assert_eq!(render(second), "18");
+    assert_eq!(render(third), "19");
+}
+
+#[test]
 fn marker_content_text_resolves_literals_counters_and_quotes() {
     let registry = CounterStyleRegistry::new();
     let components = vec![

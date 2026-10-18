@@ -4030,3 +4030,166 @@ fn the_last_break_keeps_its_widows_when_the_first_break_leaves_too_few_orphans()
         ]
     );
 }
+
+#[test]
+fn page_shells_sort_slices_and_assign_flow_ranges() {
+    let (document, cascade) = super::hello_world_doc();
+    let fallback_page = PageBox::A4;
+    let mut last_page_box = PageBox::new();
+    last_page_box.width = 200.0;
+    last_page_box.height = 100.0;
+    let last_geometry = PageFragmentPageGeometry::new(
+        2,
+        last_page_box,
+        PageFragmentInsets::default(),
+        PageFragmentInsets::default(),
+        PageFragmentRect::new(10.0, 12.0, 180.0, 40.0),
+        PageFragmentOrientation::Landscape,
+    );
+    let slices = [
+        PageSlice {
+            page_index: 2,
+            content_origin_y: 120.0,
+            page_name: Some("last".to_string()),
+        },
+        PageSlice {
+            page_index: 1,
+            content_origin_y: 70.0,
+            page_name: Some("middle-later".to_string()),
+        },
+        PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: Some("first".to_string()),
+        },
+        PageSlice {
+            page_index: 1,
+            content_origin_y: 50.0,
+            page_name: Some("middle-first".to_string()),
+        },
+    ];
+
+    let (pages, _) = super::super::build_page_fragments(
+        &document,
+        &cascade,
+        fallback_page,
+        &slices,
+        &[last_geometry],
+    );
+
+    assert_eq!(
+        pages.iter().map(|page| page.page_index).collect::<Vec<_>>(),
+        [0, 1, 1, 2]
+    );
+    assert_eq!(pages[0].page_name.as_deref(), Some("first"));
+    assert_eq!(pages[1].page_name.as_deref(), Some("middle-first"));
+    assert_eq!(pages[2].page_name.as_deref(), Some("middle-later"));
+    assert_eq!(pages[3].page_name.as_deref(), Some("last"));
+    assert_eq!(pages[0].page_box, fallback_page);
+    assert_eq!(pages[1].page_box, fallback_page);
+    assert_eq!(pages[2].page_box, fallback_page);
+    assert_eq!(pages[3].page_box, last_page_box);
+    assert_eq!(pages[0].flow_range, Some((0.0, 50.0)));
+    assert_eq!(pages[1].flow_range, Some((50.0, 70.0)));
+    assert_eq!(pages[2].flow_range, Some((70.0, 120.0)));
+    assert_eq!(pages[3].flow_range, Some((120.0, 160.0)));
+}
+
+#[test]
+fn page_shells_follow_the_vertical_root_flow_axis() {
+    let mut document = Document::new();
+    let html = document.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    document.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    document.mark_in_document_flags();
+    let cascade = cascade(&document, &build_rule_tree(&document)).expect("cascade");
+    let page_box = PageBox::A4;
+    layout_pages(&mut document, &cascade, page_box).expect("pagination");
+    let (pages, _) = super::super::build_page_fragments(
+        &document,
+        &cascade,
+        page_box,
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    );
+
+    assert!(matches!(
+        pages[0].flow_axis,
+        crate::page_projection::records::FlowAxis::X {
+            right_to_left: true,
+            width,
+            page_width,
+        } if width == page_width && page_width == pages[0].content_box.width
+    ));
+}
+
+#[test]
+fn page_shells_fall_back_for_a_non_finite_next_origin() {
+    let (document, cascade) = super::hello_world_doc();
+    let (pages, _) = super::super::build_page_fragments(
+        &document,
+        &cascade,
+        PageBox::A4,
+        &[
+            PageSlice {
+                page_index: 0,
+                content_origin_y: 10.0,
+                page_name: None,
+            },
+            PageSlice {
+                page_index: 1,
+                content_origin_y: f32::NAN,
+                page_name: None,
+            },
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        pages[0].flow_range,
+        Some((10.0, 10.0 + pages[0].content_box.height))
+    );
+    assert_eq!(pages[1].flow_range, None);
+}
+
+#[test]
+fn source_collection_keeps_text_roots_sorted_and_prepared() {
+    let mut text = usize::MAX;
+    let (mut document, cascade, root) = ahem_paragraph_with("width:80px", |doc, root| {
+        text = doc.append_text(root, "hello");
+    });
+    layout_pages(with_ahem(&mut document), &cascade, PageBox::A4).expect("pagination");
+    let body = find_body(&document).expect("body");
+    let control = PageLayoutControl::default();
+    let mut work = column_projection::ProjectionWork::new(
+        &control,
+        document.fragment_tree.work_limit(document.nodes.len()),
+    );
+
+    let sources = super::super::collect_page_fragment_sources(&document, &cascade, body, &mut work)
+        .expect("page sources");
+
+    let source_ids: Vec<_> = sources.nodes.iter().map(|source| source.node_id).collect();
+    assert!(source_ids.windows(2).all(|ids| ids[0] <= ids[1]));
+    assert!(source_ids.contains(&NodeId::new(text as u64)));
+    assert!(
+        sources
+            .text_roots
+            .iter()
+            .any(|text_root| text_root.node == root)
+    );
+    assert!(sources.paragraph_cache.contains_key(&root));
+}
