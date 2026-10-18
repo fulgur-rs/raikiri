@@ -2200,11 +2200,11 @@ fn with_fit_content_room(
     if inputs.known_dimensions.width.is_some() {
         return inputs;
     }
-    let Some(node) = tree.layout_node_with_style(idx) else {
-        return inputs;
-    };
-    let size = node.style.size.width.expand();
-    if let Some(room) = fit_content_room(tree, idx, size, inputs.parent_size.width, true) {
+    let room = tree.layout_node_with_style(idx).and_then(|node| {
+        let size = node.style.size.width.expand();
+        fit_content_room(tree, idx, size, inputs.parent_size.width, true)
+    });
+    if let Some(room) = room {
         inputs.available_space.width = AvailableSpace::Definite(room);
     }
     inputs
