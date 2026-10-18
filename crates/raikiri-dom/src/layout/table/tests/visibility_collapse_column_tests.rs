@@ -10,6 +10,9 @@ enum Column {
     SpannedGroup(&'static str, u32, Vec<&'static str>),
     /// A comment, which is no node of the document the table sees.
     Comment,
+    /// A `display: contents` element that is never rendered, whatever its
+    /// style says (`<script>`), holding column boxes.
+    NeverRendered(Vec<Column>),
     /// A `display: contents` element whose children are column boxes.
     Contents(Vec<Column>),
     /// A `<colgroup>` (with an optional `span`) holding a
@@ -69,6 +72,17 @@ fn append_column(doc: &mut Document, parent: usize, column: &Column) {
         }
         Column::Comment => {
             doc.append_comment(Some(parent), "between columns");
+        }
+        Column::NeverRendered(children) => {
+            let wrapper = doc.append_element(
+                Some(parent),
+                "script",
+                Style::default(),
+                Some("display:contents"),
+            );
+            for child in children {
+                append_column(doc, wrapper, child);
+            }
         }
         Column::Contents(children) => {
             let wrapper = doc.append_element(
@@ -677,4 +691,24 @@ fn a_comment_among_the_columns_makes_no_column() {
     );
     assert_eq!(table_size(&fixture), (110.0, 40.0));
     assert_eq!(column_box(&fixture.doc, fixture.cells[0][2]), (50.0, 50.0));
+}
+
+#[test]
+fn columns_under_an_element_that_is_never_rendered_make_no_column() {
+    // The `<script>` is `display: contents` by author CSS, but it and its
+    // subtree stay out of the table, so its collapsed column is no column.
+    let fixture = table_with(
+        SEPARATE,
+        &[
+            Column::Col(COL, None),
+            Column::NeverRendered(vec![Column::Col(COLLAPSED_COL, None)]),
+            Column::Col(COL, None),
+        ],
+        &[30.0, 40.0, 50.0],
+        1,
+        None,
+        "",
+    );
+    assert_eq!(table_size(&fixture).0, 160.0);
+    assert_eq!(column_box(&fixture.doc, fixture.cells[0][1]), (50.0, 40.0));
 }
