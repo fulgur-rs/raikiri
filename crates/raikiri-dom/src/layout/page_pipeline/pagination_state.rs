@@ -451,9 +451,10 @@ impl PaginationState {
     }
 
     /// Places the box `candidate` after its start: keeps a footnote in the
-    /// page-local area of its anchor, or opens the page a forced break, a
-    /// named page change or an avoided break asks for, truncates the margins
-    /// adjoining a break, and records the pages the box occupies.
+    /// page-local area of its anchor, or begins the box, starts it on its page,
+    /// records it among its siblings, makes room for the header of the table
+    /// it holds, names the page it opens, and finishes with the pages it
+    /// occupies.
     pub(super) fn place_box(
         &mut self,
         document: &mut LayoutSession<'_>,
@@ -479,41 +480,8 @@ impl PaginationState {
         let raw_y = candidate.raw_y;
         let height = candidate.height;
         let (page_break, mut position) = self.begin_box(document, env, candidate, entry);
-        let page_transition = self.saw_child && page_break.is_page_transition();
-        if self.saw_child {
-            // A break-after on the preceding box and a break-before (or named
-            // page transition) on this box describe the same boundary, not two
-            // blank pages.
-            if page_transition {
-                self.open_page_for_box(
-                    document,
-                    env,
-                    candidate,
-                    entry,
-                    &page_break,
-                    &mut position,
-                )?;
-            } else if position.effective_y.is_finite() && position.effective_y >= 0.0 {
-                self.start_box_on_natural_page(
-                    document,
-                    env,
-                    candidate,
-                    &page_break,
-                    &mut position,
-                )?;
-            }
-            reset_inline_x_for_page_transition(
-                document,
-                node_id,
-                page_transition,
-                candidate.context.is_direct_body_element,
-            );
-        } else {
-            // A forced break before the first class-A box does not manufacture
-            // a leading blank page.
-            self.saw_child = true;
-            self.current_page = 0;
-        }
+        let page_transition =
+            self.start_box_page(document, env, candidate, entry, &page_break, &mut position)?;
         let BoxPosition {
             mut effective_y,
             starts_after_forced_break,
@@ -688,6 +656,45 @@ impl PaginationState {
                 candidate.raw_y + candidate.height,
             );
         }
+    }
+
+    /// Starts the box `candidate` on a page: the first box of the flow starts
+    /// on the first page, and a later one opens the page its transition asks
+    /// for, or starts on the page its position falls on. Returns whether the
+    /// box met a page transition.
+    pub(super) fn start_box_page(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        page_break: &BoxBreak,
+        position: &mut BoxPosition,
+    ) -> Result<bool, Halt> {
+        let node_id = candidate.node_id;
+        let page_transition = self.saw_child && page_break.is_page_transition();
+        if self.saw_child {
+            // A break-after on the preceding box and a break-before (or named
+            // page transition) on this box describe the same boundary, not two
+            // blank pages.
+            if page_transition {
+                self.open_page_for_box(document, env, candidate, entry, page_break, position)?;
+            } else if position.effective_y.is_finite() && position.effective_y >= 0.0 {
+                self.start_box_on_natural_page(document, env, candidate, page_break, position)?;
+            }
+            reset_inline_x_for_page_transition(
+                document,
+                node_id,
+                page_transition,
+                candidate.context.is_direct_body_element,
+            );
+        } else {
+            // A forced break before the first class-A box does not manufacture
+            // a leading blank page.
+            self.saw_child = true;
+            self.current_page = 0;
+        }
+        Ok(page_transition)
     }
 
     /// Begins the placement of the box `candidate`: places the first header of

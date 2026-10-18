@@ -19052,6 +19052,100 @@ fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
 }
 
 #[test]
+fn the_first_box_starts_on_the_first_page_and_a_later_one_where_its_break_puts_it() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(None);
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = PageCandidate {
+        node_id: root,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let node_count = doc.nodes.len();
+    let start = |doc: &mut Document, saw_child, forced_transition, effective_y| {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.saw_child = saw_child;
+        state.current_page = 3;
+        let page_break = pagination_state::BoxBreak {
+            forced_transition,
+            ..box_meeting_no_break()
+        };
+        let mut position = pagination_state::BoxPosition {
+            effective_y,
+            starts_after_forced_break: false,
+        };
+        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let met = state
+            .start_box_page(
+                &mut session,
+                &env,
+                &candidate,
+                &entry,
+                &page_break,
+                &mut position,
+            )
+            .unwrap();
+        (met, state.saw_child, state.current_page, position)
+    };
+
+    // The first box starts on the first page, whatever break it meets.
+    let (met, saw_child, page, position) = start(&mut doc, false, true, 50.0);
+    assert_eq!(
+        (met, saw_child, page, position.effective_y),
+        (false, true, 0, 50.0)
+    );
+    assert!(!position.starts_after_forced_break);
+
+    // A later box that meets a page transition opens the page after the one
+    // it follows.
+    let (met, _, page, position) = start(&mut doc, true, true, 50.0);
+    assert_eq!((met, page), (true, 4));
+    assert!(position.starts_after_forced_break);
+
+    // One that meets none starts on the page its position falls on, which
+    // never precedes the page the flow is on.
+    let (met, _, page, position) = start(&mut doc, true, false, 450.0);
+    assert_eq!((met, page, position.effective_y), (false, 4, 450.0));
+    let (met, _, page, _) = start(&mut doc, true, false, 250.0);
+    assert_eq!((met, page), (false, 3));
+
+    // One at a position that no page holds stays on the page of the flow.
+    for effective_y in [f32::INFINITY, -1.0] {
+        let (met, _, page, position) = start(&mut doc, true, false, effective_y);
+        assert_eq!((met, page, position.effective_y), (false, 3, effective_y));
+    }
+}
+
+#[test]
 fn a_box_that_avoids_a_break_inside_it_is_a_page_transition() {
     let page_break = |forced_transition, page, flex_item| {
         let mut page_break = box_meeting_no_break();
