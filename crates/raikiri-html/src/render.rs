@@ -1,11 +1,9 @@
 //! Resource-aware layout pipeline shared by document layout.
 
 use raikiri_dom::{
-    FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageLayoutControl,
-    PageSlice, first_page_name,
+    FontFaceLoader, InitialPageContextError, PageLayoutControl, PageSlice,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
-    layout_pages_with_resolver_and_base_url_and_control, resolve_initial_page_context,
-    validate_layout_depth,
+    layout_pages_with_resolver_and_base_url_and_control, validate_layout_depth,
 };
 use raikiri_dom::{ResolvedPageGeometry, resolve_page_geometry};
 use raikiri_style::FontFaceRegistry;
@@ -19,13 +17,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use raikiri_style::{
-    Atom, CascadeOptions, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
-    MediaContext, PageCascadeResult, PageContextQuery, PageInheritance, RuleTree,
-    cascade_page_with_media_context_and_border_width_device_scale, cascade_with_options,
+    Atom, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext,
+    PageCascadeResult, PageContextQuery, RuleTree, cascade_with_options,
 };
 
 use crate::HtmlDocument;
-use crate::cascade::{build_rule_tree_with_limits, first_page_query};
+use crate::cascade::build_rule_tree_with_limits;
 use crate::fetch::{redacted_url, sanitize_policy_violation, url_policy_violation};
 #[cfg(doc)]
 use crate::parse_html_with_resources;
@@ -35,6 +32,33 @@ use crate::resources::{
 
 pub(crate) mod continuation;
 pub(crate) use continuation::Continuation;
+
+mod first_page;
+use first_page::FirstPage;
+
+/// What every stage of one layout run reads.
+struct Run<'r, 'a> {
+    defaults: &'r PageDefaults,
+    config: &'r LayoutConfig,
+    doc: &'r HtmlDocument,
+    resources: &'r RenderResources<'a>,
+    warnings: &'r SharedRenderWarnings,
+    resolver: &'r dyn ReplacedResolver,
+    font_loader: &'r dyn FontFaceLoader,
+    /// The `@font-face` rules of the run's environment.
+    font_faces: &'r FontFaceRegistry,
+    base_url: Option<&'r url::Url>,
+    tree: &'r RuleTree,
+    signal: Option<&'r raikiri_traits::AbortSignal>,
+}
+
+/// The images a run has fetched, which later fetches of the run count with:
+/// the URLs tried and how many tries were made.
+#[derive(Default)]
+struct ImagePreloads {
+    seen: HashSet<url::Url>,
+    attempts: usize,
+}
 
 struct FallbackRecordingResolver<'a> {
     inner: &'a (dyn ReplacedResolver + Send + Sync),
@@ -839,149 +863,34 @@ pub(crate) fn run_pipeline(
     let font_faces = layout_font_faces.as_ref().unwrap_or(&doc.font_faces);
     let base_url = effective_base_url.as_ref();
 
-    // Resolve the first page context before layout so `:first` and the first
-    // resolved `@page size` participate in the initial fragmentainer.
-    let mut first_query = first_page_query();
-    // The fonts are given to the document before the element cascade, which
-    // measures `line-height: normal` in the document's fonts for the `lh`
-    // unit, and before
-    // the first-page probe, which lays out a clone of this document, so the
-    // probe and the layout below use the same fonts.
-    let mut dom = doc.uncascaded.dom.clone();
-    // Paint resolves relative `url()` values against the base the images
-    // were fetched with, which the resources' fallback base can change.
-    if let Some(base_url) = base_url {
-        dom.set_base_url(Some(base_url.clone()));
-    }
-    let font_report = enable_inline_engine(&mut dom, resources, font_faces, &font_loader);
-    let mut cascade_options = CascadeOptions::default();
-    cascade_options.limits = config.limits.cascade_limits();
-    cascade_options.border_width_device_scale = resources.configured_border_width_device_scale();
-    // The element cascade below runs on the source document, which may have
-    // no fonts, so the measurer comes from `dom`, which has them.
-    cascade_options.normal_line_height = Some(dom.normal_line_height());
-    // The viewport-percentage lengths need the first page's page area before
-    // the element cascade, whose root the page context inherits from. Take it
-    // from the page context inheriting initial values; the root's styles only
-    // matter to font-relative page lengths, which are checked again below.
-    let provisional_page = cascade_page_with_media_context_and_border_width_device_scale(
-        &tree,
-        &first_query,
-        PageInheritance::LegacyInitialValues,
-        media_context,
-        cascade_options.border_width_device_scale,
-    );
-    cascade_options.viewport = Some(page_area_size(&provisional_page, &defaults));
-    let mut first_cascade = cascade_with_options(
-        &doc.uncascaded.dom,
-        &tree,
-        media_context,
-        &first_query,
-        &cascade_options,
-    )?;
-    // The first class-A box can select a named page. Resolve that name before
-    // the initial layout so a named `:first` page is not flattened to the
-    // anonymous page geometry. Only the page context depends on the name.
-    // A resumed layout takes the first page's name from the earlier layout.
-    let first_name = match inputs.resume {
-        Some(resume) => resume.page_names.first().cloned().flatten(),
-        None => first_page_name(&doc.uncascaded.dom, &first_cascade),
-    };
-    if let Some(name) = first_name {
-        first_query.page_name = Some(Atom::from(name.as_str()));
-        let page = cascade_page_for_query(&tree, &first_cascade, media_context, &first_query);
-        first_cascade.replace_page(page);
-    }
-    let page_box = page_box_for_page(&first_cascade.page, &defaults);
-
-    let mut marker_image_seen = HashSet::new();
-    let mut marker_image_attempts = 0;
-    resources.preload_list_marker_images(
-        &first_cascade,
+    let run = Run {
+        defaults: &defaults,
+        config,
+        doc,
+        resources,
+        warnings: &warnings,
+        resolver: &resolver,
+        font_loader: &font_loader,
+        font_faces,
         base_url,
-        &warnings,
-        &mut marker_image_seen,
-        &mut marker_image_attempts,
-        signal.as_ref(),
-    );
-    if let Some(source) = resources.image_pixel_source_ref() {
-        dom.prepare_list_marker_images(&first_cascade, source, base_url);
-    }
-    // A resumed layout already knows the first page's name, which the probe
-    // would look for in content the layout skips.
-    let (mut first_cascade, page_box) = if inputs.resume.is_some() {
-        (first_cascade, page_box)
-    } else {
-        let mut resolved_initial_context = resolve_initial_page_context(
-            &dom,
-            first_query.page_name.as_ref().map(ToString::to_string),
-            first_cascade,
-            page_box,
-            InitialPageProbeResources::new(Some(&resolver), base_url),
-            |page_name, cascade| {
-                first_query.page_name = page_name.map(Atom::from);
-                let page = cascade_page_for_query(&tree, cascade, media_context, &first_query);
-                let page_box = page_box_for_page(&page, &defaults);
-                (page, page_box)
-            },
-        )
-        .map_err(map_initial_page_context_error)?;
-        resolved_initial_context.give_paragraphs_to(&mut dom);
-        (
-            resolved_initial_context.cascade,
-            resolved_initial_context.page_box,
-        )
+        tree: &tree,
+        signal: signal.as_ref(),
     };
-    // A named first page, or page lengths relative to the root's font, can
-    // give the first page another page area than the provisional one. The
-    // element cascade is then run again in that viewport; the page context
-    // it already resolved is kept.
-    let page_area = page_area_size(&first_cascade.page, &defaults);
-    if cascade_options.viewport != Some(page_area) {
-        cascade_options.viewport = Some(page_area);
-        let page = first_cascade.page.clone();
-        first_cascade = cascade_with_options(
-            &doc.uncascaded.dom,
-            &tree,
-            media_context,
-            &first_query,
-            &cascade_options,
-        )?;
-        first_cascade.replace_page(page);
-        // Marker images without full intrinsic dimensions are sized from
-        // the marker's font, which can be viewport-relative.
-        resources.preload_list_marker_images(
-            &first_cascade,
-            base_url,
-            &warnings,
-            &mut marker_image_seen,
-            &mut marker_image_attempts,
-            signal.as_ref(),
-        );
-        if let Some(source) = resources.image_pixel_source_ref() {
-            dom.prepare_list_marker_images(&first_cascade, source, base_url);
-        }
-    }
-    let first_cascade = first_cascade;
+    let FirstPage {
+        dom,
+        cascade_options,
+        first_cascade,
+        page_box,
+        preloads:
+            ImagePreloads {
+                seen: mut marker_image_seen,
+                attempts: mut marker_image_attempts,
+            },
+    } = run.first_page(inputs.resume)?;
     // Only `page` in a cascade result depends on the page query, so the
     // first-page cascade serves as the element cascade of every later page.
     let page_cascader = PageCascader::new(&tree, &first_cascade, media_context);
 
-    for family in font_report.skipped {
-        push_resource_warning(
-            &warnings,
-            RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: ResourceKind::Font,
-                    url: None,
-                },
-                node_id: None,
-                details: format!(
-                    "@font-face family {family:?} had no usable source; fallback fonts will be used"
-                ),
-            },
-        );
-    }
     // A relayout of later pages runs the run's element cascade, on the same
     // input and with the same options, with the page context of its first
     // page; the run's own element cascade above already succeeded on them.
