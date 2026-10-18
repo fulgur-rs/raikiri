@@ -318,6 +318,33 @@ impl<'a> TaffyChildIter<'a> {
 }
 
 impl Document {
+    /// The raw children of `parent`, with each `display: contents` child that
+    /// generates no box replaced by its own children, recursively. This is the
+    /// list of boxes taffy lays out inside a block container, but unfiltered
+    /// otherwise, so a container without such a child yields its raw children.
+    /// Loose table rows need no anonymous table here: none is built for a
+    /// multicolumn container or for a `display: contents` element.
+    pub(crate) fn children_through_contents(&self, parent: usize) -> Vec<usize> {
+        let container = self.layout_node_with_style(parent).unwrap();
+        let flatten = !container.is_display_none() && container.display() != DisplayValue::Contents;
+        let mut children = Vec::new();
+        let mut stack = vec![self.nodes[parent].children.iter()];
+        while let Some(siblings) = stack.last_mut() {
+            let Some(&child) = siblings.next() else {
+                stack.pop();
+                continue;
+            };
+            if flatten && TaffyChildIter::is_flattened(self, child) {
+                stack.push(self.nodes[child].children.iter());
+            } else {
+                children.push(child);
+            }
+        }
+        children
+    }
+}
+
+impl Document {
     /// The node whose taffy children include `node`: its DOM parent, or the
     /// container its `display: contents` ancestors lift it into.
     /// An anonymous table cell wrapping `node` is its container, though the

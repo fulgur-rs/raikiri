@@ -300,3 +300,60 @@ fn letter_groups_up_to_the_id_limit_keep_their_own_opacity() {
         assert!(document.paint_order_approximations(&cascade).is_empty());
     }
 }
+
+/// A document with nodes the paint walk passes over, a `head` and an element
+/// with `display: none`, around the text it paints, laid out on one page.
+/// Returns the document, its cascade and the painted text node.
+fn document_with_hidden_nodes() -> (Document, CascadeResult, usize) {
+    let mut document = Document::new();
+    let element = |document: &mut Document, parent, tag, style| {
+        document.append_element(Some(parent), tag, taffy::Style::default(), Some(style))
+    };
+    let html = element(&mut document, 0, "html", "display:block");
+    let head = element(&mut document, html, "head", "display:none");
+    let title = element(&mut document, head, "title", "display:none");
+    document.append_text(title, "X");
+    let body = element(
+        &mut document,
+        html,
+        "body",
+        "display:block;margin:0;font:10px/10px Ahem",
+    );
+    let hidden = element(&mut document, body, "div", "display:none");
+    document.append_text(hidden, "X");
+    let shown = element(&mut document, body, "div", "display:block");
+    let text = document.append_text(shown, "X");
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let mut page_box = PageBox::new();
+    page_box.width = 300.0;
+    page_box.height = 100.0;
+    let slices = layout_pages(&mut document, &cascade, page_box).unwrap();
+    document
+        .project_pages(&cascade, page_box, &slices, &[])
+        .unwrap();
+    (document, cascade, text)
+}
+
+#[test]
+fn nodes_that_are_not_rendered_list_nothing_when_every_node_is_walked() {
+    let (document, cascade, text) = document_with_hidden_nodes();
+    let walked = document.page_paint_order_impl(&cascade, 0, None, false);
+    let texts: Vec<NodeId> = walked
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::Text(fragment) => Some(fragment.node()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, [NodeId::new(text as u64)], "{walked:?}");
+    let pruned = document.page_paint_order_impl(&cascade, 0, None, true);
+    assert_eq!(format!("{pruned:?}"), format!("{walked:?}"));
+}

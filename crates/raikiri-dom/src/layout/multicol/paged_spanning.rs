@@ -31,7 +31,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
     let Some(container) = edits.first(owner) else {
         return Ok(0.0); // cov:ignore: retained groups are created only after the owner source fragment exists.
     };
-    let children = tree.nodes[owner].children.clone();
+    let children = tree.children_through_contents(owner);
     work.charge(children.len())?;
     let mut groups = Vec::<MulticolGroup>::new();
     let mut replacements = Vec::<(usize, Vec<LayoutFragment>)>::new();

@@ -1021,8 +1021,19 @@ fn display_contents_children_of_a_balanced_container_are_painted() {
     );
 }
 
+/// The number of pixels at which `body` and `plain` render differently.
+fn differing_pixels(body: &str, plain: &str, css: &str) -> usize {
+    let actual = raster(body, css);
+    let expected = raster(plain, css);
+    actual
+        .chunks_exact(4)
+        .zip(expected.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count()
+}
+
 fn compare_bodies(body: &str, plain: &str, css: &str) {
-    assert_eq!(raster(body, css), raster(plain, css));
+    assert_eq!(differing_pixels(body, plain, css), 0);
 }
 
 #[test]
@@ -1047,5 +1058,175 @@ fn a_display_contents_wrapper_keeps_the_column_clip_of_its_children() {
             &format!("<div class=mc>{inner}</div><p>X</p>"),
             css,
         );
+    }
+}
+
+/// `inner` wrapped in `depth` boxless `display: contents` elements.
+fn wrapped(inner: &str, depth: usize) -> String {
+    let mut html = inner.to_string();
+    for _ in 0..depth {
+        html = format!("<div style='display:contents'>{html}</div>");
+    }
+    html
+}
+
+#[test]
+fn display_contents_wrappers_leave_the_column_assignment_of_blocks_unchanged() {
+    // Each wrapper holds one block: the columns break between the wrappers
+    // exactly as they break between the blocks.
+    for depth in 1..=2 {
+        compare_bodies(
+            &format!(
+                "<div class=mc>{}{}</div><p>X</p>",
+                wrapped("<p>A</p>", depth),
+                wrapped("<p>B</p>", depth)
+            ),
+            "<div class=mc><p>A</p><p>B</p></div><p>X</p>",
+            ".mc{height:20px;column-fill:auto}",
+        );
+    }
+}
+
+#[test]
+fn display_contents_wrappers_leave_the_line_breaking_of_a_column_flow_unchanged() {
+    for depth in 1..=2 {
+        compare_bodies(
+            &format!(
+                "<div class=mc>{}</div><p>X</p>",
+                wrapped("<p>A<br>B<br>C<br>D</p>", depth)
+            ),
+            "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>X</p>",
+            ".mc{height:40px;column-fill:auto}",
+        );
+    }
+}
+
+#[test]
+fn display_contents_wrappers_leave_the_balancing_of_a_column_flow_unchanged() {
+    for depth in 1..=2 {
+        compare_bodies(
+            &format!(
+                "<div class=mc>{}</div><p>X</p>",
+                wrapped("<p>A<br>B<br>C<br>D</p>", depth)
+            ),
+            "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>X</p>",
+            "",
+        );
+    }
+}
+
+/// Each case holds the blocks of a column container and the container's CSS.
+/// The blocks are placed the same way whether they sit directly in the
+/// container, all inside one boxless wrapper, or each in a wrapper of its own.
+const WRAPPED_CASES: &[(&[&str], &str)] = &[
+    (
+        &[
+            "<div style='height:60px;background:blue'></div>",
+            "<p>X</p>",
+        ],
+        ".mc{height:40px;column-fill:auto}",
+    ),
+    (&["<div style='height:60px;background:blue'></div>"], ""),
+    (
+        &["<p>A</p>", "<p style='break-before:column'>B</p>"],
+        ".mc{height:60px}",
+    ),
+    (&["<p>A</p>", "<p style='break-before:column'>B</p>"], ""),
+    (
+        &[
+            "<p>A</p>",
+            "<h2 style='column-span:all;margin:0'>S</h2>",
+            "<p>B<br>C</p>",
+        ],
+        ".mc{width:140px}",
+    ),
+    (
+        &["<p>A<br>B</p>", "<p>C<br>D</p>", "<p>E</p>"],
+        ".mc{height:60px;column-fill:auto}",
+    ),
+    (
+        &[
+            "<p>A<br>B</p>",
+            "<p style='break-inside:avoid'>C<br>D</p>",
+            "<p>E</p>",
+        ],
+        ".mc{height:60px;column-fill:auto}",
+    ),
+    (
+        &["<div class=mc style='width:40px'><p>A<br>B<br>C<br>D</p></div>"],
+        "",
+    ),
+    (
+        &["<div style='width:80px'><p>A<br>B<br>C<br>D</p></div>"],
+        ".mc{height:40px;column-fill:auto}",
+    ),
+    (
+        &["<p>A</p>", "<p></p>", "<p>B<br>C</p>"],
+        ".mc{height:40px;column-fill:auto}",
+    ),
+    (
+        &["<p>A<br>B<br>C<br>D</p>", "<p style='width:40px'>E</p>"],
+        ".mc{direction:rtl}",
+    ),
+    (
+        &[
+            "<p style='position:relative;left:10px'>A<br>B</p>",
+            "<p>C<br>D</p>",
+        ],
+        ".mc{height:40px;column-fill:auto}",
+    ),
+    (
+        &[
+            "<p style='float:left;width:20px'>F</p>",
+            "<p>A<br>B<br>C<br>D</p>",
+        ],
+        "",
+    ),
+    (
+        &[
+            "<p>A</p>",
+            "<div class=mc style='width:40px'><p>B<br>C<br>D</p></div>",
+        ],
+        ".mc{height:60px}",
+    ),
+    (
+        &[
+            "<p style='margin:10px 0'>A</p>",
+            "<p style='margin:10px 0'>B</p>",
+        ],
+        ".mc{height:50px;column-fill:auto}",
+    ),
+    // Table rows outside a table stay blocks of the container, in a wrapper or not.
+    (
+        &[
+            "<div style='display:table-row'><div style='display:table-cell'>A</div></div>",
+            "<div style='display:table-row'><div style='display:table-cell'>B</div></div>",
+        ],
+        ".mc{height:40px;column-fill:auto}",
+    ),
+];
+
+#[test]
+fn display_contents_wrappers_leave_every_column_strategy_unchanged() {
+    for (index, (blocks, css)) in WRAPPED_CASES.iter().enumerate() {
+        let plain = format!("<div class=mc>{}</div><p>Z</p>", blocks.concat());
+        let whole = format!(
+            "<div class=mc>{}</div><p>Z</p>",
+            wrapped(&blocks.concat(), 1)
+        );
+        let each = format!(
+            "<div class=mc>{}</div><p>Z</p>",
+            blocks
+                .iter()
+                .map(|block| wrapped(block, 1))
+                .collect::<String>()
+        );
+        for (name, body) in [("whole", whole), ("each", each)] {
+            assert_eq!(
+                differing_pixels(&body, &plain, css),
+                0,
+                "case {index} wrapped as {name} differs from the unwrapped blocks"
+            );
+        }
     }
 }
