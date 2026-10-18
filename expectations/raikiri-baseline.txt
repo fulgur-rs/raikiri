@@ -226,6 +226,7 @@ css/css-logical/parsing/min-block-size-invalid.html
 css/css-logical/parsing/min-inline-size-invalid.html
 
 # --- Goal B: css-backgrounds reftest 108 PASS (400x300 EXACT, 2026-09-16) ---
+css/css-backgrounds/background-attachment-fixed-border-radius-offset.html
 css/css-backgrounds/background-attachment-fixed-inline-scrolled.html
 css/css-backgrounds/background-attachment-fixed-inside-transform-1.html
 css/css-backgrounds/background-attachment-margin-root-001.html

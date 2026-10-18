@@ -143,16 +143,7 @@ pub(crate) fn paint_canvas_background(
         fill_rect(scene, color, canvas_rect);
     }
     let insets = raikiri_dom::page_content_insets(cascade, page_box);
-    let page_area = kurbo::Rect::from_origin_size(
-        (
-            f64::from(margins.left + insets.left),
-            f64::from(margins.top + insets.top),
-        ),
-        (
-            f64::from(insets.page_area_width(margins, page_box)),
-            f64::from(insets.page_area_height(margins, page_box)),
-        ),
-    );
+    let page_area = page_area_rect(margins, insets, page_box);
     paint_canvas_background_image(
         image_cache,
         scene,
@@ -162,6 +153,41 @@ pub(crate) fn paint_canvas_background(
         pixel_source,
         warnings,
     );
+}
+
+/// The page area in page-local coordinates: the page box inside its margins,
+/// border and padding, where the document flows and `fixed` background layers
+/// are positioned.
+fn page_area_rect(
+    margins: raikiri_dom::PageMargins,
+    insets: raikiri_dom::PageContentInsets,
+    page_box: PageBox,
+) -> Rect {
+    Rect::from_origin_size(
+        (
+            f64::from(margins.left + insets.left),
+            f64::from(margins.top + insets.top),
+        ),
+        (
+            f64::from(insets.page_area_width(margins, page_box)),
+            f64::from(insets.page_area_height(margins, page_box)),
+        ),
+    )
+}
+
+/// The page area that a box's `fixed` background layers are positioned in, or
+/// `None` when they behave like `scroll` ones.
+///
+/// A box that is, or lies inside, a containing block for fixed boxes (a
+/// transformed box, say) is not fixed to the page, and neither is anything
+/// under a transformed root, which carries the whole page with it (CSS
+/// Transforms 1 section 6).
+fn fixed_background_viewport(
+    page_area: Rect,
+    root_transform: Affine,
+    in_fixed_containing_block: bool,
+) -> Option<Rect> {
+    (root_transform == Affine::IDENTITY && !in_fixed_containing_block).then_some(page_area)
 }
 
 /// Where the images of the canvas background paint and are placed.
@@ -2244,6 +2270,9 @@ pub(crate) fn paint_document_impl(
     // the page border and padding.
     let content_width = insets.page_area_width(margins, page_box);
     let content_height = insets.page_area_height(margins, page_box);
+    // The page area in page-local coordinates, which `fixed` background
+    // layers are positioned in (CSS Backgrounds 3 section 2.5).
+    let page_area = page_area_rect(margins, insets, page_box);
     // Fixed-position containing blocks use the page area of the initial
     // layout even when a later named page has a different paper width.
     // The page area takes the root element's direction, which decides the
@@ -3808,9 +3837,22 @@ pub(crate) fn paint_document_impl(
                                 &paint_border_radius,
                                 painted_border,
                                 &paint_padding,
-                                matches!(cv.border_image.source, BackgroundImage::None)
-                                    && border_hides_background_edge(painted_border, cv.color),
-                                image_cache.device_grid(scene.transform),
+                                BackgroundEnv {
+                                    border_hides_edge: matches!(
+                                        cv.border_image.source,
+                                        BackgroundImage::None
+                                    ) && border_hides_background_edge(
+                                        painted_border,
+                                        cv.color,
+                                    ),
+                                    device_grid: image_cache.device_grid(scene.transform),
+                                    fixed_viewport: fixed_background_viewport(
+                                        page_area,
+                                        root_transform,
+                                        inside_fixed_containing_block
+                                            || establishes_fixed_containing_block,
+                                    ),
+                                },
                                 pixel_source,
                                 warnings,
                             );
@@ -4112,8 +4154,10 @@ pub(crate) fn paint_document_impl(
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
-                            false,
-                            image_cache.device_grid(scene.transform),
+                            BackgroundEnv {
+                                device_grid: image_cache.device_grid(scene.transform),
+                                ..BackgroundEnv::default()
+                            },
                             pixel_source,
                             warnings,
                         );
@@ -5329,6 +5373,20 @@ fn color_only_background_layer(cv: &ComputedValues) -> raikiri_style::ComputedBa
     layer
 }
 
+/// What surrounds a box and shapes how its background is painted.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct BackgroundEnv {
+    /// Whether the borders cover the outer edge of the background (see
+    /// [`border_hides_background_edge`]).
+    pub border_hides_edge: bool,
+    /// The raster output's device pixel grid, absent for a vector output.
+    pub device_grid: Option<DeviceGrid>,
+    /// The page area in the box's own coordinates, which a `fixed` layer is
+    /// positioned in. Without it a `fixed` layer is positioned like a
+    /// `scroll` one, as inside a transform.
+    pub fixed_viewport: Option<Rect>,
+}
+
 /// Paint an element's background color and every background layer.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_element_background(
@@ -5344,8 +5402,7 @@ pub(crate) fn paint_element_background(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
-    border_hides_edge: bool,
-    device_grid: Option<DeviceGrid>,
+    env: BackgroundEnv,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -5359,8 +5416,7 @@ pub(crate) fn paint_element_background(
         border_radius,
         border,
         padding,
-        border_hides_edge,
-        device_grid,
+        env,
         pixel_source,
         warnings,
         None,
@@ -5385,8 +5441,7 @@ fn paint_element_background_layers(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
-    border_hides_edge: bool,
-    device_grid: Option<DeviceGrid>,
+    env: BackgroundEnv,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     image_slice: Option<Rect>,
@@ -5415,8 +5470,12 @@ fn paint_element_background_layers(
             border_radius,
             border,
             padding,
-            border_hides_edge,
-            device_grid,
+            BackgroundEnv {
+                fixed_viewport: env.fixed_viewport.filter(|_| {
+                    layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed
+                }),
+                ..env
+            },
             &layer.size,
             &layer.position,
             &layer.repeat,
@@ -5469,8 +5528,7 @@ fn paint_element_background_slice(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
-    border_hides_edge: bool,
-    device_grid: Option<DeviceGrid>,
+    env: BackgroundEnv,
     background_size: &ComputedBackgroundSize,
     background_position: &ComputedCssPosition,
     background_repeat: &raikiri_style::property::BackgroundRepeat,
@@ -5566,7 +5624,7 @@ fn paint_element_background_slice(
     // border width, or a sixth when a double border has a gap to keep covered
     // (the shrink Chrome applies to avoid background bleed). Positioning is
     // unaffected: only the painted area shrinks.
-    let bleed_inset = (border_hides_edge
+    let bleed_inset = (env.border_hides_edge
         && matches!(clip, VisualBox::BorderBox)
         && used_border_radii(border_radius, radius_reference.0, radius_reference.1)
             .iter()
@@ -5615,7 +5673,11 @@ fn paint_element_background_slice(
         // cov:ignore: defensive fallback for future `VisualBox` variants
         _ => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
     };
-    let positioning = Rect::new(px0, py0, px1, py1);
+    // A `fixed` layer is positioned in the page area whatever its origin
+    // (CSS Backgrounds 3 section 2.5) and still painted in its clip box.
+    let positioning = env
+        .fixed_viewport
+        .unwrap_or_else(|| Rect::new(px0, py0, px1, py1));
     // Painting area from `background-clip` (CSS Backgrounds 3 section 2.7).
     // Width/height is border-box size from taffy layout.
     let mut radius_inset = (0.0, 0.0, 0.0, 0.0);
@@ -5691,8 +5753,10 @@ fn paint_element_background_slice(
                     padding,
                     // The mask already limits the background to the border
                     // ring, so there is no edge to keep clear of the image.
-                    false,
-                    device_grid,
+                    BackgroundEnv {
+                        border_hides_edge: false,
+                        ..env
+                    },
                     background_size,
                     background_position,
                     background_repeat,
@@ -5822,7 +5886,7 @@ fn paint_element_background_slice(
             background_size,
             background_position,
             background_repeat,
-            device_grid,
+            env.device_grid,
             source,
             warnings,
         );
@@ -6956,8 +7020,10 @@ pub(crate) fn paint_inline_box(
         },
         if slice.is_some() { &cv.border } else { &border },
         &background_padding,
-        false,
-        image_cache.device_grid(transform),
+        BackgroundEnv {
+            device_grid: image_cache.device_grid(transform),
+            ..BackgroundEnv::default()
+        },
         pixel_source,
         warnings,
         slice.map(|_| piece_rect),

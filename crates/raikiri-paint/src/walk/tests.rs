@@ -2443,8 +2443,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &border,
             &padding,
-            false,
-            None,
+            BackgroundEnv::default(),
             Some(&source),
             &mut warnings,
         );
@@ -2494,8 +2493,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &ring_border,
         &padding,
-        false,
-        None,
+        BackgroundEnv::default(),
         Some(&source),
         &mut ring_warnings,
     );
@@ -3133,8 +3131,7 @@ fn background_rounded_color_and_image_are_clipped_to_the_curve_together() {
             &ComputedBorderRadius::all(ComputedLength(8.0)),
             &sides,
             &padding,
-            false,
-            None,
+            BackgroundEnv::default(),
             Some(&BluePixels),
             &mut Vec::new(),
         );
@@ -3190,6 +3187,103 @@ fn bordered_sides(
         bottom: border,
         left: border,
     }
+}
+
+#[test]
+fn fixed_background_viewport_is_the_page_area_outside_any_fixed_containing_block() {
+    let page_area = kurbo::Rect::new(10.0, 20.0, 110.0, 220.0);
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::IDENTITY, false),
+        Some(page_area)
+    );
+    // Inside or at a containing block for fixed boxes, a transformed box
+    // for one, the layer scrolls with its box.
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::IDENTITY, true),
+        None
+    );
+    // A transformed root carries the whole page with it.
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::scale(2.0), false),
+        None
+    );
+}
+
+#[test]
+fn fixed_background_layer_is_positioned_in_the_page_area_and_clipped_to_its_box() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: [255, 0, 0, 255].repeat(4),
+            }))
+        }
+    }
+    let border = bordered_sides(2.0, BorderStyle::Solid, BorderColor::CurrentColor);
+    let padding = taffy::Rect {
+        top: 3.0,
+        right: 3.0,
+        bottom: 3.0,
+        left: 3.0,
+    };
+    let page_area = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    let origins = |attachment, origin, fixed_viewport| {
+        let mut scene = Scene::new();
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+        layer.repeat = background_repeat_fixture("no-repeat", "0 0").1;
+        layer.attachment = attachment;
+        layer.origin = origin;
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            100.0,
+            50.0,
+            50.0,
+            30.0,
+            CssColor::TRANSPARENT,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            BackgroundEnv {
+                fixed_viewport,
+                ..BackgroundEnv::default()
+            },
+            Some(&RedPixels),
+            &mut Vec::new(),
+        );
+        background_fill_origins(&scene)
+    };
+    use raikiri_style::property::BackgroundAttachment::{Fixed, Scroll};
+    // A scroll layer starts at its padding box; a fixed one at the page area,
+    // whatever its origin.
+    assert_eq!(
+        origins(Scroll, VisualBox::PaddingBox, Some(page_area)),
+        vec![(52.0, 32.0)]
+    );
+    for origin in [
+        VisualBox::BorderBox,
+        VisualBox::PaddingBox,
+        VisualBox::ContentBox,
+    ] {
+        assert_eq!(
+            origins(Fixed, origin, Some(page_area)),
+            vec![(0.0, 0.0)],
+            "{origin:?}"
+        );
+    }
+    // Without a page area, as inside a transform, a fixed layer scrolls.
+    assert_eq!(
+        origins(Fixed, VisualBox::PaddingBox, None),
+        vec![(52.0, 32.0)]
+    );
 }
 
 #[test]
@@ -3295,8 +3389,10 @@ fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &border,
             &padding,
-            false,
-            device_grid,
+            BackgroundEnv {
+                device_grid,
+                ..BackgroundEnv::default()
+            },
             Some(&BluePixels),
             &mut Vec::new(),
         );
@@ -3430,8 +3526,10 @@ fn background_is_pulled_in_from_a_rounded_edge_only_when_the_border_hides_it() {
             &ComputedBorderRadius::all(ComputedLength(radius)),
             sides,
             &padding,
-            border_hides_edge,
-            None,
+            BackgroundEnv {
+                border_hides_edge,
+                ..BackgroundEnv::default()
+            },
             None,
             &mut Vec::new(),
         );
@@ -3549,8 +3647,7 @@ fn background_element_origins_clips_and_rounded_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &zero_sides,
             &content_padding,
-            false,
-            None,
+            BackgroundEnv::default(),
             Some(&source),
             &mut warnings,
         );
@@ -3586,8 +3683,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
-        false,
-        None,
+        BackgroundEnv::default(),
         Some(&source),
         &mut warn_warnings,
     );
@@ -3621,8 +3717,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
-        false,
-        None,
+        BackgroundEnv::default(),
         Some(&source),
         &mut fallback_warnings,
     );
@@ -3657,8 +3752,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(8.0)),
         &zero_sides,
         &padding,
-        false,
-        None,
+        BackgroundEnv::default(),
         Some(&source),
         &mut rounded_warnings,
     );
@@ -5026,8 +5120,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
-        false,
-        None,
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -5052,8 +5145,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
-        false,
-        None,
+        BackgroundEnv::default(),
         None,
         &mut transparent_warnings,
     );
