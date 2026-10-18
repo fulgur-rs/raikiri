@@ -140,7 +140,7 @@ pub(super) fn prepare_markers(
         else {
             continue;
         };
-        if style.visibility == raikiri_style::property::Visibility::Hidden {
+        if crate::paint_rules::hides_own_box(style) {
             continue;
         }
         if let Some((shaped, offset_x)) =
