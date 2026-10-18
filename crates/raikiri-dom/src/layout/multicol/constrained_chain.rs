@@ -3,11 +3,12 @@ use crate::fragment::{FragmentRect, LayoutFragment};
 use crate::layout::context::LayoutSession;
 
 pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
-    if tree.nodes[parent].ifc.is_some()
-        || tree.layout_node_with_style(parent).unwrap().style.direction != TaffyDirection::Ltr
-    {
+    if tree.nodes[parent].ifc.is_some() {
         return None;
     }
+    // Every box of the chain runs in the container's direction, so one
+    // alignment rule places the whole chain in its columns.
+    let direction = tree.layout_node_with_style(parent).unwrap().style.direction;
     let mut chain = Vec::new();
     let mut current = parent;
     let mut constrained = false;
@@ -27,7 +28,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         let node = &tree.layout_node_with_style(child).unwrap();
         let defaults: taffy::Style = taffy::Style::default();
         if node.display() != DisplayValue::Block
-            || node.style.direction != TaffyDirection::Ltr
+            || node.style.direction != direction
             || node.style.float.is_floated()
             || node.style.clear != defaults.clear
             || !super::insets_are_a_relative_inline_offset(tree, child)
@@ -189,45 +190,45 @@ pub(super) fn layout(
     let mut first_layout = tree.nodes[first].unrounded_layout;
     // Parent-owned used margins can still refer to the unfragmented width.
     // Resolve the outer margins against the column before placing this box.
-    first_layout.margin = tree
-        .layout_node_with_style(first)
-        .unwrap()
-        .style
-        .margin
-        .map(|margin| {
-            margin
-                .resolve_to_option(context.column_width, |pointer, basis| {
-                    tree.resolve_calc_value(pointer, basis)
-                })
-                .unwrap_or(0.0)
-        });
-    let left_auto = tree
-        .layout_node_with_style(first)
-        .unwrap()
-        .style
-        .margin
-        .left
-        .is_auto();
-    let right_auto = tree
-        .layout_node_with_style(first)
-        .unwrap()
-        .style
-        .margin
-        .right
-        .is_auto();
-    let leftover = (context.column_width
+    let margin_style = tree.layout_node_with_style(first).unwrap().style.margin;
+    first_layout.margin = margin_style.map(|margin| {
+        margin
+            .resolve_to_option(context.column_width, |pointer, basis| {
+                tree.resolve_calc_value(pointer, basis)
+            })
+            .unwrap_or(0.0)
+    });
+    let left_auto = margin_style.left.is_auto();
+    let right_auto = margin_style.right.is_auto();
+    let room = context.column_width
         - output.size.width
         - first_layout.margin.left
-        - first_layout.margin.right)
-        .max(0.0);
-    let left = first_layout.margin.left
-        + if left_auto {
-            leftover / if right_auto { 2.0 } else { 1.0 }
-        } else {
-            0.0
-        };
+        - first_layout.margin.right;
+    let leftover = room.max(0.0);
+    // CSS 2.1 section 10.3.3: a box that overflows its column counts auto
+    // margins as zero, and a box with no auto margin is over-constrained.
+    // Either way the margin on the end side of the container's direction is
+    // the one that gives, so in a right-to-left container the box keeps its
+    // right margin and sits at the right edge of its column.
+    let over_constrained = !left_auto && !right_auto || room < 0.0;
+    let left = if context.rtl && over_constrained {
+        context.column_width - output.size.width - first_layout.margin.right
+    } else {
+        first_layout.margin.left
+            + if left_auto {
+                leftover / if right_auto { 2.0 } else { 1.0 }
+            } else {
+                0.0
+            }
+    };
+    // Columns progress from the right edge in a right-to-left container.
+    let column_x = if context.rtl {
+        context.column_offset_x(context.column_index)
+    } else {
+        0.0
+    };
     first_layout.location = Point {
-        x: origin.x + left,
+        x: origin.x + column_x + left,
         y: origin.y
             + output
                 .top_margin
@@ -238,8 +239,8 @@ pub(super) fn layout(
     tree.set_unrounded_layout(TaffyNodeId::from(first), &first_layout);
     let mut positions = Vec::with_capacity(chain.len());
     let mut position = Point::ZERO;
-    let mut clip_left = 0.0_f32;
-    let mut clip_right = context.column_width;
+    let mut clip_left = column_x;
+    let mut clip_right = column_x + context.column_width;
     for &id in chain {
         let layout = tree.nodes[id].unrounded_layout;
         position.x += layout.location.x;

@@ -587,3 +587,26 @@ fn a_relative_box_in_a_column_keeps_its_text_where_it_is_painted() {
         assert!(placed.is_empty() || placed == runs(&control), "{shifted}");
     }
 }
+
+#[test]
+fn a_wrapper_with_a_width_in_a_right_to_left_container_reports_its_text_at_the_column_edges() {
+    let runs = |body: &str, css: &str| {
+        lay_out(body, css)
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect::<Vec<_>>()
+    };
+    let placed = runs(
+        "<div class=mc><div style='width:30px'><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:40px;column-fill:auto;direction:rtl}",
+    );
+    let control = runs(
+        "<div style='position:absolute;direction:rtl;left:70px;top:0;width:30px'><p>A<br>B</p></div><div style='position:absolute;direction:rtl;left:10px;top:0;width:30px'><p>C<br>D</p></div>",
+        "",
+    );
+    assert_eq!(control.len(), 4);
+    assert_eq!(placed, control);
+}
