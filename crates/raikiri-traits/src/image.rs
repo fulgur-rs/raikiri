@@ -102,9 +102,9 @@ pub trait ImagePixelSource {
 /// used, as sRGB (<https://drafts.csswg.org/css-color-4/#tagged-images>).
 /// The pixels stay as they are when the profile cannot be parsed, is not an
 /// RGB profile, or already lands within one 8-bit step of sRGB on a probe of
-/// grays and primaries. That last case keeps the many images tagged with an
-/// sRGB profile byte for byte instead of adding rounding noise to them. Alpha
-/// is never touched.
+/// gray and single-channel ramps and a grid of mixed colors. That last case
+/// keeps the many images tagged with an sRGB profile byte for byte instead of
+/// adding rounding noise to them. Alpha is never touched.
 pub fn convert_rgba8_to_srgb(profile: &[u8], pixels: &mut [u8]) -> bool {
     use moxcms::{ColorProfile, DataColorSpace, Layout, RenderingIntent, TransformOptions};
 
@@ -114,37 +114,36 @@ pub fn convert_rgba8_to_srgb(profile: &[u8], pixels: &mut [u8]) -> bool {
     if pixels.is_empty() || !pixels.len().is_multiple_of(4) {
         return false;
     }
-    let options = TransformOptions {
-        rendering_intent: RenderingIntent::RelativeColorimetric,
-        ..TransformOptions::default()
-    };
-    let transform = ColorProfile::new_from_slice(profile)
+    let Some(source) = ColorProfile::new_from_slice(profile)
         .ok()
         .filter(|source| source.color_space == DataColorSpace::Rgb)
-        .and_then(|source| {
-            source
-                .create_transform_8bit(
-                    Layout::Rgba,
-                    &ColorProfile::new_srgb(),
-                    Layout::Rgba,
-                    options,
-                )
-                .ok()
-        });
+    else {
+        return false;
+    };
+    let srgb = ColorProfile::new_srgb();
+    // A profile built from lookup tables may carry them for some rendering
+    // intents only, and many carry just the perceptual one. Prefer the
+    // relative colorimetric table, and settle for whichever one is there.
+    let transform = [
+        RenderingIntent::RelativeColorimetric,
+        RenderingIntent::Perceptual,
+        RenderingIntent::Saturation,
+    ]
+    .into_iter()
+    .find_map(|rendering_intent| {
+        let options = TransformOptions {
+            rendering_intent,
+            ..TransformOptions::default()
+        };
+        source
+            .create_transform_8bit(Layout::Rgba, &srgb, Layout::Rgba, options)
+            .ok()
+    });
     let Some(transform) = transform else {
         return false;
     };
 
-    // Run grays and single-channel ramps through the transform first: a
-    // profile that maps all of them to within one step is sRGB for our purposes.
-    let probe: Vec<u8> = (0..=255u8)
-        .step_by(5)
-        .flat_map(|level| {
-            [
-                level, level, level, 255, level, 0, 0, 255, 0, level, 0, 255, 0, 0, level, 255,
-            ]
-        })
-        .collect();
+    let probe = srgb_probe_pixels();
     let mut probed = vec![0u8; probe.len()];
     if transform.transform(&probe, &mut probed).is_ok()
         && probe
@@ -161,6 +160,27 @@ pub fn convert_rgba8_to_srgb(profile: &[u8], pixels: &mut [u8]) -> bool {
         source.copy_from_slice(chunk);
         transform.transform(source, chunk).is_ok()
     })
+}
+
+/// Opaque RGBA8 colors that tell an sRGB profile from any other: grays and
+/// single-channel ramps in steps of five, then a grid of 17 levels per
+/// channel across mixed colors. The ramps alone are not enough, because a
+/// profile built from a color lookup table can leave them as they are and
+/// still move the colors between them.
+fn srgb_probe_pixels() -> Vec<u8> {
+    let ramps = (0..=255u8).step_by(5).flat_map(|level| {
+        [
+            [level, level, level, 255],
+            [level, 0, 0, 255],
+            [0, level, 0, 255],
+            [0, 0, level, 255],
+        ]
+    });
+    let levels = || (0..=240u8).step_by(16).chain([255]);
+    let grid = levels().flat_map(|red| {
+        levels().flat_map(move |green| levels().map(move |blue| [red, green, blue, 255]))
+    });
+    ramps.chain(grid).flatten().collect()
 }
 
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
