@@ -147,6 +147,8 @@ fn folded_math_dummy_keeps_the_folded_type_and_falls_back_to_a_length() {
     // A math function that folds to one dimension or percentage is probed
     // with a value of that type, so an angle is no longer taken for a length.
     assert_eq!(folded_math_dummy("calc(10deg + 20deg)"), "1deg");
+    assert_eq!(folded_math_dummy("calc(1deg + 1rad)"), "1deg");
+    assert_eq!(folded_math_dummy("calc(1s + 100ms)"), "1s");
     assert_eq!(folded_math_dummy("calc(10% + 20%)"), "1%");
     // A folded plain number is probed with a number, so `calc(0)` is no length.
     assert_eq!(folded_math_dummy("calc(1 + 2)"), "1");
