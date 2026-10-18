@@ -1336,8 +1336,10 @@ fn positioned_inline_ancestor(
 /// The padding box of the inline element `inline`, in the coordinates of the
 /// paragraph's content box: the bounding box of the padding boxes of its
 /// `pieces` on the lines (CSS 2.1 10.1). `basis` resolves its borders, and
-/// `line_shift` gives the move pagination made to the lines. `None` for an
-/// element with no piece.
+/// `line_shift` gives the move pagination made to the lines. An element with
+/// no piece of its own, such as a ruby base container, which has no box and
+/// holds its bases, spans the pieces of the elements in it. `None` when
+/// there is none.
 fn inline_padding_box(
     tree: &Document,
     pieces: &[super::inline_boxes::InlineBoxPiece],
@@ -1345,17 +1347,24 @@ fn inline_padding_box(
     basis: f32,
     line_shift: impl Fn(usize) -> (f32, f32),
 ) -> Option<PaddingBox> {
-    let border = tree
+    let mut border = tree
         .layout_node_with_style(inline)?
         .style
         .border
         .resolve_or_zero(Some(basis), resolve_calc);
+    let mut spanned: Vec<_> = pieces.iter().filter(|piece| piece.node == inline).collect();
+    if spanned.is_empty() {
+        border = taffy::Rect::ZERO;
+        spanned = pieces
+            .iter()
+            .filter(|piece| tree.ancestors(piece.node).any(|id| id == inline))
+            .collect();
+    }
     // The edges of a piece: its border box less its borders. A side that is
     // not an edge of the element has no border, and the content box reaches
     // the border box there.
-    let (left, top, right, bottom) = pieces
-        .iter()
-        .filter(|piece| piece.node == inline)
+    let (left, top, right, bottom) = spanned
+        .into_iter()
         .map(|piece| {
             let (outer, inner) = (piece.border_box, piece.content_box);
             let (dx, dy) = line_shift(piece.line);
