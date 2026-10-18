@@ -1435,6 +1435,37 @@ fn abspos_own_alignment_overrides_the_containers_last_baseline() {
 }
 
 #[test]
+fn abspos_takes_last_baseline_from_a_display_contents_document_element() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // A `display: contents` document element is blockified, so it still makes
+    // the box its children's `auto` alignment borrows from; the document node
+    // above it does not.
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:contents;align-items:last baseline;justify-items:last baseline"),
+    );
+    doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let child = doc.append_element(
+        Some(html),
+        "div",
+        Style::default(),
+        Some("position:absolute"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
+
+    let style = &doc.layout_node_with_style(child).unwrap().style;
+    assert_eq!(style.align_self, Some(TaffyAlignItems::SAFE_SELF_END));
+    assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
+}
+
+#[test]
 fn bridge_alignment_align_self_normal_preserves_normal_instead_of_auto() {
     // Regression test: `align-self: normal` must
     // NOT collapse to the same `None` mapping as `align-self: auto`.

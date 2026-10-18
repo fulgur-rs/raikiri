@@ -2433,6 +2433,88 @@ fn grid_auto_abspos_takes_last_baseline_from_the_container() {
 }
 
 #[test]
+fn abspos_under_display_contents_takes_last_baseline_from_the_grid() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // The `display: contents` element makes no box, so the grid is the
+    // abspos child's container and its `last baseline` reaches the child
+    // through `auto`.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;width:100px;height:100px;padding:10px;\
+             align-items:last baseline;justify-items:last baseline",
+        ),
+    );
+    let wrapper = doc.append_element(
+        Some(grid),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let inner_wrapper = doc.append_element(
+        Some(wrapper),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let child = doc.append_element(
+        Some(inner_wrapper),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 90.0).abs() < 0.01);
+    assert!((layout.location.y - 90.0).abs() < 0.01);
+}
+
+#[test]
+fn abspos_under_display_contents_ignores_the_alignment_of_the_wrapper() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // Only the grid is the container: a `last baseline` on the wrapper that
+    // makes no box does not reach the child, which stays at the start.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px"),
+    );
+    let wrapper = doc.append_element(
+        Some(grid),
+        "span",
+        Style::default(),
+        Some("display:contents;align-items:last baseline;justify-items:last baseline"),
+    );
+    let child = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 10.0).abs() < 0.01);
+    assert!((layout.location.y - 10.0).abs() < 0.01);
+}
+
+#[test]
 fn layout_page_fragments_emits_one_page_with_deterministic_items() {
     let (mut doc, cascade) = hello_world_doc();
     let pages = layout_page_fragments(&mut doc, &cascade, PageBox::A4)
