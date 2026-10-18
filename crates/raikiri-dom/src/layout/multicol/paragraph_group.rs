@@ -27,11 +27,10 @@ struct Paragraph {
 
 pub(super) fn balance(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, has_empty, mut high) = collect(tree, parent, entries)?;
+    let (paragraphs, paragraph_count, has_empty, mut high) = collect(tree, entries)?;
     if paragraph_count == 0
         || (paragraph_count == 1 && !has_empty)
         || !high.is_finite()
@@ -60,12 +59,11 @@ pub(super) fn balance(
 /// 1, 8.2).
 pub(super) fn fill_definite(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
     height: f32,
 ) -> Option<Group> {
-    let (paragraphs, paragraph_count, _, _) = collect(tree, parent, entries)?;
+    let (paragraphs, paragraph_count, _, _) = collect(tree, entries)?;
     if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
         return None;
     }
@@ -81,7 +79,6 @@ pub(super) fn fill_definite(
 
 fn collect(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
 ) -> Option<(Vec<Option<Paragraph>>, usize, bool, f32)> {
     let mut paragraphs = Vec::with_capacity(entries.len());
@@ -110,10 +107,10 @@ fn collect(
                 .is_none_or(|mode| !mode.is_vertical())
             && node.style.overflow.x == taffy::Overflow::Visible
             && node.style.overflow.y == taffy::Overflow::Visible;
-        if !can_balance_paragraph_box(tree, parent, child)
-            || (!empty && !can_balance_single_paragraph(tree, parent, child))
+        if !can_balance_paragraph_box(tree, child)
+            || (!empty && !can_balance_single_paragraph(tree, child))
             || node.display() != DisplayValue::Block
-            || node.style.direction != TaffyDirection::Ltr
+            || is_right_aligned_in_parent(tree, child)
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
             || node.has_before_or_after_content
@@ -401,14 +398,13 @@ pub(super) enum RowsStop {
 /// would take the planning the budget is there to stop.
 pub(super) fn fill_rows(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
     first: f32,
     later: f32,
     budget: usize,
 ) -> Result<Rows, RowsStop> {
-    let (paragraphs, count, _, _) = collect(tree, parent, entries).ok_or(RowsStop::Unsupported)?;
+    let (paragraphs, count, _, _) = collect(tree, entries).ok_or(RowsStop::Unsupported)?;
     if count == 0 || context.column_count == 0 {
         return Err(RowsStop::Unsupported);
     }
@@ -514,7 +510,6 @@ pub(super) struct PagedGroup {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paginate(
     tree: &Document,
-    parent: usize,
     entries: &[Measurement],
     context: FragmentationContext,
     owner_y: f32,
@@ -532,7 +527,7 @@ pub(super) fn paginate(
         })
         .sum::<usize>();
     work.charge(entries.len().saturating_add(line_count))?;
-    let Some((paragraphs, count, _, _)) = collect(tree, parent, entries) else {
+    let Some((paragraphs, count, _, _)) = collect(tree, entries) else {
         return Ok(None);
     };
     if count == 0 || context.column_count == 0 {

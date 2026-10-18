@@ -233,6 +233,7 @@ fn clear_break_fragmentainer_geometry_survives_trial_and_commit() {
         )
         .unwrap();
         let context = FragmentationContext {
+            rtl: false,
             available_width: 200.0,
             available_height: Some(60.0),
             column_fill: raikiri_style::property::ColumnFillValue::Auto,

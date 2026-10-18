@@ -77,7 +77,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 })
                 .collect();
             if let Some(planned) =
-                paragraph_group::paginate(tree, owner, &entries, context, owner_y, page_for, work)?
+                paragraph_group::paginate(tree, &entries, context, owner_y, page_for, work)?
             {
                 let new_end = planned.end;
                 groups.extend(planned.groups);

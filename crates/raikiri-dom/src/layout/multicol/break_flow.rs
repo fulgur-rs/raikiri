@@ -570,15 +570,7 @@ pub(super) fn layout(
             } else {
                 remaining
             };
-            let offset = context.column_offset_x(column);
-            let x = content_origin.x
-                + if tree.layout_node_with_style(root).unwrap().style.direction
-                    == taffy::Direction::Rtl
-                {
-                    context.available_width - context.column_width - offset
-                } else {
-                    offset
-                };
+            let x = content_origin.x + context.column_offset_x(column);
             let y = content_origin.y + cursor;
             let mut parent_fragment = container;
             let mut parent_y = 0.0;

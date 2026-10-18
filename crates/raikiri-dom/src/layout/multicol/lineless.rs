@@ -29,7 +29,6 @@ use raikiri_style::property::BreakInside;
 pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Option<Vec<usize>> {
     let container = &tree.layout_node_with_style(parent).unwrap();
     if container.ifc.is_some()
-        || container.style.direction != TaffyDirection::Ltr
         || !inherits_horizontal(tree, parent)
         || container.has_before_or_after_content
     {
@@ -111,7 +110,6 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
     let node = &tree.layout_node_with_style(child).unwrap();
     let defaults: taffy::Style = taffy::Style::default();
     !(node.display() != DisplayValue::Block
-        || node.style.direction != TaffyDirection::Ltr
         // An orthogonal flow is monolithic in the column's block axis.
         || !is_horizontal(node)
         // So is a box with size containment (CSS Contain 2, 3.1).
@@ -132,7 +130,8 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
         || node.break_after != BreakBetween::Auto
         || node.has_before_or_after_content
         || node.multicol.is_some()
-        || node.ifc.is_some())
+        || node.ifc.is_some()
+        || is_right_aligned_in_parent(tree, child))
 }
 
 /// The in-flow children of `wrapper`, when they are plain blocks with no
