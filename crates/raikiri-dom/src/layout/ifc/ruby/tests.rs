@@ -1905,3 +1905,22 @@ fn an_atomic_inline_in_a_ruby_without_annotations_stays_in_the_line() {
         "{atomic:?}"
     );
 }
+
+#[test]
+fn atomic_inlines_in_vertical_ruby_stay_plain() {
+    // The boxes of a vertical paragraph are not placed along its physical
+    // axes yet, so those of a ruby keep to the ordinary inline path.
+    let planned = |mode: &str| {
+        let mut container = 0;
+        let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
+            container = ruby(doc, root);
+            rb(doc, container, "a");
+            let annotation = rt(doc, container, "x");
+            inline_block(doc, annotation, 5, 5);
+        });
+        plan(&fixture.doc, &fixture.cascade, container).is_some()
+    };
+    assert!(planned("horizontal-tb"));
+    assert!(!planned("vertical-rl"));
+    assert!(!planned("vertical-lr"));
+}

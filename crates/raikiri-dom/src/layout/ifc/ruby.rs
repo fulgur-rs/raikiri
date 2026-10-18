@@ -13,9 +13,10 @@
 //! wraps each run of such boxes, giving every one an empty base of its own.
 //!
 //! Content that this mapping does not cover yet (blocks, generated content,
-//! misparented bases, atomic inlines in an inter-character annotation or
-//! alone on both sides of a pairing) leaves the container to the ordinary
-//! inline path, which lays its bases and annotations out in the line.
+//! misparented bases, atomic inlines in an inter-character annotation, alone
+//! on both sides of a pairing or in a vertical paragraph) leaves the container
+//! to the ordinary inline path, which lays its bases and annotations out in
+//! the line.
 
 use super::assign::is_css_whitespace;
 use super::boxes::{IfcBox, IfcBoxKind};
@@ -621,7 +622,12 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
                     .any(|part| holds_atomic(doc, cascade, &part.children))
         })
     });
-    if turned_atomic || has_objects_alone(doc, cascade, &segments) {
+    // `place_atomics` puts the boxes of a vertical paragraph at logical
+    // coordinates as if they were physical ones, which would leave the boxes
+    // of an annotation off their base.
+    let vertical_atomic = cascade.computed[ruby].cssom_writing_mode.is_vertical()
+        && holds_atomic(doc, cascade, &doc.nodes[ruby].children);
+    if turned_atomic || vertical_atomic || has_objects_alone(doc, cascade, &segments) {
         return None;
     }
     Some(Plan {
