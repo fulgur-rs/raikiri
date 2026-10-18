@@ -424,6 +424,87 @@ fn first_line_runs_carry_the_first_line_font_and_color() {
     );
 }
 
+/// The text of each run of the first page of `html` and its color.
+fn run_colors(html: &str) -> Vec<(String, CssColor)> {
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("expected complete layout")
+    };
+    let page = result.pages().next().unwrap();
+    page.text_runs()
+        .iter()
+        .map(|run| (run.text.to_owned(), run.color))
+        .collect()
+}
+
+/// A block's `::first-line` reaches the first line of its block child unless
+/// its own `::before` can make a line first; an empty inline `::before` with
+/// no box edges makes none.
+#[test]
+fn an_empty_before_does_not_keep_the_first_line_of_a_block_from_its_child() {
+    let page = |before: &str| {
+        run_colors(&format!(
+            r#"<!doctype html><style>
+              @page {{ size: 300px 200px; margin: 0 }}
+              body {{ margin: 0; font: 10px/10px Ahem; color: black }}
+              p {{ margin: 0 }}
+              .outer::before {{ {before} }}
+              .outer::first-line {{ color: blue }}
+            </style><div class="outer"><p>AB<br>CD</p></div>"#
+        ))
+    };
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    let black = CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let own = |runs: Vec<(String, CssColor)>| {
+        runs.into_iter()
+            .filter(|(text, _)| text == "AB" || text == "CD")
+            .collect::<Vec<_>>()
+    };
+    let owned = |first, second| [("AB".to_owned(), first), ("CD".to_owned(), second)].to_vec();
+    assert_eq!(own(page("content: ''")), owned(blue, black));
+    assert_eq!(own(page("content: '' ''")), owned(blue, black));
+    // Padding, a border or a margin makes the box a line of its own.
+    assert_eq!(
+        own(page("content: ''; padding-left: 5px")),
+        owned(black, black)
+    );
+    assert_eq!(
+        own(page("content: ''; margin-left: 5px")),
+        owned(black, black)
+    );
+    assert_eq!(
+        own(page("content: ''; border-left: 1px solid")),
+        owned(black, black)
+    );
+    // So does text, or a block-level box.
+    assert_eq!(own(page("content: 'x'")), owned(black, black));
+    assert_eq!(
+        own(page("content: ''; display: block")),
+        owned(black, black)
+    );
+}
+
 #[test]
 fn first_line_decorations_of_inline_elements_use_the_first_line_color() {
     let html = br#"<!doctype html><style>
