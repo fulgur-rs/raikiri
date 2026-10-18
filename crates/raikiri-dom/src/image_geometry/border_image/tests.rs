@@ -329,7 +329,13 @@ fn degenerate_boxes_and_tiles_have_no_geometry() {
         border_image_geometry((0.0, 0.0, 0.0, 90.0), Sides::all(27.0), &image, natural).is_none()
     );
     assert_eq!(
-        tile_axis(0.0, 10.0, 0.0, BorderImageRepeatKeyword::Repeat),
+        tile_axis(
+            0.0,
+            10.0,
+            0.0,
+            BorderImageRepeatKeyword::Repeat,
+            VisibleArea::UNBOUNDED.x
+        ),
         None
     );
 }
@@ -545,4 +551,158 @@ fn snapping_follows_the_offset_and_scale_of_each_axis() {
         let (x, y, _, _) = part.area;
         y == 0.0 && (x - 199.75 / 1.5).abs() < 1e-9
     }));
+}
+
+/// Whether a tile of `size` at `origin` crosses `range`.
+fn crosses(origin: f64, size: f64, range: (f64, f64)) -> bool {
+    origin <= range.1 && origin + size >= range.0
+}
+
+#[test]
+fn a_visible_area_keeps_only_the_tiles_it_shows() {
+    let border_box = (0.0, 0.0, 1000.0, 300.0);
+    let natural = natural(81.0, 81.0);
+    let unbounded = VisibleArea::UNBOUNDED;
+    let windows = [
+        VisibleArea {
+            x: (300.0, 360.0),
+            ..unbounded
+        },
+        VisibleArea {
+            x: (300.0, 360.0),
+            y: (f64::NEG_INFINITY, 50.0),
+        },
+        VisibleArea {
+            y: (100.0, 120.0),
+            ..unbounded
+        },
+        // Ends exactly where a tile starts and another ends.
+        VisibleArea {
+            x: (7.0, 7.0),
+            y: (293.0, 293.0),
+        },
+        VisibleArea {
+            x: (-500.0, -400.0),
+            ..unbounded
+        },
+        VisibleArea {
+            x: (5000.0, f64::INFINITY),
+            ..unbounded
+        },
+    ];
+    for keyword in [
+        BorderImageRepeatKeyword::Repeat,
+        BorderImageRepeatKeyword::Round,
+        BorderImageRepeatKeyword::Space,
+        BorderImageRepeatKeyword::Stretch,
+    ] {
+        let mut image = image(10.0, keyword);
+        image.slice.fill = true;
+        let whole =
+            border_image_geometry(border_box, Sides::all(7.0), &image, natural).expect("geometry");
+        for window in windows {
+            let within = border_image_geometry_within(
+                border_box,
+                Sides::all(7.0),
+                &image,
+                natural,
+                None,
+                window,
+            )
+            .expect("geometry");
+            assert_eq!(within.parts.len(), whole.parts.len(), "{keyword:?}");
+            for (part, whole) in within.parts.iter().zip(&whole.parts) {
+                let kept = |origins: &[f64], size: f64, range: (f64, f64)| -> Vec<f64> {
+                    origins
+                        .iter()
+                        .copied()
+                        .filter(|origin| crosses(*origin, size, range))
+                        .collect()
+                };
+                // The part is the one of the whole image; only the tile
+                // positions are limited.
+                assert_eq!(
+                    (part.source, part.area, part.tile_width, part.tile_height),
+                    (
+                        whole.source,
+                        whole.area,
+                        whole.tile_width,
+                        whole.tile_height
+                    ),
+                    "{keyword:?} {window:?}"
+                );
+                assert_eq!(
+                    part.x,
+                    kept(&whole.x, whole.tile_width, window.x),
+                    "{keyword:?} {window:?}"
+                );
+                assert_eq!(
+                    part.y,
+                    kept(&whole.y, whole.tile_height, window.y),
+                    "{keyword:?} {window:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_wide_edge_builds_only_the_tiles_near_the_visible_area() {
+    // 2px tall tiles of a 27px slice make 2px wide tiles along the top edge.
+    let image = image(27.0, BorderImageRepeatKeyword::Repeat);
+    let border_box = (0.0, 0.0, 4000.0, 100.0);
+    let top = (2.0, 0.0, 3996.0, 2.0);
+    let whole = border_image_geometry(border_box, Sides::all(2.0), &image, natural(81.0, 81.0))
+        .expect("geometry");
+    assert!(part(&whole, top).x.len() > 1900);
+
+    let window = VisibleArea {
+        x: (1000.0, 1010.0),
+        ..VisibleArea::UNBOUNDED
+    };
+    let within = border_image_geometry_within(
+        border_box,
+        Sides::all(2.0),
+        &image,
+        natural(81.0, 81.0),
+        None,
+        window,
+    )
+    .expect("geometry");
+    let top = part(&within, top);
+    assert!(top.x.len() <= 8, "{} tiles", top.x.len());
+    assert!(top.x.iter().all(|x| crosses(*x, top.tile_width, window.x)));
+}
+
+#[test]
+fn whether_a_part_is_stretched_does_not_depend_on_the_visible_area() {
+    // The dense filled middle of `a_dense_filled_middle_is_stretched_instead`
+    // stays one stretched tile, however little of it is visible.
+    let mut image = image(27.0, BorderImageRepeatKeyword::Repeat);
+    image.slice.fill = true;
+    image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
+        ComputedLengthPercentageOrCalc::Px(0.25),
+    ));
+    let middle = (0.25, 0.25, 999.5, 999.5);
+    for (window, tiles) in [
+        ((100.0, 110.0), 1),
+        // The stretched tile starts at 0.25, past this range.
+        ((-50.0, -40.0), 0),
+    ] {
+        let geometry = border_image_geometry_within(
+            (0.0, 0.0, 1000.0, 1000.0),
+            Sides::all(1.0),
+            &image,
+            natural(81.0, 81.0),
+            None,
+            VisibleArea {
+                x: window,
+                ..VisibleArea::UNBOUNDED
+            },
+        )
+        .expect("geometry");
+        let middle = part(&geometry, middle);
+        assert_eq!((middle.tile_width, middle.tile_height), (999.5, 999.5));
+        assert_eq!((middle.x.len(), middle.y.len()), (tiles, 1));
+    }
 }

@@ -38,10 +38,30 @@ pub struct BorderImagePart {
     pub tile_width: f64,
     /// Height of every tile.
     pub tile_height: f64,
-    /// Left edges of the tile columns.
+    /// Left edges of the tile columns that cross the visible area.
     pub x: Vec<f64>,
-    /// Top edges of the tile rows.
+    /// Top edges of the tile rows that cross the visible area.
     pub y: Vec<f64>,
+}
+
+/// The horizontal and vertical ranges of the page a painter shows, in the
+/// coordinates of the border box. A tile that lies outside both ranges is
+/// not part of the geometry, so a box cut into fragments does not build the
+/// tiles of the other fragments.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VisibleArea {
+    /// The horizontal range, as its lowest and highest coordinate.
+    pub x: (f64, f64),
+    /// The vertical range, as its lowest and highest coordinate.
+    pub y: (f64, f64),
+}
+
+impl VisibleArea {
+    /// Everything: no tile is left out.
+    pub const UNBOUNDED: Self = Self {
+        x: (f64::NEG_INFINITY, f64::INFINITY),
+        y: (f64::NEG_INFINITY, f64::INFINITY),
+    };
 }
 
 /// The parts of one border image, ready to draw.
@@ -81,7 +101,14 @@ pub fn border_image_geometry(
     image: &ComputedBorderImage,
     natural: Option<ImageIntrinsicSize>,
 ) -> Option<BorderImageGeometry> {
-    geometry(border_box, border_widths, image, natural, None)
+    geometry(
+        border_box,
+        border_widths,
+        image,
+        natural,
+        None,
+        VisibleArea::UNBOUNDED,
+    )
 }
 
 /// A raster output's device pixel grid along each axis: the CSS pixel
@@ -136,8 +163,34 @@ pub fn border_image_geometry_on_device_pixels(
     natural: Option<ImageIntrinsicSize>,
     grid: DeviceGrid,
 ) -> Option<BorderImageGeometry> {
-    let grid = Some(grid).filter(|grid| grid.is_usable());
-    geometry(border_box, border_widths, image, natural, grid)
+    border_image_geometry_within(
+        border_box,
+        border_widths,
+        image,
+        natural,
+        Some(grid),
+        VisibleArea::UNBOUNDED,
+    )
+}
+
+/// [`border_image_geometry`] for a painter that shows only `visible`, on the
+/// device pixels of `grid` when it has one.
+///
+/// The parts and the tile sizes are those of the whole border image, so
+/// painting the visible tiles of every fragment of a box gives the same
+/// image as painting all of them. Only the tile positions are limited: a
+/// part lists the tiles that cross `visible`, which is what a painter
+/// clipped to it would draw.
+pub fn border_image_geometry_within(
+    border_box: Rect,
+    border_widths: Sides<f64>,
+    image: &ComputedBorderImage,
+    natural: Option<ImageIntrinsicSize>,
+    grid: Option<DeviceGrid>,
+    visible: VisibleArea,
+) -> Option<BorderImageGeometry> {
+    let grid = grid.filter(|grid| grid.is_usable());
+    geometry(border_box, border_widths, image, natural, grid, visible)
 }
 
 fn geometry(
@@ -146,6 +199,7 @@ fn geometry(
     image: &ComputedBorderImage,
     natural: Option<ImageIntrinsicSize>,
     grid: Option<DeviceGrid>,
+    visible: VisibleArea,
 ) -> Option<BorderImageGeometry> {
     let (x, y, width, height) = border_box;
     if ![x, y, width, height].into_iter().all(f64::is_finite) {
@@ -369,19 +423,25 @@ fn geometry(
             } else {
                 BorderImageRepeatKeyword::Stretch
             };
-            let Some((tile_width, x)) = tile_axis(dest_x, dest_w, tile_w, horizontal) else {
+            let Some(columns) = tile_axis(dest_x, dest_w, tile_w, horizontal, visible.x) else {
                 continue;
             };
-            let Some((tile_height, y)) = tile_axis(dest_y, dest_h, tile_h, vertical) else {
+            let Some(rows) = tile_axis(dest_y, dest_h, tile_h, vertical, visible.y) else {
                 continue;
             };
             // A dense filled middle multiplies both axes; past the bound the
-            // part is drawn stretched instead.
+            // part is drawn stretched instead, whatever part of it is
+            // visible.
             let (tile_width, x, tile_height, y) =
-                if x.len().saturating_mul(y.len()) > MAX_PART_TILES {
-                    (dest_w, vec![dest_x], dest_h, vec![dest_y])
+                if columns.count.saturating_mul(rows.count) > MAX_PART_TILES {
+                    (
+                        dest_w,
+                        visible_origins(dest_x, dest_w, dest_w, 1, visible.x),
+                        dest_h,
+                        visible_origins(dest_y, dest_h, dest_h, 1, visible.y),
+                    )
                 } else {
-                    (tile_width, x, tile_height, y)
+                    (columns.tile, columns.origins, rows.tile, rows.origins)
                 };
             parts.push(BorderImagePart {
                 source,
@@ -435,15 +495,28 @@ fn default_sized(
     (size.0.is_finite() && size.1.is_finite() && size.0 > 0.0 && size.1 > 0.0).then_some(size)
 }
 
+/// The tiles of one axis of a part.
+#[derive(Debug, PartialEq)]
+struct TileAxis {
+    /// The size of every tile.
+    tile: f64,
+    /// How many tiles cover the whole part, whatever is visible.
+    count: usize,
+    /// The origins of the tiles that cross the visible range.
+    origins: Vec<f64>,
+}
+
 /// The tile size and tile origins of one axis of a part (§6.6 steps 2
 /// and 3): `start` and `length` are the part's extent and `tile` the tile
-/// size before `keyword` applies.
+/// size before `keyword` applies. Only the tiles crossing `visible` get an
+/// origin.
 fn tile_axis(
     start: f64,
     length: f64,
     tile: f64,
     keyword: BorderImageRepeatKeyword,
-) -> Option<(f64, Vec<f64>)> {
+    visible: (f64, f64),
+) -> Option<TileAxis> {
     if !(tile > 0.0 && tile.is_finite()) {
         return None;
     }
@@ -453,6 +526,11 @@ fn tile_axis(
     } else {
         keyword
     };
+    let axis = |tile: f64, first: f64, stride: f64, count: usize| TileAxis {
+        tile,
+        count,
+        origins: visible_origins(first, stride, tile, count, visible),
+    };
     match keyword {
         // Centered, and repeated outwards to cover the part.
         BorderImageRepeatKeyword::Repeat => {
@@ -460,18 +538,13 @@ fn tile_axis(
             let before = ((first - start) / tile).ceil().max(0.0);
             let first = first - before * tile;
             let count = ((start + length - first) / tile).ceil() as usize;
-            Some((tile, (0..count).map(|i| first + i as f64 * tile).collect()))
+            Some(axis(tile, first, tile, count))
         }
         // A whole number of tiles, resized to fill the part.
         BorderImageRepeatKeyword::Round => {
             let count = (length / tile).round().max(1.0);
             let tile = length / count;
-            Some((
-                tile,
-                (0..count as usize)
-                    .map(|i| start + i as f64 * tile)
-                    .collect(),
-            ))
+            Some(axis(tile, start, tile, count as usize))
         }
         // As many whole tiles as fit, with equal space around them.
         BorderImageRepeatKeyword::Space => {
@@ -480,16 +553,37 @@ fn tile_axis(
                 return None;
             }
             let gap = (length - count * tile) / (count + 1.0);
-            Some((
-                tile,
-                (0..count as usize)
-                    .map(|i| start + gap + i as f64 * (tile + gap))
-                    .collect(),
-            ))
+            Some(axis(tile, start + gap, tile + gap, count as usize))
         }
         // `stretch`: one tile as large as the part.
-        _ => Some((length, vec![start])),
+        _ => Some(axis(length, start, length, 1)),
     }
+}
+
+/// The origins `first + i * stride` of the `count` tiles of width `tile`
+/// that cross `visible`, in order.
+///
+/// A tile crosses the range when it starts at or before its upper end and
+/// ends at or after its lower end. The indices that can cross are bracketed
+/// by arithmetic, widened by one on each side to absorb rounding, and each
+/// candidate is then checked exactly, so the result is what filtering all
+/// `count` tiles gives without building the others.
+fn visible_origins(
+    first: f64,
+    stride: f64,
+    tile: f64,
+    count: usize,
+    visible: (f64, f64),
+) -> Vec<f64> {
+    let low = ((visible.0 - tile - first) / stride).floor() - 1.0;
+    let high = ((visible.1 - first) / stride).ceil() + 1.0;
+    // `as usize` saturates, and `max`/`min` ignore a NaN bound.
+    let low = low.max(0.0) as usize;
+    let high = high.min(count.saturating_sub(1) as f64) as usize;
+    (low..=high)
+        .map(|i| first + i as f64 * stride)
+        .filter(|origin| *origin <= visible.1 && *origin + tile >= visible.0)
+        .collect()
 }
 
 #[cfg(test)]

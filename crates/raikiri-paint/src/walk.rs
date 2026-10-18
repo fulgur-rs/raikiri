@@ -20,8 +20,8 @@ use peniko::color::{
 };
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
-    DeviceGrid, background_image_dimensions, background_tiles, border_image_geometry,
-    border_image_geometry_on_device_pixels, position_offset, rounded_background_tile_size,
+    DeviceGrid, VisibleArea, background_image_dimensions, background_tiles,
+    border_image_geometry_within, position_offset, rounded_background_tile_size,
 };
 use raikiri_dom::{CounterSnapshots, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
@@ -6326,10 +6326,7 @@ pub(crate) fn paint_element_border_image(
         pixel_source,
         warnings,
         transform,
-        (
-            (f64::NEG_INFINITY, f64::INFINITY),
-            (f64::NEG_INFINITY, f64::INFINITY),
-        ),
+        VisibleArea::UNBOUNDED,
     )
 }
 
@@ -6348,10 +6345,10 @@ fn paint_border_image_within(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     transform: Affine,
-    (visible_x, visible_y): ((f64, f64), (f64, f64)),
+    visible: VisibleArea,
 ) -> bool {
-    let crosses = |x: f64, width: f64| x <= visible_x.1 && x + width >= visible_x.0;
-    let crosses_y = |y: f64, height: f64| y <= visible_y.1 && y + height >= visible_y.0;
+    let crosses = |x: f64, width: f64| x <= visible.x.1 && x + width >= visible.x.0;
+    let crosses_y = |y: f64, height: f64| y <= visible.y.1 && y + height >= visible.y.0;
     let border_box = (
         f64::from(abs_x),
         f64::from(abs_y),
@@ -6365,12 +6362,8 @@ fn paint_border_image_within(
         left: f64::from(border.left.width().px()),
     };
     let grid = image_cache.device_grid(transform);
-    let geometry = |natural| match grid {
-        Some(grid) => {
-            border_image_geometry_on_device_pixels(border_box, widths, image, natural, grid)
-        }
-        None => border_image_geometry(border_box, widths, image, natural),
-    };
+    let geometry =
+        |natural| border_image_geometry_within(border_box, widths, image, natural, grid, visible);
     match &image.source {
         BackgroundImage::Url(raw_url) => {
             let Some((url, pixel_source)) = image_cache.image_url(raw_url).zip(pixel_source) else {
@@ -6494,8 +6487,8 @@ fn paint_border_image_within(
                 let scale =
                     Affine::scale_non_uniform(part.tile_width / src_w, part.tile_height / src_h)
                         * Affine::translate((-src_x, -src_y));
-                for tile_y in part.y.iter().filter(|y| crosses_y(**y, part.tile_height)) {
-                    for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
+                for tile_y in &part.y {
+                    for tile_x in &part.x {
                         scene.fill(
                             Fill::NonZero,
                             Affine::translate((*tile_x, *tile_y)) * scale,
@@ -6526,8 +6519,8 @@ fn paint_border_image_within(
                     Affine::IDENTITY,
                     &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
                 );
-                for tile_y in part.y.iter().filter(|y| crosses_y(**y, part.tile_height)) {
-                    for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
+                for tile_y in &part.y {
+                    for tile_x in &part.x {
                         scene.fill(
                             Fill::NonZero,
                             Affine::IDENTITY,
@@ -7226,9 +7219,15 @@ pub(crate) fn paint_inline_box(
             warnings,
             transform,
             if progression.vertical {
-                ((f64::NEG_INFINITY, f64::INFINITY), (low, high))
+                VisibleArea {
+                    x: VisibleArea::UNBOUNDED.x,
+                    y: (low, high),
+                }
             } else {
-                ((low, high), (f64::NEG_INFINITY, f64::INFINITY))
+                VisibleArea {
+                    x: (low, high),
+                    y: VisibleArea::UNBOUNDED.y,
+                }
             },
         );
         scene.pop_layer();
