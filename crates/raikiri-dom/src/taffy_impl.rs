@@ -786,7 +786,24 @@ impl LayoutSession<'_> {
         {
             output.baselines.first = Some(baseline);
         }
+        // The baselines of a box in a writing mode orthogonal to its parent's
+        // run across the parent's line, so they say nothing about where the
+        // box sits along it: it exposes none and is synthesized from its
+        // border box instead.
+        if self.is_orthogonal_to_parent(usize::from(node_id)) {
+            output.baselines = taffy::Baselines::NONE;
+        }
         output
+    }
+
+    /// Whether the box `idx` has a vertical inline axis while the container
+    /// that lays it out has a horizontal one, or the other way round. A
+    /// `display: contents` ancestor generates no box, so its writing mode
+    /// does not count.
+    fn is_orthogonal_to_parent(&self, idx: usize) -> bool {
+        self.taffy_parent_of(idx).is_some_and(|parent| {
+            self.has_vertical_writing_mode(parent) != self.has_vertical_writing_mode(idx)
+        })
     }
 }
 

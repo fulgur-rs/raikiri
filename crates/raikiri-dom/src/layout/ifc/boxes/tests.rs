@@ -3,6 +3,8 @@ use crate::Document;
 use crate::layout::context::LayoutSession;
 pub(super) mod clear_break_tests;
 mod group_align_tests;
+mod intrinsic_block_size_tests;
+mod orthogonal_baseline_tests;
 mod percent_edge_tests;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::test_support::with_ahem;

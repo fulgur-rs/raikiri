@@ -787,10 +787,15 @@ css/css-text/text-encoding/shaping-no-join-001.html
 css/css-text/text-encoding/shaping-no-join-002.html
 css/css-text/text-encoding/shaping-tatweel-001.html
 css/css-text/text-encoding/shaping-tatweel-003.html
+css/css-text/text-group-align/text-group-align-center-vlr.html
 css/css-text/text-group-align/text-group-align-center.html
+css/css-text/text-group-align/text-group-align-end-vlr.html
 css/css-text/text-group-align/text-group-align-end.html
+css/css-text/text-group-align/text-group-align-left-vlr.html
 css/css-text/text-group-align/text-group-align-left.html
+css/css-text/text-group-align/text-group-align-right-vlr.html
 css/css-text/text-group-align/text-group-align-right.html
+css/css-text/text-group-align/text-group-align-start-vlr.html
 css/css-text/text-group-align/text-group-align-start.html
 css/css-text/text-indent/text-indent-abspos-hanging-001.html
 css/css-text/text-indent/text-indent-caret-001.html
