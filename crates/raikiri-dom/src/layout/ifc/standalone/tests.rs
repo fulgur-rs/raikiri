@@ -177,6 +177,109 @@ fn only_a_produced_result_counts_as_a_call() {
     assert_eq!(Document::new().standalone_text_calls(), 0);
 }
 
+fn shared(
+    doc: &Document,
+    text: &str,
+    style: &StandaloneStyle,
+    width: Option<f32>,
+    align: StandaloneAlign,
+) -> Arc<StandaloneText> {
+    doc.shape_standalone_text_shared(text, style, width, align)
+        .expect("shaped")
+}
+
+#[test]
+fn a_shared_run_is_shaped_once_for_the_same_text_style_width_and_alignment() {
+    let doc = enabled();
+    let style = ahem(10.0);
+    let start = StandaloneAlign::Start;
+    let first = shared(&doc, "ab cd", &style, Some(25.0), start);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    let again = shared(&doc, "ab cd", &style, Some(25.0), start);
+    assert!(Arc::ptr_eq(&first, &again));
+    assert_eq!(doc.standalone_text_calls(), 1);
+    // The run is the one that shaping it directly gives.
+    let direct = shape(&doc, "ab cd", Some(25.0));
+    assert_eq!(
+        (first.lines().len(), first.width(), first.height()),
+        (direct.lines().len(), direct.width(), direct.height())
+    );
+    let calls = doc.standalone_text_calls();
+    // Each of the inputs makes another run.
+    let differing = [
+        shared(&doc, "ab ce", &style, Some(25.0), start),
+        shared(&doc, "ab cd", &ahem(12.0), Some(25.0), start),
+        shared(&doc, "ab cd", &style, Some(26.0), start),
+        shared(&doc, "ab cd", &style, None, start),
+        shared(&doc, "ab cd", &style, Some(25.0), StandaloneAlign::End),
+    ];
+    assert_eq!(doc.standalone_text_calls(), calls + differing.len());
+    for run in &differing {
+        assert!(!Arc::ptr_eq(&first, run));
+    }
+}
+
+#[test]
+fn a_shared_run_with_nothing_to_shape_is_not_remembered() {
+    let doc = enabled();
+    assert!(
+        doc.shape_standalone_text_shared("", &ahem(10.0), None, StandaloneAlign::Start)
+            .is_none()
+    );
+    assert_eq!(doc.standalone_text_calls(), 0);
+}
+
+#[test]
+fn shared_runs_nobody_asks_for_again_are_evicted_first() {
+    let doc = enabled();
+    let style = ahem(10.0);
+    let start = StandaloneAlign::Start;
+    let kept = shared(&doc, "kept", &style, None, start);
+    let fresh_runs = MEMO_CAPACITY + 8;
+    for index in 0..fresh_runs {
+        shared(&doc, &format!("run {index}"), &style, None, start);
+        // Asked for on every round, as a running header is on every page.
+        assert!(Arc::ptr_eq(
+            &kept,
+            &shared(&doc, "kept", &style, None, start)
+        ));
+    }
+    assert_eq!(doc.standalone_text_calls(), 1 + fresh_runs);
+    // The newest run is still there, the oldest one is shaped again.
+    shared(
+        &doc,
+        &format!("run {}", fresh_runs - 1),
+        &style,
+        None,
+        start,
+    );
+    assert_eq!(doc.standalone_text_calls(), 1 + fresh_runs);
+    shared(&doc, "run 0", &style, None, start);
+    assert_eq!(doc.standalone_text_calls(), 2 + fresh_runs);
+}
+
+#[test]
+fn shared_runs_are_not_kept_across_font_collections() {
+    let mut doc = enabled();
+    let style = ahem(10.0);
+    let before = shared(&doc, "abc", &style, None, StandaloneAlign::Start);
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), Limits::default());
+    assert_eq!(doc.standalone_text_calls(), 0);
+    let after = shared(&doc, "abc", &style, None, StandaloneAlign::Start);
+    assert_eq!(doc.standalone_text_calls(), 1);
+    assert!(!Arc::ptr_eq(&before, &after));
+}
+
+#[test]
+fn a_document_that_was_never_laid_out_shares_no_runs() {
+    let doc = Document::new();
+    let style = ahem(10.0);
+    let first = shared(&doc, "abc", &style, None, StandaloneAlign::Start);
+    let second = shared(&doc, "abc", &style, None, StandaloneAlign::Start);
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert_eq!(first.width(), second.width());
+}
+
 #[test]
 fn a_wrapped_first_line_counts_its_hanging_space_in_the_advance() {
     // "ab " ends in a soft break: shodo keeps its space in `hang_end` (10), so

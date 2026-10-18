@@ -17,6 +17,7 @@ use shodo::style::{
 };
 use shodo::{AtomicSizes, LayoutContext, Line, Paragraph, RichText};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// Width handed to the line breaker when the caller wants one line.
 const UNBOUNDED_WIDTH: f32 = 1.0e7;
@@ -139,6 +140,93 @@ impl StandaloneText {
     }
 }
 
+/// How many shaped runs a [`StandaloneMemo`] keeps.
+const MEMO_CAPACITY: usize = 64;
+
+/// Runs shaped by [`Document::shape_standalone_text_shared`], the least
+/// recently used first.
+///
+/// The text that repeats on every page (a running header) is looked up again
+/// on each page, so it stays at the recent end, while text that is new on
+/// each page (a page number) is the first to be evicted.
+#[derive(Default)]
+pub(crate) struct StandaloneMemo {
+    entries: Mutex<Vec<MemoEntry>>,
+}
+
+struct MemoEntry {
+    text: String,
+    style: StandaloneStyle,
+    // The bits stand in for the `f32`, which has no equality that holds for
+    // every value.
+    width: Option<u32>,
+    align: StandaloneAlign,
+    shaped: Arc<StandaloneText>,
+}
+
+impl MemoEntry {
+    fn matches(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> bool {
+        self.align == align
+            && self.width == width.map(f32::to_bits)
+            && self.text == text
+            && self.style == *style
+    }
+}
+
+impl StandaloneMemo {
+    fn entries(&self) -> std::sync::MutexGuard<'_, Vec<MemoEntry>> {
+        // An entry is complete before it is pushed, so a panic elsewhere
+        // leaves the list usable.
+        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn get(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> Option<Arc<StandaloneText>> {
+        let mut entries = self.entries();
+        let index = entries
+            .iter()
+            .rposition(|entry| entry.matches(text, style, width, align))?;
+        let entry = entries.remove(index);
+        let shaped = Arc::clone(&entry.shaped);
+        entries.push(entry);
+        Some(shaped)
+    }
+
+    fn insert(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+        shaped: &Arc<StandaloneText>,
+    ) {
+        let mut entries = self.entries();
+        // Another thread may have shaped the same run in the meantime.
+        entries.retain(|entry| !entry.matches(text, style, width, align));
+        if entries.len() >= MEMO_CAPACITY {
+            entries.remove(0);
+        }
+        entries.push(MemoEntry {
+            text: text.to_owned(),
+            style: style.clone(),
+            width: width.map(f32::to_bits),
+            align,
+            shaped: Arc::clone(shaped),
+        });
+    }
+}
+
 fn align_of(align: StandaloneAlign) -> TextAlign {
     match align {
         StandaloneAlign::Start => TextAlign::Start,
@@ -251,6 +339,37 @@ impl Document {
         align: StandaloneAlign,
     ) -> Option<StandaloneText> {
         self.shape_standalone(text, style, StandaloneWidth::Given(width), align)
+    }
+
+    /// [`Document::shape_standalone_text`] for callers that shape the same
+    /// run again and again, such as the margin boxes of every page: a run
+    /// that was shaped recently with the same text, style, width and
+    /// alignment is handed out again instead of being shaped a second time.
+    ///
+    /// The runs are remembered together with the document's fonts, so a
+    /// document that gets another font collection shapes anew. A document
+    /// that was never laid out has none to tie them to and shapes every time.
+    #[doc(hidden)]
+    pub fn shape_standalone_text_shared(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        width: Option<f32>,
+        align: StandaloneAlign,
+    ) -> Option<Arc<StandaloneText>> {
+        let Some(state) = &self.ifc else {
+            return self
+                .shape_standalone_text(text, style, width, align)
+                .map(Arc::new);
+        };
+        if let Some(shaped) = state.standalone_memo.get(text, style, width, align) {
+            return Some(shaped);
+        }
+        let shaped = Arc::new(self.shape_standalone_text(text, style, width, align)?);
+        state
+            .standalone_memo
+            .insert(text, style, width, align, &shaped);
+        Some(shaped)
     }
 
     /// Shape `text` inside its own unconstrained width.

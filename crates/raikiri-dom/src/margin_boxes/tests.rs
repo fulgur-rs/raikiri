@@ -482,6 +482,32 @@ fn a_vertical_writing_margin_box_advances_glyphs_down_the_column() {
     assert_eq!(vertical[1].1 - vertical[0].1, 10.0);
 }
 
+#[test]
+fn a_margin_box_whose_text_exceeds_the_shaping_limits_keeps_its_box_but_has_no_text() {
+    // Two text bytes are allowed per run; "abc" has three.
+    let mut doc = Document::new();
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    ));
+    let collection = crate::build_wpt_font_collection(dir).expect("the Ahem layer");
+    doc.set_font_collection_with_limits(
+        collection,
+        shodo::limits::Limits {
+            max_text_bytes: Some(2),
+            ..shodo::limits::Limits::default()
+        },
+    );
+    let mut spec = fixed_margin_spec();
+    spec.content = "abc".to_owned();
+    spec.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
+    let placed = place_margin_box(&doc, &spec, PaintRect::new(0.0, 0.0, 100.0, 40.0))
+        .expect("the box has an area");
+    assert!(placed.text.is_none());
+    assert_eq!(placed.background_color, spec.background);
+    assert_eq!(doc.standalone_text_calls(), 0);
+}
+
 mod css_wide_tests;
 
 #[test]
@@ -968,4 +994,114 @@ fn margin_box_text_shadow_takes_the_css_wide_keywords() {
     let unset = &right.text_runs()[0].shadows;
     assert_eq!(unset.len(), 1, "unset inherits the page context's value");
     assert_eq!(unset[0].offset, (4.0, 4.0));
+}
+
+const RUNNING_HEADER_AND_FOOTER: &str = "@page { margin: 40px; \
+       @top-left { content: 'Report title'; font-family: Ahem; font-size: 10px } \
+       @top-right { content: 'Confidential'; font-family: Ahem; font-size: 10px } \
+       @bottom-center { content: 'Page ' counter(page) ' of ' counter(pages); \
+                        font-family: Ahem; font-size: 10px } }";
+
+fn lay_out_numbered_page(
+    doc: &Document,
+    cascade: &CascadeResult,
+    values: &MarginBoxNamedValues,
+    index: u32,
+    count: u32,
+) -> Vec<MarginBox> {
+    page_margin_boxes_with_values(
+        doc,
+        cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(index, count, false),
+        values,
+    )
+}
+
+#[test]
+fn margin_box_text_that_repeats_on_every_page_is_shaped_once() {
+    // Each box is shaped twice on a page, once for its width and once in the
+    // box. The running header is the same on every page and only the page
+    // number in the footer is new, so the later pages shape the footer alone.
+    let (doc, cascade) = page_cascade_fixture(RUNNING_HEADER_AND_FOOTER);
+    let values = MarginBoxNamedValues::new();
+    let mut per_page = Vec::new();
+    for index in 0..10 {
+        let before = doc.standalone_text_calls();
+        let boxes = lay_out_numbered_page(&doc, &cascade, &values, index, 10);
+        per_page.push(doc.standalone_text_calls() - before);
+        let contents: Vec<_> = boxes
+            .iter()
+            .map(|margin_box| margin_box.content.as_str())
+            .collect();
+        assert_eq!(
+            contents,
+            [
+                "Report title",
+                "Confidential",
+                format!("Page {} of 10", index + 1).as_str()
+            ]
+        );
+    }
+    assert_eq!(per_page, [6, 2, 2, 2, 2, 2, 2, 2, 2, 2]);
+    assert_eq!(doc.standalone_text_calls(), 24);
+}
+
+#[test]
+fn a_page_laid_out_again_reuses_all_of_its_shaped_text() {
+    // A page that is laid out for its boxes and again to be painted.
+    let (doc, cascade) = page_cascade_fixture(RUNNING_HEADER_AND_FOOTER);
+    let values = MarginBoxNamedValues::new();
+    let first = lay_out_numbered_page(&doc, &cascade, &values, 3, 10);
+    let calls = doc.standalone_text_calls();
+    assert_eq!(calls, 6);
+    let again = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(3, 10, false),
+    );
+    assert_eq!(doc.standalone_text_calls(), calls);
+    for (first, again) in first.iter().zip(&again) {
+        assert_eq!(first.content, again.content);
+        assert_eq!(first.rect, again.rect);
+        assert_eq!(
+            glyph_positions(first.text.as_ref().expect("text")),
+            glyph_positions(again.text.as_ref().expect("text"))
+        );
+    }
+}
+
+#[test]
+fn reused_margin_box_text_is_placed_as_if_shaped_afresh() {
+    // The ninth page after eight others lays out like a first page of a
+    // document that shaped nothing before it.
+    let (doc, cascade) = page_cascade_fixture(RUNNING_HEADER_AND_FOOTER);
+    let values = MarginBoxNamedValues::new();
+    for index in 0..8 {
+        lay_out_numbered_page(&doc, &cascade, &values, index, 10);
+    }
+    let reused = lay_out_numbered_page(&doc, &cascade, &values, 8, 10);
+    let (fresh_doc, fresh_cascade) = page_cascade_fixture(RUNNING_HEADER_AND_FOOTER);
+    let fresh = lay_out_numbered_page(
+        &fresh_doc,
+        &fresh_cascade,
+        &MarginBoxNamedValues::new(),
+        8,
+        10,
+    );
+    assert_eq!(reused.len(), 3);
+    assert_eq!(reused.len(), fresh.len());
+    for (reused, fresh) in reused.iter().zip(&fresh) {
+        assert_eq!(reused.content, fresh.content);
+        assert_eq!(reused.rect, fresh.rect);
+        let (reused_text, fresh_text) = (
+            reused.text.as_ref().expect("text"),
+            fresh.text.as_ref().expect("text"),
+        );
+        assert_eq!(reused_text.origin(), fresh_text.origin());
+        assert_eq!(glyph_positions(reused_text), glyph_positions(fresh_text));
+    }
 }
