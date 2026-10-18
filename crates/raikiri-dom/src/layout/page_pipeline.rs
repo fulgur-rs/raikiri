@@ -4208,31 +4208,9 @@ fn paginate_flow(
         &unpaginated_overflow,
     );
     state.table_headers.index();
-    document.table_objects.headers = state.table_headers;
+    document.table_objects.headers = std::mem::take(&mut state.table_headers);
 
-    // The candidates above stand for the paginated flow only. Boxes outside
-    // it, such as a nested absolutely positioned box or the overflow of a
-    // monolithic box, still need pages to paint on, and so do table edges
-    // that `finish_boxes` grew over repeated headers.
-    if !control.page_limit_reached.get() {
-        // Pagination materialized the moved boxes in page coordinates, which
-        // already include `root_flow_offset`; boxes it left alone paint where
-        // their own coordinates put them.
-        let end =
-            content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
-        if end.is_finite() && end > 0.0 {
-            state
-                .reach
-                .include_checked(control, page_origins.page_index_for_end(end), false)?;
-        }
-    }
-    // Pages past the last one the normal flow reached hold only boxes outside
-    // it, and keep the page type the flow ended on, whatever page type was
-    // active when one of those boxes first reached them.
-    let names_end = control.capped_page_index(state.reach.max);
-    state
-        .page_names
-        .continue_onto(state.reach.flow_max, names_end, true);
+    state.reach_overflow_pages(document, &env, content_height)?;
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
