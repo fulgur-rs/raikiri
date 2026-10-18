@@ -637,6 +637,18 @@ fn inline_ancestors(
         })
 }
 
+/// Whether the inline element `id` of `paragraph`, or an inline element of
+/// the paragraph around it, is the containing block of fixed-position
+/// descendants, as `transform`, `filter` and layout containment make it. A
+/// `fixed` background layer inside one is positioned like a `scroll` layer.
+pub(super) fn in_fixed_containing_block(paragraph: Paragraph<'_>, id: usize) -> bool {
+    inline_ancestors(paragraph, id).any(|(ancestor, _)| {
+        paragraph.cascade.computed.get(ancestor).is_some_and(|cv| {
+            raikiri_dom::establishes_fixed_containing_block(paragraph.document, ancestor, cv)
+        })
+    })
+}
+
 /// The opacities of the translucent inline elements of `paragraph` around
 /// `id`, a box laid out beside its lines, outermost first.
 pub(crate) fn enclosing_inline_opacities(paragraph: Paragraph<'_>, id: usize) -> Vec<(usize, f32)> {

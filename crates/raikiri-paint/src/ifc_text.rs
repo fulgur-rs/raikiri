@@ -92,6 +92,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
     page_box: raikiri_traits::PageBox,
     page_lines: Option<crate::walk::PageLines>,
     paint_transform: Affine,
+    fixed_viewport: Option<Rect>,
 ) {
     if let Some(lines) = hold_ifc_lines(
         image_cache,
@@ -107,6 +108,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         page_box,
         page_lines,
         paint_transform,
+        fixed_viewport,
     ) {
         lines.finish(scene);
     }
@@ -278,6 +280,7 @@ pub(crate) fn hold_ifc_lines<'a>(
     page_box: raikiri_traits::PageBox,
     page_lines: Option<crate::walk::PageLines>,
     paint_transform: Affine,
+    fixed_viewport: Option<Rect>,
 ) -> Option<HeldLines<'a>> {
     let positioned = PositionedLines::new(document, cascade, root_id, fragmentainer)?;
     let writing_mode = positioned.writing_mode;
@@ -439,6 +442,7 @@ pub(crate) fn hold_ifc_lines<'a>(
             pixel_source,
             warnings,
             paint_transform,
+            piece_fixed_viewport(paragraph, cv, piece.node, fixed_viewport),
         );
     }
     for positioned_line in positioned.lines() {
@@ -555,6 +559,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 pixel_source,
                 warnings,
                 piece_transform,
+                piece_fixed_viewport(paragraph, cv, piece.node, fixed_viewport),
             );
         }
         // Images of `::before` and `::after` content are replaced content
@@ -867,7 +872,28 @@ pub(crate) fn draw_ifc_lines(
         raikiri_traits::PageBox::A4,
         None,
         Affine::IDENTITY,
+        None,
     );
+}
+
+/// The page area in which the `fixed` background layers of the inline box
+/// `node`, styled `cv`, are positioned, given the page area `fixed_viewport`
+/// that the layers of its paragraph's block are positioned in. A box without
+/// a `fixed` layer needs none. Inside an inline element that is the
+/// containing block of fixed-position boxes, a `fixed` layer is positioned
+/// like a `scroll` one, so the box gets no page area.
+fn piece_fixed_viewport(
+    paragraph: Paragraph<'_>,
+    cv: &raikiri_style::ComputedValues,
+    node: usize,
+    fixed_viewport: Option<Rect>,
+) -> Option<Rect> {
+    fixed_viewport.filter(|_| {
+        cv.background_layers()
+            .iter()
+            .any(|layer| layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed)
+            && !typographic::in_fixed_containing_block(paragraph, node)
+    })
 }
 
 /// Where `line` paints, before the transforms around its paragraph.

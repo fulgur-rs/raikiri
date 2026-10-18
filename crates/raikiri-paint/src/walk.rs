@@ -2167,6 +2167,9 @@ pub(crate) fn paint_document_impl(
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             decorations: text::DecorationContext,
+            /// The page area that `fixed` backgrounds of the paragraph's
+            /// inline boxes are positioned in.
+            fixed_viewport: Option<Rect>,
             /// Whether the paragraph's lines wait for the end of the layer,
             /// as those of the explicit cells beside it do.
             defer: bool,
@@ -2188,6 +2191,9 @@ pub(crate) fn paint_document_impl(
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             paint_transform: Affine,
+            /// The page area that `fixed` backgrounds of the paragraph's
+            /// inline boxes are positioned in.
+            fixed_viewport: Option<Rect>,
             /// Keep the paragraph's groups open until
             /// [`PaintFrame::FinishLines`] when it has any, so the boxes laid
             /// out beside the lines join them.
@@ -2659,6 +2665,7 @@ pub(crate) fn paint_document_impl(
                 fragmentainer,
                 inside_fixed,
                 decorations,
+                fixed_viewport,
                 defer: _,
             } => {
                 let layout = cell.unrounded_layout;
@@ -2752,6 +2759,7 @@ pub(crate) fn paint_document_impl(
                         .filter(|_| !inside_fixed)
                         .map(|lines| lines.translated(transform_y + paint_offset_y)),
                     paint_transform,
+                    fixed_viewport,
                 );
                 if clip.is_some() {
                     scene.pop_layer();
@@ -2868,6 +2876,7 @@ pub(crate) fn paint_document_impl(
                 fragmentainer,
                 inside_fixed,
                 paint_transform,
+                fixed_viewport,
                 hold,
                 boxes_in_groups,
             } => {
@@ -2923,6 +2932,7 @@ pub(crate) fn paint_document_impl(
                             .filter(|_| !inside_fixed)
                             .map(|lines| lines.translated(translation_y)),
                         paint_transform,
+                        fixed_viewport,
                     );
                     match lines {
                         Some(mut lines) if boxes_in_groups || lines.has_groups() => {
@@ -2968,6 +2978,7 @@ pub(crate) fn paint_document_impl(
                             .filter(|_| !inside_fixed)
                             .map(|lines| lines.translated(translation_y)),
                         paint_transform,
+                        fixed_viewport,
                     )
                     .map(|lines| lines.finish_leaving_groups(leaves_groups(&deferral_scopes)))
                     .unwrap_or_default();
@@ -3007,6 +3018,7 @@ pub(crate) fn paint_document_impl(
                         .filter(|_| !inside_fixed)
                         .map(|lines| lines.translated(translation_y)),
                     paint_transform,
+                    fixed_viewport,
                 ) {
                     if leaves_groups(&deferral_scopes) {
                         let left = finish_lines_leaving_groups(scene, lines);
@@ -4551,6 +4563,11 @@ pub(crate) fn paint_document_impl(
                         fragmentainer,
                         inside_fixed: ifc_inside_fixed,
                         paint_transform: scene.transform,
+                        fixed_viewport: fixed_background_viewport(
+                            page_area,
+                            root_transform,
+                            inside_fixed_containing_block || establishes_fixed_containing_block,
+                        ),
                         // Lines clipped to the page content box hold no
                         // boxes, which that clip does not cover.
                         hold: !children.is_empty()
@@ -4635,6 +4652,11 @@ pub(crate) fn paint_document_impl(
                             fragmentainer,
                             inside_fixed: ifc_inside_fixed,
                             decorations: child_decorations.clone(),
+                            fixed_viewport: fixed_background_viewport(
+                                page_area,
+                                root_transform,
+                                inside_fixed_containing_block || establishes_fixed_containing_block,
+                            ),
                             defer: defers,
                         });
                         continue;
@@ -4862,6 +4884,11 @@ pub(crate) fn paint_document_impl(
                                 .filter(|_| !inside_fixed)
                                 .map(|lines| lines.translated(transform_y + paint_offset_y)),
                             paint_transform,
+                            fixed_background_viewport(
+                                page_area,
+                                root_transform,
+                                inside_fixed_containing_block,
+                            ),
                         );
                     }
                     // Any other text node lies outside every paragraph and
@@ -6950,7 +6977,9 @@ impl InlineProgression {
 /// inline element, the way the element visit paints a box. `x` and `y` are
 /// the page position of the paragraph's content box; `progression` gives the
 /// axis the element's pieces run along; `transform` is what the piece is
-/// painted through inside the root element's transform.
+/// painted through inside the root element's transform; `fixed_viewport` is
+/// the page area its `fixed` background layers are positioned in, and `None`
+/// positions them like `scroll` ones.
 ///
 /// A side whose edge the piece does not carry (the element continues on
 /// another line there) has no border, padding or corner radius: the box is
@@ -6970,6 +6999,7 @@ pub(crate) fn paint_inline_box(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     transform: Affine,
+    fixed_viewport: Option<Rect>,
 ) {
     let outer = piece.border_box;
     let content = piece.content_box;
@@ -7182,6 +7212,7 @@ pub(crate) fn paint_inline_box(
         &background_padding,
         BackgroundEnv {
             device_grid: image_cache.device_grid(transform),
+            fixed_viewport,
             ..BackgroundEnv::default()
         },
         pixel_source,
