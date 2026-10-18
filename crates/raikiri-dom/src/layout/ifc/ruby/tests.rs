@@ -854,19 +854,49 @@ fn an_annotation_in_a_base_container_sits_over_an_empty_base_of_its_own() {
 
 #[test]
 fn consecutive_improper_annotations_each_get_a_base() {
-    let positions = glyph_positions(|doc, ruby| {
-        let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
-        doc.append_text(rbc, "B");
-        rt(doc, rbc, "A");
-        doc.append_text(rbc, " ");
-        rt(doc, rbc, "C");
-    });
-    let annotations: Vec<_> = positions.iter().filter(|glyph| glyph.0).collect();
-    let [first, second] = annotations.as_slice() else {
-        panic!("{positions:?}");
+    // The x of the last annotation, with `separator` between the two in the
+    // source. The white space is preserved so that it takes room.
+    let last_annotation_x = |separator: &str| {
+        let positions = glyph_positions(|doc, ruby| {
+            let rbc = element(
+                doc,
+                ruby,
+                "rbc",
+                "display:ruby-base-container;white-space:pre",
+            );
+            doc.append_text(rbc, "B");
+            rt(doc, rbc, "A");
+            if !separator.is_empty() {
+                doc.append_text(rbc, separator);
+            }
+            rt(doc, rbc, "C");
+        });
+        let annotations: Vec<_> = positions.iter().filter(|glyph| glyph.0).collect();
+        let (first, last) = (annotations[0], annotations[annotations.len() - 1]);
+        assert!(first.1.0 < last.1.0, "{positions:?}");
+        last.1.0
     };
-    assert_eq!(first.1.1, second.1.1);
-    assert!(first.1.0 < second.1.0, "{positions:?}");
+    // White space between annotations is intra-level white space: it keeps a
+    // column of its own, which pushes the second annotation along.
+    assert!(last_annotation_x(" ") > last_annotation_x(""));
+}
+
+#[test]
+fn nodes_that_render_nothing_do_not_end_a_run_of_improper_annotations() {
+    // The annotations are in an inline box, whose children are walked as they
+    // are; the hidden box is one of them.
+    let positions = |hidden: bool| {
+        glyph_positions(|doc, ruby| {
+            let span = element(doc, ruby, "span", "display:inline");
+            doc.append_text(span, "B");
+            rt(doc, span, "A");
+            if hidden {
+                element(doc, span, "span", "display:none");
+            }
+            rt(doc, span, "C");
+        })
+    };
+    assert_eq!(positions(true), positions(false));
 }
 
 #[test]

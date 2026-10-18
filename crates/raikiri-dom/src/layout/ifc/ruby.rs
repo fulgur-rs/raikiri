@@ -953,13 +953,25 @@ impl Content<'_, '_> {
 
     /// `first`, an improperly contained annotation, and the annotations that
     /// follow it in `nodes` from `next` on, with nothing but white space and
-    /// nodes that render nothing between them. `next` moves past the last one.
-    fn annotation_run(&self, nodes: &[usize], next: &mut usize, first: usize) -> Vec<usize> {
-        let mut run = vec![first];
+    /// nodes that render nothing between them. Each comes with the white space
+    /// between it and the next one: intra-level white space (CSS Ruby 1
+    /// §2.3). `next` moves past the last annotation.
+    fn annotation_run(
+        &self,
+        nodes: &[usize],
+        next: &mut usize,
+        first: usize,
+    ) -> Vec<(usize, Vec<usize>)> {
+        let mut run = vec![(first, Vec::new())];
         let mut look = *next;
+        let mut white_space = Vec::new();
         while let Some(&id) = nodes.get(look) {
             look += 1;
-            if is_skipped(self.doc, id) || is_white_space_text(self.doc, id) {
+            if is_skipped(self.doc, id) {
+                continue;
+            }
+            if is_white_space_text(self.doc, id) {
+                white_space.push(id);
                 continue;
             }
             if self.doc.nodes[id].display() != DisplayValue::RubyText
@@ -967,24 +979,27 @@ impl Content<'_, '_> {
             {
                 break;
             }
-            run.push(id);
+            if let Some(previous) = run.last_mut() {
+                previous.1 = std::mem::take(&mut white_space);
+            }
+            run.push((id, Vec::new()));
             *next = look;
         }
         run
     }
 
-    /// Push the improperly contained annotations `annotations` in an
-    /// anonymous ruby container: each is the annotation of an empty base of
-    /// its own, and all share one level (CSS Ruby 1 §2.2). The container takes
-    /// its style from the parent of the first annotation and has no box of its
-    /// own.
+    /// Push the improperly contained annotations `annotations`, each with the
+    /// white space after it, in an anonymous ruby container: each is the
+    /// annotation of an empty base of its own, and all share one level (CSS
+    /// Ruby 1 §2.2). The container takes its style from the parent of the
+    /// first annotation and has no box of its own.
     fn anonymous_ruby(
         &mut self,
         builder: &mut ParagraphBuilder,
-        annotations: &[usize],
+        annotations: &[(usize, Vec<usize>)],
         letter: Letter,
     ) -> Result<(), IfcError> {
-        let first = annotations[0];
+        let first = annotations[0].0;
         let owner = self.doc.parent_of(first).unwrap_or(first);
         let segment = Segment {
             gap: Vec::new(),
@@ -996,7 +1011,12 @@ impl Content<'_, '_> {
                 container: None,
                 annotations: annotations
                     .iter()
-                    .map(|&id| Part::new(Some(id), id, self.doc.nodes[id].children.clone()))
+                    .map(|(id, tail)| {
+                        let mut part =
+                            Part::new(Some(*id), *id, self.doc.nodes[*id].children.clone());
+                        part.tail.clone_from(tail);
+                        part
+                    })
                     .collect(),
             }],
         };
