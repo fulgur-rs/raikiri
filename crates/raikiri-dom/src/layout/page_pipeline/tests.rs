@@ -19184,3 +19184,112 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
     assert!(state.deferred_shifts.line_splits.is_empty());
     assert_eq!((state.flow_shift, text.effective_y), (0.0, 10.0));
 }
+
+#[test]
+fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_opens_one() {
+    let (mut doc, cascade, body, _, text) =
+        unpaginated_paragraph_after_a_spacer("aaaa bbbb", "", 0.0);
+    let spacer = doc.nodes[body].children[0];
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let node_count = doc.nodes.len();
+    let candidate = |page_name: &str| PageCandidate {
+        node_id: text,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext {
+            is_text: true,
+            page_name_in_flow: true,
+            ..Default::default()
+        },
+        page_name: Some(page_name.to_string()),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = |comparison_page_name: &str| pagination_state::CandidateEntry {
+        name_context_seen: true,
+        comparison_page_name: Some(comparison_page_name.to_string()),
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut step = |state: &mut PaginationState,
+                    control: &PageLayoutControl<'_>,
+                    candidate: &PageCandidate,
+                    entry: &pagination_state::CandidateEntry,
+                    effective_y: f32| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots: candidates::FlowRoots::new(&doc, body),
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut position = pagination_state::TextPosition {
+            effective_y,
+            height: 10.0,
+        };
+        let stepped = state.step_text_page(&mut session, &env, candidate, entry, &mut position);
+        (stepped, position.effective_y)
+    };
+    let unlimited = PageLayoutControl::new(None);
+
+    // The first text is on the first page, whatever its position, and names it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), 250.0);
+    let stepped = stepped.unwrap();
+    assert!(!stepped.named_page_change && !stepped.consumes_pending_break);
+    assert!(state.saw_child);
+    assert_eq!((state.current_page, y), (0, 250.0));
+    assert_eq!(state.page_names.current.as_deref(), Some("a"));
+
+    // Later text goes on from the page its position falls on.
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), 250.0);
+    let stepped = stepped.unwrap();
+    assert!(!stepped.named_page_change && !stepped.consumes_pending_break);
+    assert_eq!((state.current_page, state.flow_shift, y), (2, 0.0, 250.0));
+    // A position that is not on any page leaves it where it is.
+    let (stepped, _) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), -5.0);
+    stepped.unwrap();
+    assert_eq!(state.current_page, 2);
+
+    // A page type other than the one it follows opens a page for the text,
+    // which moves to the top of it together with the flow after it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("b"), &entry("a"), 50.0);
+    let stepped = stepped.unwrap();
+    assert!(stepped.named_page_change && !stepped.consumes_pending_break);
+    assert_eq!((state.current_page, state.flow_shift, y), (1, 50.0, 100.0));
+    assert_eq!(state.page_names.current.as_deref(), Some("b"));
+
+    // So does a break pending after the box before it.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    state.current_page = 1;
+    state.pending_break.source = Some(spacer);
+    let (stepped, y) = step(&mut state, &unlimited, &candidate("a"), &entry("a"), 120.0);
+    let stepped = stepped.unwrap();
+    assert!(!stepped.named_page_change && stepped.consumes_pending_break);
+    assert_eq!((state.current_page, state.flow_shift, y), (2, 80.0, 200.0));
+
+    // Neither is within a page limit it would pass.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(1));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    let (stepped, _) = step(&mut state, &discovery, &candidate("b"), &entry("a"), 50.0);
+    assert!(matches!(stepped, Err(pagination_state::Halt::PageLimit)));
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.saw_child = true;
+    let (stepped, _) = step(&mut state, &discovery, &candidate("a"), &entry("a"), 150.0);
+    assert!(matches!(stepped, Err(pagination_state::Halt::PageLimit)));
+}

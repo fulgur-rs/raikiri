@@ -110,6 +110,15 @@ pub(super) struct TextPosition {
     pub(super) height: f32,
 }
 
+/// Why the page of in-flow text was settled as it was.
+pub(super) struct TextPageStep {
+    /// Whether the text names another page type than the flow it follows, so
+    /// that it opens a page.
+    pub(super) named_page_change: bool,
+    /// Whether a break pending after the previous box applies to the text.
+    pub(super) consumes_pending_break: bool,
+}
+
 /// The blocks whose lines hold the text of a candidate: what keeping those
 /// lines together can move.
 pub(super) struct LineBlocks {
@@ -313,18 +322,15 @@ impl PaginationState {
             ..
         } = *env;
         let CandidateEntry {
-            name_context_seen,
-            ref comparison_page_name,
             keep_local_page_type,
             page_before_candidate,
             ifc_root,
             participates_in_margin_adjacency,
             uses_positioned_coordinates,
+            ..
         } = *entry;
         let node_id = candidate.node_id;
         let name_participates_in_flow = candidate.context.page_name_in_flow;
-        let page_origin = |page_index: u32| page_origins.origin(page_index);
-        let page_index_in_flow = |y: f32| page_origins.page_index_in_flow(y);
         // The inline layout root whose lines hold this text, if any.
         let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
         // In-flow text between two blocks separates them: the next block's
@@ -341,14 +347,6 @@ impl PaginationState {
         {
             return Ok(());
         }
-        // Text is not itself a class-A box, but non-empty text can be the
-        // content that follows a nested named box.  Carry the containing
-        // box's page type so that content after `page:b` inside a
-        // `page:a` box resumes on an `a` page rather than becoming an
-        // anonymous page.  Only direct body text consumes a pending
-        // break-after; descendants must wait until their containing box
-        // has finished.
-        let candidate_page_name = candidate.page_name.clone();
         let mut text = TextPosition {
             effective_y: if uses_positioned_coordinates {
                 positioned_text_start_y(document, text_lines, node_id, text_ifc_root)
@@ -366,85 +364,37 @@ impl PaginationState {
         );
         self.push_first_line_block(document, env, candidate, entry, &blocks, &mut text)?;
         self.keep_lines_together(document, env, candidate, entry, &blocks, &mut text)?;
-        let TextPosition {
-            mut effective_y,
-            height,
-        } = text;
         place_text_candidate(
             document,
             text_lines,
             node_id,
             ifc_root,
             text_ifc_root,
-            effective_y,
+            text.effective_y,
         );
-        let named_page_change = text_changes_page_name(
-            name_context_seen,
-            name_participates_in_flow,
-            height,
-            &candidate_page_name,
-            comparison_page_name,
-        );
-        let pending_break_applies = self.pending_break.applies_to(document, node_id);
-        let consumes_pending_break = pending_break_applies && name_participates_in_flow;
-        if self.saw_child {
-            if consumes_pending_break || named_page_change {
-                let natural_page = page_index_in_flow(effective_y).unwrap_or(self.current_page);
-                let target_page = forced_target_page(self.current_page, natural_page);
-                reach_page(control, target_page)?;
-                let target_y = page_origin(target_page);
-                // The candidate was materialized to `effective_y` above,
-                // so this is the additional movement for this boundary.
-                // The same amount advances `flow_shift`, which also moves
-                // later candidates whose ancestor is not moved here.
-                let delta = target_y - effective_y;
-                if delta.is_finite() {
-                    shift_text_candidate(
-                        document,
-                        text_lines,
-                        node_id,
-                        ifc_root.map(|(root, _)| root),
-                        text_ifc_root,
-                        delta,
-                    );
-                    self.flow_shift += delta;
-                    effective_y += delta;
-                }
-                self.current_page = target_page;
-                self.page_names.current = candidate_page_name.clone();
-            } else if let Some(natural_page) = page_index_in_flow(effective_y) {
-                reach_page(control, natural_page)?;
-                self.current_page = self.current_page.max(natural_page);
-            }
-        } else {
-            self.saw_child = true;
-            self.current_page = 0;
-            if name_participates_in_flow {
-                self.page_names.current = candidate_page_name.clone();
-            }
-        }
+        let step = self.step_text_page(document, env, candidate, entry, &mut text)?;
         if text_sets_page_name(
-            height,
+            text.height,
             name_participates_in_flow,
-            named_page_change,
-            consumes_pending_break,
+            step.named_page_change,
+            step.consumes_pending_break,
             page_type_leaves_local_flow(
                 keep_local_page_type,
                 self.current_page,
                 page_before_candidate,
             ),
         ) {
-            self.page_names.current = candidate_page_name;
+            self.page_names.current = candidate.page_name.clone();
         }
         reach_page(control, self.current_page)?;
-        if name_participates_in_flow && height > 0.0 {
+        if name_participates_in_flow && text.height > 0.0 {
             self.column_contexts
                 .occupy_enclosing(node_id, self.current_page, document, cascade);
         }
-        let end_page = page_origins.end_page(effective_y, height);
+        let end_page = page_origins.end_page(text.effective_y, text.height);
         let in_flow = !candidate.context.is_out_of_flow_descendant;
         self.record_pages(control, end_page, in_flow)?;
-        if consumes_pending_break {
+        if step.consumes_pending_break {
             self.pending_break.clear();
         }
         self.pending_break.note_after(
@@ -1019,6 +969,90 @@ impl PaginationState {
             }
         }
         Ok(())
+    }
+
+    /// Settles the page the in-flow text `candidate` starts on, once its
+    /// lines are kept together and it is placed at `text.effective_y`. The
+    /// first candidate opens the first page. A
+    /// pending break or a change of the page type the text names opens a
+    /// page, to the top of which the text moves; any other text goes on from
+    /// the page it falls on.
+    pub(super) fn step_text_page(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        text: &mut TextPosition,
+    ) -> Result<TextPageStep, Halt> {
+        let FlowEnv {
+            control,
+            page_origins,
+            text_lines,
+            ..
+        } = *env;
+        let node_id = candidate.node_id;
+        let name_participates_in_flow = candidate.context.page_name_in_flow;
+        let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
+        // Text is not itself a class-A box, but non-empty text can be the
+        // content that follows a nested named box.  Carry the containing
+        // box's page type so that content after `page:b` inside a
+        // `page:a` box resumes on an `a` page rather than becoming an
+        // anonymous page.  Only direct body text consumes a pending
+        // break-after; descendants must wait until their containing box
+        // has finished.
+        let named_page_change = text_changes_page_name(
+            entry.name_context_seen,
+            name_participates_in_flow,
+            text.height,
+            &candidate.page_name,
+            &entry.comparison_page_name,
+        );
+        let pending_break_applies = self.pending_break.applies_to(document, node_id);
+        let consumes_pending_break = pending_break_applies && name_participates_in_flow;
+        if self.saw_child {
+            if consumes_pending_break || named_page_change {
+                let natural_page = page_origins
+                    .page_index_in_flow(text.effective_y)
+                    .unwrap_or(self.current_page);
+                let target_page = forced_target_page(self.current_page, natural_page);
+                reach_page(control, target_page)?;
+                let target_y = page_origins.origin(target_page);
+                // `place_text` already materialized the candidate at
+                // `effective_y`, so this is the additional movement for this
+                // boundary.
+                // The same amount advances `flow_shift`, which also moves
+                // later candidates whose ancestor is not moved here.
+                let delta = target_y - text.effective_y;
+                if delta.is_finite() {
+                    shift_text_candidate(
+                        document,
+                        text_lines,
+                        node_id,
+                        entry.ifc_root.map(|(root, _)| root),
+                        text_ifc_root,
+                        delta,
+                    );
+                    self.flow_shift += delta;
+                    text.effective_y += delta;
+                }
+                self.current_page = target_page;
+                self.page_names.current = candidate.page_name.clone();
+            } else if let Some(natural_page) = page_origins.page_index_in_flow(text.effective_y) {
+                reach_page(control, natural_page)?;
+                self.current_page = self.current_page.max(natural_page);
+            }
+        } else {
+            self.saw_child = true;
+            self.current_page = 0;
+            if name_participates_in_flow {
+                self.page_names.current = candidate.page_name.clone();
+            }
+        }
+        Ok(TextPageStep {
+            named_page_change,
+            consumes_pending_break,
+        })
     }
 
     /// Records the pages the candidate placed on the current page occupies,
