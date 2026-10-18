@@ -662,7 +662,7 @@ fn a_floated_relative_paragraph_in_a_column_is_painted_shifted_once() {
     compare(
         "<div class=mc><p style='float:left;position:relative;left:5px;background:lime'>A<br>B</p></div>",
         ".mc{height:40px;column-fill:auto}",
-        "<div style='position:absolute;left:5px;top:0;width:40px'><p style='background:lime'>A<br>B</p></div>",
+        "<p style='position:absolute;left:5px;top:0;background:lime'>A<br>B</p>",
     );
 }
 
@@ -794,5 +794,133 @@ fn a_floated_column_child_with_auto_margins_keeps_zero_margins() {
         "<div class=mc><p style='float:left;width:20px;margin:0 auto;background:lime'>A<br>B</p></div>",
         ".mc{height:40px;column-fill:auto}",
         "<p style='position:absolute;left:0;top:0;width:20px;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_in_a_later_column_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='float:left;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><p style='position:absolute;left:60px;top:0;background:lime'>C<br>D</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_in_a_balanced_container_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p>A</p><p style='float:left;background:lime'>B<br>C</p></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A</p></div><p style='position:absolute;left:60px;top:0;background:lime'>B<br>C</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_with_a_margin_shrinks_to_its_content_inside_it() {
+    for margin in ["margin-left:7px", "margin:0 5px 0 3px", "margin-right:7px"] {
+        compare(
+            &format!(
+                "<div class=mc><p style='float:left;{margin};background:lime'>A<br>B</p></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<p style='position:absolute;left:0;top:0;{margin};background:lime'>A<br>B</p>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_floated_column_child_that_would_overflow_the_column_is_limited_to_it() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A B<br>C</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;width:40px;background:lime'>A B<br>C</p>",
+    );
+}
+
+#[test]
+fn a_floated_block_holding_a_paragraph_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><div style='float:left;background:lime'><p>A<br>B</p></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;background:lime'><p>A<br>B</p></div>",
+    );
+}
+
+#[test]
+fn a_right_to_left_floated_column_child_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto;direction:rtl}",
+        "<p style='position:absolute;left:60px;top:0;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_right_floated_column_child_sits_at_the_right_edge_of_its_column() {
+    for (css, left) in [
+        (".mc{height:40px;column-fill:auto}", 20),
+        (".mc{height:40px;column-fill:auto;direction:rtl}", 80),
+    ] {
+        compare(
+            "<div class=mc><p style='float:right;background:lime'>A<br>B</p></div>",
+            css,
+            &format!("<p style='position:absolute;left:{left}px;top:0;background:lime'>A<br>B</p>"),
+        );
+    }
+}
+
+#[test]
+fn a_right_floated_column_child_in_a_later_column_sits_at_the_right_edge_of_it() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p style='float:right;margin-right:5px;background:lime'>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px'><p>A<br>B</p></div><p style='position:absolute;left:75px;top:0;background:lime'>C<br>D</p>",
+    );
+}
+
+#[test]
+fn a_floated_box_without_lines_shrinks_to_its_content() {
+    compare(
+        "<div class=mc><div style='float:left;background:lime'><div style='width:20px;height:20px;background:blue'></div></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;background:lime'><div style='width:20px;height:20px;background:blue'></div></div>",
+    );
+}
+
+#[test]
+fn a_relative_right_floated_column_child_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='float:right;position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:25px;top:0;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_relative_floated_column_child_with_a_width_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><p style='float:left;width:40px;position:relative;left:5px;background:lime'>A<br>B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:5px;top:0;width:40px;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_floated_column_child_fits_the_room_its_margin_leaves() {
+    compare(
+        "<div class=mc><p style='float:left;margin-left:10px;background:lime'>A B<br>C</p></div>",
+        ".mc{height:80px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;margin-left:10px;width:30px;background:lime'>A B<br>C</p>",
     );
 }

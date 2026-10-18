@@ -1123,8 +1123,9 @@ pub(super) fn layout(
         tree.nodes[child].cache.clear();
         let output = tree.compute_child_layout(
             TaffyNodeId::from(child),
-            super::column_child_input(
-                super::column_child_known_width(tree, child, context.column_width),
+            super::column_child_layout_input(
+                tree,
+                child,
                 context.column_width,
                 definite_height,
                 AvailableSpace::MaxContent,
