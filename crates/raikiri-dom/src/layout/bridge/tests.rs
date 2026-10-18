@@ -1370,6 +1370,41 @@ fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
 }
 
 #[test]
+fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
+    let mut parent = ComputedValues::initial();
+    parent.align_items = SelfAlignmentValue::LastBaseline;
+    parent.justify_items = SelfAlignmentValue::LastBaseline;
+    for (position, expected) in [
+        (PositionValue::Absolute, Some(TaffyAlignItems::SAFE_END)),
+        (PositionValue::Fixed, Some(TaffyAlignItems::SAFE_END)),
+        (PositionValue::Static, None),
+    ] {
+        let label = format!("{position:?}");
+        let mut cv = ComputedValues::initial();
+        cv.position = position;
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        bridge_inherited_last_baseline(&mut style, &cv, &parent);
+        assert_eq!(style.align_self, expected, "position: {label}");
+        assert_eq!(style.justify_self, expected, "position: {label}");
+    }
+}
+
+#[test]
+fn abspos_own_alignment_overrides_the_containers_last_baseline() {
+    let mut parent = ComputedValues::initial();
+    parent.align_items = SelfAlignmentValue::LastBaseline;
+    let mut cv = ComputedValues::initial();
+    cv.position = PositionValue::Absolute;
+    cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Center);
+    let mut style = Style::default();
+    bridge_alignment(&mut style, &cv);
+    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
+    assert_eq!(style.justify_self, None);
+}
+
+#[test]
 fn bridge_alignment_align_self_normal_preserves_normal_instead_of_auto() {
     // Regression test: `align-self: normal` must
     // NOT collapse to the same `None` mapping as `align-self: auto`.

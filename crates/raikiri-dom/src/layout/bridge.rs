@@ -392,6 +392,9 @@ fn apply_computed_to_style_in_session_inner(
             &mut doc.context.layout_warnings,
         );
         bridge_alignment(&mut style, cv);
+        if let Some(parent) = doc.nodes[idx].parent {
+            bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[parent]);
+        }
         bridge_gap(
             &mut style,
             cv,
@@ -1284,6 +1287,31 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     };
     style.align_self = own(cv.align_self);
     style.justify_self = own(cv.justify_self);
+}
+
+/// An absolutely positioned box whose `align-self` / `justify-self` is `auto`
+/// takes the container's `align-items` / `justify-items`. When that is
+/// `last baseline`, the box falls back to `safe end` like an explicit
+/// `last baseline` does (see [`bridge_alignment`]); taffy alone would
+/// inherit the container's plain baseline.
+fn bridge_inherited_last_baseline(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    parent: &ComputedValues,
+) {
+    if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
+        return;
+    }
+    if matches!(cv.align_self, AlignSelfValue::Auto)
+        && parent.align_items == SelfAlignmentValue::LastBaseline
+    {
+        style.align_self = Some(TaffyAlignItems::SAFE_END);
+    }
+    if matches!(cv.justify_self, AlignSelfValue::Auto)
+        && parent.justify_items == SelfAlignmentValue::LastBaseline
+    {
+        style.justify_self = Some(TaffyAlignItems::SAFE_END);
+    }
 }
 
 /// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by
