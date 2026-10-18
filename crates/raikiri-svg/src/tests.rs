@@ -2928,3 +2928,47 @@ fn rasterizing_with_resolved_styles_rejects_an_invalid_font() {
         Err(SvgError::InvalidDocument(_))
     ));
 }
+
+#[test]
+fn rasterizing_with_resolved_styles_checks_descendants_at_zero_opacity() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><rect width='20' height='10'/></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let viewport = SvgViewport {
+        width: 20.0,
+        height: 10.0,
+    };
+    let root_style = SvgRootStyle {
+        opacity: 0.0,
+        ..SvgRootStyle::default()
+    };
+    let font = super::SvgRootFont {
+        size: 12.0,
+        family: "sans-serif",
+        weight: 400.0,
+        style: "normal",
+    };
+    let rasterize = |declarations| {
+        let elements = [super::SvgElementStyle {
+            element_index: 1,
+            declarations,
+        }];
+        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
+            viewport,
+            root_style,
+            super::SvgResolvedStyles {
+                root_color: [0, 0, 0, 255],
+                font,
+                elements: &elements,
+            },
+            None,
+        )
+    };
+    let blank = rasterize("display:none!important").unwrap();
+    assert!(blank.rgba.iter().all(|&byte| byte == 0));
+    assert!(matches!(
+        rasterize("fill:red!important"),
+        Err(SvgError::InvalidDocument(_))
+    ));
+}

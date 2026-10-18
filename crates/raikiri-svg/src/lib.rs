@@ -584,8 +584,11 @@ impl SvgDocument {
     ///
     /// The host's resolved root color and font, its `visibility` and the
     /// descendant declarations are applied exactly as that method does, so the
-    /// raster and the exported source agree. Errors from the font and element
-    /// checks of that method are returned before anything is allocated.
+    /// raster and the exported source agree. An invalid font is returned
+    /// before anything is allocated. Malformed descendant declarations are
+    /// returned whatever `root_style.opacity` is: at zero opacity, where
+    /// nothing is drawn, they are checked before the output is allocated;
+    /// otherwise they are checked when the source is prepared for drawing.
     pub fn rasterize_at_css_pixel_scale_with_resolved_styles(
         &self,
         viewport: SvgViewport,
@@ -616,7 +619,6 @@ impl SvgDocument {
         }
 
         let (width, height, byte_len) = checked_output_size(viewport, max_output_bytes)?;
-        let mut pixels = allocate_transparent_pixels(byte_len)?;
         let viewport = if css_pixel_scale {
             viewport
         } else {
@@ -625,6 +627,14 @@ impl SvgDocument {
                 height: height as f32,
             }
         };
+        if root_style.opacity == 0.0
+            && let Some(source_style) = source_style.filter(|style| !style.elements.is_empty())
+        {
+            // Nothing is drawn, but malformed descendant styles are rejected
+            // as they are at any other opacity.
+            self.prepare_source(viewport, root_style, source_style, false)?;
+        }
+        let mut pixels = allocate_transparent_pixels(byte_len)?;
 
         if root_style.opacity > 0.0 {
             let drawn = self.draw(
