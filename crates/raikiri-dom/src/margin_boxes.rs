@@ -1529,7 +1529,7 @@ fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32
 /// shrunk in proportion to themselves. When none of them has anything to
 /// grow or shrink by, the space goes in proportion to `counts`, the number of
 /// generated boxes each one stands for, so that empty boxes share an edge
-/// equally.
+/// equally. The `counts` add up to more than zero.
 fn flex_fit(extents: &[EdgeExtent], counts: &[f32], available: f32) -> Vec<f32> {
     let max_total = extents.iter().map(|extent| extent.max).sum::<f32>();
     let min_total = extents.iter().map(|extent| extent.min).sum::<f32>();
@@ -1557,14 +1557,7 @@ fn flex_fit(extents: &[EdgeExtent], counts: &[f32], available: f32) -> Vec<f32> 
     bases
         .iter()
         .zip(&factors)
-        .map(|(base, factor)| {
-            let share = if factor_total > 0.0 {
-                factor / factor_total
-            } else {
-                1.0 / bases.len() as f32
-            };
-            (base + space * share).max(0.0)
-        })
+        .map(|(base, factor)| (base + space * factor / factor_total).max(0.0))
         .collect()
 }
 
