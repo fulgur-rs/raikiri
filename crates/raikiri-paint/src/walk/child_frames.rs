@@ -3,7 +3,7 @@
 //! them and the lines of its own paragraph.
 
 use super::element_box::ElementBox;
-use super::frames::{AnonymousParagraphFrame, LinesFrame, PaintFrame, VisitFrame};
+use super::frames::{AnonymousParagraphFrame, LayerClose, LinesFrame, PaintFrame, VisitFrame};
 use super::paint_walk::PaintWalk;
 use super::{
     box_intersects_page, first_text_descendant, fixed_background_viewport, generated_flow_height,
@@ -12,7 +12,7 @@ use super::{
 use crate::text;
 use anyrender::PaintScene;
 use kurbo::Affine;
-use raikiri_style::property::{DisplayValue, PositionValue, ZIndexValue};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, ZIndexValue};
 use raikiri_traits::NodeKind;
 
 /// Where the children of an element are placed from, and what they inherit
@@ -54,6 +54,11 @@ pub(super) struct ChildPlan {
     /// Whether the paragraph of the element has content positioned below its
     /// blocks.
     pub(super) negative_content: bool,
+    /// How the layer of the element ends when it merges its inline content
+    /// into the enclosing layer, inside its overflow clip.
+    pub(super) merge: Option<LayerClose>,
+    /// Whether the frame of the `::after` content of the element was pushed.
+    pub(super) after_pushed: bool,
 }
 
 /// The frames that paint the children of an element, each list last child
@@ -493,4 +498,60 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             blocks: block_frames,
         }
     }
+
+    /// The children of `element` that are visited, in the order they paint:
+    /// the stacking order of positioned siblings, with source order within a
+    /// level.
+    pub(super) fn paint_children(&self, element: &ElementBox<'w>) -> Vec<usize> {
+        let (document, cascade) = (self.document, self.cascade);
+        let ElementBox {
+            node, node_id, cv, ..
+        } = *element;
+        // Paint positioned siblings in stacking order while keeping
+        // source order for equal stack levels. Flex/grid containers use
+        // order-modified document order within each stacking bucket,
+        // as required by CSS Display's `order` property behavior.
+        // This is intentionally local to the current parent; full
+        // nested stacking-context isolation remains outside this
+        // minimal painter.
+        let mut children =
+            if node.is_inline_svg_root() || document.anonymous_table_contents_paint_only(node_id) {
+                Vec::new()
+            } else if node.is_ifc_root() {
+                // The paragraph's own text and inline elements are drawn
+                // from the lines; only the boxes laid out beside them are
+                // visited like ordinary children.
+                node.ifc_boxes()
+            } else if let Some(children) = document.anonymous_table_paint_sequence(node_id) {
+                children
+            } else {
+                node.children.clone()
+            };
+        raikiri_dom::paint_rules::sort_paint_children(&mut children, cv.display, cascade);
+        children
+    }
+}
+
+/// The height that the columns of `element`, or of the container it sits
+/// in as a `display: contents` element, clip its children to.
+pub(super) fn multicol_clip_height(
+    element: &ElementBox<'_>,
+    column_clip_height: Option<f32>,
+) -> Option<f32> {
+    let ElementBox {
+        node, cv, layout, ..
+    } = *element;
+    let own_multicol_clip_height = match cv.column_count {
+        ColumnCountValue::Count(count)
+            if count > 1 && node.is_multicol_container() && layout.size.height > 0.0 =>
+        {
+            Some(layout.size.height)
+        }
+        _ => None,
+    };
+    // A `display: contents` element has no box, so the columns of
+    // the container it sits in hold its children.
+    own_multicol_clip_height.or((cv.display == DisplayValue::Contents)
+        .then_some(column_clip_height)
+        .flatten())
 }

@@ -1,7 +1,9 @@
-//! The groups and clips that enclose the paint of an element and its subtree.
+//! The groups, clips and layers that enclose the paint of an element and its
+//! subtree.
 
+use super::child_frames::{ChildFrames, ChildPlan};
 use super::element_box::ElementBox;
-use super::frames::PaintFrame;
+use super::frames::{DeferralLayer, LayerClose, PaintFrame};
 use super::paint_walk::PaintWalk;
 use super::{paint_generated_pseudo, push_overflow_clip};
 use anyrender::PaintScene;
@@ -187,5 +189,84 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             });
         }
         after_pushed
+    }
+
+    /// Open the layer of `element` when it has one, and put its frames on
+    /// the stack, or in the layer when its inline content waits for the end.
+    pub(super) fn place_frames(
+        &mut self,
+        element: &ElementBox<'w>,
+        plan: &ChildPlan,
+        frames: ChildFrames<'w>,
+        lines_frame: Option<PaintFrame<'w>>,
+    ) {
+        let ElementBox {
+            node,
+            node_id,
+            generates_box,
+            ..
+        } = *element;
+        let ChildPlan {
+            defers,
+            hold_lines,
+            negative_content,
+            merge,
+            after_pushed,
+            ..
+        } = *plan;
+        let (document, cascade) = (self.document, self.cascade);
+        let ChildFrames {
+            children: child_frames,
+            below_lines: below_lines_frames,
+            blocks: mut block_frames,
+        } = frames;
+        let finish_lines = hold_lines.then_some(PaintFrame::FinishLines { root: node_id });
+        let stack = &mut self.stack;
+        let deferral_scopes = &mut self.deferral_scopes;
+        // A `display: contents` element has no box, so its children
+        // share the enclosing layer.
+        if !defers && generates_box {
+            let allowed = deferral_scopes.last().is_some_and(|layer| layer.allowed)
+                && !node.is_multicol_container();
+            let close = merge.unwrap_or(
+                if raikiri_dom::paint_rules::hoists_positioned_content(document, cascade, node_id) {
+                    LayerClose::Hoist
+                } else {
+                    LayerClose::Paint
+                },
+            );
+            let mut layer = DeferralLayer::new(allowed, close);
+            layer.after = after_pushed;
+            deferral_scopes.push(layer);
+            stack.push(PaintFrame::EndDeferral);
+        }
+        if (defers || merge.is_some()) && node.is_ifc_root() {
+            if let Some(layer) = deferral_scopes.last_mut() {
+                let pending = &mut layer.pending;
+                pending.extend(below_lines_frames.into_iter().rev());
+                if negative_content && !block_frames.is_empty() {
+                    pending.push(PaintFrame::TraceBelowBlocks { root: node_id });
+                    pending.extend(std::mem::take(&mut block_frames).into_iter().rev());
+                }
+                pending.extend(lines_frame);
+                pending.extend(child_frames.into_iter().rev());
+                pending.extend(finish_lines);
+                // A standalone `::after` still follows the content
+                // it is generated after.
+                if defers && after_pushed {
+                    pending.extend(stack.pop());
+                }
+            }
+        } else {
+            stack.extend(finish_lines);
+            stack.extend(child_frames);
+            stack.extend(lines_frame);
+            if negative_content && !block_frames.is_empty() {
+                stack.extend(std::mem::take(&mut block_frames));
+                stack.push(PaintFrame::TraceBelowBlocks { root: node_id });
+            }
+            stack.extend(below_lines_frames);
+        }
+        stack.extend(block_frames);
     }
 }

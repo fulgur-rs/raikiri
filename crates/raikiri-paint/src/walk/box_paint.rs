@@ -20,6 +20,26 @@ use raikiri_style::property::{
 use raikiri_traits::{PaintInsets, PaintRect};
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
+    /// Paint the parts of the box of `element` in their order, and return
+    /// the advance of its generated `::before` content.
+    pub(super) fn paint_box(&mut self, element: &ElementBox<'w>, has_column_rules: bool) -> f32 {
+        if element.paints_on_page
+            && !raikiri_dom::paint_rules::hides_empty_table_cell(
+                self.document,
+                self.cascade,
+                element.node_id,
+            )
+        {
+            self.paint_box_decorations(element);
+            self.paint_replaced_content(element);
+            self.paint_column_rules(element, has_column_rules);
+            self.paint_list_marker(element);
+            self.paint_generated_before(element, has_column_rules)
+        } else {
+            0.0
+        }
+    }
+
     /// Paint the background, shadows, border and outline of the box of `element`, and trace it.
     pub(super) fn paint_box_decorations(&mut self, element: &ElementBox<'w>) {
         let ElementBox {
