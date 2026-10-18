@@ -1129,7 +1129,21 @@ fn layout_column_group(
                 root.multicol_fragment_origins_recorded = true;
             }
         } else {
-            refresh_nested_text_fragments(tree, child, column_context);
+            // A block measured as one item of the balance stays whole in its
+            // column, so no line of it may go to a later column.
+            let whole_in_column = fragment_height.is_none() && measured.is_some();
+            refresh_nested_text_fragments(
+                tree,
+                child,
+                if whole_in_column {
+                    FragmentationContext {
+                        column_count: column_context.column_index + 1,
+                        ..column_context
+                    }
+                } else {
+                    column_context
+                },
+            );
         }
         if let Some((balanced_child, fragments, _)) = &paragraph_balance
             && *balanced_child == child
