@@ -171,11 +171,13 @@ fn parse_start_end_shorthand<T: Copy>(
 /// "Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
 /// fit-content(<length-percentage>)`", "Initial: auto", "Inherited: no".
 ///
-/// # Not supported (spec-valid, future support)
+/// # The `fit-content()` function
 ///
-/// The `fit-content(<length-percentage>)` function is parsed and checked, but it still computes to
-/// `auto`: the limit is not carried to layout yet.
-/// Negative values (`width: -10px`) also violate the specification's `[0,∞]` grammar and are dropped.
+/// The limit of `fit-content(<length-percentage [0,∞]>)` is read by
+/// [`parse_non_negative_length_percentage_or_calc`]: a plain length or percentage must not be negative,
+/// and a mixed-unit `calc()` is clamped to the range when it is resolved. It is kept as
+/// [`LengthOrAuto::FitContentOf`].
+/// Negative values (`width: -10px`) violate the specification's `[0,∞]` grammar and are dropped.
 ///
 /// # Order of alternatives
 ///
@@ -212,20 +214,16 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     {
         return Some(LengthOrAuto::FitContent);
     }
-    if input
-        .try_parse(|i| {
-            i.expect_function_matching("fit-content")?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .filter(|limit| limit.payload() >= 0.0)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                nested.expect_exhausted()?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
+    if let Ok(limit) = input.try_parse(|i| {
+        i.expect_function_matching("fit-content")?;
+        i.parse_nested_block(|nested| {
+            let limit = parse_non_negative_length_percentage_or_calc(nested)
+                .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+            nested.expect_exhausted()?;
+            Ok::<_, cssparser::ParseError<'_, ()>>(limit)
         })
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
+    }) {
+        return Some(LengthOrAuto::FitContentOf(limit));
     }
     let length = parse_length_value(input, true)?;
     (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
@@ -257,14 +255,24 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// while padding accepted all five `<length-percentage>` variants. Support for font-relative units
 /// removed that difference.
 pub(super) fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<LengthPercentageOrCalc> {
-    // A mixed-unit `calc()` reaches this parser only after substitution or
-    // simplification failed to fold it to one dimension. A math function is
-    // clamped to the range rather than rejected.
+    parse_non_negative_length_percentage_or_calc(input)
+}
+
+/// Parse a `<length-percentage [0,∞]>`, the grammar of a padding side and of the limit of
+/// `fit-content()`.
+///
+/// A negative length or percentage returns `None`. A mixed-unit `calc()` reaches this parser only
+/// after substitution or simplification failed to fold it to one dimension, and is clamped to the
+/// range when it is resolved rather than rejected.
+fn parse_non_negative_length_percentage_or_calc(
+    input: &mut Parser<'_, '_>,
+) -> Option<LengthPercentageOrCalc> {
     if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
         return Some(LengthPercentageOrCalc::from_non_negative_calc(calc));
     }
     let length = parse_length_value(input, true)?;
-    // CSS Box 3 §4.1: "Negative values for padding properties are invalid."
+    // CSS Box 3 §4.1: "Negative values for padding properties are invalid."; the
+    // `fit-content()` limit has the same `[0,∞]` range.
     (length.payload() >= 0.0).then_some(LengthPercentageOrCalc::Length(length))
 }
 

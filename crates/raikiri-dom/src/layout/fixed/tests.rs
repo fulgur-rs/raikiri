@@ -948,6 +948,20 @@ fn sizing_keywords_resolve_against_the_containing_block() {
         width(Dimension::fit_content_percent(0.25)),
         Some(("measure", 200.0))
     );
+    let mut arena = Vec::new();
+    let calc = crate::taffy_impl::push_calc(
+        &mut arena,
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 25.0,
+            px: -50.0,
+        },
+        true,
+    );
+    // 25% of the 800px basis less 50px.
+    assert_eq!(
+        width(Dimension::fit_content_calc(calc)),
+        Some(("measure", 150.0))
+    );
     assert_eq!(width(Dimension::fit_content()), Some(("measure", 300.0)));
     assert_eq!(width(Dimension::stretch()), Some(("exact", 300.0)));
     assert_eq!(width(Dimension::length(10.0)), None);
@@ -1233,6 +1247,24 @@ fn min_content_fixed_paragraphs_take_their_longest_word() {
     let (doc, fixed) =
         laid_out_with_words("position:fixed;left:5px;top:6px;font:10px Ahem;width:min-content");
     assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 100.0, 100.0));
+}
+
+#[test]
+fn fixed_paragraphs_take_the_limit_of_the_fit_content_function_as_their_box_size() {
+    // The limit is a size of the box-sizing box, so the padding of a
+    // `content-box` comes on top of it. Either way the lines wrap at the
+    // content width: two 100px words fit in 260px and in 300px.
+    for (box_sizing, width) in [("content-box", 340.0), ("border-box", 300.0)] {
+        let (doc, fixed) = laid_out_with_words(&format!(
+            "position:fixed;left:5px;top:6px;font:10px Ahem;padding:0 20px;\
+             box-sizing:{box_sizing};width:fit-content(300px)"
+        ));
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (5.0, 6.0, width, 50.0),
+            "{box_sizing}"
+        );
+    }
 }
 
 #[test]

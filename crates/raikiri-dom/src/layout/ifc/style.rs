@@ -147,7 +147,8 @@ impl InlineRelativeInsets {
             LengthOrAuto::Auto
             | LengthOrAuto::MinContent
             | LengthOrAuto::MaxContent
-            | LengthOrAuto::FitContent => None,
+            | LengthOrAuto::FitContent
+            | LengthOrAuto::FitContentOf(_) => None,
         };
         Some(Self {
             left: terms(cv.left),
@@ -877,7 +878,8 @@ pub(crate) fn inline_edges(
         LengthOrAuto::Auto
         | LengthOrAuto::MinContent
         | LengthOrAuto::MaxContent
-        | LengthOrAuto::FitContent => (0.0, 0.0),
+        | LengthOrAuto::FitContent
+        | LengthOrAuto::FitContentOf(_) => (0.0, 0.0),
     };
     let writing_mode = match cv.cssom_writing_mode {
         p::WritingMode::HorizontalTb => WritingMode::HorizontalTb,

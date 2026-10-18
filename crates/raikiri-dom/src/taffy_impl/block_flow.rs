@@ -148,19 +148,8 @@ pub(crate) fn compute_block_flow(
         let width = match style.size.width.expand() {
             taffy::ExpandedDimension::MinContent => minimum,
             taffy::ExpandedDimension::MaxContent => maximum,
-            taffy::ExpandedDimension::FitContentPx(limit) => {
-                fit(limit + metrics.inset.horizontal_axis_sum())
-            }
-            taffy::ExpandedDimension::FitContentPercent(limit) => {
-                inputs.parent_size.width.map_or(maximum, |basis| {
-                    fit(limit * basis + metrics.inset.horizontal_axis_sum())
-                })
-            }
-            taffy::ExpandedDimension::FitContentCalc(handle) => {
-                inputs.parent_size.width.map_or(maximum, |basis| {
-                    fit(resolve_calc(handle, basis) + metrics.inset.horizontal_axis_sum())
-                })
-            }
+            // `fit-content(<length-percentage>)` takes the room its limit
+            // makes, which `with_fit_content_room` offers before this runs.
             _ => match inputs.available_space.width {
                 AvailableSpace::MaxContent => maximum,
                 AvailableSpace::MinContent => minimum,

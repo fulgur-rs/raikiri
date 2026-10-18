@@ -682,7 +682,9 @@ fn layout_values<'a>(
     let content_keyword = |size| {
         matches!(
             size,
-            ComputedLengthPercentageOrAuto::MaxContent | ComputedLengthPercentageOrAuto::FitContent
+            ComputedLengthPercentageOrAuto::MaxContent
+                | ComputedLengthPercentageOrAuto::FitContent
+                | ComputedLengthPercentageOrAuto::FitContentOf(_)
         )
     };
     let width = content_keyword(cv.width);
@@ -709,7 +711,9 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
     let cv = &cascade.computed[idx];
     let keyword = match cv.width {
         ComputedLengthPercentageOrAuto::MinContent => true,
-        ComputedLengthPercentageOrAuto::MaxContent | ComputedLengthPercentageOrAuto::FitContent => {
+        ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent
+        | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
             sized_by_content_keyword(doc, cascade, idx, cv)
         }
         _ => false,
@@ -1953,6 +1957,20 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
         ComputedLengthPercentageOrAuto::MinContent => Dimension::min_content(),
         ComputedLengthPercentageOrAuto::MaxContent => Dimension::max_content(),
         ComputedLengthPercentageOrAuto::FitContent => Dimension::fit_content(),
+        // `fit-content(<length-percentage>)`: the limit keeps its percentage
+        // for Taffy to resolve against the containing block.
+        ComputedLengthPercentageOrAuto::FitContentOf(limit) => match limit {
+            ComputedLengthPercentageOrCalc::Px(v) => {
+                Dimension::fit_content_px(sanitize_taffy(v, site, diag))
+            }
+            ComputedLengthPercentageOrCalc::Percent(p) => {
+                Dimension::fit_content_percent(sanitize_taffy(p / 100.0, site, diag))
+            }
+            ComputedLengthPercentageOrCalc::Calc(value) => {
+                let pointer = crate::taffy_impl::push_calc(calc_values, value, true);
+                Dimension::fit_content_calc(pointer)
+            }
+        },
         ComputedLengthPercentageOrAuto::Calc(value) => {
             let pointer = crate::taffy_impl::push_calc(calc_values, value, true);
             Dimension::calc(pointer)
@@ -1986,7 +2004,8 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent => LengthPercentageAuto::auto(),
+        | ComputedLengthPercentageOrAuto::FitContent
+        | ComputedLengthPercentageOrAuto::FitContentOf(_) => LengthPercentageAuto::auto(),
         ComputedLengthPercentageOrAuto::Calc(value) => {
             let pointer = crate::taffy_impl::push_calc(calc_values, value, non_negative);
             LengthPercentageAuto::calc(pointer)
@@ -2027,7 +2046,8 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
         // Margins never compute to a sizing keyword.
         ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent => LengthPercentageAuto::length(0.0),
+        | ComputedLengthPercentageOrAuto::FitContent
+        | ComputedLengthPercentageOrAuto::FitContentOf(_) => LengthPercentageAuto::length(0.0),
     }
 }
 

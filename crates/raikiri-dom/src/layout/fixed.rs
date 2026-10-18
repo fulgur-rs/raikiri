@@ -647,6 +647,11 @@ fn resolve_sizing_keyword(style: Dimension, stretch: f32, basis: f32) -> Option<
         CompactLength::FIT_CONTENT_KEYWORD_TAG => {
             Some(KeywordSize::Measure(AvailableSpace::Definite(stretch)))
         }
+        // A calc pointer carries address bits in its tag, so it is tested by
+        // its own predicate.
+        _ if style.is_fit_content_calc() => Some(KeywordSize::Measure(AvailableSpace::Definite(
+            crate::taffy_impl::resolve_calc(style.calc_value(), basis),
+        ))),
         CompactLength::STRETCH_TAG => Some(KeywordSize::Exact(stretch)),
         _ => None,
     }

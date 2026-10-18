@@ -183,6 +183,42 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
 }
 
 #[test]
+fn the_fit_content_limit_resolves_against_the_basis_it_needs() {
+    let limit =
+        |size: taffy::Dimension, basis: Option<f32>| fit_content_limit(size.expand(), basis);
+    let mut arena = Vec::new();
+    let mut calc = |percent: f32, px: f32| {
+        let value = raikiri_style::property::CalcLengthPercentage { percent, px };
+        taffy::Dimension::fit_content_calc(push_calc(&mut arena, value, true))
+    };
+
+    // A length needs no basis.
+    assert_eq!(
+        limit(taffy::Dimension::fit_content_px(120.0), None),
+        Some(120.0)
+    );
+    // A percentage leaves no limit while the basis is indefinite.
+    assert_eq!(
+        limit(taffy::Dimension::fit_content_percent(0.25), None),
+        None
+    );
+    assert_eq!(
+        limit(taffy::Dimension::fit_content_percent(0.25), Some(400.0)),
+        Some(100.0)
+    );
+    // So does a calc() with a percentage term, which a calc() of lengths does not.
+    let mixed = calc(25.0, -50.0);
+    assert_eq!(limit(mixed, None), None);
+    assert_eq!(limit(mixed, Some(400.0)), Some(50.0));
+    assert_eq!(limit(calc(0.0, 30.0), None), Some(30.0));
+    // A limit never goes below zero.
+    assert_eq!(limit(mixed, Some(100.0)), Some(0.0));
+    // Other sizes have no limit.
+    assert_eq!(limit(taffy::Dimension::length(10.0), Some(400.0)), None);
+    assert_eq!(limit(taffy::Dimension::auto(), Some(400.0)), None);
+}
+
+#[test]
 fn a_horizontal_override_keeps_the_vertical_ancestor_fragmentation_guard() {
     use crate::layout::ifc::boxes::IfcBoxKind;
     use crate::layout::test_support::ifc_ahem_fonts;

@@ -5504,6 +5504,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | LengthOrAuto::MinContent
             | LengthOrAuto::MaxContent
             | LengthOrAuto::FitContent => None,
+            LengthOrAuto::FitContentOf(limit) => length_percentage_or_calc(limit),
             LengthOrAuto::Calc(_) => Some("calc()"),
             LengthOrAuto::RelativeCalc(_) => Some("LengthOrAuto::RelativeCalc"),
             LengthOrAuto::Length(l) => length(l),
@@ -7873,6 +7874,18 @@ fn cascade_page_max_and_fit_content_widths_are_kept() {
     assert_eq!(
         fit.declarations().get(&PropertyKey::Width),
         Some(&PropertyValue::Width(LengthOrAuto::FitContent)),
+    );
+}
+
+#[test]
+fn cascade_page_fit_content_function_width_absolutizes_its_limit() {
+    let root = root_with_font_size(20.0);
+    let fit = page("@page { width: fit-content(2em) }", &root);
+    assert_eq!(
+        fit.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::FitContentOf(
+            LengthPercentageOrCalc::Length(Length::Px(40.0))
+        ))),
     );
 }
 

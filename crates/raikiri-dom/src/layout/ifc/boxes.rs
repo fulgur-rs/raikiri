@@ -9,7 +9,7 @@ use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext, BoxProbe};
-use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
+use crate::taffy_impl::{fit_content_room, measure_against_parent_height, resolve_calc};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::TextGroupAlign;
@@ -2228,6 +2228,14 @@ fn content_keyword_width(
 ) -> Option<OwnWidth> {
     let size = tree.layout_node_with_style(node).unwrap().style.size;
     let keyword = if horizontal { size.width } else { size.height };
+    // A percentage against an indefinite size leaves no room, which sizes the
+    // child like `auto`.
+    let basis = if horizontal {
+        parent_size.width
+    } else {
+        parent_size.height
+    };
+    let room = fit_content_room(tree, node, keyword.expand(), basis, horizontal);
     let mut measure = |along: AvailableSpace| {
         let (width, height) = if horizontal {
             (along, AvailableSpace::MaxContent)
@@ -2265,6 +2273,18 @@ fn content_keyword_width(
         taffy::ExpandedDimension::FitContent => Some(OwnWidth::Fit {
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
+        }),
+        // The limit stands in for the room the root leaves the child.
+        taffy::ExpandedDimension::FitContentPx(_)
+        | taffy::ExpandedDimension::FitContentPercent(_)
+        | taffy::ExpandedDimension::FitContentCalc(_) => room.map(|room| {
+            OwnWidth::Fixed(
+                OwnWidth::Fit {
+                    min: measure(AvailableSpace::MinContent),
+                    max: measure(AvailableSpace::MaxContent),
+                }
+                .at(room),
+            )
         }),
         _ => None,
     }
@@ -2351,7 +2371,7 @@ fn clamp_block_height(tree: &Document, node: usize, basis: f32, height: f32) -> 
 }
 
 /// What a `content-box` size needs added to become a border-box size.
-fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
+pub(crate) fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
     let style = &tree.layout_node_with_style(node).unwrap().style;
     if style.box_sizing != taffy::BoxSizing::ContentBox {
         return 0.0;
@@ -2361,7 +2381,7 @@ fn box_sizing_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
     padding.left + padding.right + border.left + border.right
 }
 
-fn box_sizing_height_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
+pub(crate) fn box_sizing_height_adjustment(tree: &Document, node: usize, basis: f32) -> f32 {
     let style = &tree.layout_node_with_style(node).unwrap().style;
     if style.box_sizing != taffy::BoxSizing::ContentBox {
         return 0.0;

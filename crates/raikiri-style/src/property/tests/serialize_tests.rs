@@ -56,6 +56,21 @@ fn serialize_length_or_auto_formats_length_and_auto() {
         serialize_length_or_auto(&LengthOrAuto::FitContent),
         "fit-content"
     );
+    assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(
+            Length::Percent(50.0)
+        ))),
+        "fit-content(50%)"
+    );
+    assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Calc(
+            CalcLengthPercentage {
+                percent: 10.0,
+                px: 20.0
+            }
+        ))),
+        "fit-content(calc(10% + 20px))"
+    );
 }
 
 #[test]

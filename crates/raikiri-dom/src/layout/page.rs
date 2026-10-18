@@ -86,7 +86,8 @@ pub(crate) fn used_computed_length_percentage_or_auto(
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent => {
+        | ComputedLengthPercentageOrAuto::FitContent
+        | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
             return None;
         }
     };

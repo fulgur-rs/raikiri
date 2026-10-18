@@ -106,7 +106,8 @@ fn relative_insets_with_box_tree(
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent => Some(None),
+        | ComputedLengthPercentageOrAuto::FitContent
+        | ComputedLengthPercentageOrAuto::FitContentOf(_) => Some(None),
         ComputedLengthPercentageOrAuto::Percent(_) | ComputedLengthPercentageOrAuto::Calc(_) => {
             None
         }

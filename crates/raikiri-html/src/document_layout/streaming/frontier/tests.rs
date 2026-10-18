@@ -185,7 +185,12 @@ fn open_boxes_sized_by_their_content_hold_from_their_start() {
         frontier_of("<p>a</p><div style='width:min-content'><p>x</p>"),
         "<div>"
     );
-    for width in ["max-content", "fit-content"] {
+    for width in [
+        "max-content",
+        "fit-content",
+        "fit-content(10em)",
+        "fit-content(50%)",
+    ] {
         assert_eq!(
             frontier_of(&format!("<p>a</p><div style='width:{width}'><p>x</p>")),
             "<div>"

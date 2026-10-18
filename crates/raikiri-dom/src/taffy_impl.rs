@@ -84,6 +84,51 @@ pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
     calc.value.percent != 0.0
 }
 
+/// The limit of a `fit-content(<length-percentage>)` size, resolved against
+/// the percentage `basis` of the containing block.
+///
+/// `None` when `size` is not that function, or when its limit needs a basis
+/// that is indefinite: a percentage that cannot resolve leaves the box with no
+/// limit, which CSS Sizing 3 §5.2.1 treats as the initial value, so the room
+/// its parent offers sizes it.
+fn fit_content_limit(size: taffy::ExpandedDimension, basis: Option<f32>) -> Option<f32> {
+    let limit = match size {
+        taffy::ExpandedDimension::FitContentPx(limit) => limit,
+        taffy::ExpandedDimension::FitContentPercent(percent) => basis? * percent,
+        taffy::ExpandedDimension::FitContentCalc(handle) if calc_has_percentage(handle) => {
+            resolve_calc(handle, basis?)
+        }
+        taffy::ExpandedDimension::FitContentCalc(handle) => resolve_calc(handle, 0.0),
+        _ => return None,
+    };
+    limit.is_finite().then_some(limit.max(0.0))
+}
+
+/// The border-box size that `fit-content(<length-percentage>)` offers the
+/// box `idx` to shrink to fit in, along the width when `horizontal` and the
+/// height otherwise; `None` when `size` is not that function or its limit
+/// cannot resolve (see [`fit_content_limit`]).
+///
+/// The limit is a size of the box-sizing box, so a `content-box` needs its
+/// padding and border added. Their percentages refer to the same `basis`, an
+/// indefinite one counting as zero as it does for the box's own edges.
+pub(crate) fn fit_content_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    size: taffy::ExpandedDimension,
+    basis: Option<f32>,
+    horizontal: bool,
+) -> Option<f32> {
+    let limit = fit_content_limit(size, basis)?;
+    let edge_basis = basis.unwrap_or(0.0);
+    let adjustment = if horizontal {
+        crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, edge_basis)
+    } else {
+        crate::layout::ifc::boxes::box_sizing_height_adjustment(tree, idx, edge_basis)
+    };
+    Some(limit + adjustment)
+}
+
 /// Whether the `height`, `min-height` or `max-height` of `node` is a
 /// percentage, or a `calc()` with one, of the height of its containing block.
 /// A box with an aspect ratio carries each of them over to its width.
@@ -618,6 +663,7 @@ impl LayoutSession<'_> {
             });
         let compute = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
             let idx = usize::from(node_id);
+            let inputs = with_fit_content_room(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
             let inputs = if empty {
                 inputs
@@ -1296,11 +1342,21 @@ fn measure_ifc_root(
     };
     // A fixed box shrinks to fit against its containing block, the page area
     // (CSS 2.1 10.1), while taffy hands it its parent's room. A min-content or
-    // max-content measure is not a room to fit, and is kept.
+    // max-content measure is not a room to fit, and is kept; so is the room
+    // that the limit of `fit-content(<length-percentage>)` makes.
     let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
+    let limited = tree.layout_node_with_style(idx).is_some_and(|node| {
+        matches!(
+            node.style.size.width.expand(),
+            taffy::ExpandedDimension::FitContentPx(_)
+                | taffy::ExpandedDimension::FitContentPercent(_)
+                | taffy::ExpandedDimension::FitContentCalc(_)
+        )
+    });
     let available = match page_width {
         Some(page_width)
             if fixed
+                && !limited
                 && !measure.stretched_width
                 && matches!(available.width, AvailableSpace::Definite(_)) =>
         {
@@ -2172,6 +2228,15 @@ pub(crate) fn flex_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let inputs = with_fit_content_width(tree, node_id, inputs);
+    flex_layout_sized(tree, node_id, inputs)
+}
+
+/// [`flex_layout`] once the width of a `fit-content` container is settled.
+fn flex_layout_sized(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
     let idx = usize::from(node_id);
     let (size, inset, _) = tree.block_definite_size(idx, &inputs);
     let basis = Size {
@@ -2186,10 +2251,34 @@ pub(crate) fn flex_layout(
     output
 }
 
-/// Give a flex container with a `fit-content` width the width CSS Sizing 3
-/// §3.1.1 defines for it: the room offered, but at least its min-content and at
-/// most its max-content width. Taffy's flexbox algorithm reads the keyword as
-/// `max-content`.
+/// Offer a box sized by `fit-content(<length-percentage>)` its limit as the
+/// room it shrinks to fit in, whatever room its parent offers.
+///
+/// A limit that cannot resolve (see [`fit_content_room`]) leaves the room
+/// alone, so the box is sized by the room it is offered.
+fn with_fit_content_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if inputs.known_dimensions.width.is_some() {
+        return inputs;
+    }
+    let room = tree.layout_node_with_style(idx).and_then(|node| {
+        let size = node.style.size.width.expand();
+        fit_content_room(tree, idx, size, inputs.parent_size.width, true)
+    });
+    if let Some(room) = room {
+        inputs.available_space.width = AvailableSpace::Definite(room);
+    }
+    inputs
+}
+
+/// Give a flex container with a `fit-content` width, or a
+/// `fit-content(<length-percentage>)` one whose limit [`with_fit_content_room`]
+/// made the room, the width CSS Sizing 3 §3.1.1 defines for it: the room
+/// offered, but at least its min-content and at most its max-content width.
+/// Taffy's flexbox algorithm reads the keyword as `max-content`.
 fn with_fit_content_width(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
@@ -2205,6 +2294,9 @@ fn with_fit_content_width(
                 matches!(
                     node.style.size.width.expand(),
                     taffy::ExpandedDimension::FitContent
+                        | taffy::ExpandedDimension::FitContentPx(_)
+                        | taffy::ExpandedDimension::FitContentPercent(_)
+                        | taffy::ExpandedDimension::FitContentCalc(_)
                 )
             })
     {
@@ -2215,7 +2307,7 @@ fn with_fit_content_width(
         probe.run_mode = RunMode::ComputeSize;
         probe.axis = RequestedAxis::Horizontal;
         probe.available_space.width = space;
-        flex_layout(tree, node_id, probe).size.width
+        flex_layout_sized(tree, node_id, probe).size.width
     };
     let min_content = measure(AvailableSpace::MinContent);
     let max_content = measure(AvailableSpace::MaxContent);
