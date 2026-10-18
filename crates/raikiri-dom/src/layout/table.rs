@@ -863,7 +863,7 @@ fn compute_table_layout_checked(
         resolve_row_heights(doc, &mut grid, height_widths, border_spacing)
     })?;
     if let Some(columns) = &columns_in_place {
-        columns.forget_stale_row_passes(&mut grid);
+        columns.measure_changed_cells(doc, &mut grid, height_widths, border_spacing)?;
     }
     for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
         if *hidden {
@@ -2474,79 +2474,7 @@ fn resolve_row_heights(
     for cell in &mut grid.cells {
         let columns = cell_column_range(cell, column_widths.len())?;
         let cell_width = spanned_size(&column_widths[columns], spacing.0);
-        // Cell height floors the row rather than stretching the content used
-        // for alignment. Preserve ordinary block border and margin sizing.
-        let authored_height = doc
-            .layout_style_for_key(cell.node_id)
-            .expect("table cell layout style")
-            .size
-            .height;
-        if !authored_height.is_auto() {
-            doc.layout_style_for_key_mut(cell.node_id)
-                .expect("table cell layout style")
-                .size
-                .height = Dimension::auto();
-            doc.table_layout_node_mut(cell.node_id).cache.clear();
-        }
-        let output = doc.compute_child_layout(
-            NodeId::from(cell.node_id),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::InherentSize,
-                axis: taffy::tree::RequestedAxis::Horizontal,
-                known_dimensions: Size {
-                    width: Some(cell_width),
-                    height: None,
-                },
-                parent_size: Size {
-                    width: Some(cell_width),
-                    height: None,
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(cell_width),
-                    height: AvailableSpace::MAX_CONTENT,
-                },
-                known_dimensions_are_definite: taffy::geometry::Size {
-                    width: true,
-                    height: true,
-                },
-                vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
-            },
-        );
-        if !authored_height.is_auto() {
-            doc.layout_style_for_key_mut(cell.node_id)
-                .expect("table cell layout style")
-                .size
-                .height = authored_height;
-            doc.table_layout_node_mut(cell.node_id).cache.clear();
-        }
-        cell.row_pass = (authored_height.is_auto() && row_pass_is_final(doc, cell.node_id))
-            .then_some(RowPassLayout {
-                width: cell_width,
-                scrollable_overflow_rect: output.scrollable_overflow_rect,
-            });
-        // Distribute rowspan height across spanned rows (simple: equally)
-        cell.natural_height = output.size.height;
-        let style = doc
-            .layout_style_for_key(cell.node_id)
-            .expect("table cell layout style");
-        let padding = style
-            .padding
-            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
-        let border = style
-            .border
-            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
-        let authored_height = resolve_dimension(style.size.height, None).map_or(0.0, |height| {
-            if style.box_sizing == taffy::BoxSizing::ContentBox {
-                height + padding.top + padding.bottom + border.top + border.bottom
-            } else {
-                height
-            }
-        });
-        let h = output.size.height.max(authored_height);
-        let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
-        cell.baseline =
-            baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
+        let h = measure_cell(doc, cell, cell_width);
         let rs = cell.row_span as usize;
         if rs == 1 {
             row_heights[cell.row as usize] = f32_max_compat(row_heights[cell.row as usize], h);
@@ -2602,6 +2530,87 @@ fn resolve_row_heights(
         }
     }
     Ok(row_heights)
+}
+
+/// Lay `cell` out at `cell_width` with no definite height, and record what the
+/// rows and the final placement need of it: the lines it can keep, its height
+/// and its baseline. Returns the height it asks of its rows.
+fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_width: f32) -> f32 {
+    // Cell height floors the row rather than stretching the content used
+    // for alignment. Preserve ordinary block border and margin sizing.
+    let authored_height = doc
+        .layout_style_for_key(cell.node_id)
+        .expect("table cell layout style")
+        .size
+        .height;
+    if !authored_height.is_auto() {
+        doc.layout_style_for_key_mut(cell.node_id)
+            .expect("table cell layout style")
+            .size
+            .height = Dimension::auto();
+        doc.table_layout_node_mut(cell.node_id).cache.clear();
+    }
+    let output = doc.compute_child_layout(
+        NodeId::from(cell.node_id),
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: taffy::tree::RequestedAxis::Horizontal,
+            known_dimensions: Size {
+                width: Some(cell_width),
+                height: None,
+            },
+            parent_size: Size {
+                width: Some(cell_width),
+                height: None,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(cell_width),
+                height: AvailableSpace::MAX_CONTENT,
+            },
+            known_dimensions_are_definite: taffy::geometry::Size {
+                width: true,
+                height: true,
+            },
+            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        },
+    );
+    if !authored_height.is_auto() {
+        doc.layout_style_for_key_mut(cell.node_id)
+            .expect("table cell layout style")
+            .size
+            .height = authored_height;
+        doc.table_layout_node_mut(cell.node_id).cache.clear();
+    }
+    cell.row_pass = (authored_height.is_auto() && row_pass_is_final(doc, cell.node_id)).then_some(
+        RowPassLayout {
+            width: cell_width,
+            scrollable_overflow_rect: output.scrollable_overflow_rect,
+        },
+    );
+    // Distribute rowspan height across spanned rows (simple: equally)
+    cell.natural_height = output.size.height;
+    let style = doc
+        .layout_style_for_key(cell.node_id)
+        .expect("table cell layout style");
+    let padding = style
+        .padding
+        .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+    let border = style
+        .border
+        .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+    let authored_height = resolve_dimension(style.size.height, None).map_or(0.0, |height| {
+        if style.box_sizing == taffy::BoxSizing::ContentBox {
+            height + padding.top + padding.bottom + border.top + border.bottom
+        } else {
+            height
+        }
+    });
+    let h = output.size.height.max(authored_height);
+    let baseline = first_cell_baseline(doc, cell.node_id, padding.top + border.top);
+    cell.baseline =
+        baseline.unwrap_or((output.size.height - padding.bottom - border.bottom).max(0.0));
+    h
 }
 
 // ---------------------------------------------------------------------------
@@ -3800,15 +3809,26 @@ impl ColumnsInPlace {
         }
     }
 
-    /// Forget the row-pass layout of each cell whose borders differ between
-    /// the two states: its lines were broken at borders it no longer has.
-    fn forget_stale_row_passes(&self, grid: &mut TableGrid) {
+    /// Measure again each cell whose borders differ between the two states,
+    /// with the borders it keeps: the measure of the rows broke its lines at
+    /// borders it no longer has, so neither its lines, its height nor its
+    /// baseline are those it is laid out and aligned by. The rows keep the
+    /// heights they were measured at.
+    fn measure_changed_cells(
+        &self,
+        doc: &mut LayoutSession<'_>,
+        grid: &mut TableGrid,
+        column_widths: &[f32],
+        spacing: (f32, f32),
+    ) -> Result<(), raikiri_traits::LayoutError> {
         let states = self.in_place.cells.iter().zip(&self.remaining.cells);
         for (cell, (in_place, remaining)) in grid.cells.iter_mut().zip(states) {
             if in_place.1 != remaining.1 {
-                cell.row_pass = None;
+                let columns = cell_column_range(cell, column_widths.len())?;
+                measure_cell(doc, cell, spanned_size(&column_widths[columns], spacing.0));
             }
         }
+        Ok(())
     }
 }
 

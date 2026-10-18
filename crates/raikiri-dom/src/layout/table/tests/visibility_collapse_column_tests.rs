@@ -664,6 +664,32 @@ fn a_cell_beside_a_collapsed_column_breaks_its_lines_at_the_borders_it_keeps() {
 }
 
 #[test]
+fn a_cell_beside_a_collapsed_column_is_aligned_by_the_lines_it_keeps() {
+    // The row keeps the 30px the cell's three lines took beside the collapsed
+    // column, where its border narrowed them. Without that border the cell
+    // breaks two lines of 20px, and sits at the bottom of the row by them.
+    let columns = [
+        "display:table-column;width:40px",
+        "display:table-column;visibility:collapse;width:40px",
+        "display:table-column;width:40px",
+    ];
+    for text in [WRAPS, "#X X X X X X"] {
+        let rows: [Row; 1] = [(
+            "",
+            &[
+                ("", "X"),
+                ("border-right:20px solid black", "X"),
+                ("vertical-align:bottom", text),
+            ],
+        )];
+        let (doc, _, cells) = laid_out_rows("table-layout:fixed", 120, &columns, &rows);
+        let layout = doc.nodes[cells[0][2]].unrounded_layout;
+        assert_eq!(layout.size.height, 30.0, "{text}");
+        assert_eq!(layout.padding.top, 10.0, "{text}");
+    }
+}
+
+#[test]
 fn a_border_only_a_collapsed_column_gives_the_rows_is_not_counted_twice() {
     // While the column is in place its cell's bottom border is the line
     // between the rows, and the cell below takes it as its top border. The
