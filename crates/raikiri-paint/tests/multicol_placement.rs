@@ -1546,3 +1546,53 @@ fn an_atomic_inline_taller_than_its_text_makes_its_line_taller_in_the_column() {
         ),
     );
 }
+
+#[test]
+fn atomic_inlines_of_a_paragraph_in_wrappers_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for (open, close) in [("<div>", "</div>"), ("<div><div>", "</div></div>")] {
+        compare(
+            &format!("<div class=mc>{open}<p>A{red}<br>B<br>{blue}C<br>D</p>{close}</div><p>E</p>"),
+            ".mc{height:40px}",
+            &format!(
+                "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn atomic_inlines_of_a_paragraph_in_a_wrapper_fill_three_columns() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><div><p>A{red}<br>B<br>{blue}C<br>D<br>F{red}</p></div></div>"),
+        ".mc{width:160px;column-count:3;height:40px}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div><div style='position:absolute;left:120px;top:0'>F{red}</div>"
+        ),
+    );
+}
+
+#[test]
+fn an_atomic_inline_moved_with_its_line_by_widows_is_not_left_in_the_earlier_column() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><div><p>A{red}<br>B<br>{blue}C<br>D</p></div></div>"),
+        ".mc{height:60px;orphans:2;widows:2}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div>"
+        ),
+    );
+}
+
+#[test]
+fn atomic_inlines_of_a_paragraph_in_a_right_to_left_wrapper_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><div><p>A{red}<br>B<br>{blue}C<br>D</p></div></div><p>E</p>"),
+        ".mc{height:40px;direction:rtl}",
+        &format!(
+            "<div dir=rtl style='position:absolute;left:60px;top:0;width:40px'>A{red}<br>B</div><div dir=rtl style='position:absolute;left:0;top:0;width:40px'>{blue}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+        ),
+    );
+}

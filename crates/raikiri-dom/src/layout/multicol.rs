@@ -181,8 +181,9 @@ pub(crate) fn compute_multicol_layout(
     .then(|| constrained_chain::supported(tree, index))
     .flatten();
     // Inspect fresh child layouts before opting a definite-height plain block
-    // chain into fragmentation. Atomic and constrained children keep their
-    // foundational placement path.
+    // chain into fragmentation. A chain may end in a paragraph with atomic
+    // inlines, which go to the columns of their lines. Constrained children
+    // and other boxes in a paragraph keep their foundational placement path.
     let plain_block_scope = inputs.run_mode == RunMode::PerformLayout
         && !custom_scope
         && !break_flow_scope
@@ -833,11 +834,16 @@ fn can_balance_single_paragraph(tree: &Document, child: usize) -> bool {
 fn can_balance_atomic_paragraph(tree: &Document, child: usize) -> bool {
     can_balance_paragraph_box(tree, child)
         && tree.nodes[child].ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
-        && tree.nodes[child].ifc.as_ref().is_some_and(|root| {
-            root.boxes
-                .iter()
-                .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
-        })
+        && paragraph_boxes_are_atomic(tree, child)
+}
+
+/// Whether the paragraph `node_id` has no box but atomic inlines.
+fn paragraph_boxes_are_atomic(tree: &Document, node_id: usize) -> bool {
+    tree.nodes[node_id].ifc.as_ref().is_some_and(|root| {
+        root.boxes
+            .iter()
+            .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
+    })
 }
 
 fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
@@ -919,7 +925,7 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
         }
         if node.ifc.is_some() {
             return node.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
-                && node.ifc_boxes().is_empty()
+                && paragraph_boxes_are_atomic(tree, child)
                 && !multicol_subtree_has_float(tree, child);
         }
         current = child;
@@ -2134,12 +2140,36 @@ fn record_nested_ifc_box_fragments(
                 root.multicol_fragment_origins_recorded = true;
             }
 
+            let mut path = Vec::new();
+            let mut current = node_id;
+            while current != subtree_root {
+                path.push(current);
+                let Some(parent) = tree.parent_of(current) else {
+                    break;
+                };
+                current = parent;
+            }
+            path.reverse();
+            let plain_block_path = !subtree_has_float
+                && !nested_logical_minimum_scope
+                && tree.nodes[subtree_root].taffy_display() == Display::Block
+                && tree.nodes[node_id].ifc_writing_mode()
+                    == Some(shodo::geometry::WritingMode::HorizontalTb)
+                && path
+                    .iter()
+                    .all(|&ancestor| tree.nodes[ancestor].taffy_display() == Display::Block);
+            let node_offset_y = path
+                .iter()
+                .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)
+                .sum::<f32>();
+
             // An atomic inline sits on a line, so it belongs to the column of
             // that line: it gets a fragment in the paragraph's fragment of
             // that column, as the paragraph's fragments would each paint it
             // otherwise.
-            if root_owns_fragments
+            if (root_owns_fragments || plain_block_path)
                 && !nested_row_flex_scope
+                && tree.nodes[node_id].multicol.is_none()
                 && let (Some(ranges), Some(lines)) = (&line_ranges, &lines)
             {
                 let (recorded, atomics) =
@@ -2179,29 +2209,6 @@ fn record_nested_ifc_box_fragments(
                     });
                 }
             }
-
-            let mut path = Vec::new();
-            let mut current = node_id;
-            while current != subtree_root {
-                path.push(current);
-                let Some(parent) = tree.parent_of(current) else {
-                    break;
-                };
-                current = parent;
-            }
-            path.reverse();
-            let plain_block_path = !subtree_has_float
-                && !nested_logical_minimum_scope
-                && tree.nodes[subtree_root].taffy_display() == Display::Block
-                && tree.nodes[node_id].ifc_writing_mode()
-                    == Some(shodo::geometry::WritingMode::HorizontalTb)
-                && path
-                    .iter()
-                    .all(|&ancestor| tree.nodes[ancestor].taffy_display() == Display::Block);
-            let node_offset_y = path
-                .iter()
-                .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)
-                .sum::<f32>();
 
             for (column, entries) in columns {
                 let column_x =
