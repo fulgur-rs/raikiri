@@ -4,6 +4,15 @@ use raikiri_traits::PageBox;
 /// Lay out `<body>` 100px wide with `build` adding its content, giving each
 /// `<img>` a 25×50 natural size.
 fn laid_out(build: impl FnOnce(&mut Document, usize)) -> Document {
+    laid_out_with_natural_size((25.0, 50.0), build)
+}
+
+/// [`laid_out`] with the natural size of each `<img>` given. A zero size is the
+/// empty box a resolver's fallback leaves, with no ratio.
+fn laid_out_with_natural_size(
+    natural: (f32, f32),
+    build: impl FnOnce(&mut Document, usize),
+) -> Document {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -18,8 +27,9 @@ fn laid_out(build: impl FnOnce(&mut Document, usize)) -> Document {
         if node.tag_name() == Some("img")
             && let crate::node::NodeData::Element(element) = &mut node.data
         {
-            let mut intrinsic = raikiri_traits::IntrinsicBox::new(25.0, 50.0);
-            intrinsic.aspect_ratio = Some(0.5);
+            let mut intrinsic = raikiri_traits::IntrinsicBox::new(natural.0, natural.1);
+            intrinsic.aspect_ratio =
+                (natural.0 > 0.0 && natural.1 > 0.0).then(|| natural.0 / natural.1);
             element.image_intrinsic_size = Some(intrinsic);
         }
     }
@@ -45,6 +55,31 @@ fn a_block_level_image_keeps_its_natural_width() {
         image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
     });
     assert_eq!(size(&doc, image), (25.0, 50.0));
+}
+
+#[test]
+fn a_decoded_image_keeps_its_own_natural_size_whatever_its_file_name() {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+        doc.set_element_attribute(image, "src", "green.png")
+            .unwrap();
+    });
+    // The 100×50 size that stands in for an image nobody decoded is not
+    // authored on this one.
+    assert_eq!(size(&doc, image), (25.0, 50.0));
+}
+
+#[test]
+fn an_unresolved_green_image_keeps_the_stand_in_size_over_a_fallback_box() {
+    let mut image = 0;
+    let doc = laid_out_with_natural_size((0.0, 0.0), |doc, body| {
+        image = doc.append_element(Some(body), "img", Style::default(), Some("display:block"));
+        doc.set_element_attribute(image, "src", "green.png")
+            .unwrap();
+    });
+    // A resolver's fallback stores an empty box; it is not a decoded size.
+    assert_eq!(size(&doc, image), (100.0, 50.0));
 }
 
 #[test]
