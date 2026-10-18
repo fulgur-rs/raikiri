@@ -10,10 +10,11 @@ use super::{
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
-use raikiri_dom::{FragmentRect, Node};
+use raikiri_dom::{Document, FragmentRect, Node};
 use raikiri_style::property::{BorderStyle, PositionValue};
 use raikiri_style::{
-    ComputedBorder, ComputedBorderRadius, ComputedLengthPercentageOrAuto, ComputedValues, Sides,
+    CascadeResult, ComputedBorder, ComputedBorderRadius, ComputedLengthPercentageOrAuto,
+    ComputedValues, Sides,
 };
 use raikiri_traits::NodeKind;
 
@@ -75,6 +76,51 @@ pub(super) struct ElementBox<'w> {
     pub(super) generated_content_advance: f32,
 }
 
+/// Where the box of an element lies before the clips of fragmentainers cut
+/// it.
+struct Placement<'w> {
+    cv: &'w ComputedValues,
+    abs_x: f32,
+    abs_y: f32,
+    generates_box: bool,
+    paint_padding: taffy::Rect<f32>,
+    paint_border_radius: ComputedBorderRadius,
+    child_shift_y: f32,
+    pos_dx: f32,
+    pos_dy: f32,
+    transformable: bool,
+    child_transform_x: f32,
+    child_transform_y: f32,
+    placed_in_column: bool,
+    fixed_in_viewport: bool,
+    establishes_fixed_containing_block: bool,
+    fixed_dx: f32,
+    fixed_dy: f32,
+    paint_x: f32,
+    paint_y: f32,
+}
+
+/// The extent of the box of an element after the clips of the fragmentainers
+/// cut it.
+struct FragmentCut {
+    paint_y: f32,
+    paint_height: f32,
+    paint_background_height: f32,
+    multicol_clip_pushed: bool,
+    fragmentainer_clip_pushed: bool,
+}
+
+/// Whether the box of an element paints on this page, and the extent it
+/// paints in.
+struct PageExtent {
+    paint_y: f32,
+    paint_height: f32,
+    paint_background_height: f32,
+    paints_on_page: bool,
+    paints_as_absolute_continuation: bool,
+    unfragmented_top: f32,
+}
+
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Find where the box of the element `inputs.node_id`, laid out as
     /// `layout`, is painted. Opens the clips of the fragmentainers that cut it
@@ -88,55 +134,186 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     ) -> Option<ElementBox<'w>> {
         let BoxInputs {
             node_id,
+            fragment_id,
+            inside_fixed,
+            inside_fixed_containing_block,
+            ..
+        } = inputs;
+        let (document, cascade, counter_snapshots) =
+            (self.document, self.cascade, self.counter_snapshots);
+        let placement = self.placement(&inputs, node, layout);
+        let Placement {
+            cv,
+            abs_x,
+            abs_y,
+            generates_box,
+            paint_padding,
+            paint_border_radius,
+            child_shift_y,
+            pos_dx,
+            pos_dy,
+            transformable,
+            child_transform_x,
+            child_transform_y,
+            placed_in_column,
+            fixed_in_viewport,
+            establishes_fixed_containing_block,
+            fixed_dx,
+            fixed_dy,
+            paint_x,
+            paint_y,
+        } = placement;
+        if transformable
+            && !translation_only(cv)
+            && !self.push_transform(cv, layout, paint_x, paint_y)
+        {
+            return None;
+        }
+        let cut = self.cut_by_fragmentainers(&inputs, layout, paint_x, paint_y);
+        let FragmentCut {
+            multicol_clip_pushed,
+            fragmentainer_clip_pushed,
+            ..
+        } = cut;
+        // A collapsed-border table cell paints the borders that won
+        // conflict resolution with its rows, neighbours and table.
+        let painted_border = document
+            .get_node(node_id)
+            .and_then(|node| node.collapsed_border())
+            .unwrap_or(&cv.border);
+        let PageExtent {
+            paint_y,
+            mut paint_height,
+            mut paint_background_height,
+            paints_on_page,
+            paints_as_absolute_continuation,
+            unfragmented_top,
+        } = self.page_extent(&inputs, node, layout, &placement, &cut);
+        // The pseudo is not an arena child yet, so Taffy cannot
+        // include its line box in an auto-height originating box.
+        // Expand only the auto-height paint geometry; fixed-height
+        // elements retain their normal overflow behavior. This is a
+        // paint-side bridge: the arena/Taffy flow remains unchanged
+        // until generated inline boxes can participate in layout.
+        if !paints_as_absolute_continuation
+            && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        {
+            let pseudo_height = generated_flow_height(
+                document,
+                cascade,
+                node_id,
+                counter_snapshots,
+                &mut self.generated_flow_heights,
+            );
+            let pseudo_border_height = cv.border.top.width().px()
+                + paint_padding.top
+                + pseudo_height
+                + paint_padding.bottom
+                + cv.border.bottom.width().px();
+            if pseudo_border_height > paint_height {
+                let was_intrinsic_height =
+                    (paint_background_height - layout.size.height).abs() <= f32::EPSILON;
+                paint_height = pseudo_border_height;
+                if was_intrinsic_height {
+                    paint_background_height = paint_height;
+                }
+            }
+        }
+        let generated_x = paint_x + cv.border.left.width().px() + paint_padding.left;
+        let generated_y = paint_y + cv.border.top.width().px() + paint_padding.top;
+        // Direct text children are the only inline descendants whose
+        // current minimal layout path has a reliable horizontal box.
+        // Use their right edge for `::after`; element children stay
+        // on the existing block-flow path until a full IFC lands.
+        let generated_content_advance = node
+            .children
+            .iter()
+            .filter_map(|child_id| document.get_node(*child_id))
+            .filter(|child| child.kind() == NodeKind::Text)
+            .map(|child| {
+                (child.unrounded_layout.location.x + child.unrounded_layout.size.width
+                    - cv.border.left.width().px()
+                    - paint_padding.left)
+                    .max(0.0)
+            })
+            .fold(0.0, f32::max);
+        Some(ElementBox {
+            node,
+            node_id,
+            cv,
+            layout,
+            fragment_id,
+            inside_fixed,
+            inside_fixed_containing_block,
+            abs_x,
+            abs_y,
+            generates_box,
+            paint_padding,
+            paint_border_radius,
+            child_shift_y,
+            pos_dx,
+            pos_dy,
+            fixed_dx,
+            fixed_dy,
+            child_transform_x,
+            child_transform_y,
+            placed_in_column,
+            fixed_in_viewport,
+            establishes_fixed_containing_block,
+            paint_x,
+            paint_y,
+            paint_height,
+            paint_background_height,
+            multicol_clip_pushed,
+            fragmentainer_clip_pushed,
+            painted_border,
+            paints_on_page,
+            paints_as_absolute_continuation,
+            unfragmented_top,
+            generated_x,
+            generated_y,
+            generated_content_advance,
+        })
+    }
+
+    /// Where the box of the element `inputs.node_id` lies, before any
+    /// transform or fragmentainer clip applies.
+    fn placement(
+        &self,
+        inputs: &BoxInputs,
+        node: &'w Node,
+        layout: taffy::Layout,
+    ) -> Placement<'w> {
+        let BoxInputs {
+            node_id,
             parent_abs_x,
             parent_abs_y,
             parent_font_size,
             shift_y,
             transform_x,
             transform_y,
-            fragment_clip_height,
             fragment_id,
-            fragment_clip,
             is_fragment_visit,
-            inside_fixed,
             inside_fixed_containing_block,
-        } = inputs;
-        let (document, cascade, counter_snapshots, page_box, active_page_name, layout_fragments) = (
+            ..
+        } = *inputs;
+        let (document, cascade, page_box, root_id, layout_fragments) = (
             self.document,
             self.cascade,
-            self.counter_snapshots,
             self.page_box,
-            self.active_page_name,
+            self.root_id,
             self.layout_fragments,
         );
-        let (image_cache, root_id) = (self.image_cache, self.root_id);
         let PageGeometry {
-            margins,
-            insets,
             content_height,
             fixed_rtl,
             fixed_content_width,
-            page_top,
-            page_bottom,
             page_offset_x,
             page_offset_y,
             fixed_flow_shift_x,
             fixed_origin_y,
-            flow_band,
             ..
         } = self.geometry;
-        let named_page_matches = |node_id: usize| {
-            raikiri_dom::paint_rules::named_page_matches(
-                document,
-                cascade,
-                node_id,
-                active_page_name,
-            )
-        };
-        let scene = &mut *self.scene;
-        let trace = &mut self.trace;
-        let stack = &mut self.stack;
-        let generated_flow_heights = &mut self.generated_flow_heights;
         let abs_x = parent_abs_x + layout.location.x;
         let abs_y = parent_abs_y + layout.location.y;
         let cv = &cascade.computed[node_id];
@@ -243,21 +420,72 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             (0.0, 0.0)
         };
         let paint_x = abs_x + page_offset_x + pos_dx + fixed_dx + child_transform_x;
-        let mut paint_y =
-            abs_y + page_offset_y + child_shift_y + pos_dy + fixed_dy + child_transform_y;
-        if transformable && !translation_only(cv) {
-            let matrix =
-                element_transform(cv, paint_x, paint_y, layout.size.width, layout.size.height);
-            // spec: https://www.w3.org/TR/css-transforms-1/#transform-function-lists
-            // A singular matrix hides the element and its subtree.
-            if matrix.determinant() == 0.0
-                || !matrix.as_coeffs().iter().all(|value| value.is_finite())
-            {
-                return None;
-            }
-            stack.push(PaintFrame::RestoreTransform(scene.transform));
-            scene.transform *= matrix;
+        let paint_y = abs_y + page_offset_y + child_shift_y + pos_dy + fixed_dy + child_transform_y;
+        Placement {
+            cv,
+            abs_x,
+            abs_y,
+            generates_box,
+            paint_padding,
+            paint_border_radius,
+            child_shift_y,
+            pos_dx,
+            pos_dy,
+            transformable,
+            child_transform_x,
+            child_transform_y,
+            placed_in_column,
+            fixed_in_viewport,
+            establishes_fixed_containing_block,
+            fixed_dx,
+            fixed_dy,
+            paint_x,
+            paint_y,
         }
+    }
+
+    /// Move the scene by the transform of the element, and push the frame
+    /// that restores it. Give `false` when the transform hides the element
+    /// and its subtree.
+    fn push_transform(
+        &mut self,
+        cv: &ComputedValues,
+        layout: taffy::Layout,
+        paint_x: f32,
+        paint_y: f32,
+    ) -> bool {
+        let matrix = element_transform(cv, paint_x, paint_y, layout.size.width, layout.size.height);
+        // spec: https://www.w3.org/TR/css-transforms-1/#transform-function-lists
+        // A singular matrix hides the element and its subtree.
+        if matrix.determinant() == 0.0 || !matrix.as_coeffs().iter().all(|value| value.is_finite())
+        {
+            return false;
+        }
+        self.stack
+            .push(PaintFrame::RestoreTransform(self.scene.transform));
+        self.scene.transform *= matrix;
+        true
+    }
+
+    /// Open the clips of the fragmentainers that cut the box of the element
+    /// `inputs.node_id`, and say how far they cut it.
+    fn cut_by_fragmentainers(
+        &mut self,
+        inputs: &BoxInputs,
+        layout: taffy::Layout,
+        paint_x: f32,
+        paint_y: f32,
+    ) -> FragmentCut {
+        let BoxInputs {
+            node_id,
+            fragment_clip_height,
+            fragment_clip,
+            ..
+        } = *inputs;
+        let image_cache = self.image_cache;
+        let scene = &mut *self.scene;
+        let trace = &mut self.trace;
+        let mut paint_y = paint_y;
         let mut paint_height = layout.size.height;
         let mut paint_background_height = layout.size.height;
         let mut multicol_clip_pushed = false;
@@ -300,12 +528,69 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 t.push(crate::PaintTraceEvent::PushFragmentainerClip(node_id));
             }
         }
-        // A collapsed-border table cell paints the borders that won
-        // conflict resolution with its rows, neighbours and table.
-        let painted_border = document
-            .get_node(node_id)
-            .and_then(|node| node.collapsed_border())
-            .unwrap_or(&cv.border);
+        FragmentCut {
+            paint_y,
+            paint_height,
+            paint_background_height,
+            multicol_clip_pushed,
+            fragmentainer_clip_pushed,
+        }
+    }
+
+    /// Whether the box of the element `inputs.node_id` paints on this page,
+    /// and the extent it paints in, which a box that continues from an
+    /// earlier page or breaks into the next one stretches or moves.
+    fn page_extent(
+        &self,
+        inputs: &BoxInputs,
+        node: &'w Node,
+        layout: taffy::Layout,
+        placement: &Placement<'w>,
+        cut: &FragmentCut,
+    ) -> PageExtent {
+        let BoxInputs {
+            node_id,
+            inside_fixed,
+            ..
+        } = *inputs;
+        let Placement {
+            cv,
+            abs_y,
+            pos_dy,
+            child_transform_y,
+            fixed_in_viewport,
+            paint_x,
+            ..
+        } = *placement;
+        let FragmentCut {
+            mut paint_y,
+            mut paint_height,
+            mut paint_background_height,
+            ..
+        } = *cut;
+        let (document, cascade, root_id, active_page_name) = (
+            self.document,
+            self.cascade,
+            self.root_id,
+            self.active_page_name,
+        );
+        let scene_transform = self.scene.transform;
+        let PageGeometry {
+            margins,
+            insets,
+            page_top,
+            page_bottom,
+            flow_band,
+            ..
+        } = self.geometry;
+        let named_page_matches = |node_id: usize| {
+            raikiri_dom::paint_rules::named_page_matches(
+                document,
+                cascade,
+                node_id,
+                active_page_name,
+            )
+        };
         // A hidden table must not paint its own collapsed border.
         let visibility_hidden_table = raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
         let mut paints_on_page = !visibility_hidden_table
@@ -327,7 +612,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                                     (paint_x + grid.x, paint_y + grid.y, grid.width, grid.height)
                                 },
                             );
-                            band.holds_box(scene.transform, own_box)
+                            band.holds_box(scene_transform, own_box)
                         })))));
         // An absolutely positioned containing block can own a child
         // fragment on a later page even when its first layout box ends
@@ -344,29 +629,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 || cv.border.left.width().px() > 0.0)
             && cv.background_color.a != 0;
         let descendant_end_on_page = if is_absolute_fragment_candidate {
-            node.children
-                .iter()
-                .filter_map(|child_id| {
-                    let child = document.get_node(*child_id)?;
-                    let child_cv = cascade.computed.get(*child_id)?;
-                    if !matches!(
-                        child_cv.position,
-                        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                    ) {
-                        return None;
-                    }
-                    let child_y = abs_y + child.unrounded_layout.location.y;
-                    box_intersects_page(
-                        child_y,
-                        child.unrounded_layout.size.height,
-                        page_top,
-                        page_bottom,
-                    )
-                    .then_some(child_y + child.unrounded_layout.size.height)
-                })
-                .fold(None, |maximum, value| {
-                    Some(maximum.map_or(value, |current: f32| current.max(value)))
-                })
+            in_flow_child_end(document, cascade, node, abs_y, |child_y, child_height| {
+                box_intersects_page(child_y, child_height, page_top, page_bottom)
+                    .then_some(child_y + child_height)
+            })
         } else {
             None
         };
@@ -405,23 +671,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         if paints_on_page
             && !paints_as_absolute_continuation
             && is_absolute_fragment_candidate
-            && let Some(descendant_end) = node
-                .children
-                .iter()
-                .filter_map(|child_id| {
-                    let child = document.get_node(*child_id)?;
-                    let child_cv = cascade.computed.get(*child_id)?;
-                    if !matches!(
-                        child_cv.position,
-                        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                    ) {
-                        return None;
-                    }
-                    let child_y = abs_y + child.unrounded_layout.location.y;
-                    (child_y >= page_bottom).then_some(child_y + child.unrounded_layout.size.height)
-                })
-                .fold(None, |maximum, value| {
-                    Some(maximum.map_or(value, |current: f32| current.max(value)))
+            && let Some(descendant_end) =
+                in_flow_child_end(document, cascade, node, abs_y, |child_y, child_height| {
+                    (child_y >= page_bottom).then_some(child_y + child_height)
                 })
         {
             paint_height =
@@ -431,91 +683,41 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             // separately and may reach the page edge.
             paint_background_height = (page_bottom - abs_y).max(0.0);
         }
-
-        // The pseudo is not an arena child yet, so Taffy cannot
-        // include its line box in an auto-height originating box.
-        // Expand only the auto-height paint geometry; fixed-height
-        // elements retain their normal overflow behavior. This is a
-        // paint-side bridge: the arena/Taffy flow remains unchanged
-        // until generated inline boxes can participate in layout.
-        if !paints_as_absolute_continuation
-            && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
-        {
-            let pseudo_height = generated_flow_height(
-                document,
-                cascade,
-                node_id,
-                counter_snapshots,
-                generated_flow_heights,
-            );
-            let pseudo_border_height = cv.border.top.width().px()
-                + paint_padding.top
-                + pseudo_height
-                + paint_padding.bottom
-                + cv.border.bottom.width().px();
-            if pseudo_border_height > paint_height {
-                let was_intrinsic_height =
-                    (paint_background_height - layout.size.height).abs() <= f32::EPSILON;
-                paint_height = pseudo_border_height;
-                if was_intrinsic_height {
-                    paint_background_height = paint_height;
-                }
-            }
-        }
-        let generated_x = paint_x + cv.border.left.width().px() + paint_padding.left;
-        let generated_y = paint_y + cv.border.top.width().px() + paint_padding.top;
-        // Direct text children are the only inline descendants whose
-        // current minimal layout path has a reliable horizontal box.
-        // Use their right edge for `::after`; element children stay
-        // on the existing block-flow path until a full IFC lands.
-        let generated_content_advance = node
-            .children
-            .iter()
-            .filter_map(|child_id| document.get_node(*child_id))
-            .filter(|child| child.kind() == NodeKind::Text)
-            .map(|child| {
-                (child.unrounded_layout.location.x + child.unrounded_layout.size.width
-                    - cv.border.left.width().px()
-                    - paint_padding.left)
-                    .max(0.0)
-            })
-            .fold(0.0, f32::max);
-        Some(ElementBox {
-            node,
-            node_id,
-            cv,
-            layout,
-            fragment_id,
-            inside_fixed,
-            inside_fixed_containing_block,
-            abs_x,
-            abs_y,
-            generates_box,
-            paint_padding,
-            paint_border_radius,
-            child_shift_y,
-            pos_dx,
-            pos_dy,
-            fixed_dx,
-            fixed_dy,
-            child_transform_x,
-            child_transform_y,
-            placed_in_column,
-            fixed_in_viewport,
-            establishes_fixed_containing_block,
-            paint_x,
+        PageExtent {
             paint_y,
             paint_height,
             paint_background_height,
-            multicol_clip_pushed,
-            fragmentainer_clip_pushed,
-            painted_border,
             paints_on_page,
             paints_as_absolute_continuation,
             unfragmented_top,
-            generated_x,
-            generated_y,
-            generated_content_advance,
-        })
+        }
     }
+}
+
+/// The farthest bottom edge, among the in-flow children of `node` laid out
+/// from `abs_y`, that `end` reports for the top and height of a child.
+fn in_flow_child_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    node: &Node,
+    abs_y: f32,
+    end: impl Fn(f32, f32) -> Option<f32>,
+) -> Option<f32> {
+    node.children
+        .iter()
+        .filter_map(|child_id| {
+            let child = document.get_node(*child_id)?;
+            let child_cv = cascade.computed.get(*child_id)?;
+            if !matches!(
+                child_cv.position,
+                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+            ) {
+                return None;
+            }
+            let child_y = abs_y + child.unrounded_layout.location.y;
+            end(child_y, child.unrounded_layout.size.height)
+        })
+        .fold(None, |maximum, value| {
+            Some(maximum.map_or(value, |current: f32| current.max(value)))
+        })
 }

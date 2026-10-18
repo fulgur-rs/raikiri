@@ -19,7 +19,38 @@ use raikiri_style::property::{
 };
 use raikiri_traits::{PaintInsets, PaintRect};
 
+/// The geometry that the decorations of a box paint in: its own box, which
+/// for a table is its grid without the captions.
+#[derive(Clone, Copy)]
+struct OwnBox {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    background_height: f32,
+}
+
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
+    /// Paint the parts of the box of `element` in their order, and return
+    /// the advance of its generated `::before` content.
+    pub(super) fn paint_box(&mut self, element: &ElementBox<'w>, has_column_rules: bool) -> f32 {
+        if element.paints_on_page
+            && !raikiri_dom::paint_rules::hides_empty_table_cell(
+                self.document,
+                self.cascade,
+                element.node_id,
+            )
+        {
+            self.paint_box_decorations(element);
+            self.paint_replaced_content(element);
+            self.paint_column_rules(element, has_column_rules);
+            self.paint_list_marker(element);
+            self.paint_generated_before(element, has_column_rules)
+        } else {
+            0.0
+        }
+    }
+
     /// Paint the background, shadows, border and outline of the box of `element`, and trace it.
     pub(super) fn paint_box_decorations(&mut self, element: &ElementBox<'w>) {
         let ElementBox {
@@ -27,53 +58,80 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             node_id,
             cv,
             layout,
-            fragment_id,
-            inside_fixed,
-            inside_fixed_containing_block,
             generates_box,
-            paint_padding,
-            paint_border_radius,
-            fixed_in_viewport,
-            establishes_fixed_containing_block,
             paint_x,
             paint_y,
             paint_height,
             paint_background_height,
-            painted_border,
-            paints_as_absolute_continuation,
-            unfragmented_top,
             ..
         } = *element;
-        let (document, image_cache, pixel_source, root_transform, canvas_owner) = (
-            self.document,
-            self.image_cache,
-            self.pixel_source,
-            self.root_transform,
-            self.canvas_owner,
-        );
-        let PageGeometry {
-            page_area,
-            page_clip_transform,
-            page_content_clip,
-            ..
-        } = self.geometry;
-        let scene = &mut *self.scene;
-        let trace = &mut self.trace;
-        let warnings = &mut *self.warnings;
-        if let Some(t) = trace.as_deref_mut()
+        if let Some(t) = self.trace.as_deref_mut()
             && generates_box
             && !raikiri_dom::paint_rules::hides_own_box(cv)
         {
             t.push(crate::PaintTraceEvent::Box(node_id));
         }
         let grid = node.table_grid_box();
-        let own_paint_x = paint_x + grid.map_or(0.0, |rect| rect.x);
-        let own_paint_width = grid.map_or(layout.size.width, |rect| rect.width);
-        let own_paint_y = paint_y + grid.map_or(0.0, |rect| rect.y);
-        let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
-        let own_background_height = grid.map_or(paint_background_height, |rect| rect.height);
+        let own = OwnBox {
+            x: paint_x + grid.map_or(0.0, |rect| rect.x),
+            y: paint_y + grid.map_or(0.0, |rect| rect.y),
+            width: grid.map_or(layout.size.width, |rect| rect.width),
+            height: grid.map_or(paint_height, |rect| rect.height),
+            background_height: grid.map_or(paint_background_height, |rect| rect.height),
+        };
         // The box's own geometry, which its outline follows.
-        let (fragment_paint_y, fragment_paint_height) = (own_paint_y, own_paint_height);
+        let (fragment_paint_y, fragment_paint_height) = (own.y, own.height);
+        let (own, sliced) = self.open_block_slice(element, own);
+        // A `display: contents` element has no box whose
+        // background, borders or outline could paint; its
+        // generated content still does. Neither does a box that
+        // is not visible, whose descendants may still be.
+        let paints_own_box = generates_box && !raikiri_dom::paint_rules::hides_own_box(cv);
+        if paints_own_box {
+            self.paint_background(element, &own);
+        }
+        self.paint_borders(element, &own, paints_own_box);
+        let scene = &mut *self.scene;
+        if sliced {
+            scene.pop_layer();
+        }
+        // Outlines do not consume box-model space and are painted
+        // outside the border edge (CSS Basic UI §4). Each box of a
+        // sliced box draws a whole outline around itself, like the
+        // pieces of an inline box.
+        if paints_own_box {
+            paint_element_outline(
+                scene,
+                own.width,
+                fragment_paint_height,
+                own.x,
+                fragment_paint_y,
+                &cv.outline,
+                cv.outline_offset,
+                cv.color,
+            );
+        }
+    }
+
+    /// Clip the decorations of `element` to the slice it paints, when it is
+    /// one slice of a box broken across outer columns, and give the extent of
+    /// the whole box it paints in, and whether it clipped.
+    fn open_block_slice(&mut self, element: &ElementBox<'w>, own: OwnBox) -> (OwnBox, bool) {
+        let ElementBox {
+            node_id,
+            cv,
+            fragment_id,
+            ..
+        } = *element;
+        let document = self.document;
+        let scene = &mut *self.scene;
+        let OwnBox {
+            x: own_paint_x,
+            y: own_paint_y,
+            width: own_paint_width,
+            height: own_paint_height,
+            background_height: own_background_height,
+        } = own;
         // A box that is one slice of a box broken across outer
         // columns paints the whole box's decorations, cut at the
         // breaks (CSS Fragmentation 3 §5.4).
@@ -102,91 +160,155 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             }
             None => (own_paint_y, own_paint_height, own_background_height),
         };
-        // A `display: contents` element has no box whose
-        // background, borders or outline could paint; its
-        // generated content still does. Neither does a box that
-        // is not visible, whose descendants may still be.
-        let paints_own_box = generates_box && !raikiri_dom::paint_rules::hides_own_box(cv);
-        if paints_own_box {
-            // Paint element background (CSS Backgrounds 3 §2.2).
-            // Shift applies to the box itself per CSS 2.1 §10.8.1.
-            let clip_background = page_content_clip.filter(|_| {
-                !inside_fixed
-                    && !fixed_in_viewport
-                    && matches!(
-                        cv.position,
-                        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                    )
-            });
-            if let Some(clip) = clip_background {
-                scene.scene.push_clip_layer(page_clip_transform, &clip);
+        (
+            OwnBox {
+                x: own_paint_x,
+                y: own_paint_y,
+                width: own_paint_width,
+                height: own_paint_height,
+                background_height: own_background_height,
+            },
+            block_slice.is_some(),
+        )
+    }
+
+    /// Paint the shadows and the background of the box `own` of `element`.
+    fn paint_background(&mut self, element: &ElementBox<'w>, own: &OwnBox) {
+        let ElementBox {
+            node_id,
+            cv,
+            inside_fixed,
+            inside_fixed_containing_block,
+            paint_padding,
+            paint_border_radius,
+            fixed_in_viewport,
+            establishes_fixed_containing_block,
+            painted_border,
+            ..
+        } = *element;
+        let OwnBox {
+            x: own_paint_x,
+            y: own_paint_y,
+            width: own_paint_width,
+            height: own_paint_height,
+            background_height: own_background_height,
+        } = *own;
+        let (document, image_cache, pixel_source, root_transform, canvas_owner) = (
+            self.document,
+            self.image_cache,
+            self.pixel_source,
+            self.root_transform,
+            self.canvas_owner,
+        );
+        let PageGeometry {
+            page_area,
+            page_clip_transform,
+            page_content_clip,
+            ..
+        } = self.geometry;
+        let scene = &mut *self.scene;
+        let warnings = &mut *self.warnings;
+        // Paint element background (CSS Backgrounds 3 §2.2).
+        // Shift applies to the box itself per CSS 2.1 §10.8.1.
+        let clip_background = page_content_clip.filter(|_| {
+            !inside_fixed
+                && !fixed_in_viewport
+                && matches!(
+                    cv.position,
+                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                )
+        });
+        if let Some(clip) = clip_background {
+            scene.scene.push_clip_layer(page_clip_transform, &clip);
+        }
+        paint_element_box_shadows(
+            scene,
+            own_paint_width,
+            own_paint_height,
+            own_paint_x,
+            own_paint_y,
+            &paint_border_radius,
+            &cv.box_shadow,
+            cv.color,
+        );
+        let table_part_clip = document.anonymous_table_part_background_cells(node_id);
+        if let Some(cells) = table_part_clip {
+            let mut path = BezPath::new();
+            for cell in cells {
+                let x = f64::from(cell.x);
+                let y = f64::from(cell.y);
+                let right = x + f64::from(cell.width);
+                let bottom = y + f64::from(cell.height);
+                path.move_to((x, y));
+                path.line_to((right, y));
+                path.line_to((right, bottom));
+                path.line_to((x, bottom));
+                path.close_path();
             }
-            paint_element_box_shadows(
+            scene.scene.push_clip_layer(
+                Affine::translate((f64::from(own_paint_x), f64::from(own_paint_y))),
+                &path,
+            );
+        }
+        // Propagation transfers only the background to the canvas;
+        // shadows and borders still belong to the element's box.
+        if canvas_owner != Some(node_id) {
+            paint_element_background(
+                image_cache,
                 scene,
                 own_paint_width,
-                own_paint_height,
+                own_background_height,
                 own_paint_x,
                 own_paint_y,
-                &paint_border_radius,
-                &cv.box_shadow,
+                cv.background_color,
+                cv.background_layers(),
                 cv.color,
+                &paint_border_radius,
+                painted_border,
+                &paint_padding,
+                BackgroundEnv {
+                    border_hides_edge: matches!(cv.border_image.source, BackgroundImage::None)
+                        && border_hides_background_edge(painted_border, cv.color),
+                    device_grid: image_cache.device_grid(scene.transform),
+                    fixed_viewport: fixed_background_viewport(
+                        page_area,
+                        root_transform,
+                        inside_fixed_containing_block || establishes_fixed_containing_block,
+                    ),
+                },
+                pixel_source,
+                warnings,
             );
-            let table_part_clip = document.anonymous_table_part_background_cells(node_id);
-            if let Some(cells) = table_part_clip {
-                let mut path = BezPath::new();
-                for cell in cells {
-                    let x = f64::from(cell.x);
-                    let y = f64::from(cell.y);
-                    let right = x + f64::from(cell.width);
-                    let bottom = y + f64::from(cell.height);
-                    path.move_to((x, y));
-                    path.line_to((right, y));
-                    path.line_to((right, bottom));
-                    path.line_to((x, bottom));
-                    path.close_path();
-                }
-                scene.scene.push_clip_layer(
-                    Affine::translate((f64::from(own_paint_x), f64::from(own_paint_y))),
-                    &path,
-                );
-            }
-            // Propagation transfers only the background to the canvas;
-            // shadows and borders still belong to the element's box.
-            if canvas_owner != Some(node_id) {
-                paint_element_background(
-                    image_cache,
-                    scene,
-                    own_paint_width,
-                    own_background_height,
-                    own_paint_x,
-                    own_paint_y,
-                    cv.background_color,
-                    cv.background_layers(),
-                    cv.color,
-                    &paint_border_radius,
-                    painted_border,
-                    &paint_padding,
-                    BackgroundEnv {
-                        border_hides_edge: matches!(cv.border_image.source, BackgroundImage::None)
-                            && border_hides_background_edge(painted_border, cv.color),
-                        device_grid: image_cache.device_grid(scene.transform),
-                        fixed_viewport: fixed_background_viewport(
-                            page_area,
-                            root_transform,
-                            inside_fixed_containing_block || establishes_fixed_containing_block,
-                        ),
-                    },
-                    pixel_source,
-                    warnings,
-                );
-            }
-            if table_part_clip.is_some() {
-                scene.pop_layer();
-            }
-            if clip_background.is_some() {
-                scene.pop_layer();
-            }
         }
+        if table_part_clip.is_some() {
+            scene.pop_layer();
+        }
+        if clip_background.is_some() {
+            scene.pop_layer();
+        }
+    }
+
+    /// Paint the border of the box `own` of `element` over its background,
+    /// or its border image, which replaces the border styles.
+    fn paint_borders(&mut self, element: &ElementBox<'w>, own: &OwnBox, paints_own_box: bool) {
+        let ElementBox {
+            cv,
+            paint_border_radius,
+            painted_border,
+            paints_as_absolute_continuation,
+            unfragmented_top,
+            ..
+        } = *element;
+        let OwnBox {
+            x: own_paint_x,
+            y: own_paint_y,
+            width: own_paint_width,
+            height: own_paint_height,
+            ..
+        } = *own;
+        let (image_cache, pixel_source) = (self.image_cache, self.pixel_source);
+        let scene = &mut *self.scene;
+        let warnings = &mut *self.warnings;
         // An opaque background that uses the same solid color as
         // every border side already paints the complete visible
         // union in `paint_element_background`; avoid compositing
@@ -294,25 +416,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 painted_border,
                 cv.color,
                 &paint_border_radius,
-            );
-        }
-        if block_slice.is_some() {
-            scene.pop_layer();
-        }
-        // Outlines do not consume box-model space and are painted
-        // outside the border edge (CSS Basic UI §4). Each box of a
-        // sliced box draws a whole outline around itself, like the
-        // pieces of an inline box.
-        if paints_own_box {
-            paint_element_outline(
-                scene,
-                own_paint_width,
-                fragment_paint_height,
-                own_paint_x,
-                fragment_paint_y,
-                &cv.outline,
-                cv.outline_offset,
-                cv.color,
             );
         }
     }
