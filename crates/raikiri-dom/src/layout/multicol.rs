@@ -83,10 +83,10 @@ pub(crate) fn compute_multicol_layout(
     // foundational block projection, which preserves the item's unfragmented
     // minimum before the column offsets below. Text-bearing children retain
     // the existing custom line-range projection.
-    let span_scope = tree.nodes[index]
-        .children
-        .iter()
-        .any(|&child| spanning::is_spanner(tree, child));
+    let span_scope = tree
+        .children_through_contents(index)
+        .into_iter()
+        .any(|child| spanning::is_spanner(tree, child));
     let custom_scope = (span_scope
         || tree.context.fragmentation_stack.is_empty()
             && (multicol_has_nested_descendant(tree, index)
@@ -378,10 +378,9 @@ fn space_min_constrained_children(
         multicol_has_min_constrained_child(tree, index)
             && !multicol_has_direct_break_flow(tree, index)
     }) {
-        let children: Vec<usize> = tree.nodes[index]
-            .children
-            .iter()
-            .copied()
+        let children: Vec<usize> = tree
+            .children_through_contents(index)
+            .into_iter()
             .filter(|&child| {
                 tree.nodes[child].is_in_document()
                     && tree.nodes[child].kind() == NodeKind::Element
@@ -407,15 +406,15 @@ fn space_min_constrained_children(
         // The minimum-sized children overflow the auto multicol box, but the
         // auto box's used block-size remains the minimum child size rather
         // than the sum of those overflowing children.
-        let min_child_height = tree.nodes[index]
-            .children
-            .iter()
-            .filter(|&&child| {
+        let min_child_height = tree
+            .children_through_contents(index)
+            .into_iter()
+            .filter(|&child| {
                 tree.nodes[child].is_in_document()
                     && tree.nodes[child].kind() == NodeKind::Element
                     && !tree.nodes[child].is_display_none()
             })
-            .map(|&child| tree.nodes[child].unrounded_layout.size.height)
+            .map(|child| tree.nodes[child].unrounded_layout.size.height)
             .fold(0.0_f32, f32::max);
         *height = height.min(min_child_height);
     }
@@ -674,14 +673,16 @@ fn multicol_has_nested_descendant(tree: &Document, node_id: usize) -> bool {
 
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn multicol_has_direct_break_flow(tree: &Document, node_id: usize) -> bool {
-    tree.nodes[node_id].children.iter().copied().any(|child| {
-        tree.nodes[child].kind() == NodeKind::Element
-            && tree.nodes[child].is_in_document()
-            && tree.nodes[child]
-                .children
-                .iter()
-                .any(|&grandchild| tree.nodes[grandchild].tag_name() == Some("br"))
-    })
+    tree.children_through_contents(node_id)
+        .into_iter()
+        .any(|child| {
+            tree.nodes[child].kind() == NodeKind::Element
+                && tree.nodes[child].is_in_document()
+                && tree.nodes[child]
+                    .children
+                    .iter()
+                    .any(|&grandchild| tree.nodes[grandchild].tag_name() == Some("br"))
+        })
 }
 
 fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {
@@ -697,11 +698,13 @@ fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool 
 
 // cov:ignore: direct block fragmentation is exercised by the ignored multicol WPT reftests.
 fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
-    tree.nodes[node_id].children.iter().any(|&child| {
-        tree.nodes[child].is_in_document()
-            && tree.nodes[child].kind() == NodeKind::Element
-            && !tree.nodes[child].is_display_none()
-    })
+    tree.children_through_contents(node_id)
+        .into_iter()
+        .any(|child| {
+            tree.nodes[child].is_in_document()
+                && tree.nodes[child].kind() == NodeKind::Element
+                && !tree.nodes[child].is_display_none()
+        })
 }
 
 // Whether `node_id` has several child boxes and every one is an in-flow
@@ -709,10 +712,9 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
 // from its content, which the custom path breaks between lines in a
 // definite-height container as well.
 fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool {
-    let mut children = tree.nodes[node_id]
-        .children
-        .iter()
-        .copied()
+    let mut children = tree
+        .children_through_contents(node_id)
+        .into_iter()
         .filter(|&child| {
             tree.nodes[child].is_in_document()
                 && tree.nodes[child].kind() == NodeKind::Element
@@ -769,19 +771,21 @@ fn insets_are_a_relative_inline_offset(tree: &Document, child: usize) -> bool {
 // path until the custom projection can account for the minimum's unfragmented
 // overflow.
 fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
-    tree.nodes[node_id].children.iter().any(|&child| {
-        tree.nodes[child].is_in_document()
-            && tree.nodes[child].kind() == NodeKind::Element
-            && !tree.nodes[child].is_display_none()
-            && tree.nodes[child].has_logical_min_block_size
-            && !tree
-                .layout_node_with_style(child)
-                .unwrap()
-                .style
-                .min_size
-                .height
-                .is_auto()
-    })
+    tree.children_through_contents(node_id)
+        .into_iter()
+        .any(|child| {
+            tree.nodes[child].is_in_document()
+                && tree.nodes[child].kind() == NodeKind::Element
+                && !tree.nodes[child].is_display_none()
+                && tree.nodes[child].has_logical_min_block_size
+                && !tree
+                    .layout_node_with_style(child)
+                    .unwrap()
+                    .style
+                    .min_size
+                    .height
+                    .is_auto()
+        })
 }
 
 fn can_balance_single_paragraph(tree: &Document, child: usize) -> bool {
@@ -814,7 +818,7 @@ fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
 /// pieces that cut a block at the column edges place it from the left, so
 /// they leave such a block to the placement of each child.
 fn is_right_aligned_in_parent(tree: &Document, child: usize) -> bool {
-    let rtl_parent = tree.nodes[child].parent.is_some_and(|parent| {
+    let rtl_parent = tree.taffy_parent_of(child).is_some_and(|parent| {
         tree.layout_node_with_style(parent).unwrap().style.direction == TaffyDirection::Rtl
     });
     let node = &tree.layout_node_with_style(child).unwrap();
@@ -830,10 +834,9 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
     }
     let mut current = parent;
     loop {
-        let mut children = tree.nodes[current]
-            .children
-            .iter()
-            .copied()
+        let mut children = tree
+            .children_through_contents(current)
+            .into_iter()
             .filter(|&child| {
                 tree.nodes[child].is_in_document()
                     && tree.nodes[child].kind() == NodeKind::Element
@@ -887,10 +890,9 @@ fn relayout_nested_multicol_children(
 ) -> f32 {
     let index = usize::from(node_id);
     let fallback_height = border_box_size.height;
-    let children: Vec<usize> = tree.nodes[index]
-        .children
-        .iter()
-        .copied()
+    let children: Vec<usize> = tree
+        .children_through_contents(index)
+        .into_iter()
         .filter(|&child| tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none())
         .collect();
     let has_spanners = children
@@ -1615,10 +1617,9 @@ fn plan_nested_continuation(
         });
     }
     let root = latest_root(tree, child)?;
-    let children: Vec<usize> = node
-        .children
-        .iter()
-        .copied()
+    let children: Vec<usize> = tree
+        .children_through_contents(child)
+        .into_iter()
         .filter(|&id| tree.nodes[id].is_in_document() && !tree.nodes[id].is_display_none())
         .collect();
     if children.iter().any(|&id| spanning::is_spanner(tree, id)) {

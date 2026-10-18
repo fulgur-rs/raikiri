@@ -12,11 +12,14 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
     let mut current = parent;
     let mut constrained = false;
     for _ in 0..128 {
-        let mut children = tree.nodes[current].children.iter().copied().filter(|&id| {
-            tree.nodes[id].is_in_document()
-                && tree.nodes[id].kind() == NodeKind::Element
-                && !tree.nodes[id].is_display_none()
-        });
+        let mut children = tree
+            .children_through_contents(current)
+            .into_iter()
+            .filter(|&id| {
+                tree.nodes[id].is_in_document()
+                    && tree.nodes[id].kind() == NodeKind::Element
+                    && !tree.nodes[id].is_display_none()
+            });
         let child = children.next()?;
         if children.next().is_some() {
             return None;

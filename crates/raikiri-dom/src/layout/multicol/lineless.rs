@@ -78,14 +78,12 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
     (sized || holds_absolute_boxes).then_some(children)
 }
 
-/// The rendered element children of `parent`. Text that renders gives a
-/// box lines, which the callers refuse, so any other node is collapsible
-/// white space.
+/// The rendered element children of `parent`, with those of a `display:
+/// contents` child in its place. Text that renders gives a box lines, which
+/// the callers refuse, so any other node is collapsible white space.
 fn rendered_elements(tree: &Document, parent: usize) -> impl Iterator<Item = usize> + '_ {
-    tree.nodes[parent]
-        .children
-        .iter()
-        .copied()
+    tree.children_through_contents(parent)
+        .into_iter()
         .filter(|&child| {
             let node = &tree.layout_node_with_style(child).unwrap();
             node.is_in_document()
@@ -98,7 +96,7 @@ fn rendered_elements(tree: &Document, parent: usize) -> impl Iterator<Item = usi
 /// container it is a child of, with no line or box before it, which leaves
 /// it the whole column height.
 pub(super) fn starts_the_outer_columns(tree: &Document, id: usize) -> bool {
-    let Some(parent) = tree.nodes[id].parent else {
+    let Some(parent) = tree.taffy_parent_of(id) else {
         return false;
     };
     let outer = &tree.layout_node_with_style(parent).unwrap();
@@ -220,7 +218,7 @@ fn has_block_edge_decorations(style: &taffy::Style) -> bool {
 /// Whether `id` has content of its own, other than the absolutely
 /// positioned children that `skip_absolute` leaves out.
 fn has_rendered_content(tree: &Document, id: usize, skip_absolute: bool) -> bool {
-    tree.nodes[id].children.iter().any(|&child| {
+    tree.children_through_contents(id).into_iter().any(|child| {
         let node = &tree.layout_node_with_style(child).unwrap();
         node.is_in_document()
             && !node.is_display_none()
@@ -242,10 +240,8 @@ fn is_absolute_box(node: &crate::Node) -> bool {
 
 /// The absolutely positioned children of `child` that are rendered.
 fn absolute_children(tree: &Document, child: usize) -> Vec<usize> {
-    tree.nodes[child]
-        .children
-        .iter()
-        .copied()
+    tree.children_through_contents(child)
+        .into_iter()
         .filter(|&id| {
             let node = &tree.layout_node_with_style(id).unwrap();
             node.is_in_document() && !node.is_display_none() && is_absolute_box(node)
