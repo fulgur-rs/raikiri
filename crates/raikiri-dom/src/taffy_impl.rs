@@ -1303,7 +1303,8 @@ fn measure_ifc_root(
             AvailableSpace::Definite(size) => size,
             _ => 0.0,
         };
-        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis)
+        let percent_height = measure.definite_height.filter(|_| !vertical);
+        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis, percent_height)
     } else {
         crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };

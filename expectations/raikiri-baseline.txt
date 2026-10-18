@@ -4922,3 +4922,7 @@ css/css-text/white-space/white-space-intrinsic-size-023.html
 
 # --- margin box text sized from the monospace medium of the page context (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
 css/css-page/margin-boxes/alignment-001-print.html
+
+# --- percentage-height images sizing shrink-to-fit boxes (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
+# Pass once the width of an image's box in a paragraph is measured against the paragraph root's definite height, so an image of `height: 100%` sizes its shrink-to-fit parent through its aspect ratio; KEEP in audit-vacuous-passes.
+css/css-sizing/intrinsic-percent-replaced-009.html
