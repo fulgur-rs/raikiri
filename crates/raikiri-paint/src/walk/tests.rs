@@ -641,6 +641,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -652,6 +653,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_percent,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -663,6 +665,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         10.0,
         &end_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -674,6 +677,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         12.5,
         &end_percent,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -685,6 +689,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         6.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -696,6 +701,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         11.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -707,6 +713,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         1.0,
         &start_px,
         &repeat,
+        None,
     );
     assert!(!scene.commands.is_empty());
 
@@ -721,6 +728,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_px,
         &repeat,
+        None,
     );
     let zero = raikiri_traits::DecodedImage {
         width: 0,
@@ -737,6 +745,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         50.0,
         &start_px,
         &repeat,
+        None,
     );
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -748,6 +757,7 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         10.0,
         &start_px,
         &repeat,
+        None,
     );
     assert_eq!(scene.commands.len(), before);
 }
@@ -1810,6 +1820,7 @@ fn background_repeat_tiles_cover_area_with_clipping() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     // 100 / 20 by 50 / 10 tiles, edge tiles fit exactly here, painted as one
     // repeating pattern.
@@ -1844,6 +1855,7 @@ fn background_repeat_tiles_cover_area_with_clipping() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_origins(&clipped).len(), 4);
     let origins = background_fill_origins(&clipped);
@@ -1869,6 +1881,7 @@ fn background_no_repeat_paints_single_origin_tile() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
     assert_eq!(background_fill_origins(&scene), vec![(0.0, 0.0)]);
@@ -1886,6 +1899,7 @@ fn background_no_repeat_paints_single_origin_tile() {
         10.0,
         &offset_position,
         &offset_repeat,
+        None,
     );
     assert_eq!(background_fill_count(&offset), 1);
     assert_eq!(background_fill_origins(&offset), vec![(3.0, 4.0)]);
@@ -1910,6 +1924,7 @@ fn background_repeat_x_and_y_tile_single_axis() {
         10.0,
         &repeat_x_position,
         &repeat_x,
+        None,
     );
     // One fill repeats the tile along the row.
     assert_eq!(background_fill_count(&scene), 1);
@@ -1930,6 +1945,7 @@ fn background_repeat_x_and_y_tile_single_axis() {
         10.0,
         &repeat_y_position,
         &repeat_y,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
     assert_eq!(background_fill_origins(&scene).len(), 5);
@@ -1959,6 +1975,7 @@ fn background_repeat_with_offset_covers_both_directions() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     let origins = background_fill_origins(&scene);
     assert_eq!(origins.len(), 30);
@@ -1986,6 +2003,7 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 25);
     let origins = background_fill_origins(&scene);
@@ -2005,6 +2023,7 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
         32.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&spaced), 9);
     let origins = background_fill_origins(&spaced);
@@ -2025,6 +2044,7 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
         10.0,
         &single_position,
         &single_repeat,
+        None,
     );
     assert_eq!(background_fill_count(&single), 1);
     assert_eq!(background_fill_origins(&single), vec![(3.0, 4.0)]);
@@ -2050,6 +2070,7 @@ fn background_round_rescales_to_whole_tiles() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_origins(&exact).len(), 25);
 
@@ -2065,6 +2086,7 @@ fn background_round_rescales_to_whole_tiles() {
         30.0,
         &position,
         &repeat,
+        None,
     );
     let origins = background_fill_origins(&rescaled);
     assert_eq!(origins.len(), 3);
@@ -2084,6 +2106,7 @@ fn background_round_rescales_to_whole_tiles() {
             10.0,
             &mixed_position,
             &mixed,
+            None,
         );
         assert_eq!(
             background_fill_origins(&mixed_scene).len(),
@@ -2118,6 +2141,7 @@ fn background_repeat_rejects_nonfinite_tile_geometry() {
             image_h,
             &position,
             &repeat,
+            None,
         );
         assert_eq!(background_fill_count(&scene), 0);
     }
@@ -2133,6 +2157,7 @@ fn background_repeat_rejects_nonfinite_tile_geometry() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 0);
 }
@@ -2156,6 +2181,7 @@ fn background_repeat_tiles_paint_contiguous_pixels() {
         2.0,
         &repeat_position,
         &repeat,
+        None,
     );
     let repeat_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(repeat_scene, Affine::IDENTITY),
@@ -2180,6 +2206,7 @@ fn background_repeat_tiles_paint_contiguous_pixels() {
         2.0,
         &single_position,
         &single,
+        None,
     );
     let single_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(single_scene, Affine::IDENTITY),
@@ -2216,6 +2243,7 @@ fn background_origin_positions_independently_from_clip() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
     assert_eq!(background_fill_origins(&scene), vec![(10.0, 10.0)]);
@@ -2234,6 +2262,7 @@ fn background_origin_positions_independently_from_clip() {
         10.0,
         &position,
         &repeat_all,
+        None,
     );
     let origins = background_fill_origins(&tiled);
     assert!(origins.contains(&(10.0, 10.0)));
@@ -2414,7 +2443,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &border,
             &padding,
-            false,
+            BackgroundEnv::default(),
             Some(&source),
             &mut warnings,
         );
@@ -2464,7 +2493,7 @@ fn background_clip_text_warns_and_border_area_masks_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &ring_border,
         &padding,
-        false,
+        BackgroundEnv::default(),
         Some(&source),
         &mut ring_warnings,
     );
@@ -2566,6 +2595,7 @@ fn background_space_and_round_paint_spec_correct_pixels() {
         2.0,
         &space_position,
         &space,
+        None,
     );
     let space_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(space_scene, kurbo::Affine::IDENTITY),
@@ -2592,6 +2622,7 @@ fn background_space_and_round_paint_spec_correct_pixels() {
         3.0,
         &round_position,
         &round,
+        None,
     );
     let round_rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(round_scene, kurbo::Affine::IDENTITY),
@@ -2622,6 +2653,7 @@ fn background_origin_clip_pixel_separation() {
         20.0,
         &position,
         &repeat,
+        None,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
@@ -2669,6 +2701,7 @@ fn background_rounded_clip_pixel_corners() {
         20.0,
         &position,
         &repeat,
+        None,
     );
     scene.pop_layer();
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -3098,7 +3131,7 @@ fn background_rounded_color_and_image_are_clipped_to_the_curve_together() {
             &ComputedBorderRadius::all(ComputedLength(8.0)),
             &sides,
             &padding,
-            false,
+            BackgroundEnv::default(),
             Some(&BluePixels),
             &mut Vec::new(),
         );
@@ -3154,6 +3187,328 @@ fn bordered_sides(
         bottom: border,
         left: border,
     }
+}
+
+#[test]
+fn fixed_background_viewport_is_the_page_area_outside_any_fixed_containing_block() {
+    let page_area = kurbo::Rect::new(10.0, 20.0, 110.0, 220.0);
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::IDENTITY, false),
+        Some(page_area)
+    );
+    // Inside or at a containing block for fixed boxes, a transformed box
+    // for one, the layer scrolls with its box.
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::IDENTITY, true),
+        None
+    );
+    // A transformed root carries the whole page with it.
+    assert_eq!(
+        fixed_background_viewport(page_area, Affine::scale(2.0), false),
+        None
+    );
+}
+
+#[test]
+fn fixed_background_layer_is_positioned_in_the_page_area_and_clipped_to_its_box() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: [255, 0, 0, 255].repeat(4),
+            }))
+        }
+    }
+    let border = bordered_sides(2.0, BorderStyle::Solid, BorderColor::CurrentColor);
+    let padding = taffy::Rect {
+        top: 3.0,
+        right: 3.0,
+        bottom: 3.0,
+        left: 3.0,
+    };
+    let page_area = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    let origins = |attachment, origin, fixed_viewport| {
+        let mut scene = Scene::new();
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+        layer.repeat = background_repeat_fixture("no-repeat", "0 0").1;
+        layer.attachment = attachment;
+        layer.origin = origin;
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            100.0,
+            50.0,
+            50.0,
+            30.0,
+            CssColor::TRANSPARENT,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            BackgroundEnv {
+                fixed_viewport,
+                ..BackgroundEnv::default()
+            },
+            Some(&RedPixels),
+            &mut Vec::new(),
+        );
+        background_fill_origins(&scene)
+    };
+    use raikiri_style::property::BackgroundAttachment::{Fixed, Scroll};
+    // A scroll layer starts at its padding box; a fixed one at the page area,
+    // whatever its origin.
+    assert_eq!(
+        origins(Scroll, VisualBox::PaddingBox, Some(page_area)),
+        vec![(52.0, 32.0)]
+    );
+    for origin in [
+        VisualBox::BorderBox,
+        VisualBox::PaddingBox,
+        VisualBox::ContentBox,
+    ] {
+        assert_eq!(
+            origins(Fixed, origin, Some(page_area)),
+            vec![(0.0, 0.0)],
+            "{origin:?}"
+        );
+    }
+    // Without a page area, as inside a transform, a fixed layer scrolls.
+    assert_eq!(
+        origins(Fixed, VisualBox::PaddingBox, None),
+        vec![(52.0, 32.0)]
+    );
+}
+
+#[test]
+fn tile_spans_snap_each_edge_to_the_device_grid() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat, Round, Space};
+    // Without a grid (a vector output) nothing moves.
+    assert_eq!(
+        tile_spans(&[68.25], 38.5, NoRepeat, None),
+        vec![(68.25, 38.5)]
+    );
+    // Each edge goes to its nearest device pixel, so the tile grows from the
+    // fractional 68.25..106.75 to the whole-pixel 68..107.
+    assert_eq!(
+        tile_spans(&[68.25], 38.5, NoRepeat, Some((1.0, 0.0))),
+        vec![(68.0, 39.0)]
+    );
+    // Two device pixels per CSS pixel snap to half pixels.
+    assert_eq!(
+        tile_spans(&[68.3], 38.5, NoRepeat, Some((2.0, 0.0))),
+        vec![(68.5, 38.5)]
+    );
+    // The grid offset shifts the pixel boundaries.
+    assert_eq!(
+        tile_spans(&[10.0], 4.0, NoRepeat, Some((1.0, 0.5))),
+        vec![(10.5, 4.0)]
+    );
+    // `space` tiles are snapped one by one, so their lengths may differ.
+    assert_eq!(
+        tile_spans(&[0.0, 10.5, 21.0], 5.5, Space, Some((1.0, 0.0))),
+        vec![(0.0, 6.0), (11.0, 5.0), (21.0, 6.0)]
+    );
+    // A `repeat` axis keeps its origin tile, with a whole-pixel pitch of at
+    // least one device pixel.
+    assert_eq!(
+        tile_spans(&[10.2, 11.0, 11.8], 0.8, Repeat, Some((1.0, 0.0))),
+        vec![(10.0, 1.0)]
+    );
+    assert_eq!(
+        tile_spans(&[10.0], 116.8, Repeat, Some((1.0, 0.0))),
+        vec![(10.0, 117.0)]
+    );
+    assert_eq!(
+        tile_spans(&[10.0], 0.1, Repeat, Some((2.0, 0.0))),
+        vec![(10.0, 0.5)]
+    );
+    assert_eq!(tile_spans(&[10.2], 0.8, Repeat, None), vec![(10.2, 0.8)]);
+    // A `round` axis keeps the pitch that fits its area.
+    assert_eq!(
+        tile_spans(&[10.2, 20.4], 10.2, Round, Some((1.0, 0.0))),
+        vec![(10.2, 10.2)]
+    );
+    assert!(tile_spans(&[], 1.0, Repeat, Some((1.0, 0.0))).is_empty());
+}
+
+#[test]
+fn tile_spans_keep_a_positive_length_on_a_mirrored_grid() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat};
+    // A reflection gives the grid a negative scale, but a tile is still as
+    // long as its device pixels, and its edges still go to the nearest pixel.
+    assert_eq!(
+        tile_spans(&[3.4], 10.0, Repeat, Some((-1.0, 0.0))),
+        vec![(3.0, 10.0)]
+    );
+    assert_eq!(
+        tile_spans(&[3.4], 0.2, Repeat, Some((-2.0, 0.0))),
+        vec![(3.5, 0.5)]
+    );
+    assert_eq!(
+        tile_spans(&[68.25], 38.5, NoRepeat, Some((-1.0, 0.0))),
+        vec![(68.0, 39.0)]
+    );
+    // A grid without a usable scale leaves the tiles where they are.
+    for scale in [0.0, f64::INFINITY, f64::NAN] {
+        assert_eq!(
+            tile_spans(&[3.4], 10.0, Repeat, Some((scale, 0.0))),
+            vec![(3.4, 10.0)]
+        );
+    }
+}
+
+#[test]
+fn tile_spans_keep_a_tile_thinner_than_a_device_pixel() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Space};
+    // Both edges of the tile round to the same device pixel boundary, which
+    // would leave it no length at all; it keeps its own span instead.
+    assert_eq!(
+        tile_spans(&[10.1], 0.2, NoRepeat, Some((1.0, 0.0))),
+        vec![(10.1, 0.2)]
+    );
+    assert_eq!(
+        tile_spans(&[10.1, 20.1], 0.2, Space, Some((1.0, 0.0))),
+        vec![(10.1, 0.2), (20.1, 0.2)]
+    );
+    assert_eq!(
+        tile_spans(&[10.1], 0.2, NoRepeat, Some((-1.0, 0.0))),
+        vec![(10.1, 0.2)]
+    );
+    // A tile whose edges land on different boundaries is still snapped.
+    assert_eq!(
+        tile_spans(&[10.4], 0.2, NoRepeat, Some((1.0, 0.0))),
+        vec![(10.0, 1.0)]
+    );
+    // When one tile of a `space` axis collapses, its neighbors stay unsnapped
+    // with it: the first tile would otherwise stay at 0.1..0.3 and overlap the
+    // second one, which snaps to 0..1.
+    assert_eq!(
+        tile_spans(&[0.1, 0.4], 0.2, Space, Some((1.0, 0.0))),
+        vec![(0.1, 0.2), (0.4, 0.2)]
+    );
+}
+
+#[test]
+fn a_snapped_repeat_keeps_the_phase_of_the_placed_tile() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat};
+    // A 1.6px tile placed at 0.2px repeats every 2 device pixels from device
+    // pixel 0, whichever tile covers the start of the painting area.
+    let grid = Some((1.0, 0.0));
+    for (painting_start, covering_start) in [(-1.0, -1.4), (0.0, 0.2), (3.5, 3.4)] {
+        let spans = axis_tile_spans(&[covering_start], 1.6, Repeat, (0.2, painting_start), grid);
+        let [(start, pitch)] = spans[..] else {
+            panic!("a repeat axis keeps one tile: {spans:?}");
+        };
+        assert_eq!(pitch, 2.0);
+        assert_eq!(start % 2.0, 0.0, "{spans:?} is off the lattice 0, 2, 4");
+        assert!(
+            start <= painting_start && painting_start < start + pitch,
+            "{spans:?} does not cover {painting_start}"
+        );
+    }
+    // Without a grid the tile that covers the painting start is kept as it is.
+    let unsnapped = axis_tile_spans(&[-1.4], 1.6, Repeat, (0.2, -1.0), None);
+    assert_eq!(unsnapped.len(), 1);
+    assert!((unsnapped[0].0 + 1.4).abs() < 1e-9 && unsnapped[0].1 == 1.6);
+    // Other keywords are snapped from their own tiles.
+    assert_eq!(
+        axis_tile_spans(&[10.4], 0.2, NoRepeat, (10.4, 0.0), grid),
+        vec![(10.0, 1.0)]
+    );
+}
+
+#[test]
+fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
+    struct BluePixels;
+    impl raikiri_traits::ImagePixelSource for BluePixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 4,
+                height: 4,
+                rgba: [0, 0, 255, 255].repeat(16),
+            }))
+        }
+    }
+    let (position, repeat) = background_repeat_fixture("no-repeat", "center");
+    let border = bordered_sides(0.0, BorderStyle::None, BorderColor::CurrentColor);
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    // The red channel of row 5 of a white 40x10 canvas holding a box that is
+    // `width` wide at x = 10.5 and centers a 4x4 blue image.
+    let row = |width: f32, device_grid: Option<DeviceGrid>| {
+        let mut scene = Scene::new();
+        scene.fill(
+            peniko::Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            peniko::Color::from_rgba8(255, 255, 255, 255),
+            None,
+            &kurbo::Rect::new(0.0, 0.0, 40.0, 10.0),
+        );
+        let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+        layer.image = BackgroundImage::Url("https://example.test/blue.png".into());
+        layer.position = position;
+        layer.repeat = repeat;
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            width,
+            10.0,
+            10.5,
+            0.0,
+            CssColor::TRANSPARENT,
+            &[layer],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            BackgroundEnv {
+                device_grid,
+                ..BackgroundEnv::default()
+            },
+            Some(&BluePixels),
+            &mut Vec::new(),
+        );
+        let buffer = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, kurbo::Affine::IDENTITY),
+            40,
+            10,
+        );
+        (0..40)
+            .map(|x| buffer[(5 * 40 + x) * 4])
+            .collect::<Vec<u8>>()
+    };
+    // The box is 21 wide at 10.5, so its center puts the image at 19..23. The
+    // painting box rounds to 11..32, but the image keeps the unsnapped
+    // position instead of moving to 19.5.
+    let snapped = row(21.0, Some(DeviceGrid::uniform(1.0)));
+    assert_eq!(snapped[18], 255, "left of the image");
+    assert!(snapped[19..23].iter().all(|red| *red == 0), "{snapped:?}");
+    assert_eq!(snapped[23], 255, "right of the image");
+    // Centered in 22, the image straddles half pixels at 19.5..23.5. A grid
+    // moves it onto whole pixels; without one it keeps the half pixels.
+    let on_grid = row(22.0, Some(DeviceGrid::uniform(1.0)));
+    assert_eq!(on_grid[19], 255);
+    assert!(on_grid[20..24].iter().all(|red| *red == 0), "{on_grid:?}");
+    assert_eq!(on_grid[24], 255);
+    let off_grid = row(22.0, None);
+    assert!(
+        (1..255).contains(&off_grid[19]) && (1..255).contains(&off_grid[23]),
+        "{off_grid:?}"
+    );
 }
 
 #[test]
@@ -3257,7 +3612,10 @@ fn background_is_pulled_in_from_a_rounded_edge_only_when_the_border_hides_it() {
             &ComputedBorderRadius::all(ComputedLength(radius)),
             sides,
             &padding,
-            border_hides_edge,
+            BackgroundEnv {
+                border_hides_edge,
+                ..BackgroundEnv::default()
+            },
             None,
             &mut Vec::new(),
         );
@@ -3375,7 +3733,7 @@ fn background_element_origins_clips_and_rounded_images() {
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &zero_sides,
             &content_padding,
-            false,
+            BackgroundEnv::default(),
             Some(&source),
             &mut warnings,
         );
@@ -3411,7 +3769,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
-        false,
+        BackgroundEnv::default(),
         Some(&source),
         &mut warn_warnings,
     );
@@ -3445,7 +3803,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
-        false,
+        BackgroundEnv::default(),
         Some(&source),
         &mut fallback_warnings,
     );
@@ -3480,7 +3838,7 @@ fn background_element_origins_clips_and_rounded_images() {
         &ComputedBorderRadius::all(ComputedLength(8.0)),
         &zero_sides,
         &padding,
-        false,
+        BackgroundEnv::default(),
         Some(&source),
         &mut rounded_warnings,
     );
@@ -3787,6 +4145,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&nonfinite), 0);
     // Finite positioning with non-finite painting skips without crashing.
@@ -3801,6 +4160,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&nonfinite_paint), 0);
     // Round with zero positioning width keeps the natural tile width on that
@@ -3818,6 +4178,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &round_position,
         &round,
+        None,
     );
     assert_eq!(background_fill_origins(&zero_round).len(), 25);
     // Space with zero positioning width falls back to a single tile on that axis.
@@ -3833,6 +4194,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         10.0,
         &zero_space_position,
         &zero_space,
+        None,
     );
     assert_eq!(background_fill_count(&zero_space_scene), 5);
     // Tiny tiles hitting the repeat fan-out bound skip without allocating.
@@ -3847,6 +4209,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         0.001,
         &position,
         &repeat,
+        None,
     );
     assert_eq!(background_fill_count(&tiny), 0);
 }
@@ -3911,6 +4274,7 @@ fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
         0.001,
         &position,
         &space,
+        None,
     );
     assert_eq!(background_fill_count(&scene), 1);
 }
@@ -4842,7 +5206,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
-        false,
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -4867,7 +5231,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
-        false,
+        BackgroundEnv::default(),
         None,
         &mut transparent_warnings,
     );

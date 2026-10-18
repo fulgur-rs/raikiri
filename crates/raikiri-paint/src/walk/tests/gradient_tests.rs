@@ -376,7 +376,7 @@ fn element_background_paints_the_gradient_over_its_color() {
             top: 0.0,
             bottom: 0.0,
         },
-        false,
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -422,7 +422,7 @@ fn rounded_box_color_and_gradient_are_clipped_to_the_curve_together() {
                 top: 0.0,
                 bottom: 0.0,
             },
-            false,
+            BackgroundEnv::default(),
             None,
             &mut Vec::new(),
         );
@@ -484,7 +484,7 @@ fn gradient_keeps_its_clip_inside_a_matching_border() {
             top: 0.0,
             bottom: 0.0,
         },
-        false,
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -520,7 +520,7 @@ fn raster_element_background(cv: &ComputedValues, width: u32, height: u32) -> Ve
             top: 0.0,
             bottom: 0.0,
         },
-        false,
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
@@ -853,7 +853,7 @@ fn border_area_gradients_paint_the_ring() {
             top: 0.0,
             bottom: 0.0,
         },
-        false,
+        BackgroundEnv::default(),
         None,
         &mut warnings,
     );
