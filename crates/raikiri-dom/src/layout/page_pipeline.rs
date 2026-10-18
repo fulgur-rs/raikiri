@@ -12,7 +12,7 @@ use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant}
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use footnotes::FootnoteAreas;
 pub(crate) use link_events::page_fragment_events_from_pages;
-use pagination_state::{Flow, FlowEnv, PaginationState};
+use pagination_state::{FlowEnv, PaginationState};
 
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
@@ -4187,12 +4187,13 @@ fn paginate_flow(
         let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
             continue;
         };
-        let flow = if candidate.context.is_text {
-            state.place_text(document, &env, &candidate, &entry)?
+        let placed = if candidate.context.is_text {
+            state.place_text(document, &env, &candidate, &entry)
         } else {
-            state.place_box(document, &env, &candidate, &entry)?
+            state.place_box(document, &env, &candidate, &entry)
         };
-        if flow == Flow::Stop {
+        if let Err(halt) = placed {
+            halt.finish()?;
             break;
         }
     }

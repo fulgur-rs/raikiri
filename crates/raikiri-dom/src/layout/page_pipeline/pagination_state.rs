@@ -38,22 +38,42 @@ pub(super) struct FlowEnv<'a> {
     pub(super) page_box: PageBox,
 }
 
-/// Whether pagination goes on with the next candidate after one was placed.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Flow {
-    Next,
-    /// The page limit ends pagination.
-    Stop,
+/// Why placing a candidate ends pagination instead of going on with the next
+/// one.
+#[derive(Debug)]
+pub(super) enum Halt {
+    /// The page limit truncates pagination: the candidates placed so far are
+    /// all there is.
+    PageLimit,
+    /// Layout failed.
+    Failed(LayoutError),
 }
 
-/// Returns [`Flow::Stop`] from the enclosing method when `$page_index` is
-/// past the page limit of a control that truncates there.
-macro_rules! check_page_limit {
-    ($control:expr, $page_index:expr) => {
-        if !$control.within_page_limit($page_index)? {
-            return Ok(Flow::Stop);
+impl From<LayoutError> for Halt {
+    fn from(error: LayoutError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl Halt {
+    /// What pagination returns once it stopped here: nothing for the page
+    /// limit, which only truncates it, and the error otherwise.
+    pub(super) fn finish(self) -> Result<(), LayoutError> {
+        match self {
+            Self::PageLimit => Ok(()),
+            Self::Failed(error) => Err(error),
         }
-    };
+    }
+}
+
+/// Lets placement reach `page_index`, or halts it there when `page_index` is
+/// past the page limit of a control that truncates at it.
+fn reach_page(control: &PageLayoutControl<'_>, page_index: u32) -> Result<(), Halt> {
+    if control.within_page_limit(page_index)? {
+        Ok(())
+    } else {
+        Err(Halt::PageLimit)
+    }
 }
 
 /// What the start of a candidate settled for its placement.
@@ -218,7 +238,7 @@ impl PaginationState {
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         entry: &CandidateEntry,
-    ) -> Result<Flow, LayoutError> {
+    ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
             body_id,
@@ -257,7 +277,7 @@ impl PaginationState {
         if candidate.context.is_float_descendant
             && has_footnote_ancestor(cascade, node_id, document)
         {
-            return Ok(Flow::Next);
+            return Ok(());
         }
         // Text is not itself a class-A box, but non-empty text can be the
         // content that follows a nested named box.  Carry the containing
@@ -317,7 +337,7 @@ impl PaginationState {
                 block_height,
                 self.current_page,
             ) {
-                check_page_limit!(control, target_page);
+                reach_page(control, target_page)?;
                 let target_y = page_origin(target_page);
                 let delta = move_line_block(
                     document,
@@ -388,7 +408,7 @@ impl PaginationState {
             match fix {
                 LineBreakFix::MoveLines(moves) => {
                     for (line, shift, page) in moves.into_iter().flatten() {
-                        check_page_limit!(control, page);
+                        reach_page(control, page)?;
                         move_paragraph_lines(
                             document,
                             cascade,
@@ -421,7 +441,7 @@ impl PaginationState {
                         self.flow_shift,
                     );
                     let target_page = self.current_page.saturating_add(1);
-                    check_page_limit!(control, target_page);
+                    reach_page(control, target_page)?;
                     let delta = move_line_block(
                         document,
                         cascade,
@@ -460,7 +480,7 @@ impl PaginationState {
             if consumes_pending_break || named_page_change {
                 let natural_page = page_index_in_flow(effective_y).unwrap_or(self.current_page);
                 let target_page = forced_target_page(self.current_page, natural_page);
-                check_page_limit!(control, target_page);
+                reach_page(control, target_page)?;
                 let target_y = page_origin(target_page);
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
@@ -482,7 +502,7 @@ impl PaginationState {
                 self.current_page = target_page;
                 self.page_names.current = candidate_page_name.clone();
             } else if let Some(natural_page) = page_index_in_flow(effective_y) {
-                check_page_limit!(control, natural_page);
+                reach_page(control, natural_page)?;
                 self.current_page = self.current_page.max(natural_page);
             }
         } else {
@@ -505,7 +525,7 @@ impl PaginationState {
         ) {
             self.page_names.current = candidate_page_name;
         }
-        check_page_limit!(control, self.current_page);
+        reach_page(control, self.current_page)?;
         if name_participates_in_flow && height > 0.0 {
             self.column_contexts
                 .occupy_enclosing(node_id, self.current_page, document, cascade);
@@ -523,7 +543,7 @@ impl PaginationState {
             candidate.context.deferred_named_break_after,
         );
 
-        Ok(Flow::Next)
+        Ok(())
     }
 
     /// Places the box `candidate` after its start: keeps a footnote in the
@@ -536,7 +556,7 @@ impl PaginationState {
         env: &FlowEnv<'_>,
         candidate: &PageCandidate,
         entry: &CandidateEntry,
-    ) -> Result<Flow, LayoutError> {
+    ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
             body_id,
@@ -576,13 +596,13 @@ impl PaginationState {
                 self.current_page,
                 page_origins,
             );
-            check_page_limit!(control, placement.page);
+            reach_page(control, placement.page)?;
             self.footnote_areas
                 .place(document, node_id, placement, page_origins);
             self.flow_shift -= placement.height;
             self.reach.include(placement.page, false);
             self.saw_child = true;
-            return Ok(Flow::Next);
+            return Ok(());
         }
         // Copy layout data before any break adjustment so the immutable node
         // borrow does not overlap the in-place location update below.
@@ -685,7 +705,7 @@ impl PaginationState {
                     named_page_change,
                 );
                 let target_page = forced_target_page(self.current_page, natural_page);
-                check_page_limit!(control, target_page);
+                reach_page(control, target_page)?;
                 // A negative block-start margin can pull a forced-break box
                 // back into the preceding page.  Keep the break boundary for
                 // following siblings (and for page count), but materialize
@@ -804,7 +824,7 @@ impl PaginationState {
                         natural_page = page_index_for_y(effective_y);
                     }
                 }
-                check_page_limit!(control, natural_page);
+                reach_page(control, natural_page)?;
                 self.current_page = self.current_page.max(natural_page);
             }
             reset_inline_x_for_page_transition(
@@ -867,7 +887,7 @@ impl PaginationState {
                 self.last_named = LastNamedBox::new(document, candidate, node_id, raw_y, height);
             }
         }
-        check_page_limit!(control, self.current_page);
+        reach_page(control, self.current_page)?;
         // A fixed-height direct block that fits on the physical paper is
         // monolithic in this minimal paginator.
         let monolithic_paper_fit = || {
@@ -905,7 +925,7 @@ impl PaginationState {
             candidate.context.deferred_named_break_after,
         );
 
-        Ok(Flow::Next)
+        Ok(())
     }
 
     /// Records the pages the candidate placed on the current page occupies,

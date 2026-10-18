@@ -18650,13 +18650,12 @@ fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
     state.page_names = PageNames::new(Some("a".to_string()));
 
     let mut session = crate::layout::context::LayoutSession::new(&mut doc);
-    let flow = state
+    state
         .place_text(&mut session, &env, &candidate, &entry)
         .unwrap();
 
     // The text opens the next page for the page type it names, but it has
     // no position to move to the start of that page from.
-    assert_eq!(flow, Flow::Next);
     assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
     assert_eq!(state.page_names.current.as_deref(), Some("b"));
 }
@@ -18705,12 +18704,101 @@ fn a_page_type_change_leaves_a_box_at_a_non_finite_position_where_it_is() {
     state.page_names = PageNames::new(Some("a".to_string()));
 
     let mut session = crate::layout::context::LayoutSession::new(&mut doc);
-    let flow = state
+    state
         .place_box(&mut session, &env, &candidate, &entry)
         .unwrap();
 
     // The box opens the next page for the page type it names, but it has no
     // position to land at the start of that page from.
-    assert_eq!(flow, Flow::Next);
     assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
+}
+
+#[test]
+fn placement_halts_at_a_page_past_the_page_limit() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let text = doc.nodes[root].children[0];
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
+    let node_count = doc.nodes.len();
+    // A candidate on the third page, placed after another one.
+    let candidate = |node_id, is_text| PageCandidate {
+        node_id,
+        raw_y: 250.0,
+        height: 10.0,
+        context: candidates::BoxContext {
+            is_text,
+            ..Default::default()
+        },
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: false,
+        comparison_page_name: None,
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut place = |control: &PageLayoutControl<'_>, candidate: &PageCandidate| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots,
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
+        };
+        let mut state = pagination_state_before_first_candidate(node_count);
+        state.saw_child = true;
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        if candidate.context.is_text {
+            state.place_text(&mut session, &env, candidate, &entry)
+        } else {
+            state.place_box(&mut session, &env, candidate, &entry)
+        }
+    };
+
+    for (node_id, is_text) in [(text, true), (root, false)] {
+        let candidate = candidate(node_id, is_text);
+        // A control that truncates at two pages halts pagination there and
+        // records that it did.
+        let discovery = PageLayoutControl::for_geometry_discovery(Some(2));
+        assert!(matches!(
+            place(&discovery, &candidate),
+            Err(pagination_state::Halt::PageLimit)
+        ));
+        assert!(discovery.page_limit_reached());
+        // One that rejects excess pages fails layout.
+        assert!(matches!(
+            place(&PageLayoutControl::new(Some(2)), &candidate),
+            Err(pagination_state::Halt::Failed(
+                LayoutError::PageLimitExceeded {
+                    limit: 2,
+                    actual: 3
+                }
+            ))
+        ));
+        // Within the limit the candidate is placed.
+        assert!(place(&PageLayoutControl::new(Some(3)), &candidate).is_ok());
+    }
+}
+
+#[test]
+fn halting_pagination_at_the_page_limit_is_not_an_error() {
+    assert!(pagination_state::Halt::PageLimit.finish().is_ok());
+    assert!(matches!(
+        pagination_state::Halt::Failed(LayoutError::Aborted).finish(),
+        Err(LayoutError::Aborted)
+    ));
 }
