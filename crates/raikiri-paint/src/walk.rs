@@ -4680,10 +4680,13 @@ pub(crate) fn paint_document_impl(
                         // area in the column, so its descendants must not
                         // paint into the following sibling's fragment. A
                         // block that layout broke into column pieces places
-                        // its descendants in those pieces itself.
+                        // its descendants in those pieces itself. A
+                        // `display: contents` element has no box at all, so
+                        // its children are the ones the columns hold.
                         Some(_) // cov:ignore: exercised by ignored exact paged-text WPT.
                             if !fragmented_nodes.contains(&child) && document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
                                 child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
+                                    && cascade.computed[child].display != DisplayValue::Contents
                                     && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
                                     && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
                             }) => // cov:ignore: exercised by ignored exact paged-text WPT.

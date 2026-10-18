@@ -999,3 +999,24 @@ fn relative_paragraphs_with_each_inline_inset_are_painted_shifted_once_in_a_defi
         );
     }
 }
+
+#[test]
+fn display_contents_children_of_a_definite_height_container_are_painted() {
+    // An element with `display: contents` has no box, so it paints no
+    // background, and the blocks inside it are painted where the columns put
+    // them.
+    compare(
+        "<div class=mc style='height:60px'><div style='display:contents;background:blue'><p>A</p></div><div style='display:contents'><div style='display:contents'><p>B</p></div></div></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A</div><div style='position:absolute;left:0;top:20px'>B</div>",
+    );
+}
+
+#[test]
+fn display_contents_children_of_a_balanced_container_are_painted() {
+    compare(
+        "<div class=mc><div style='display:contents'><p>A</p><p>B</p></div><div style='display:contents'><p>C</p><p>D</p></div></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+    );
+}
