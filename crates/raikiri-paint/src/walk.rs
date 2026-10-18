@@ -6190,21 +6190,27 @@ fn tile_spans(
             })
             .into_iter()
             .collect(),
-        _ => starts
-            .iter()
-            .map(|start| {
-                let snapped = snap(*start);
-                let snapped_length = snap(*start + length) - snapped;
-                // A tile thinner than a device pixel can have both edges
-                // round to the same boundary; it then stays where it is
-                // instead of vanishing.
-                if snapped_length > 0.0 {
-                    (snapped, snapped_length)
-                } else {
-                    (*start, length)
-                }
-            })
-            .collect(),
+        _ => {
+            let snapped: Vec<(f64, f64)> = starts
+                .iter()
+                .map(|start| {
+                    let snapped = snap(*start);
+                    (snapped, snap(*start + length) - snapped)
+                })
+                .collect();
+            // A tile thinner than a device pixel can have both edges round to
+            // the same boundary. The axis then stays where it is instead of
+            // losing that tile, and as a whole, so the tiles that did snap
+            // cannot overlap the one that did not.
+            if snapped
+                .iter()
+                .all(|(_, snapped_length)| *snapped_length > 0.0)
+            {
+                snapped
+            } else {
+                starts.iter().map(|start| (*start, length)).collect()
+            }
+        }
     }
 }
 

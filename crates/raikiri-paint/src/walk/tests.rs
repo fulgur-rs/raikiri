@@ -3386,6 +3386,13 @@ fn tile_spans_keep_a_tile_thinner_than_a_device_pixel() {
         tile_spans(&[10.4], 0.2, NoRepeat, Some((1.0, 0.0))),
         vec![(10.0, 1.0)]
     );
+    // When one tile of a `space` axis collapses, its neighbors stay unsnapped
+    // with it: the first tile would otherwise stay at 0.1..0.3 and overlap the
+    // second one, which snaps to 0..1.
+    assert_eq!(
+        tile_spans(&[0.1, 0.4], 0.2, Space, Some((1.0, 0.0))),
+        vec![(0.1, 0.2), (0.4, 0.2)]
+    );
 }
 
 #[test]
