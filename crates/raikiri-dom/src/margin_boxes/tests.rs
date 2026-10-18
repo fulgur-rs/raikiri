@@ -193,6 +193,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         text_shadows: Vec::new(),
         overflow: OverflowXY::both(OverflowValue::Visible),
         overflow_clip_margin: raikiri_style::resolve::ComputedOverflowClipMargin::INITIAL,
+        z_index: 0,
         text_style: text_style(16.0, &[]),
         alignment: StandaloneAlign::Start,
         vertical_align: MarginTextVerticalAlign::Top,
@@ -749,6 +750,7 @@ fn margin_box_text_is_debuggable_and_borders_clamp_to_the_box() {
 
 mod fixed_dimension_tests;
 mod layout_tests;
+mod paint_order_tests;
 
 #[test]
 fn a_deferred_page_count_marks_its_placeholder() {

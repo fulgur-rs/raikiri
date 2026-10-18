@@ -77,51 +77,45 @@ pub(crate) fn paint_blank_paper(scene: &mut impl PaintScene, page_box: PageBox) 
     );
 }
 
-/// Canvas background fill site — CSS Backgrounds 3 §2.11 canvas propagation.
+/// Fill a rectangle with a flat color.
+fn fill_rect(scene: &mut impl PaintScene, color: peniko::Color, rect: kurbo::Rect) {
+    scene.fill(
+        peniko::Fill::NonZero,
+        kurbo::Affine::IDENTITY,
+        color,
+        None,
+        &rect,
+    );
+}
+
+/// The paper as a rectangle in page coordinates.
+fn paper_rect(page_box: PageBox) -> kurbo::Rect {
+    kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64)
+}
+
+/// Paint the page background: the color and images of the `@page` box, which
+/// cover the paper. It is the bottom of everything a page shows, margin boxes
+/// included (CSS Page 3 §3.1).
 ///
-/// Page backgrounds cover the paper.  When the page has a non-zero margin,
-/// the html/body canvas background is painted only in the page content area;
-/// this is the geometry that makes `@page { margin: 5px }` visibly different
-/// from a zero-margin page.  With zero page margins the canvas background
-/// covers the whole paper.
-///
-/// The canvas images are sized and positioned against the root element's
-/// box (§2.11.2), which runs through every page as one surface:
-/// `root` is the root element's box on this page, which sits higher on each
-/// later page, so a later page continues the tiles of the earlier ones and
-/// shows a `no-repeat` image only where the root's box reaches it.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_canvas_background(
+/// The paper is always covered, even when the page background is
+/// transparent; the UA canvas default is white in that case. The page and
+/// the propagated canvas background (see [`paint_canvas_background`]) stay
+/// separate layers: a canvas color may be translucent, and selecting it with
+/// `or` would discard the opaque page color instead of compositing over it.
+pub(crate) fn paint_page_background(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    root: Option<&raikiri_dom::RootBox>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
     let page_color = page_background_color(cascade, pixel_source);
-    let canvas_color = canvas_background_color(document, cascade, pixel_source);
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let white = peniko::Color::from_rgba8(255, 255, 255, 255);
 
-    fn fill_rect(scene: &mut impl PaintScene, color: peniko::Color, rect: kurbo::Rect) {
-        scene.fill(
-            peniko::Fill::NonZero,
-            kurbo::Affine::IDENTITY,
-            color,
-            None,
-            &rect,
-        );
-    }
-
-    // The paper is always covered, even when the page background is
-    // transparent; the UA canvas default is white in that case. The page
-    // and propagated canvas backgrounds stay separate layers: a canvas
-    // color may be translucent, and selecting it with `or` would discard
-    // the opaque page color instead of compositing over it.
-    let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
+    let page_rect = paper_rect(page_box);
     fill_rect(scene, page_color.unwrap_or(white), page_rect);
     // The page background covers the paper, but `background-origin` places it
     // in the page box, whose border edge lies inside the page margins. The
@@ -143,8 +137,37 @@ pub(crate) fn paint_canvas_background(
         pixel_source,
         warnings,
     );
+}
+
+/// Canvas background fill site — CSS Backgrounds 3 §2.11 canvas propagation.
+///
+/// When the page has a non-zero margin, the html/body canvas background is
+/// painted only in the page content area; this is the geometry that makes
+/// `@page { margin: 5px }` visibly different from a zero-margin page.  With
+/// zero page margins the canvas background covers the whole paper.
+///
+/// The canvas images are sized and positioned against the root element's
+/// box (§2.11.2), which runs through every page as one surface:
+/// `root` is the root element's box on this page, which sits higher on each
+/// later page, so a later page continues the tiles of the earlier ones and
+/// shows a `no-repeat` image only where the root's box reaches it.
+///
+/// The page background (see [`paint_page_background`]) goes below it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_canvas_background(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    root: Option<&raikiri_dom::RootBox>,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let canvas_color = canvas_background_color(document, cascade, pixel_source);
+    let margins = raikiri_dom::page_margins(cascade, page_box);
     let canvas_rect = if margins.is_zero() {
-        page_rect
+        paper_rect(page_box)
     } else {
         kurbo::Rect::new(
             margins.left as f64,
@@ -1827,12 +1850,10 @@ fn paint_margin_box(
     }
 }
 
-/// Paint the page-margin boxes laid out by [`raikiri_dom::page_margin_boxes`]
-/// for the page context in `cascade.page`.
+/// Lay out the page-margin boxes of a page for the page context in
+/// `cascade.page`, in drawing order (see [`raikiri_dom::page_margin_boxes`]).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_page_margin_boxes(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
+pub(crate) fn layout_page_margin_boxes(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
@@ -1840,18 +1861,35 @@ pub(crate) fn paint_page_margin_boxes(
     page_count: u32,
     page_is_left: bool,
     paired_page_increment: Option<i32>,
+) -> Vec<raikiri_dom::MarginBox> {
+    let context = raikiri_dom::MarginBoxPageContext::new(page_index, page_count, page_is_left)
+        .with_paired_page_increment(paired_page_increment);
+    raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
+}
+
+/// Split margin boxes in drawing order into the ones that go behind the
+/// document canvas, which have a negative `z-index`, and the ones that go in
+/// front of the document contents (CSS Page 3 §3.1).
+pub(crate) fn split_margin_boxes_by_layer(
+    margin_boxes: &[raikiri_dom::MarginBox],
+) -> (&[raikiri_dom::MarginBox], &[raikiri_dom::MarginBox]) {
+    margin_boxes.split_at(margin_boxes.partition_point(|margin_box| margin_box.z_index < 0))
+}
+
+/// Paint page-margin boxes, in the order given.
+pub(crate) fn paint_page_margin_boxes(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    margin_boxes: &[raikiri_dom::MarginBox],
+    page_box: PageBox,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
-    let context = raikiri_dom::MarginBoxPageContext::new(page_index, page_count, page_is_left)
-        .with_paired_page_increment(paired_page_increment);
-    for margin_box in
-        raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
-    {
+    for margin_box in margin_boxes {
         paint_margin_box(
             image_cache,
             scene,
-            &margin_box,
+            margin_box,
             &page_box,
             pixel_source,
             warnings,

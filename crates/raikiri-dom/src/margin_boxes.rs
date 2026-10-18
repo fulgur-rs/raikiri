@@ -21,6 +21,7 @@ use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
     CssColor, FontFamilyName, OverflowValue, OverflowXY, PropertyKey, PropertyValue, QuoteKeyword,
     StringFetchMode, TextAlign, TextShadowColor, VerticalAlign, VisualBox, WritingMode,
+    ZIndexValue,
 };
 use raikiri_style::resolve::ComputedOverflowClipMargin;
 use raikiri_style::{
@@ -280,6 +281,12 @@ pub struct MarginBox {
     /// Shaped content, `None` when the content is empty or the content box
     /// has no area.
     pub text: Option<MarginBoxText>,
+    /// The `z-index` of the box, `0` for `auto`. A margin box always
+    /// establishes a stacking context, whatever its `position` (CSS Page 3
+    /// §3.1). The document's canvas, page borders and contents count as one
+    /// element of level `0`, so a box of a negative level paints behind the
+    /// canvas background and any other box in front of the document.
+    pub z_index: i32,
     /// Padding-box clip of the box's text and content image, `None` when
     /// `overflow` is `visible` on both axes. Margin boxes follow the usual
     /// property rules (CSS Paged Media 3 §4.2), so their content overflows
@@ -320,6 +327,7 @@ impl MarginBox {
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
+            z_index: 0,
             overflow_clip: None,
             deferred: Vec::new(),
             running: None,
@@ -393,10 +401,7 @@ impl MarginBox {
         {
             return out;
         }
-        let index = SLOTS
-            .iter()
-            .position(|slot| *slot == self.slot)
-            .unwrap_or(0);
+        let index = slot_index(self.slot);
         // Margin boxes are not DOM nodes: the line identity uses a key from
         // the top of the id space, one per slot.
         let root = NodeId::new(u64::MAX - index as u64);
@@ -414,7 +419,9 @@ impl MarginBox {
     }
 }
 
-/// The sixteen slots in the order their content is resolved.
+/// The sixteen slots in the order their content is resolved. It is also the
+/// default painting order of the boxes (CSS Page 3 §3.1): from the top-left
+/// corner, then clockwise.
 const SLOTS: [PageMarginBoxSlot; 16] = [
     PageMarginBoxSlot::TopLeftCorner,
     PageMarginBoxSlot::TopLeft,
@@ -433,6 +440,12 @@ const SLOTS: [PageMarginBoxSlot; 16] = [
     PageMarginBoxSlot::LeftMiddle,
     PageMarginBoxSlot::LeftTop,
 ];
+
+/// The position of `slot` in [`SLOTS`], which is also its place in the default
+/// painting order of margin boxes.
+fn slot_index(slot: PageMarginBoxSlot) -> usize {
+    SLOTS.iter().position(|other| *other == slot).unwrap_or(0)
+}
 
 /// Placement of generated margin-box text across the block axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -470,6 +483,7 @@ struct MarginBoxSpec {
     text_shadows: Vec<TextShadow>,
     overflow: OverflowXY,
     overflow_clip_margin: ComputedOverflowClipMargin,
+    z_index: i32,
     text_style: StandaloneStyle,
     alignment: StandaloneAlign,
     vertical_align: MarginTextVerticalAlign,
@@ -1261,6 +1275,11 @@ fn margin_box_spec(
         text_shadows: margin_box_text_shadows(&style),
         overflow: style.overflow,
         overflow_clip_margin: style.overflow_clip_margin,
+        z_index: match style.z_index {
+            ZIndexValue::Integer(level) => level,
+            // `auto` is level 0, and so is any value that is not a level.
+            _ => 0,
+        },
         text_style,
         alignment,
         vertical_align,
@@ -1360,6 +1379,7 @@ fn place_margin_box(
         borders,
         padding,
         text,
+        z_index: spec.z_index,
         overflow_clip,
         running,
         lime_background: spec.background_image_lime,
@@ -1857,9 +1877,10 @@ fn layout_vertical_margin_boxes(
 /// Lay out the page-margin boxes of one page.
 ///
 /// `cascade` is the element cascade the page was laid out with and `page`
-/// the `@page` cascade of this page's context. Boxes come in drawing order:
-/// the top row, the bottom row, the left and right columns, then the
-/// corners. Boxes with `content: none` or no area are left out.
+/// the `@page` cascade of this page's context. Boxes come in drawing order
+/// (CSS Page 3 §3.1): by ascending [`MarginBox::z_index`], and among boxes of
+/// one level clockwise from the top-left corner. Boxes with `content: none`
+/// or no area are left out.
 pub fn page_margin_boxes(
     document: &Document,
     cascade: &CascadeResult,
@@ -2029,5 +2050,9 @@ pub fn page_margin_boxes_with_values(
             PaintRect::new(x, y, width, height),
         ));
     }
+    // The boxes were laid out edge by edge. They paint in `SLOTS` order, from
+    // the top-left corner clockwise, and by `z-index` first. The sort is
+    // stable and every slot occurs once.
+    out.sort_by_key(|margin_box| (margin_box.z_index, slot_index(margin_box.slot)));
     out
 }
