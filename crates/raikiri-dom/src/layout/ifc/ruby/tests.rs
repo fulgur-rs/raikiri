@@ -1602,3 +1602,33 @@ fn deeply_nested_display_contents_wrappers_fall_back() {
         );
     }
 }
+
+#[test]
+fn a_box_in_a_positioned_ruby_base_container_is_placed_against_its_bases() {
+    let (mut base, mut child) = (0, 0);
+    let fixture = block_fixture("line-height:20px;width:200px", |doc, root| {
+        doc.append_text(root, "aaaa ");
+        let outer = ruby(doc, root);
+        let rbc = element(
+            doc,
+            outer,
+            "rbc",
+            "display:ruby-base-container;position:relative",
+        );
+        base = rb(doc, rbc, "bb");
+        child = element(
+            doc,
+            base,
+            "span",
+            "position:absolute;width:10px;height:10px;left:50%",
+        );
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    // The container has no box and no piece; it spans its base.
+    let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+    let piece = pieces.iter().find(|piece| piece.node == base).unwrap();
+    assert_eq!(piece.border_box.width, 20.0, "{piece:?}");
+    let located = doc.nodes[child].unrounded_layout.location.x;
+    assert_eq!(located, piece.border_box.x + 10.0);
+}
