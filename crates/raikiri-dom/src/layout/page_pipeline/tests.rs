@@ -17986,6 +17986,14 @@ fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_move
     doc.nodes[floater].unrounded_layout.margin.top = 4.0;
     doc.nodes[wrapper].unrounded_layout.size.height = 20.0;
     let pages = PageOrigins::new(&[], 100.0);
+    let node_count = doc.nodes.len();
+    let new_state = || {
+        PaginationState::new(
+            HeaderRepeats::default(),
+            PageNames::new(None),
+            ColumnContexts::new(node_count),
+        )
+    };
     let moved_floats = || {
         let mut floats = FloatShifts {
             later: 20.0,
@@ -18029,7 +18037,7 @@ fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_move
 
     // A box before the candidate that underflowed into the preceding page
     // keeps its correction for the flow after it.
-    let mut state = PaginationState::default();
+    let mut state = new_state();
     state.deferred_shifts.underflow = Some((clearing, 7.0));
     settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
     assert_eq!(state.flow_shift, 7.0);
@@ -18037,22 +18045,18 @@ fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_move
 
     // Leaving a subtree that could not hold a moved box takes back the part
     // of the shift it did not absorb, and returns to the page the flow was on.
-    let mut state = PaginationState {
-        flow_shift: 12.0,
-        current_page: 3,
-        ..Default::default()
-    };
+    let mut state = new_state();
+    state.flow_shift = 12.0;
+    state.current_page = 3;
     state.subtree_shifts.bounded.push((clearing, 5.0, 2));
     settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
     assert_eq!((state.flow_shift, state.current_page), (7.0, 2));
     assert!(state.subtree_shifts.bounded.is_empty());
 
     // So does leaving the moved float whose shift is pending.
-    let mut state = PaginationState {
-        flow_shift: 50.0,
-        current_page: 4,
-        ..Default::default()
-    };
+    let mut state = new_state();
+    state.flow_shift = 50.0;
+    state.current_page = 4;
     state.float_shifts.pending = Some((floater, 30.0, 1));
     settle(&mut doc, &mut state, &candidate(wrapper, 0.0, true));
     assert_eq!((state.flow_shift, state.current_page), (20.0, 1));
@@ -18061,36 +18065,64 @@ fn settling_the_shifts_at_a_candidate_ends_those_it_has_left_and_clears_the_move
 
     // A box that clears the moved float moves below it, and so does the flow
     // after it. The box then starts on the page its new position falls on.
-    let mut state = PaginationState {
-        float_shifts: moved_floats(),
-        ..Default::default()
-    };
+    let mut state = new_state();
+    state.float_shifts = moved_floats();
     settle(&mut doc, &mut state, &candidate(clearing, 130.0, true));
     assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
     // No ancestor holds a box directly below the body.
     assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
 
     // The ancestors of a nested box grow to hold its shift.
-    let mut state = PaginationState {
-        float_shifts: moved_floats(),
-        ..Default::default()
-    };
+    let mut state = new_state();
+    state.float_shifts = moved_floats();
     settle(&mut doc, &mut state, &candidate(nested, 130.0, false));
     assert_eq!((state.flow_shift, state.current_page), (10.0, 1));
     assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 30.0);
 
     // A float that does not fit beside the moved one moves below it and then
     // is the float that the floats after it keep below.
-    let mut state = PaginationState {
-        float_shifts: moved_floats(),
-        ..Default::default()
-    };
+    let mut state = new_state();
+    state.float_shifts = moved_floats();
     settle(&mut doc, &mut state, &candidate(floater, 130.0, true));
     assert_eq!((state.flow_shift, state.current_page), (14.0, 1));
     assert_eq!(state.float_shifts.pending, Some((floater, 14.0, 0)));
 
     // A box with nothing to clear stays where it is.
-    let mut state = PaginationState::default();
+    let mut state = new_state();
     settle(&mut doc, &mut state, &candidate(clearing, 130.0, true));
     assert_eq!((state.flow_shift, state.current_page), (0.0, 0));
+}
+
+#[test]
+fn pagination_goes_on_within_the_page_limit_and_stops_or_fails_at_it() {
+    // A control that rejects excess pages fails at the limit.
+    let strict = PageLayoutControl::new(Some(2));
+    assert!(strict.within_page_limit(1).unwrap());
+    assert!(matches!(
+        strict.within_page_limit(2),
+        Err(LayoutError::PageLimitExceeded {
+            limit: 2,
+            actual: 3
+        })
+    ));
+    assert!(!strict.page_limit_reached());
+    // One that truncates at the limit stops there and records that it did.
+    let discovery = PageLayoutControl::for_geometry_discovery(Some(2));
+    assert!(discovery.within_page_limit(1).unwrap());
+    assert!(!discovery.page_limit_reached());
+    assert!(!discovery.within_page_limit(2).unwrap());
+    assert!(discovery.page_limit_reached());
+    // A cancelled layout fails whatever the limit.
+    let abort = || true;
+    let aborted = PageLayoutControl::for_geometry_discovery(Some(2)).with_abort_check(&abort);
+    assert!(matches!(
+        aborted.within_page_limit(0),
+        Err(LayoutError::Aborted)
+    ));
+    // Without a limit every page is within it.
+    assert!(
+        PageLayoutControl::new(None)
+            .within_page_limit(u32::MAX)
+            .unwrap()
+    );
 }
