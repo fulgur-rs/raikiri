@@ -8,6 +8,7 @@ use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
 /// The geometry of one page, found once before its nodes are walked.
+#[derive(Clone, Copy)]
 pub(super) struct PageGeometry {
     pub(super) margins: PageMargins,
     pub(super) insets: PageContentInsets,
@@ -190,5 +191,47 @@ impl PageGeometry {
             flow_band,
             page_lines,
         }
+    }
+
+    /// The clip that flowed text is held to, if any: the page content box
+    /// when the page is at least twice as wide as its content. Fixed boxes
+    /// repeat on every page and are not clipped. When pages follow the y
+    /// axis, the right edge is the page border box instead: x is not the
+    /// paging axis there, so ink that overflows into the right page padding
+    /// stays visible.
+    pub(super) fn text_page_clip(
+        &self,
+        cascade: &CascadeResult,
+        page_box: PageBox,
+        inside_fixed: bool,
+    ) -> Option<Rect> {
+        let Self {
+            margins,
+            insets,
+            content_width,
+            content_height,
+            page_offset_x,
+            pages_follow_x_axis,
+            ..
+        } = *self;
+        (!inside_fixed
+            && content_width.is_finite()
+            && content_width > 0.0
+            && page_box.width >= content_width * 2.0
+            && cascade.page.margin_boxes().is_empty())
+        .then(|| {
+            Rect::new(
+                page_offset_x as f64,
+                (margins.top + insets.top) as f64,
+                (page_box.width
+                    - margins.right
+                    - if pages_follow_x_axis.is_some() {
+                        insets.right
+                    } else {
+                        0.0
+                    }) as f64,
+                (margins.top + insets.top + content_height) as f64,
+            )
+        })
     }
 }
