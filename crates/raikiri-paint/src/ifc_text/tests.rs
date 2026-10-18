@@ -511,10 +511,7 @@ fn vertical_ifc_glyph_origins_and_outline_axes_are_converted_to_physical_space()
                 0.0,
                 0.0,
             ]);
-            let skew = run.skew().map_or(Affine::IDENTITY, |degrees| {
-                Affine::skew(f64::from(degrees).to_radians().tan(), 0.0)
-            });
-            let transform = orientation * skew;
+            let transform = orientation * crate::text::synthetic_slant(run.skew());
             expected_transforms.push((transform != Affine::IDENTITY).then_some(transform));
         }
     }
