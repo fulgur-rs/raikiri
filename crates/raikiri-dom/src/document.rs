@@ -3606,7 +3606,7 @@ fn content_image_size(
         (None, None) => {
             let (width, height) = default_object_size(natural_width, natural_height, ratio);
             if ratio.is_some() && width > 0.0 && height > 0.0 {
-                constrain_with_ratio(
+                crate::image_geometry::constrain_with_ratio(
                     (width, height),
                     (min_width, max_width),
                     (min_height, max_height),
@@ -3643,40 +3643,6 @@ fn default_object_size(
             }
         }
         (None, None, None) => DEFAULT,
-    }
-}
-
-/// The constraint table of CSS 2.1 §10.4 for a replaced element whose
-/// `width` and `height` are both `auto`: a tentative `size` with a ratio
-/// is brought within `width` and `height`'s `(min, max)` bounds, keeping
-/// the ratio wherever the bounds allow. Each max is at least its min.
-fn constrain_with_ratio(
-    (w, h): (f32, f32),
-    (min_w, max_w): (f32, f32),
-    (min_h, max_h): (f32, f32),
-) -> (f32, f32) {
-    match (w > max_w, w < min_w, h > max_h, h < min_h) {
-        (true, _, true, _) => {
-            if max_w / w <= max_h / h {
-                (max_w, min_h.max(max_w * h / w))
-            } else {
-                (min_w.max(max_h * w / h), max_h)
-            }
-        }
-        (_, true, _, true) => {
-            if min_w / w <= min_h / h {
-                (max_w.min(min_h * w / h), min_h)
-            } else {
-                (min_w, max_h.min(min_w * h / w))
-            }
-        }
-        (_, true, true, _) => (min_w, max_h),
-        (true, _, _, true) => (max_w, min_h),
-        (true, _, _, _) => (max_w, (max_w * h / w).max(min_h)),
-        (_, true, _, _) => (min_w, (min_w * h / w).min(max_h)),
-        (_, _, true, _) => ((max_h * w / h).max(min_w), max_h),
-        (_, _, _, true) => ((min_h * w / h).min(max_w), min_h),
-        _ => (w, h),
     }
 }
 

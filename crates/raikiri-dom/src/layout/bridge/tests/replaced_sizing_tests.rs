@@ -334,6 +334,8 @@ fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_agai
         ("height:calc(100% - 20px)", [40.0, 25.0, 20.0, 40.0]),
         ("min-height:100%", [50.0, 25.0, 30.0, 50.0]),
         ("min-height:calc(100% - 20px)", [40.0, 25.0, 25.0, 40.0]),
+        ("max-height:50%", [25.0, 25.0, 15.0, 25.0]),
+        ("max-height:calc(50% - 10px)", [20.0, 25.0, 10.0, 20.0]),
     ] {
         let mut parent = 0;
         let mut doc = laid_out(|doc, body| {
@@ -473,4 +475,123 @@ fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured
         })
         .collect();
     assert_eq!(widths, [50.0, 25.0, 30.0, 50.0]);
+}
+
+/// Lay out one `<img>` with `css` on `<body>` and return its size.
+fn image_size(css: &str) -> (f32, f32) {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        image = doc.append_element(Some(body), "img", Style::default(), Some(css));
+    });
+    size(&doc, image)
+}
+
+#[test]
+fn a_max_height_brings_an_image_without_a_size_within_it_keeping_the_ratio() {
+    // The image is 25x50, so a height capped at 25px is 12.5px wide.
+    for display in ["inline", "block", "inline-block"] {
+        assert_eq!(
+            image_size(&format!("display:{display};max-height:25px")),
+            (12.5, 25.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn a_max_width_brings_an_image_without_a_size_within_it_keeping_the_ratio() {
+    for display in ["inline", "block", "inline-block"] {
+        assert_eq!(
+            image_size(&format!("display:{display};max-width:10px")),
+            (10.0, 20.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn a_calc_max_width_brings_an_image_of_any_display_within_it() {
+    // A percentage resolves against the 100px body: 10px + 10% is 20px.
+    for display in ["inline", "block", "inline-block"] {
+        assert_eq!(
+            image_size(&format!("display:{display};max-width:calc(10px + 10%)")),
+            (20.0, 40.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn an_image_without_a_size_follows_the_constraint_table_of_css_2_1() {
+    for (css, expected) in [
+        // Both maxima are exceeded: the one that shrinks it most wins.
+        ("max-width:10px;max-height:40px", (10.0, 20.0)),
+        ("max-width:20px;max-height:20px", (10.0, 20.0)),
+        // Over a max in one axis and under a min in the other.
+        ("min-width:50px;max-height:20px", (50.0, 20.0)),
+        ("max-width:10px;min-height:80px", (10.0, 80.0)),
+        // A min raises the image the same way.
+        ("min-width:50px", (50.0, 100.0)),
+        ("min-height:100px", (50.0, 100.0)),
+        // A percentage resolves against the 100px body.
+        ("max-width:20%", (20.0, 40.0)),
+        ("max-width:calc(10px + 10%)", (20.0, 40.0)),
+        // The constraints apply to the border box with `border-box`.
+        (
+            "box-sizing:border-box;padding:5px;max-width:20px",
+            (20.0, 30.0),
+        ),
+        ("padding:5px;max-width:10px", (20.0, 30.0)),
+    ] {
+        assert_eq!(image_size(css), expected, "{css}");
+    }
+}
+
+#[test]
+fn a_size_on_one_side_of_an_image_is_not_changed_by_the_constraint_table() {
+    // The specified side wins, the other side is cut by its own max, and the
+    // ratio no longer holds.
+    assert_eq!(image_size("height:50px;max-width:10px"), (10.0, 50.0));
+    assert_eq!(image_size("width:25px;max-height:20px"), (25.0, 20.0));
+    assert_eq!(
+        image_size("width:20px;height:20px;max-width:10px"),
+        (10.0, 20.0)
+    );
+}
+
+#[test]
+fn a_shrink_to_fit_box_takes_its_width_from_the_percentage_max_height_of_its_image() {
+    // A max-height of 20% of the 100px content box is 20px, which the ratio
+    // carries over to a 10px width for the parent to wrap.
+    for box_css in [
+        "position:absolute;height:100px",
+        "display:inline-block;height:100px",
+    ] {
+        for display in ["inline", "block", "inline-block"] {
+            let (parent, image) =
+                image_in_box(box_css, &format!("display:{display};max-height:20%"));
+            assert_eq!(image, (10.0, 20.0), "{box_css} {display}");
+            assert_eq!(parent.0, 10.0, "{box_css} {display}");
+        }
+    }
+}
+
+#[test]
+fn an_image_with_both_sides_authored_keeps_them_in_every_container() {
+    // Both sides are fixed by the author, so the ratio and the constraint
+    // table have nothing to decide.
+    for box_css in [
+        "display:block",
+        "display:flex;flex-direction:column",
+        "display:flex;flex-direction:row",
+        "display:grid",
+    ] {
+        let (_, image) = image_in_box(box_css, "width:20px;height:20px");
+        assert_eq!(image, (20.0, 20.0), "{box_css}");
+    }
+}
+
+#[test]
+fn a_percentage_max_height_without_a_definite_height_does_not_constrain_an_image() {
+    assert_eq!(image_size("max-height:50%"), (25.0, 50.0));
 }
