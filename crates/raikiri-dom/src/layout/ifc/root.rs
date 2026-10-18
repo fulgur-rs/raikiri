@@ -103,6 +103,9 @@ pub(crate) struct IfcRoot {
     /// The opacity of the translucent `::first-line` boxes around the first
     /// line, multiplied.
     pub(crate) first_line_opacity: Option<f32>,
+    /// The values the paragraph's text and inline elements have on its first
+    /// line.
+    first_line_styles: Arc<super::first_line::FirstLineStyles>,
     letter_style_index: Arc<LetterStyleIndex>,
 }
 
@@ -364,6 +367,7 @@ impl IfcRoot {
             text_nowrap: meta.text_nowrap,
             letter_styles: meta.letter_styles,
             first_line_opacity: meta.first_line_opacity,
+            first_line_styles: meta.first_line_styles,
             letter_style_index,
         }
     }
@@ -461,8 +465,28 @@ impl IfcRoot {
             text_nowrap: self.text_nowrap.clone(),
             letter_styles: self.letter_styles.clone(),
             first_line_opacity: self.first_line_opacity,
+            first_line_styles: self.first_line_styles.clone(),
             letter_style_index: self.letter_style_index.clone(),
         }
+    }
+
+    /// The values text has on the first line when it sits directly in the
+    /// element or generated box `owner`, if a `::first-line` style reaches
+    /// the paragraph.
+    pub(crate) fn first_line_text_style(
+        &self,
+        owner: usize,
+    ) -> Option<&raikiri_style::ComputedValues> {
+        self.first_line_styles.text(owner)
+    }
+
+    /// The values the inline element or generated box `id` has on the first
+    /// line, if a `::first-line` style reaches the paragraph.
+    pub(crate) fn first_line_element_style(
+        &self,
+        id: usize,
+    ) -> Option<&raikiri_style::ComputedValues> {
+        self.first_line_styles.element(id)
     }
 
     pub(crate) fn typographic_fragment(

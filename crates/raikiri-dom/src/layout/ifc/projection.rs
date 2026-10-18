@@ -12,6 +12,7 @@
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::first_letter::{FirstLetter, LetterStyle};
+use super::first_line::{FirstLine, FirstLineStyles};
 use super::generated_atomics::GeneratedAtomic;
 use super::generated_blocks::GeneratedBlock;
 use super::style;
@@ -117,6 +118,9 @@ pub(crate) struct ProjectedMeta {
     /// paragraph's first line, multiplied (see
     /// [`crate::paint_rules::first_line_opacity_layer`]).
     pub(crate) first_line_opacity: Option<f32>,
+    /// The values the text and inline elements of the paragraph have on its
+    /// first line. Empty when no `::first-line` style reaches the paragraph.
+    pub(crate) first_line_styles: Arc<FirstLineStyles>,
 }
 
 /// The text style of `node` with its document context: its `lang`, and no
@@ -479,9 +483,25 @@ fn push_generated(
         builder.push_atomic(id, &inline_style, InlineEdges::default());
     }
     if !empty {
-        builder
-            .open_inline(id, &inline_style, edges)
-            .set_inline_edge_percents(edge_percents);
+        let first_line = if inline_level && pseudo != PseudoElem::Marker {
+            first_letter
+                .first_line
+                .as_ref()
+                .and_then(|first_line| first_line.generated(doc, cascade, element, pseudo))
+        } else {
+            None
+        };
+        match first_line {
+            Some(values) => {
+                let first_style = styled(doc, cascade, &values, element, fonts)?;
+                if let Some(first_line) = first_letter.first_line.as_mut() {
+                    first_line.note_generated(id.0 as usize, values);
+                }
+                builder.open_inline_with_first_line(id, &inline_style, &first_style, edges)
+            }
+            None => builder.open_inline(id, &inline_style, edges),
+        }
+        .set_inline_edge_percents(edge_percents);
     }
     if !inline_level && block.is_none() && pseudo == PseudoElem::After {
         builder.push_forced_break(id);
@@ -763,6 +783,7 @@ pub(crate) fn project_ifc_text_builder(
             letter_styles: Vec::new(),
             // An anonymous item has no first formatted line of an element.
             first_line_opacity: None,
+            first_line_styles: Arc::default(),
         },
     })
 }
@@ -856,14 +877,27 @@ fn project_children_builder(
     // root and to every inline box (Quirks Mode Standard, 3.3-3.4).
     paragraph_style.line_height_quirk = line_height_quirk(doc);
     let writing_mode = paragraph_style.writing_mode;
+    let mut first_letter =
+        FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
+    // The first formatted line of a table cell's anonymous content is not
+    // found from the cell's own `::first-line`.
+    if anonymous_children.is_some() {
+        first_letter.first_line = None;
+    }
+    if let Some(first_line) = &first_letter.first_line {
+        match first_line.element(doc, cascade, root) {
+            Some(values) => {
+                paragraph_style.first_line = Some(styled(doc, cascade, &values, root, fonts)?);
+            }
+            None => first_letter.first_line = None,
+        }
+    }
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut percent_insets = Vec::new();
     let mut cleared_breaks = Vec::new();
     let mut text_nowrap = HashMap::new();
-    let mut first_letter =
-        FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
     let mut generated_images = GeneratedImages {
         atomics: Vec::new(),
         writing_mode,
@@ -1042,6 +1076,9 @@ fn project_children_builder(
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
                 let parent_style = &cascade.computed[doc.parent_of(id).unwrap_or(id)];
+                if let Some(first_line) = first_letter.first_line.as_mut() {
+                    first_line.note_text(doc, cascade, id);
+                }
                 text_nowrap.insert(
                     id as u64,
                     parent_style.effective_text_wrap_mode == TextWrapMode::Nowrap,
@@ -1264,9 +1301,28 @@ fn project_children_builder(
                         id as u64,
                         cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
                     );
-                    builder
-                        .open_inline(NodeId(id as u64), &inline_style, edges)
-                        .set_inline_edge_percents(edge_percents);
+                    // On the first line the element's values come from the
+                    // `::first-line` it sits in; its box geometry does not.
+                    match first_letter
+                        .first_line
+                        .as_ref()
+                        .and_then(|first_line| first_line.element(doc, cascade, id))
+                    {
+                        Some(values) => {
+                            let first_style = styled(doc, cascade, &values, id, fonts)?;
+                            if let Some(first_line) = first_letter.first_line.as_mut() {
+                                first_line.note_element(id, values);
+                            }
+                            builder.open_inline_with_first_line(
+                                NodeId(id as u64),
+                                &inline_style,
+                                &first_style,
+                                edges,
+                            )
+                        }
+                        None => builder.open_inline(NodeId(id as u64), &inline_style, edges),
+                    }
+                    .set_inline_edge_percents(edge_percents);
                     push_generated(
                         &mut builder,
                         doc,
@@ -1352,6 +1408,12 @@ fn project_children_builder(
             text_nowrap: Arc::new(text_nowrap),
             letter_styles: first_letter.styles,
             first_line_opacity: first_line_opacity(doc, cascade, root, &counters.predecessors),
+            first_line_styles: Arc::new(
+                first_letter
+                    .first_line
+                    .map(FirstLine::into_styles)
+                    .unwrap_or_default(),
+            ),
         },
     })
 }

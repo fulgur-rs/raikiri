@@ -427,7 +427,9 @@ fn contexts_for_text_owners<K: Copy + Eq + std::hash::Hash>(
 
 /// The decoration context of a text node: the context after the ifc root,
 /// folded through the elements between the root and the text. Each element's
-/// decoration sits at that element's baseline, `shifts` below the line's.
+/// decoration sits at that element's baseline, `shifts` below the line's. On
+/// the root's first line, the elements have the values the `::first-line`
+/// around them gives.
 fn context_for_text(
     document: &Document,
     cascade: &CascadeResult,
@@ -435,7 +437,9 @@ fn context_for_text(
     text_node: usize,
     base: &DecorationContext,
     shifts: &HashMap<usize, f32>,
+    on_first_line: bool,
 ) -> DecorationContext {
+    let first_line = on_first_line.then(|| document.get_node(root_id)).flatten();
     let root_id = document.ifc_source_owner(root_id);
     // Anonymous flex/grid text roots already carry their complete ancestor
     // context. Starting at their parent would fold those ancestors twice.
@@ -459,7 +463,10 @@ fn context_for_text(
             .take_while(|&id| id != root_id),
     );
     chain.iter().rev().fold(base.clone(), |context, &id| {
-        let Some(cv) = computed_for_id(cascade, id) else {
+        let Some(cv) = first_line
+            .and_then(|node| node.ifc_first_line_element_style(id))
+            .or_else(|| computed_for_id(cascade, id))
+        else {
             return context;
         };
         decorations_for_element(
@@ -688,7 +695,15 @@ pub fn positioned_line_decorations(
                     .unwrap_or_default();
                 return annotation_context(document, cascade, owner, &shifts);
             }
-            let context = context_for_text(document, cascade, root, owner, base, &shifts);
+            let context = context_for_text(
+                document,
+                cascade,
+                root,
+                owner,
+                base,
+                &shifts,
+                line.index == 0,
+            );
             if style_owner == owner {
                 return context;
             }

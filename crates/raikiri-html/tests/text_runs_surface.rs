@@ -365,6 +365,113 @@ fn first_letter_across_generated_sources_preserves_each_owner_kind_and_remainder
 /// default body, while an explicit length stays as written and a
 /// non-monospace family goes back to the 16px `medium`.
 #[test]
+fn first_line_runs_carry_the_first_line_font_and_color() {
+    let html = br#"<!doctype html><style>
+      @page { size: 300px 200px; margin: 0 }
+      body { margin: 0; font: 10px/10px Ahem; color: black }
+      p { margin: 0 }
+      p::first-line { color: blue; font-size: 20px }
+      .own { color: red }
+    </style><p>AB<span class="own">C</span><span>D</span><br>EF<span>G</span></p>"#;
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources(&html[..], &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("expected complete layout")
+    };
+    let page = result.pages().next().unwrap();
+    let runs = page.text_runs();
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let black = CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let seen: Vec<_> = runs
+        .iter()
+        .map(|run| (run.text, run.font_size, run.color))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("AB", 20.0, blue),
+            ("C", 20.0, red),
+            ("D", 20.0, blue),
+            ("EF", 10.0, black),
+            ("G", 10.0, black),
+        ]
+    );
+}
+
+#[test]
+fn first_line_decorations_of_inline_elements_use_the_first_line_color() {
+    let html = br#"<!doctype html><style>
+      @page { size: 300px 200px; margin: 0 }
+      body { margin: 0; font: 10px/10px Ahem }
+      p { margin: 0; color: red }
+      p::first-line { color: blue }
+      span { text-decoration: underline }
+    </style><p><span>AB</span><br><span>CD</span></p>"#;
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources(&html[..], &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("expected complete layout")
+    };
+    let page = result.pages().next().unwrap();
+    let runs = page.text_runs();
+    let underline = |text: &str| {
+        let run = runs.iter().find(|run| run.text == text).unwrap();
+        assert_eq!(run.decorations.len(), 1, "{text}");
+        (run.color, run.decorations[0].color)
+    };
+    let blue = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    let red = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    assert_eq!(underline("AB"), (blue, blue));
+    assert_eq!(underline("CD"), (red, red));
+}
+
+#[test]
 fn pre_text_run_uses_monospace_medium_font_size() {
     let html = br#"<!doctype html><style>
       @page { size: 400px 300px; margin: 0 }

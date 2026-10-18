@@ -7,6 +7,7 @@ pub(crate) mod ch;
 mod clear_breaks;
 pub(crate) mod error;
 pub(crate) mod first_letter;
+pub(crate) mod first_line;
 pub(crate) mod flow;
 pub(crate) mod font;
 pub(crate) mod generated_atomics;

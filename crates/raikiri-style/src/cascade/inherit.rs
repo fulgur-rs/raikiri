@@ -268,10 +268,13 @@ pub(crate) struct WalkOutputs {
     pub(crate) pseudo: HashMap<(StyleNodeId, PseudoElem), PseudoValueArc<ComputedValues>>,
     pub(crate) svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     pub(crate) first_letter_inputs: HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
-    /// The candidates the first-letter methods recompute first-line text from:
+    /// The resolve context of each element with a `::first-line` style, for
+    /// recomputing the styles of the first line's descendants.
+    pub(crate) first_line_contexts: HashMap<StyleNodeId, ResolveContext>,
+    /// The candidates the first-line methods recompute first-line text from:
     /// those of the elements under an element with a `::first-line` style,
     /// and of their `::before`, `::after` and `::first-line`. Kept only when
-    /// some element has first-letter inputs.
+    /// some element has first-letter inputs or a `::first-line` style.
     pub(crate) typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
     pub(crate) opacity_specified: Vec<bool>,
     pub(crate) background_color_specified: Vec<bool>,
@@ -304,6 +307,7 @@ impl WalkOutputs {
             pseudo: HashMap::new(),
             svg_properties: HashMap::new(),
             first_letter_inputs: HashMap::new(),
+            first_line_contexts: HashMap::new(),
             typographic_inheritance: HashMap::new(),
             opacity_specified: try_filled(node_count, false)?,
             background_color_specified: try_filled(node_count, false)?,
@@ -487,8 +491,10 @@ pub(crate) fn walk_from<D: StyleDom>(
         &options.limits,
         options.stored_block_budget,
     )?; // cov:ignore: the error branch needs a u32 handle overflow
-    // Recomputing first-line text only matters to the first-letter methods.
-    let keep_typographic = collector.targets(PseudoElem::FirstLetter);
+    // Recomputing first-line text only matters to the first-letter and
+    // first-line methods.
+    let keep_typographic =
+        collector.targets(PseudoElem::FirstLetter) || collector.targets(PseudoElem::FirstLine);
     let node_count = dom.node_count();
     let mut budget = ResultBudget::new(&options.limits);
     let mut out = WalkOutputs::allocate(node_count, &mut budget)?;
@@ -641,6 +647,10 @@ pub(crate) fn walk_from<D: StyleDom>(
                 ))?;
                 let inputs = inputs.clone();
                 try_insert(&mut out.first_letter_inputs, id, inputs)?;
+            }
+            if let Some(&context) = out.first_line_contexts.get(&source) {
+                budget.retained(entry_bytes(&out.first_line_contexts, 0))?;
+                try_insert(&mut out.first_line_contexts, id, context)?;
             }
             let computed = out.computed[src].clone();
             // Counted as resolving the node would count it, so that the
@@ -855,6 +865,10 @@ pub(crate) fn walk_from<D: StyleDom>(
                         };
                         try_insert(&mut out.first_letter_inputs, id, inputs)?;
                     }
+                    if pseudo == PseudoElem::FirstLine {
+                        budget.retained(entry_bytes(&out.first_line_contexts, 0))?;
+                        try_insert(&mut out.first_line_contexts, id, ctx)?;
+                    }
                     pseudo_computed.custom_properties = pseudo_custom_properties;
                     pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
                     budget.output(pseudo_entry_bytes(own_heap_bytes(
@@ -947,7 +961,7 @@ pub(crate) fn walk_from<D: StyleDom>(
     if out.computed.len() < node_count {
         out.computed.resize(node_count, ComputedValues::initial());
     }
-    if out.first_letter_inputs.is_empty() {
+    if out.first_letter_inputs.is_empty() && out.first_line_contexts.is_empty() {
         out.typographic_inheritance.clear();
     }
     collector.count_into(&mut out.counts);
