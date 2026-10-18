@@ -10,83 +10,10 @@ use raikiri_style::CascadeResult;
 
 #[derive(Clone)]
 pub(super) enum PaintFrame<'a> {
-    Visit {
-        node_id: usize,
-        parent_abs_x: f32,
-        parent_abs_y: f32,
-        parent_font_size: f32,
-        shift_y: f32,
-        transform_x: f32,
-        transform_y: f32,
-        /// How far the relative offsets that paint applies to the
-        /// ancestors move `parent_abs_y` from where layout placed it.
-        paint_offset_y: f32,
-        fragment_clip_height: Option<f32>,
-        /// On a `display: contents` child of a multicolumn container, the
-        /// column height that container clips its blocks to. The element
-        /// has no box, so its children are the ones the columns hold.
-        column_clip_height: Option<f32>,
-        fragment_id: Option<usize>,
-        fragment_origin_x: f32,
-        fragment_origin_y: f32,
-        fragmentainer: Option<usize>,
-        fragment_rect: Option<FragmentRect>,
-        fragment_clip: Option<FragmentRect>,
-        is_fragment_visit: bool,
-        inside_fixed: bool,
-        inside_fixed_containing_block: bool,
-        decorations: text::DecorationContext,
-    },
-    AnonymousParagraph {
-        key: usize,
-        cell: &'a raikiri_dom::Node,
-        x: f32,
-        y: f32,
-        shift_y: f32,
-        transform_x: f32,
-        transform_y: f32,
-        /// How far the relative offsets that paint applies move `y`
-        /// from where layout placed it.
-        paint_offset_y: f32,
-        fragmentainer: Option<usize>,
-        inside_fixed: bool,
-        decorations: text::DecorationContext,
-        /// The page area that `fixed` backgrounds of the paragraph's
-        /// inline boxes are positioned in.
-        fixed_viewport: Option<Rect>,
-        /// Whether the paragraph's lines wait for the end of the layer,
-        /// as those of the explicit cells beside it do.
-        defer: bool,
-    },
+    Visit(VisitFrame),
+    AnonymousParagraph(AnonymousParagraphFrame<'a>),
     RestoreTransform(Affine),
-    /// The lines of one paragraph, drawn where this frame pops: in place
-    /// for most paragraphs, or at the end of the enclosing layer for a
-    /// block whose inline content is deferred (see
-    /// [`raikiri_dom::paint_rules::defers_inline_content`]).
-    Lines {
-        node_id: usize,
-        x: f32,
-        y: f32,
-        shift_y: f32,
-        /// How far the translations around the paragraph move its lines
-        /// along y.
-        translation_y: f32,
-        decorations: text::DecorationContext,
-        fragmentainer: Option<usize>,
-        inside_fixed: bool,
-        paint_transform: Affine,
-        /// The page area that `fixed` backgrounds of the paragraph's
-        /// inline boxes are positioned in.
-        fixed_viewport: Option<Rect>,
-        /// Keep the paragraph's groups open until
-        /// [`PaintFrame::FinishLines`] when it has any, so the boxes laid
-        /// out beside the lines join them.
-        hold: bool,
-        /// Whether a box beside the lines is inside a translucent inline
-        /// element, so the groups are kept open even if no text of the
-        /// element allocated one.
-        boxes_in_groups: bool,
-    },
+    Lines(LinesFrame),
     /// Start recording the paint of a box laid out beside the held lines
     /// of its paragraph. An `early` box paints before the lines, which
     /// place it once they are drawn.
@@ -154,6 +81,88 @@ pub(super) enum PaintFrame<'a> {
     },
 }
 
+#[derive(Clone)]
+pub(super) struct VisitFrame {
+    pub(super) node_id: usize,
+    pub(super) parent_abs_x: f32,
+    pub(super) parent_abs_y: f32,
+    pub(super) parent_font_size: f32,
+    pub(super) shift_y: f32,
+    pub(super) transform_x: f32,
+    pub(super) transform_y: f32,
+    /// How far the relative offsets that paint applies to the
+    /// ancestors move `parent_abs_y` from where layout placed it.
+    pub(super) paint_offset_y: f32,
+    pub(super) fragment_clip_height: Option<f32>,
+    /// On a `display: contents` child of a multicolumn container, the
+    /// column height that container clips its blocks to. The element
+    /// has no box, so its children are the ones the columns hold.
+    pub(super) column_clip_height: Option<f32>,
+    pub(super) fragment_id: Option<usize>,
+    pub(super) fragment_origin_x: f32,
+    pub(super) fragment_origin_y: f32,
+    pub(super) fragmentainer: Option<usize>,
+    pub(super) fragment_rect: Option<FragmentRect>,
+    pub(super) fragment_clip: Option<FragmentRect>,
+    pub(super) is_fragment_visit: bool,
+    pub(super) inside_fixed: bool,
+    pub(super) inside_fixed_containing_block: bool,
+    pub(super) decorations: text::DecorationContext,
+}
+
+#[derive(Clone)]
+pub(super) struct AnonymousParagraphFrame<'a> {
+    pub(super) key: usize,
+    pub(super) cell: &'a raikiri_dom::Node,
+    pub(super) x: f32,
+    pub(super) y: f32,
+    pub(super) shift_y: f32,
+    pub(super) transform_x: f32,
+    pub(super) transform_y: f32,
+    /// How far the relative offsets that paint applies move `y`
+    /// from where layout placed it.
+    pub(super) paint_offset_y: f32,
+    pub(super) fragmentainer: Option<usize>,
+    pub(super) inside_fixed: bool,
+    pub(super) decorations: text::DecorationContext,
+    /// The page area that `fixed` backgrounds of the paragraph's
+    /// inline boxes are positioned in.
+    pub(super) fixed_viewport: Option<Rect>,
+    /// Whether the paragraph's lines wait for the end of the layer,
+    /// as those of the explicit cells beside it do.
+    pub(super) defer: bool,
+}
+
+/// The lines of one paragraph, drawn where this frame pops: in place
+/// for most paragraphs, or at the end of the enclosing layer for a
+/// block whose inline content is deferred (see
+/// [`raikiri_dom::paint_rules::defers_inline_content`]).
+#[derive(Clone)]
+pub(super) struct LinesFrame {
+    pub(super) node_id: usize,
+    pub(super) x: f32,
+    pub(super) y: f32,
+    pub(super) shift_y: f32,
+    /// How far the translations around the paragraph move its lines
+    /// along y.
+    pub(super) translation_y: f32,
+    pub(super) decorations: text::DecorationContext,
+    pub(super) fragmentainer: Option<usize>,
+    pub(super) inside_fixed: bool,
+    pub(super) paint_transform: Affine,
+    /// The page area that `fixed` backgrounds of the paragraph's
+    /// inline boxes are positioned in.
+    pub(super) fixed_viewport: Option<Rect>,
+    /// Keep the paragraph's groups open until
+    /// [`PaintFrame::FinishLines`] when it has any, so the boxes laid
+    /// out beside the lines join them.
+    pub(super) hold: bool,
+    /// Whether a box beside the lines is inside a translucent inline
+    /// element, so the groups are kept open even if no text of the
+    /// element allocated one.
+    pub(super) boxes_in_groups: bool,
+}
+
 /// How an open layer ends once its subtree is done.
 #[derive(Clone, Copy)]
 pub(super) enum LayerClose {
@@ -211,7 +220,7 @@ pub(super) fn positioned_frame(
     frame: &PaintFrame<'_>,
 ) -> raikiri_dom::paint_rules::PositionedFrame {
     match frame {
-        PaintFrame::Visit { node_id, .. } | PaintFrame::InlineGroup { node_id, .. } => {
+        PaintFrame::Visit(VisitFrame { node_id, .. }) | PaintFrame::InlineGroup { node_id, .. } => {
             raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
         }
         PaintFrame::PushClip { node_id, .. } => {
@@ -290,7 +299,7 @@ pub(super) fn set_aside<'a>(
 ) -> Option<PaintFrame<'a>> {
     // A positioned box waits for the end of its layer, after the
     // backgrounds of the blocks that follow it.
-    if let PaintFrame::Visit { node_id, .. } = &frame
+    if let PaintFrame::Visit(VisitFrame { node_id, .. }) = &frame
         && let Some(layer) = deferral_scopes.last_mut()
         && layer.allowed
         && !layer.flushing
@@ -310,7 +319,7 @@ pub(super) fn set_aside<'a>(
     }
     // The lines of an anonymous cell in a table part that defers wait
     // for the end of the layer, in tree order with the other cells'.
-    if let PaintFrame::AnonymousParagraph { defer, .. } = &mut frame
+    if let PaintFrame::AnonymousParagraph(AnonymousParagraphFrame { defer, .. }) = &mut frame
         && std::mem::take(defer)
     {
         if let Some(layer) = deferral_scopes.last_mut() {
@@ -320,7 +329,7 @@ pub(super) fn set_aside<'a>(
     }
     // A box that does not defer, such as a flex container, paints after
     // the inline content deferred before it.
-    if let PaintFrame::Visit { node_id, .. } = &frame
+    if let PaintFrame::Visit(VisitFrame { node_id, .. }) = &frame
         && deferral_scopes
             .last()
             .is_some_and(|layer| !layer.pending.is_empty())

@@ -2,28 +2,40 @@
 //! change nothing else.
 
 use super::frames::{
-    DeferralLayer, LayerClose, PaintFrame, finish_lines_leaving_groups, leave_groups,
+    DeferralLayer, LayerClose, PaintFrame, VisitFrame, finish_lines_leaving_groups, leave_groups,
     leaves_groups, positioned_frame,
 };
-use super::{in_left_group, paint_generated_pseudo, push_overflow_clip, traced_text};
+use super::page_geometry::PageGeometry;
+use super::{
+    ImageBrushCache, in_left_group, paint_generated_pseudo, push_overflow_clip, traced_text,
+};
 use crate::capture::CaptureScene;
 use crate::transform::TransformScene;
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use peniko::Mix;
-use raikiri_dom::paint_rules;
+use raikiri_dom::paint_rules::{self, LeavingParagraphs};
 use raikiri_dom::{CounterSnapshots, Document};
 use raikiri_style::CascadeResult;
-use raikiri_traits::{PageBox, PaintClip};
+use raikiri_traits::{ImagePixelSource, PageBox, PaintClip, RenderWarning};
 use std::collections::{HashMap, HashSet};
 
 /// The walk of one page: what it paints into and the work that waits for
 /// frames further down the stack.
 pub(super) struct PaintWalk<'w, S> {
+    pub(super) image_cache: &'w ImageBrushCache,
     pub(super) document: &'w Document,
     pub(super) cascade: &'w CascadeResult,
     pub(super) counter_snapshots: &'w CounterSnapshots,
     pub(super) page_box: PageBox,
+    /// The page name that `@page` rules are matched against, if any.
+    pub(super) active_page_name: Option<Option<&'w str>>,
+    pub(super) geometry: PageGeometry,
+    pub(super) pixel_source: Option<&'w dyn ImagePixelSource>,
+    pub(super) custom_highlights: &'w [crate::TextHighlightRange],
+    pub(super) warnings: &'w mut Vec<RenderWarning>,
+    /// Whether each paragraph's content can leave its lines, found once.
+    pub(super) paragraphs: LeavingParagraphs,
     pub(super) scene: &'w mut TransformScene<'w, CaptureScene<'w, S>>,
     pub(super) trace: Option<&'w mut Vec<crate::PaintTraceEvent>>,
     /// Paragraphs whose groups wait for the boxes beside their lines,
@@ -44,10 +56,13 @@ pub(super) struct PaintWalk<'w, S> {
 }
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
-    /// Carry out `frame` if it changes nothing but the state of the walk, and
-    /// give it back if it has boxes or lines of its own to paint.
-    pub(super) fn step(&mut self, frame: PaintFrame<'w>) -> Option<PaintFrame<'w>> {
+    /// Carry out `frame`, and give it back if it is the visit of a node, which
+    /// the walk goes on with.
+    pub(super) fn step(&mut self, frame: PaintFrame<'w>) -> Option<VisitFrame> {
         match frame {
+            PaintFrame::Visit(visit) => return Some(visit),
+            PaintFrame::AnonymousParagraph(paragraph) => self.anonymous_paragraph(paragraph),
+            PaintFrame::Lines(lines) => self.lines(lines),
             PaintFrame::RestoreTransform(transform) => self.scene.transform = transform,
             PaintFrame::EndDeferral => self.end_deferral(),
             PaintFrame::PushClip {
@@ -93,7 +108,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     self.counter_snapshots,
                 );
             }
-            frame => return Some(frame),
         }
         None
     }
