@@ -271,6 +271,33 @@ fn shared_runs_are_not_kept_across_font_collections() {
 }
 
 #[test]
+fn shared_runs_are_shaped_again_when_the_fonts_change_under_the_document() {
+    // The caller keeps a handle on the collection the document got, and
+    // changes a generic family list through it.
+    let fonts = ifc_ahem_fonts();
+    let mut doc = Document::new();
+    doc.set_font_collection_with_limits(fonts.clone(), Limits::default());
+    let style = ahem(10.0);
+    let start = StandaloneAlign::Start;
+    let before = shared(&doc, "abc", &style, None, start);
+    assert!(Arc::ptr_eq(
+        &before,
+        &shared(&doc, "abc", &style, None, start)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 1);
+    fonts.set_generic_families(shodo::style::GenericFamily::Serif, vec!["Ahem".to_owned()]);
+    let after = shared(&doc, "abc", &style, None, start);
+    assert!(!Arc::ptr_eq(&before, &after));
+    assert_eq!(doc.standalone_text_calls(), 2);
+    // The run shaped under the new fonts is the one handed out from now on.
+    assert!(Arc::ptr_eq(
+        &after,
+        &shared(&doc, "abc", &style, None, start)
+    ));
+    assert_eq!(doc.standalone_text_calls(), 2);
+}
+
+#[test]
 fn a_document_that_was_never_laid_out_shares_no_runs() {
     let doc = Document::new();
     let style = ahem(10.0);

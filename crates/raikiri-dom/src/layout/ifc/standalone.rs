@@ -151,7 +151,14 @@ const MEMO_CAPACITY: usize = 64;
 /// each page (a page number) is the first to be evicted.
 #[derive(Default)]
 pub(crate) struct StandaloneMemo {
-    entries: Mutex<Vec<MemoEntry>>,
+    state: Mutex<MemoState>,
+}
+
+#[derive(Default)]
+struct MemoState {
+    /// The font generations every entry was shaped under.
+    generations: Option<(u64, Option<u64>)>,
+    entries: Vec<MemoEntry>,
 }
 
 struct MemoEntry {
@@ -180,44 +187,56 @@ impl MemoEntry {
 }
 
 impl StandaloneMemo {
-    fn entries(&self) -> std::sync::MutexGuard<'_, Vec<MemoEntry>> {
+    /// The state for the fonts at `generations`: runs shaped under other
+    /// fonts are dropped first.
+    fn state(&self, generations: (u64, Option<u64>)) -> std::sync::MutexGuard<'_, MemoState> {
         // An entry is complete before it is pushed, so a panic elsewhere
         // leaves the list usable.
-        self.entries.lock().unwrap_or_else(PoisonError::into_inner)
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.generations != Some(generations) {
+            state.entries.clear();
+            state.generations = Some(generations);
+        }
+        state
     }
 
     fn get(
         &self,
+        generations: (u64, Option<u64>),
         text: &str,
         style: &StandaloneStyle,
         width: Option<f32>,
         align: StandaloneAlign,
     ) -> Option<Arc<StandaloneText>> {
-        let mut entries = self.entries();
-        let index = entries
+        let mut state = self.state(generations);
+        let index = state
+            .entries
             .iter()
             .rposition(|entry| entry.matches(text, style, width, align))?;
-        let entry = entries.remove(index);
+        let entry = state.entries.remove(index);
         let shaped = Arc::clone(&entry.shaped);
-        entries.push(entry);
+        state.entries.push(entry);
         Some(shaped)
     }
 
     fn insert(
         &self,
+        generations: (u64, Option<u64>),
         text: &str,
         style: &StandaloneStyle,
         width: Option<f32>,
         align: StandaloneAlign,
         shaped: &Arc<StandaloneText>,
     ) {
-        let mut entries = self.entries();
+        let mut state = self.state(generations);
         // Another thread may have shaped the same run in the meantime.
-        entries.retain(|entry| !entry.matches(text, style, width, align));
-        if entries.len() >= MEMO_CAPACITY {
-            entries.remove(0);
+        state
+            .entries
+            .retain(|entry| !entry.matches(text, style, width, align));
+        if state.entries.len() >= MEMO_CAPACITY {
+            state.entries.remove(0);
         }
-        entries.push(MemoEntry {
+        state.entries.push(MemoEntry {
             text: text.to_owned(),
             style: style.clone(),
             width: width.map(f32::to_bits),
@@ -347,8 +366,10 @@ impl Document {
     /// alignment is handed out again instead of being shaped a second time.
     ///
     /// The runs are remembered together with the document's fonts, so a
-    /// document that gets another font collection shapes anew. A document
-    /// that was never laid out has none to tie them to and shapes every time.
+    /// document that gets another font collection shapes anew, and so does
+    /// one whose collection changes under it (a font is registered, or a
+    /// generic or fallback family list is set). A document that was never
+    /// laid out has none to tie them to and shapes every time.
     #[doc(hidden)]
     pub fn shape_standalone_text_shared(
         &self,
@@ -362,13 +383,19 @@ impl Document {
                 .shape_standalone_text(text, style, width, align)
                 .map(Arc::new);
         };
-        if let Some(shaped) = state.standalone_memo.get(text, style, width, align) {
+        // Read before shaping: a change of the fonts while this run is shaped
+        // then drops the run again at the next look-up.
+        let generations = state.fonts.generations();
+        if let Some(shaped) = state
+            .standalone_memo
+            .get(generations, text, style, width, align)
+        {
             return Some(shaped);
         }
         let shaped = Arc::new(self.shape_standalone_text(text, style, width, align)?);
         state
             .standalone_memo
-            .insert(text, style, width, align, &shaped);
+            .insert(generations, text, style, width, align, &shaped);
         Some(shaped)
     }
 
