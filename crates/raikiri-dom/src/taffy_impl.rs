@@ -796,10 +796,12 @@ impl LayoutSession<'_> {
         output
     }
 
-    /// Whether the box `idx` has a vertical inline axis while its parent's is
-    /// horizontal, or the other way round.
+    /// Whether the box `idx` has a vertical inline axis while the container
+    /// that lays it out has a horizontal one, or the other way round. A
+    /// `display: contents` ancestor generates no box, so its writing mode
+    /// does not count.
     fn is_orthogonal_to_parent(&self, idx: usize) -> bool {
-        self.parent_of(idx).is_some_and(|parent| {
+        self.taffy_parent_of(idx).is_some_and(|parent| {
             self.has_vertical_writing_mode(parent) != self.has_vertical_writing_mode(idx)
         })
     }

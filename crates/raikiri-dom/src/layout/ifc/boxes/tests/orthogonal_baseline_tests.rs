@@ -47,3 +47,29 @@ fn a_parallel_inline_block_sits_on_the_baseline_of_its_last_line() {
     // with the strut's and the box runs 42px below the baseline.
     assert_eq!(paragraph_height("height:50px", "A"), 50.0);
 }
+
+#[test]
+fn a_display_contents_ancestor_does_not_make_a_parallel_inline_block_orthogonal() {
+    // The vertical wrapper generates no box, so the horizontal inline-block
+    // still belongs to the horizontal paragraph and keeps its baseline.
+    let mut root_id = 0;
+    let fixture = block_fixture("line-height:10px", |doc, root| {
+        root_id = root;
+        let wrapper = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some("display:contents;writing-mode:vertical-lr"),
+        );
+        let atomic = doc.append_element(
+            Some(wrapper),
+            "div",
+            taffy::Style::default(),
+            Some("display:inline-block;writing-mode:horizontal-tb;height:50px"),
+        );
+        doc.append_text(atomic, "A");
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, root_id).3, 50.0);
+}
