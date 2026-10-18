@@ -2,7 +2,9 @@ use super::*;
 use crate::layout::ifc::test_support::{Fixture, sheet_fixture, span};
 use crate::layout::test_support::with_ahem;
 use crate::node::MulticolTextFragment;
-use column_projection::{LineColumns, charge_column_ranges, split_inline_elements};
+use column_projection::{
+    ColumnProjection, LineColumns, charge_column_ranges, index_children, split_inline_elements,
+};
 
 /// Lines `start..end` in `column`, which starts `y` down the paragraph.
 fn range(start: usize, end: usize, column: usize, y: f32) -> MulticolTextFragment {
@@ -279,4 +281,83 @@ fn a_plain_inline_element_is_painted_apart_only_when_the_first_line_changes_it()
         built = two_lines(doc, root);
     });
     assert_eq!(generated_kinds(&restyled), [(built[0], None)]);
+}
+
+/// A paragraph of `outer` with the elements `first` and `second`, then `empty`;
+/// they are returned as `[outer, first, second, empty]` beside the paragraph.
+fn nested_elements() -> (Document, usize, [usize; 4]) {
+    let mut ids = [0; 4];
+    let Fixture { doc, root, .. } = sheet_fixture("", "width:200px", |doc, root| {
+        let outer = span(doc, root, "display:inline");
+        let first = span(doc, outer, "display:inline");
+        let second = span(doc, outer, "display:inline");
+        let empty = span(doc, root, "display:inline");
+        ids = [outer, first, second, empty];
+    });
+    (doc, root, ids)
+}
+
+/// The column of `sources` that holds the bounds of each of them.
+fn column_holding(sources: &[usize]) -> ColumnProjection {
+    let mut data = ColumnProjection::default();
+    for &source in sources {
+        data.bounds.insert(source, Vec::new());
+    }
+    data
+}
+
+#[test]
+fn a_child_is_in_the_columns_that_hold_the_sources_below_it() {
+    let (doc, root, [outer, first, second, empty]) = nested_elements();
+    let columns = HashMap::from([
+        (0, column_holding(&[first])),
+        (1, column_holding(&[second])),
+    ]);
+    let control = PageLayoutControl::default();
+    let mut work = ProjectionWork::new(&control, 1000);
+    let children = index_children(&doc, root, &columns, 0, &mut work).expect("indexed");
+    // `outer` has sources in both columns; `empty` has none and goes to the
+    // first column.
+    assert_eq!(
+        children,
+        HashMap::from([
+            ((root, 0), vec![outer, empty]),
+            ((root, 1), vec![outer]),
+            ((outer, 0), vec![first]),
+            ((outer, 1), vec![second]),
+        ])
+    );
+}
+
+#[test]
+fn sources_in_one_column_index_their_shared_ancestors_once() {
+    let (doc, root, [outer, first, second, empty]) = nested_elements();
+    let columns = HashMap::from([(1, column_holding(&[first, second]))]);
+    let control = PageLayoutControl::default();
+    let mut work = ProjectionWork::new(&control, 1000);
+    let children = index_children(&doc, root, &columns, 0, &mut work).expect("indexed");
+    assert_eq!(
+        children,
+        HashMap::from([
+            ((root, 1), vec![outer]),
+            ((root, 0), vec![empty]),
+            ((outer, 1), vec![first, second]),
+        ])
+    );
+    // Each source charges for its own element and for `outer`, where the
+    // second stops: 4. Each of the 4 children then charges for itself and
+    // for its one column: 8.
+    assert_eq!(work.remaining(), 1000 - (4 + 8));
+}
+
+#[test]
+fn indexing_the_children_stops_when_the_work_runs_out() {
+    let (doc, root, [_, first, ..]) = nested_elements();
+    let columns = HashMap::from([(0, column_holding(&[first]))]);
+    let control = PageLayoutControl::default();
+    let mut work = ProjectionWork::new(&control, 1);
+    assert!(matches!(
+        index_children(&doc, root, &columns, 0, &mut work),
+        Err(LayoutError::FragmentLimitExceeded { limit: 1 })
+    ));
 }

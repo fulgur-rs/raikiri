@@ -240,37 +240,75 @@ impl ParagraphProjection {
             multicol,
         };
         result.add_inline_pieces(&lines, pieces, &split, &block_nodes, work)?;
+        result.add_text_lines(&lines, document, root, work)?;
+        if crate::generated_content::inside_marker_in_flow(cascade, root)
+            && document.list_marker_image(root).is_some()
+            && let Some(positioned) = &positioned
+        {
+            result.add_marker_images(positioned, &columns, work)?;
+        }
+        if node
+            .ifc
+            .as_ref()
+            .is_some_and(|ifc| !ifc.generated_atomics.is_empty())
+            && let Some(positioned) = &positioned
+        {
+            result.add_content_images(positioned, &columns, work)?;
+        }
+        // Pure inline paragraphs have no independent block/atomic subtrees.
+        // Index their source edges by actual column ownership once, retaining
+        // unowned empty elements in the first placement only. Atomic subtrees
+        // keep the existing traversal and remain bounded by the work cap.
+        if multicol && node.ifc_boxes().is_empty() {
+            let first_column = ranges
+                .and_then(|ranges| ranges.first())
+                .map_or(fallback_column, |range| range.fragmentainer);
+            result.children = Some(index_children(
+                document,
+                root,
+                &result.columns,
+                first_column,
+                work,
+            )?);
+        }
+        Ok(result)
+    }
+}
+
+impl ParagraphProjection {
+    /// Record the lines of text of each owner of a paragraph where the
+    /// paragraph places them, combined and, in columns, in each column.
+    fn add_text_lines(
+        &mut self,
+        lines: &ParagraphLines<'_, '_>,
+        document: &Document,
+        root: usize,
+        work: &mut ProjectionWork<'_, '_>,
+    ) -> Result<(), LayoutError> {
         for (owner, owned) in document.ifc_text_lines_by_node(root) {
             work.check()?;
-            if multicol {
+            if lines.multicol {
                 work.charge(1)?;
             }
-            result.combined.record_count += 1;
-            result.combined.owners.entry(owner).or_default();
+            self.combined.record_count += 1;
+            self.combined.owners.entry(owner).or_default();
             for (index, raw) in owned.lines.iter().enumerate() {
                 work.check()?;
-                if multicol {
+                if lines.multicol {
                     work.charge(1)?;
                 }
-                let Some(offset) = positioned
-                    .as_ref()
-                    .and_then(|lines| lines.line_offset(raw.line))
-                else {
+                let Some(PlacedLine { offset, shift, .. }) = lines.placement(raw.line) else {
                     continue;
                 };
-                let shift = positioned
-                    .as_ref()
-                    .and_then(|lines| lines.shifts.get(raw.line))
-                    .copied()
-                    .unwrap_or(0.0);
-                let column = columns.column[raw.line];
+                let column = lines.columns.column[raw.line];
+                let origin = lines.columns.origin[raw.line];
                 let line = crate::IfcTextLine {
                     top: raw.top + offset.1 - shift,
                     bottom: raw.bottom + offset.1 - shift,
                     ..*raw
                 };
                 add_line(
-                    &mut result.combined,
+                    &mut self.combined,
                     owner,
                     &owned,
                     index,
@@ -278,15 +316,15 @@ impl ParagraphProjection {
                     offset.0,
                     column as u32,
                 );
-                if multicol {
+                if lines.multicol {
                     add_line(
-                        result.columns.entry(column).or_default(),
+                        self.columns.entry(column).or_default(),
                         owner,
                         &owned,
                         index,
                         crate::IfcTextLine {
-                            top: line.top - columns.origin[raw.line],
-                            bottom: line.bottom - columns.origin[raw.line],
+                            top: line.top - origin,
+                            bottom: line.bottom - origin,
                             ..line
                         },
                         0.0,
@@ -295,134 +333,146 @@ impl ParagraphProjection {
                 }
             }
         }
-        if crate::generated_content::inside_marker_in_flow(cascade, root)
-            && document.list_marker_image(root).is_some()
-            && let Some(positioned) = &positioned
-        {
-            for line in positioned.lines() {
-                work.charge(
-                    line.runs
-                        .len()
-                        .saturating_add(line.markers.len())
-                        .saturating_add(1),
-                )?;
-                let top = line.offset.1 + line.line.block_offset();
-                let height = line.line.block_size();
-                for marker in line.markers {
-                    let global = crate::PositionedMarker {
-                        owner: marker.owner,
-                        rect: raikiri_traits::PaintRect::new(
-                            line.offset.0 + marker.rect.x,
-                            line.offset.1 + marker.rect.y,
-                            marker.rect.width,
-                            marker.rect.height,
-                        ),
-                    };
-                    let local = crate::PositionedMarker {
-                        rect: raikiri_traits::PaintRect::new(
-                            marker.rect.x,
-                            global.rect.y - columns.origin[line.index],
-                            global.rect.width,
-                            global.rect.height,
-                        ),
-                        ..global
-                    };
-                    result.markers.push((top, height, global));
-                    result
-                        .marker_columns
-                        .entry(columns.column[line.index])
-                        .or_default()
-                        .push((top - columns.origin[line.index], height, local));
-                }
-            }
-        }
-        if node
-            .ifc
-            .as_ref()
-            .is_some_and(|ifc| !ifc.generated_atomics.is_empty())
-            && let Some(positioned) = &positioned
-        {
-            for line in positioned.lines() {
-                work.charge(
-                    line.runs
-                        .len()
-                        .saturating_add(line.content_images.len())
-                        .saturating_add(1),
-                )?;
-                let top = line.offset.1 + line.line.block_offset();
-                let height = line.line.block_size();
-                for image in line.content_images {
-                    let global = crate::PositionedContentImage {
-                        rect: raikiri_traits::PaintRect::new(
-                            line.offset.0 + image.rect.x,
-                            line.offset.1 + image.rect.y,
-                            image.rect.width,
-                            image.rect.height,
-                        ),
-                        ..image
-                    };
-                    let local = crate::PositionedContentImage {
-                        rect: raikiri_traits::PaintRect::new(
-                            image.rect.x,
-                            global.rect.y - columns.origin[line.index],
-                            global.rect.width,
-                            global.rect.height,
-                        ),
-                        ..global
-                    };
-                    result
-                        .content_images
-                        .push((top, height, line.index, global));
-                    result
-                        .content_image_columns
-                        .entry(columns.column[line.index])
-                        .or_default()
-                        .push((top - columns.origin[line.index], height, line.index, local));
-                }
-            }
-        }
-        // Pure inline paragraphs have no independent block/atomic subtrees.
-        // Index their source edges by actual column ownership once, retaining
-        // unowned empty elements in the first placement only. Atomic subtrees
-        // keep the existing traversal and remain bounded by the work cap.
-        if multicol && node.ifc_boxes().is_empty() {
-            let mut membership = HashMap::<usize, BTreeSet<usize>>::new();
-            for (&column, data) in &result.columns {
-                for &source in data.owners.keys().chain(data.bounds.keys()) {
-                    for current in document
-                        .inclusive_ancestors(source)
-                        .take_while(|&current| current != root)
-                    {
-                        work.charge(1)?;
-                        if !membership.entry(current).or_default().insert(column) {
-                            break;
-                        }
-                    }
-                }
-            }
-            let first_column = ranges
-                .and_then(|ranges| ranges.first())
-                .map_or(fallback_column, |range| range.fragmentainer);
-            let mut children = HashMap::<(usize, usize), Vec<usize>>::new();
-            let mut pending = vec![root];
-            while let Some(parent) = pending.pop() {
-                for &child in &document.nodes[parent].children {
-                    work.charge(1)?;
-                    let columns = membership
-                        .get(&child)
-                        .cloned()
-                        .unwrap_or_else(|| BTreeSet::from([first_column]));
-                    for column in columns {
-                        work.charge(1)?;
-                        children.entry((parent, column)).or_default().push(child);
-                    }
-                    pending.push(child);
-                }
-            }
-            result.children = Some(children);
-        }
-        Ok(result)
+        Ok(())
     }
+
+    /// Record the images of the list markers of a paragraph, with the top and
+    /// height of their line: from the content box of the paragraph, and from
+    /// the start of their column.
+    fn add_marker_images(
+        &mut self,
+        positioned: &PositionedLines<'_>,
+        columns: &LineColumns,
+        work: &mut ProjectionWork<'_, '_>,
+    ) -> Result<(), LayoutError> {
+        for line in positioned.lines() {
+            work.charge(
+                line.runs
+                    .len()
+                    .saturating_add(line.markers.len())
+                    .saturating_add(1),
+            )?;
+            let top = line.offset.1 + line.line.block_offset();
+            let height = line.line.block_size();
+            for marker in line.markers {
+                let global = crate::PositionedMarker {
+                    owner: marker.owner,
+                    rect: raikiri_traits::PaintRect::new(
+                        line.offset.0 + marker.rect.x,
+                        line.offset.1 + marker.rect.y,
+                        marker.rect.width,
+                        marker.rect.height,
+                    ),
+                };
+                let local = crate::PositionedMarker {
+                    rect: raikiri_traits::PaintRect::new(
+                        marker.rect.x,
+                        global.rect.y - columns.origin[line.index],
+                        global.rect.width,
+                        global.rect.height,
+                    ),
+                    ..global
+                };
+                self.markers.push((top, height, global));
+                self.marker_columns
+                    .entry(columns.column[line.index])
+                    .or_default()
+                    .push((top - columns.origin[line.index], height, local));
+            }
+        }
+        Ok(())
+    }
+
+    /// Record the content images of a paragraph, with the top and height of
+    /// their line and the index of the line: from the content box of the
+    /// paragraph, and from the start of their column.
+    fn add_content_images(
+        &mut self,
+        positioned: &PositionedLines<'_>,
+        columns: &LineColumns,
+        work: &mut ProjectionWork<'_, '_>,
+    ) -> Result<(), LayoutError> {
+        for line in positioned.lines() {
+            work.charge(
+                line.runs
+                    .len()
+                    .saturating_add(line.content_images.len())
+                    .saturating_add(1),
+            )?;
+            let top = line.offset.1 + line.line.block_offset();
+            let height = line.line.block_size();
+            for image in line.content_images {
+                let global = crate::PositionedContentImage {
+                    rect: raikiri_traits::PaintRect::new(
+                        line.offset.0 + image.rect.x,
+                        line.offset.1 + image.rect.y,
+                        image.rect.width,
+                        image.rect.height,
+                    ),
+                    ..image
+                };
+                let local = crate::PositionedContentImage {
+                    rect: raikiri_traits::PaintRect::new(
+                        image.rect.x,
+                        global.rect.y - columns.origin[line.index],
+                        global.rect.width,
+                        global.rect.height,
+                    ),
+                    ..global
+                };
+                self.content_images.push((top, height, line.index, global));
+                self.content_image_columns
+                    .entry(columns.column[line.index])
+                    .or_default()
+                    .push((top - columns.origin[line.index], height, line.index, local));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The children of each element of the paragraph `root` that has lines in
+/// `columns`, by the element and the column: `(parent, column)` lists the
+/// children of `parent` that have source edges in `column`. A child with
+/// none of its own, such as an empty element, is kept in `first_column`.
+pub(super) fn index_children(
+    document: &Document,
+    root: usize,
+    columns: &HashMap<usize, ColumnProjection>,
+    first_column: usize,
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<HashMap<(usize, usize), Vec<usize>>, LayoutError> {
+    let mut membership = HashMap::<usize, BTreeSet<usize>>::new();
+    for (&column, data) in columns {
+        for &source in data.owners.keys().chain(data.bounds.keys()) {
+            for current in document
+                .inclusive_ancestors(source)
+                .take_while(|&current| current != root)
+            {
+                work.charge(1)?;
+                if !membership.entry(current).or_default().insert(column) {
+                    break;
+                }
+            }
+        }
+    }
+    let mut children = HashMap::<(usize, usize), Vec<usize>>::new();
+    let mut pending = vec![root];
+    while let Some(parent) = pending.pop() {
+        for &child in &document.nodes[parent].children {
+            work.charge(1)?;
+            let member_columns = membership
+                .get(&child)
+                .cloned()
+                .unwrap_or_else(|| BTreeSet::from([first_column]));
+            for column in member_columns {
+                work.charge(1)?;
+                children.entry((parent, column)).or_default().push(child);
+            }
+            pending.push(child);
+        }
+    }
+    Ok(children)
 }
 
 /// Charge `work` for preparing the lines of `count` over the `ranges` of a
