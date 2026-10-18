@@ -625,6 +625,26 @@ fn grid_static_position_alignment_uses_grid_self_and_content_box() {
 }
 
 #[test]
+fn grid_static_position_alignment_ignores_explicit_insets() {
+    let (doc, abspos) = laid_out(
+        "width:200px;height:100px",
+        "display:grid;position:relative;width:200px;height:100px",
+        "position:absolute;left:0;width:50px;height:10px",
+    );
+    let (alignment, space) = static_position_alignment(
+        &doc,
+        abspos,
+        Size {
+            width: 50.0,
+            height: 10.0,
+        },
+    );
+
+    assert_eq!((alignment.width, alignment.height), (0.0, 0.0));
+    assert_eq!(space, Size::ZERO);
+}
+
+#[test]
 fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
     for (wrapper_css, fixed_css, expected_y) in [
         ("", "top:5px", 5.0),
