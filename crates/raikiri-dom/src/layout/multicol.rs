@@ -1343,18 +1343,10 @@ fn plan_nested_continuation(
         .horizontal
         .then(|| lineless::supported(tree, child, false))
         .flatten();
-    // The outer container has a definite height here, so rows may also fill
-    // overflow columns past its last one; the fragment budget bounds them.
-    let max_pieces = tree
-        .fragment_tree
-        .limit
-        .saturating_sub(tree.fragment_tree.fragments.len());
-    let rows = max_pieces;
     // A box that avoids breaks inside, has a minimum height or generated
     // content keeps its previous layout: the rows below hold its paragraph
     // lines only.
-    if (lineless_children.is_none()
-        && (rows < 2 || style.height_definite || !node.style.size.height.is_auto()))
+    if (lineless_children.is_none() && (style.height_definite || !node.style.size.height.is_auto()))
         || !style.horizontal
         || !node.style.min_size.height.is_auto()
         || !node.style.max_size.height.is_auto()
@@ -1399,6 +1391,10 @@ fn plan_nested_continuation(
     let row_top = -(cursor + margin_top);
     let row_step = outer.column_offset_x(1);
     if let Some(children) = lineless_children {
+        let max_pieces = tree
+            .fragment_tree
+            .limit
+            .saturating_sub(tree.fragment_tree.fragments.len());
         let rows = lineless::fill_rows(
             tree,
             &children,
@@ -1465,7 +1461,12 @@ fn plan_nested_continuation(
             )
         })
         .collect();
-    let rows = paragraph_group::fill_rows(tree, child, &entries, context, first, later, rows)?;
+    // The outer container has a definite height here, so the rows may also
+    // fill overflow columns past its last one. Every row holds a line, so
+    // they end with the content; the fragment budget is enforced when their
+    // records are made, which reports exhaustion.
+    let rows =
+        paragraph_group::fill_rows(tree, child, &entries, context, first, later, usize::MAX)?;
     let columns = rows.heights.len().checked_sub(1).filter(|&n| n > 0)?;
     // The block-end padding and border must fit in the last outer column too.
     let end = continued_origin_y + rows.heights[columns] + block_end_inset;

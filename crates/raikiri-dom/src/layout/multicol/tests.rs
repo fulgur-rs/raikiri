@@ -2192,13 +2192,13 @@ fn a_cloned_nested_multicol_fills_its_rows_with_paragraph_lines_between_its_padd
 
 /// A column container of `columns` columns, 100px high and filled in order,
 /// holding a one-column container of `lines` 10px lines styled by
-/// `inner_css`. Returns the container, its paragraph and the paragraph's
-/// column ranges as (line start, line end, fragmentainer).
-fn nested_paragraph_rows(
+/// `inner_css`, not yet laid out. Returns the document, the inner container
+/// and its paragraph.
+fn nested_paragraph_document(
     columns: usize,
     inner_css: &str,
     lines: usize,
-) -> (Document, usize, Vec<(usize, usize, usize)>) {
+) -> (Document, usize, usize) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
@@ -2225,6 +2225,18 @@ fn nested_paragraph_rows(
         doc.append_text(paragraph, "a");
         doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
     }
+    (doc, inner, paragraph)
+}
+
+/// [`nested_paragraph_document`] laid out. Returns the document, the inner
+/// container and the paragraph's column ranges as (line start, line end,
+/// fragmentainer).
+fn nested_paragraph_rows(
+    columns: usize,
+    inner_css: &str,
+    lines: usize,
+) -> (Document, usize, Vec<(usize, usize, usize)>) {
+    let (mut doc, inner, paragraph) = nested_paragraph_document(columns, inner_css, lines);
     layout_nested_flex_float_fixture(&mut doc);
     let ranges = doc.nodes[paragraph]
         .ifc_multicol_fragments()
@@ -2260,6 +2272,36 @@ fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() 
         nested_paragraph_rows(2, "padding:10px 0;box-decoration-break:clone", 20);
     assert_eq!(ranges, [(0, 8, 0), (8, 16, 1), (16, 20, 2)]);
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+}
+
+#[test]
+fn paragraph_rows_the_fragment_budget_cannot_hold_report_exhaustion() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    // Whatever the budget, the layout either holds the three rows or reports
+    // that it ran out; it never drops the rows and lays the lines out in one
+    // column.
+    let mut exhausted = false;
+    for limit in 1..40 {
+        let (mut doc, inner, _) = nested_paragraph_document(3, "", 25);
+        doc.fragment_tree.limit = limit;
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        match layout_single_page(&mut doc, &cascade, page) {
+            Ok(_) => assert_eq!(
+                doc.nodes[inner].multicol_rows.len(),
+                3,
+                "limit {limit} dropped the rows"
+            ),
+            Err(LayoutError::FragmentLimitExceeded { .. }) => exhausted = true,
+            Err(other) => panic!("limit {limit}: {other:?}"),
+        }
+    }
+    assert!(exhausted);
 }
 
 #[test]
