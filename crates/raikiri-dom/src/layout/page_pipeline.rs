@@ -4204,71 +4204,34 @@ fn paginate_flow(
             flow_shift -= delta;
             current_page = flow_page;
         }
-        let float_edges = float_shifts.edges_for(document, cascade, node_id, body_id);
-        if let Some((float_context, float_edges)) = float_edges {
-            let floating = is_floating_box_for_pagination(document, cascade, node_id);
-            let floor = if !floating && candidate.context.is_float_descendant {
-                None
-            } else {
-                float_floor(
+        if let Some(clearance) =
+            float_shifts.clearance_for(document, cascade, body_id, &candidate, flow_shift)
+        {
+            flow_shift += clearance.shift;
+            if clearance.floating {
+                float_shifts.hold_cleared_float(
                     document,
                     cascade,
                     node_id,
-                    float_context,
-                    &float_edges,
-                    floating,
-                )
-            };
-            let margin_top = if floating {
-                document.nodes[node_id].unrounded_layout.margin.top
-            } else {
-                0.0
-            };
-            // Floors are in normal-flow coordinates, without the relative
-            // offsets of the box and its ancestors.
-            let follower_offset =
-                accumulated_relative_offset_y(document, cascade, body_id, node_id);
-            let flow_raw_y = candidate.raw_y - follower_offset;
-            let shift = clearance_shift(
-                floor,
-                flow_raw_y + flow_shift - margin_top,
-                float_shifts.later,
-            );
-            if shift > 0.0 {
-                flow_shift += shift;
-                if floating {
-                    float_shifts.pending = Some((node_id, shift, current_page));
-                    // The shifted float is now the one later floats on its
-                    // side keep below.
-                    if let Some(index) = float_side_index(cascade.computed[node_id].float) {
-                        let layout = &document.nodes[node_id].unrounded_layout;
-                        let edge = float_margin_edge(
-                            document,
-                            node_id,
-                            index,
-                            flow_raw_y + flow_shift,
-                            layout.size.height,
-                            layout.margin.top,
-                        );
-                        float_shifts.record_edge(float_context, edge);
-                    }
-                }
-                if !floating && !candidate.context.is_direct_body_element {
-                    // The ancestors of a nested clearing box grow to hold it.
-                    grow_ancestors_for_shift(
-                        document,
-                        cascade,
-                        node_id,
-                        shift,
-                        body_id,
-                        &mut subtree_shifts,
-                        current_page,
-                        &IfcBoxShifts::default(),
-                    );
-                }
-                // The box may now start on a later page than the flow.
-                current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
+                    &clearance,
+                    flow_shift,
+                    current_page,
+                );
+            } else if !candidate.context.is_direct_body_element {
+                // The ancestors of a nested clearing box grow to hold it.
+                grow_ancestors_for_shift(
+                    document,
+                    cascade,
+                    node_id,
+                    clearance.shift,
+                    body_id,
+                    &mut subtree_shifts,
+                    current_page,
+                    &IfcBoxShifts::default(),
+                );
             }
+            // The box may now start on a later page than the flow.
+            current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
         }
         if !document.is_source_node(node_id) {
             continue;
@@ -7358,7 +7321,8 @@ struct MarginTruncation {
 impl SiblingMargins {
     /// How the top of `at.natural_page` truncates the margin between the box
     /// `at` and the sibling block before it, or `None` when the page edge
-    /// falls outside that margin or no margin separates the two.
+    /// falls outside that margin or no margin separates the two. A box that
+    /// clears floats is left alone, since its gap may hold clearance.
     fn truncation_at_break(
         &self,
         document: &super::context::LayoutSession<'_>,
@@ -8435,7 +8399,84 @@ struct MovedFloat {
     forced_transition: bool,
 }
 
+/// A box that has to start below the moved floats of its formatting context.
+struct FloatClearance {
+    /// The formatting context the floats are in.
+    context: usize,
+    /// Whether the box is itself a float, rather than a box that clears one.
+    floating: bool,
+    /// The unpaginated top of the box in normal-flow coordinates, without
+    /// the relative offsets of the box and its ancestors.
+    flow_raw_y: f32,
+    /// How far the box moves down.
+    shift: f32,
+}
+
 impl FloatShifts {
+    /// How `candidate`, at `flow_shift` into the flow, has to move down to
+    /// stay below the moved floats of its formatting context, or `None`
+    /// when it does not.
+    fn clearance_for(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        candidate: &PageCandidate,
+        flow_shift: f32,
+    ) -> Option<FloatClearance> {
+        let node_id = candidate.node_id;
+        let (context, edges) = self.edges_for(document, cascade, node_id, body_id)?;
+        let floating = is_floating_box_for_pagination(document, cascade, node_id);
+        let floor = if !floating && candidate.context.is_float_descendant {
+            None
+        } else {
+            float_floor(document, cascade, node_id, context, &edges, floating)
+        };
+        let margin_top = if floating {
+            document.nodes[node_id].unrounded_layout.margin.top
+        } else {
+            0.0
+        };
+        // Floors are in normal-flow coordinates, without the relative
+        // offsets of the box and its ancestors.
+        let follower_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
+        let flow_raw_y = candidate.raw_y - follower_offset;
+        let shift = clearance_shift(floor, flow_raw_y + flow_shift - margin_top, self.later);
+        (shift > 0.0).then_some(FloatClearance {
+            context,
+            floating,
+            flow_raw_y,
+            shift,
+        })
+    }
+
+    /// Makes the float `node_id`, which `clearance` moved down, the one
+    /// later floats on its side keep below. `flow_shift` includes that move
+    /// and `flow_page` is the page the flow was on before it.
+    fn hold_cleared_float(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        clearance: &FloatClearance,
+        flow_shift: f32,
+        flow_page: u32,
+    ) {
+        self.pending = Some((node_id, clearance.shift, flow_page));
+        if let Some(side) = float_side_index(cascade.computed[node_id].float) {
+            let layout = &document.nodes[node_id].unrounded_layout;
+            let edge = float_margin_edge(
+                document,
+                node_id,
+                side,
+                clearance.flow_raw_y + flow_shift,
+                layout.size.height,
+                layout.margin.top,
+            );
+            self.record_edge(clearance.context, edge);
+        }
+    }
+
     /// Records `moved`: adds its shift to the pending one and, for a float
     /// on a side, keeps its margin-box edge for the floats and clearing
     /// boxes that follow it in the same formatting context.

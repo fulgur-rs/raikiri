@@ -17327,7 +17327,8 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     // Nor when no block before it was recorded.
     assert!(truncation(&SiblingMargins::default(), &cascade, &at).is_none());
 
-    // A box that clears floats keeps the gap, which may hold clearance.
+    // A box that clears floats keeps the gap, which may hold clearance. The
+    // gap above it is judged from the bottom recorded for the block before.
     margins.record_bottom(body, second, true, 190.0);
     let clearing = MarginBreak {
         node_id: third,
@@ -17340,4 +17341,119 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
     let found = truncation(&margins, &cascade, &clearing).unwrap();
     assert_eq!(found.delta, -20.0);
+}
+
+#[test]
+fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
+    // `body > clearing, right, floater` after a float moved to 100..140.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, css: &str| {
+        doc.append_element(Some(body), "div", Style::default(), Some(css))
+    };
+    let clearing = block(&mut doc, "display:block;clear:left");
+    let right = block(&mut doc, "display:block;clear:right");
+    let floater = block(&mut doc, "display:block;float:left");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    doc.nodes[body].unrounded_layout.size.width = 100.0;
+    doc.nodes[floater].unrounded_layout.size = taffy::Size {
+        width: 60.0,
+        height: 10.0,
+    };
+    doc.nodes[floater].unrounded_layout.margin.top = 4.0;
+    let mut shifts = FloatShifts {
+        later: 20.0,
+        ..Default::default()
+    };
+    shifts.record_edge(
+        body,
+        FloatEdge {
+            node: 99,
+            side: 0,
+            top: 100.0,
+            bottom: 140.0,
+            width: 50.0,
+        },
+    );
+    let candidate = |node_id, raw_y, set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        PageCandidate {
+            node_id,
+            raw_y,
+            height: 10.0,
+            context,
+            page_name: None,
+            named_flex_context: None,
+            ifc_root: None,
+        }
+    };
+    let clearance = |shifts: &FloatShifts, node_id, raw_y, flow_shift| {
+        shifts.clearance_for(
+            &doc,
+            &cascade,
+            body,
+            &candidate(node_id, raw_y, |_| {}),
+            flow_shift,
+        )
+    };
+
+    // A box that clears the float moves down to its bottom.
+    let found = clearance(&shifts, clearing, 130.0, 0.0).unwrap();
+    assert_eq!(found.context, body);
+    assert!(!found.floating);
+    assert_eq!(found.flow_raw_y, 130.0);
+    assert_eq!(found.shift, 10.0);
+    // The flow shift so far counts toward its position.
+    assert_eq!(
+        clearance(&shifts, clearing, 120.0, 5.0).unwrap().shift,
+        15.0
+    );
+    // It moves no further than the floats above took.
+    assert_eq!(
+        clearance(&shifts, clearing, 100.0, 0.0).unwrap().shift,
+        20.0
+    );
+    // A box already below the float, or one that clears the other side, stays.
+    assert!(clearance(&shifts, clearing, 150.0, 0.0).is_none());
+    assert!(clearance(&shifts, right, 130.0, 0.0).is_none());
+    // So does a box inside a float, which moves with it.
+    let inside = shifts.clearance_for(
+        &doc,
+        &cascade,
+        body,
+        &candidate(clearing, 130.0, |context| {
+            context.is_float_descendant = true
+        }),
+        0.0,
+    );
+    assert!(inside.is_none());
+    // And nothing moves once the shift later floats may need is spent.
+    let spent = FloatShifts {
+        later: 0.0,
+        edges: std::mem::take(&mut shifts.edges),
+        ..Default::default()
+    };
+    assert!(clearance(&spent, clearing, 130.0, 0.0).is_none());
+    let mut shifts = spent;
+    shifts.later = 20.0;
+
+    // A float that does not fit beside the earlier one moves below it, from
+    // the top of its margin box.
+    let found = clearance(&shifts, floater, 130.0, 0.0).unwrap();
+    assert!(found.floating);
+    assert_eq!(found.shift, 14.0);
+
+    // It then is the float that later floats on its side keep below.
+    shifts.hold_cleared_float(&doc, &cascade, floater, &found, 14.0, 3);
+    assert_eq!(shifts.pending, Some((floater, 14.0, 3)));
+    let edge = shifts.edges[&body]
+        .iter()
+        .find(|edge| edge.node == floater)
+        .unwrap();
+    assert_eq!((edge.side, edge.top, edge.bottom), (0, 140.0, 154.0));
 }
