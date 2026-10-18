@@ -546,23 +546,45 @@ impl<'a> CounterValues<'a> {
 pub struct CounterSnapshotView<'a> {
     snapshot: &'a CounterSnapshot,
     computed: Option<&'a ComputedValues>,
+    list_item_fallback: Option<&'a [i32]>,
 }
 
 impl<'a> CounterSnapshotView<'a> {
     /// Borrow `snapshot` and optionally apply pseudo-element counter
     /// directives on lookup.
     pub fn new(snapshot: &'a CounterSnapshot, computed: Option<&'a ComputedValues>) -> Self {
-        Self { snapshot, computed }
+        Self {
+            snapshot,
+            computed,
+            list_item_fallback: None,
+        }
+    }
+
+    pub(crate) fn with_list_item_fallback(
+        snapshot: &'a CounterSnapshot,
+        computed: Option<&'a ComputedValues>,
+        list_item_fallback: Option<&'a [i32]>,
+    ) -> Self {
+        Self {
+            snapshot,
+            computed,
+            list_item_fallback,
+        }
     }
 }
 
 impl CounterSnapshotLookup for CounterSnapshotView<'_> {
     fn values_for(&self, name: &str) -> CounterValues<'_> {
-        let base = self
+        let snapshot_values = self
             .snapshot
             .get(&raikiri_traits::Symbol::new(name))
             .map(Vec::as_slice)
             .unwrap_or_default();
+        let base = if name == "list-item" && snapshot_values.is_empty() {
+            self.list_item_fallback.unwrap_or(snapshot_values)
+        } else {
+            snapshot_values
+        };
         CounterValues::with_directives(base, self.computed, name)
     }
 }
