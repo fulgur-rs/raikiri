@@ -135,6 +135,12 @@ impl FirstLine {
     }
 }
 
+/// Whether text of only white space in a box with `cv` generates no content.
+fn collapses_blank_text(cv: &ComputedValues) -> bool {
+    cv.effective_white_space_collapse == WhiteSpaceCollapse::Collapse
+        || cv.effective_white_space_collapse == WhiteSpaceCollapse::Discard
+}
+
 /// Whether the first in-flow content of paragraph `root` is a block: the
 /// first formatted line is then the first line of that block, not of the
 /// paragraph's own lines.
@@ -167,12 +173,9 @@ fn starts_with_block(doc: &Document, cascade: &CascadeResult, root: usize) -> bo
                 let node = &doc.nodes[id];
                 match node.kind() {
                     NodeKind::Text => {
-                        let collapses = doc.parent_of(id).is_some_and(|parent| {
-                            matches!(
-                                cascade.computed[parent].effective_white_space_collapse,
-                                WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
-                            )
-                        });
+                        let collapses = doc
+                            .parent_of(id)
+                            .is_some_and(|parent| collapses_blank_text(&cascade.computed[parent]));
                         let text = node.text_content().unwrap_or("");
                         if !text.is_empty() && (!collapses || !text.trim().is_empty()) {
                             return false;

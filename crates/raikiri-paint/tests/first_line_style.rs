@@ -217,10 +217,11 @@ fn an_atomic_inline_first_keeps_the_text_beside_it_on_the_first_line() {
 }
 
 #[test]
-fn a_paragraph_without_content_draws_nothing() {
+fn a_paragraph_of_boxes_that_take_no_room_draws_nothing() {
     let rgba = raster(
-        "<p></p><p> <!--c--><span></span></p>",
-        "p{color:red} p::first-line{color:blue}",
+        "<div class=outer> <span style='float:left;width:0;height:0'></span>\
+         <span style='position:absolute'></span><span></span> </div>",
+        ".outer{color:red} .outer::first-line{color:blue}",
     );
     assert_eq!(count(&rgba, BLUE) + count(&rgba, RED), 0);
 }
