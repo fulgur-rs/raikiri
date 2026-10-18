@@ -3,8 +3,8 @@
 use anyrender::Scene;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
-use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
-use std::sync::Arc;
+use raikiri_traits::{DecodedImage, ImagePixelSource, ImageRasterSize, PageBox};
+use std::sync::{Arc, Mutex};
 use taffy::Style;
 
 /// A 10×10 image in four quadrants: red and blue on top, green and black
@@ -34,9 +34,32 @@ impl ImagePixelSource for Quadrants {
     }
 }
 
+/// `Quadrants` that remembers the raster size each request asked for, as an
+/// SVG source would be asked to rasterize at it.
+struct Recording(Mutex<Vec<(f32, f32)>>);
+impl ImagePixelSource for Recording {
+    fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+        Quadrants.get_decoded(url)
+    }
+
+    fn get_decoded_at_size(
+        &self,
+        url: &url::Url,
+        size: ImageRasterSize,
+        _max_output_bytes: Option<u64>,
+    ) -> Option<Arc<DecodedImage>> {
+        self.0.lock().unwrap().push((size.width, size.height));
+        self.get_decoded(url)
+    }
+}
+
 /// Pixels of a 100×80 page whose block, sized and styled by `block_style`,
 /// holds nothing but a background.
 fn paint(block_style: &str) -> Vec<u8> {
+    paint_with(block_style, &Quadrants)
+}
+
+fn paint_with(block_style: &str, source: &dyn ImagePixelSource) -> Vec<u8> {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
@@ -53,7 +76,7 @@ fn paint(block_style: &str) -> Vec<u8> {
     page.height = 80.0;
     layout_single_page(&mut doc, &computed, page).unwrap();
     let mut scene = Scene::new();
-    raikiri_paint::paint_single_page_with_images(&mut scene, &doc, &computed, page, &Quadrants)
+    raikiri_paint::paint_single_page_with_images(&mut scene, &doc, &computed, page, source)
         .unwrap();
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| {
@@ -120,4 +143,26 @@ fn an_explicit_size_on_the_other_axis_is_not_rescaled() {
     assert_eq!(pixel(&pixels, 2, 9), GREEN);
     assert_eq!(pixel(&pixels, 2, 11), WHITE);
     assert_eq!(pixel(&pixels, 9, 2), BLUE);
+}
+
+#[test]
+fn the_image_is_rasterized_at_the_final_rounded_tile_size() {
+    // A size-aware source such as an SVG draws into the viewport it is given,
+    // so it must be asked for the 12px tile that ends up on the page, not for
+    // the 10px image width or a height scaled from it.
+    let source = Recording(Mutex::new(Vec::new()));
+    paint_with(
+        "width:24px;height:40px;background-image:url(file:///quadrants.png);\
+         background-repeat:round no-repeat",
+        &source,
+    );
+    assert_eq!(*source.0.lock().unwrap(), [(12.0, 12.0)]);
+    let source = Recording(Mutex::new(Vec::new()));
+    paint_with(
+        "width:24px;height:40px;background-image:url(file:///quadrants.png);\
+         background-repeat:round round",
+        &source,
+    );
+    // Both axes round: 40px holds four 10px tiles, so only the width moves.
+    assert_eq!(*source.0.lock().unwrap(), [(12.0, 10.0)]);
 }

@@ -443,8 +443,7 @@ fn a_single_round_axis_scales_an_auto_axis_with_it() {
     let auto = ComputedLengthPercentageOrAuto::Auto;
     let px = |value| ComputedLengthPercentageOrAuto::Px(value);
     let mut repeat = raikiri_style::ComputedValues::initial().background_layers()[0].repeat;
-    // 32x32 rounds to 36 across a 72 wide area, and the auto height follows;
-    // the `round` axis keeps its size here for `background_tiles` to rescale.
+    // 32x32 rounds to 36 across a 72 wide area, and the auto height follows.
     repeat.x = BackgroundRepeatKeyword::Round;
     repeat.y = BackgroundRepeatKeyword::NoRepeat;
     let size = ComputedBackgroundSize::Explicit {
@@ -452,15 +451,16 @@ fn a_single_round_axis_scales_an_auto_axis_with_it() {
         height: auto,
     };
     assert_eq!(
-        background_round_ratio_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
-        (32.0, 36.0)
+        rounded_background_tile_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
+        (36.0, 36.0)
     );
-    // The same holds along the other axis and for a non-square image.
+    // The same holds along the other axis and for a non-square image: 45
+    // tall fits twice into 90, 22.5 across.
     repeat.x = BackgroundRepeatKeyword::Space;
     repeat.y = BackgroundRepeatKeyword::Round;
     assert_eq!(
-        background_round_ratio_size(&size, (40.0, 20.0), (90.0, 45.0), &repeat),
-        (45.0, 20.0)
+        rounded_background_tile_size(&size, (40.0, 20.0), (90.0, 45.0), &repeat),
+        (45.0, 22.5)
     );
     // A width that is explicit keeps its used value: only an auto axis follows.
     let size = ComputedBackgroundSize::Explicit {
@@ -469,8 +469,8 @@ fn a_single_round_axis_scales_an_auto_axis_with_it() {
     };
     repeat.x = BackgroundRepeatKeyword::Repeat;
     assert_eq!(
-        background_round_ratio_size(&size, (40.0, 20.0), (90.0, 50.0), &repeat),
-        (40.0, 20.0)
+        rounded_background_tile_size(&size, (40.0, 20.0), (90.0, 45.0), &repeat),
+        (40.0, 22.5)
     );
     let size = ComputedBackgroundSize::Explicit {
         width: auto,
@@ -479,13 +479,13 @@ fn a_single_round_axis_scales_an_auto_axis_with_it() {
     repeat.x = BackgroundRepeatKeyword::Round;
     repeat.y = BackgroundRepeatKeyword::Repeat;
     assert_eq!(
-        background_round_ratio_size(&size, (40.0, 20.0), (90.0, 50.0), &repeat),
-        (40.0, 20.0)
+        rounded_background_tile_size(&size, (40.0, 20.0), (90.0, 45.0), &repeat),
+        (45.0, 20.0)
     );
 }
 
 #[test]
-fn round_ratio_size_leaves_other_combinations_alone() {
+fn rounding_leaves_the_other_cases_without_an_auto_axis_to_follow() {
     let auto = ComputedLengthPercentageOrAuto::Auto;
     let size = ComputedBackgroundSize::Explicit {
         width: auto,
@@ -496,17 +496,17 @@ fn round_ratio_size_leaves_other_combinations_alone() {
     repeat.x = BackgroundRepeatKeyword::Round;
     repeat.y = BackgroundRepeatKeyword::Round;
     assert_eq!(
-        background_round_ratio_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
-        (32.0, 32.0)
+        rounded_background_tile_size(&size, (40.0, 20.0), (90.0, 45.0), &repeat),
+        (45.0, 22.5)
     );
     // No round axis.
     repeat.x = BackgroundRepeatKeyword::Repeat;
     repeat.y = BackgroundRepeatKeyword::Repeat;
     assert_eq!(
-        background_round_ratio_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
+        rounded_background_tile_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
         (32.0, 32.0)
     );
-    // `cover` and `contain` do not have an auto axis.
+    // `cover` and `contain` do not have an auto axis: only the round axis moves.
     repeat.x = BackgroundRepeatKeyword::Round;
     repeat.y = BackgroundRepeatKeyword::NoRepeat;
     for size in [
@@ -514,13 +514,29 @@ fn round_ratio_size_leaves_other_combinations_alone() {
         ComputedBackgroundSize::Contain,
     ] {
         assert_eq!(
-            background_round_ratio_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
-            (32.0, 32.0)
+            rounded_background_tile_size(&size, (32.0, 32.0), (72.0, 72.0), &repeat),
+            (36.0, 32.0)
         );
     }
     // A positioning area that cannot be rounded to keeps the size.
     assert_eq!(
-        background_round_ratio_size(&size, (32.0, 32.0), (f64::INFINITY, 72.0), &repeat),
+        rounded_background_tile_size(&size, (32.0, 32.0), (f64::INFINITY, 72.0), &repeat),
         (32.0, 32.0)
+    );
+}
+
+#[test]
+fn a_rounded_tile_size_is_unchanged_by_rounding_it_again() {
+    let size = ComputedBackgroundSize::Explicit {
+        width: ComputedLengthPercentageOrAuto::Auto,
+        height: ComputedLengthPercentageOrAuto::Auto,
+    };
+    let mut repeat = raikiri_style::ComputedValues::initial().background_layers()[0].repeat;
+    repeat.x = BackgroundRepeatKeyword::Round;
+    repeat.y = BackgroundRepeatKeyword::NoRepeat;
+    let rounded = rounded_background_tile_size(&size, (7.0, 3.0), (100.0, 50.0), &repeat);
+    assert_eq!(
+        rounded_background_tile_size(&size, rounded, (100.0, 50.0), &repeat),
+        rounded
     );
 }
