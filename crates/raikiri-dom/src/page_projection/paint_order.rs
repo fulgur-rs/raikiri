@@ -1735,8 +1735,15 @@ fn push_paragraph<'a>(
             let Some(&fragment) = boxes.get(cursor) else {
                 return; // cov:ignore: an element with line pieces on the page has a box there
             };
+            // The first line's boxes take their values from the
+            // `::first-line` around them.
+            let style = root_node
+                .ifc_first_line_element_style(element)
+                .filter(|_| piece.line == 0)
+                .unwrap_or(&items.cascade.computed[element]);
             events.push(PaintEvent::LineBox(LineBox {
                 fragment,
+                style,
                 line: TextLineId {
                     root: NodeId::new(root as u64),
                     index: piece.line,
@@ -2469,5 +2476,6 @@ fn column_projection_style<'a>(
         piece.node,
         piece.source_container,
         piece.source_owner,
+        piece.line,
     )
 }
