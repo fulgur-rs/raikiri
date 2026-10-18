@@ -233,6 +233,9 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     let leading = container(&[float, block], None);
     let two = container(&[float, float], None);
     let inline = container(&[float], Some("A B"));
+    let nested = container(&[block, float], None);
+    let wrapper = doc.nodes[nested].children[0];
+    doc.append_element(Some(wrapper), "div", Style::default(), Some(float));
     doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
 
     let rules = build_rule_tree(&doc);
@@ -245,9 +248,11 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     assert!(!multicol_ends_with_its_only_float(&doc, empty));
     assert!(multicol_ends_with_its_only_float(&doc, alone));
     assert!(multicol_ends_with_its_only_float(&doc, trailing));
-    // Content after the float wraps beside it, and a second float shares its line.
+    // Content after the float wraps beside it, and a second float shares its
+    // line, also when that float is inside an earlier child.
     assert!(!multicol_ends_with_its_only_float(&doc, leading));
     assert!(!multicol_ends_with_its_only_float(&doc, two));
+    assert!(!multicol_ends_with_its_only_float(&doc, nested));
     // Lines of the container's own are laid out beside the float.
     assert!(doc.nodes[inline].ifc.is_some());
     assert!(!multicol_ends_with_its_only_float(&doc, inline));

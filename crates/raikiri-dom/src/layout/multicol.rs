@@ -686,11 +686,11 @@ fn multicol_has_direct_break_flow(tree: &Document, node_id: usize) -> bool {
         })
 }
 
-/// Whether the last rendered child of `node_id` is the only float among them
-/// and the container holds no inline content of its own. Nothing then wraps
-/// beside the float and no other float shares its line, so the column
-/// strategies can place it like a block of its own: shrunk to its content
-/// within the column, at the edge of its own side.
+/// Whether the last rendered child of `node_id` is a float, no float is
+/// inside an earlier child, and the container holds no inline content of its
+/// own. Nothing then wraps beside the float and no other float shares its
+/// line, so the column strategies can place it like a block of its own:
+/// shrunk to its content within the column, at the edge of its own side.
 fn multicol_ends_with_its_only_float(tree: &Document, node_id: usize) -> bool {
     if tree.nodes[node_id].ifc.is_some() {
         return false;
@@ -712,7 +712,10 @@ fn multicol_ends_with_its_only_float(tree: &Document, node_id: usize) -> bool {
         })
         .collect();
     rendered.split_last().is_some_and(|(&last, before)| {
-        is_float(last) && !before.iter().any(|&child| is_float(child))
+        is_float(last)
+            && !before
+                .iter()
+                .any(|&child| multicol_subtree_has_float(tree, child))
     })
 }
 
