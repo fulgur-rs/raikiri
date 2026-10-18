@@ -1263,6 +1263,59 @@ fn wpt_font_loader_resolves_local_url_forms_with_containment() {
 }
 
 #[test]
+fn wpt_font_loader_roots_file_urls_outside_the_checkout_at_the_checkout() {
+    use raikiri_dom::FontFaceLoader;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    let fonts = root.join("fonts");
+    std::fs::create_dir_all(&fonts).unwrap();
+    std::fs::write(fonts.join("served.ttf"), b"served-font").unwrap();
+    // A file outside the checkout that the same path would name at the
+    // filesystem root must stay unreachable.
+    let outside = temp.path().join("fonts");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.ttf"), b"secret-font").unwrap();
+    let loader = WptFontLoader {
+        root: root.clone(),
+        base: Some(root.join("css")),
+    };
+
+    // `/fonts/served.ttf` in a stylesheet resolves against a `file:` base to
+    // a file URL at the filesystem root.
+    assert_eq!(
+        loader.load("file:///fonts/served.ttf?v=1#x"),
+        Some(b"served-font".to_vec())
+    );
+    assert!(loader.load("file:///fonts/missing.ttf").is_none());
+    let outside_url = raikiri::Url::from_file_path(outside.join("secret.ttf")).unwrap();
+    assert!(loader.load(outside_url.as_str()).is_none());
+    // A first path segment with a colon is a path, not a URL scheme.
+    std::fs::create_dir_all(root.join("a:b")).unwrap();
+    std::fs::write(root.join("a:b").join("odd.ttf"), b"odd-font").unwrap();
+    assert_eq!(
+        loader.load("file:///a:b/odd.ttf"),
+        Some(b"odd-font".to_vec())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn wpt_font_loader_refuses_a_rooted_file_url_that_escapes_through_a_link() {
+    use raikiri_dom::FontFaceLoader;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("wpt");
+    std::fs::create_dir_all(root.join("fonts")).unwrap();
+    let secret = temp.path().join("secret.ttf");
+    std::fs::write(&secret, b"secret-font").unwrap();
+    std::os::unix::fs::symlink(&secret, root.join("fonts").join("link.ttf")).unwrap();
+    let loader = WptFontLoader { root, base: None };
+
+    assert!(loader.load("file:///fonts/link.ttf").is_none());
+}
+
+#[test]
 fn live_stylesheet_sources_handle_style_targets_and_nested_subtrees() {
     let mut document = raikiri_dom::Document::new();
     let root = document.root_index();

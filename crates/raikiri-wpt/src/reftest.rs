@@ -3743,10 +3743,13 @@ fn rotate_presented_page(
 /// Load `@font-face` `src: url(...)` bytes from the WPT tree.
 ///
 /// Server-absolute WPT URLs, resource-base-relative URLs, and the `file://`
-/// URLs produced by resource absolutization are accepted. `data:` and remote
-/// URLs stay `None` (fail-closed, recorded as `skipped` by the caller). Every
-/// resolved path is canonicalized and containment-checked under `root`; the
-/// final byte cap is enforced again by `raikiri_dom` after the read.
+/// URLs produced by resource absolutization are accepted. A `file://` URL
+/// outside the checkout is read as a server-absolute URL, because a
+/// stylesheet's `url(/fonts/x.ttf)` resolves against a `file:` base to a file
+/// URL at the filesystem root. `data:` and remote URLs stay `None`
+/// (fail-closed, recorded as `skipped` by the caller). Every resolved path is
+/// canonicalized and containment-checked under `root`; the final byte cap is
+/// enforced again by `raikiri_dom` after the read.
 struct WptFontLoader {
     root: PathBuf,
     base: Option<PathBuf>,
@@ -3796,7 +3799,22 @@ impl WptFontLoader {
             if !parsed.scheme().eq_ignore_ascii_case("file") {
                 return None;
             }
-            return parsed.to_file_path().ok();
+            let path = parsed.to_file_path().ok()?;
+            let root = std::fs::canonicalize(&self.root).ok()?;
+            if std::fs::canonicalize(&path).is_ok_and(|canonical| canonical.starts_with(&root)) {
+                return Some(path);
+            }
+            // A root-relative URL such as `/fonts/x.ttf` in a stylesheet,
+            // resolved against a `file:` base, is a file URL at the
+            // filesystem root. WPT roots it at the checkout instead.
+            let root_url = raikiri::Url::from_directory_path(&root).ok()?;
+            // The `./` keeps a first segment such as `a:b` from parsing as a
+            // URL scheme.
+            return root_url
+                .join(&format!("./{}", parsed.path().trim_start_matches('/')))
+                .ok()?
+                .to_file_path()
+                .ok();
         }
         let base = self.base.as_deref()?;
         let base_url = raikiri::Url::from_directory_path(base).ok()?;

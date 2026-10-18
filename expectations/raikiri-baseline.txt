@@ -2576,9 +2576,6 @@ css/css-flexbox/table-as-item-stretch-cross-size-4.html
 css/css-flexbox/table-as-item-stretch-cross-size-5.html
 css/css-flexbox/table-as-item-wide-content.html
 css/css-fonts/downloadable-font-print.html
-css/css-fonts/first-available-font-005.html
-css/css-fonts/first-available-font-006.html
-css/css-fonts/first-available-font-007.html
 css/css-fonts/font-default-01.html
 css/css-fonts/font-default-04.html
 css/css-fonts/font-face-local-not-family.html
@@ -4926,3 +4923,10 @@ css/css-page/margin-boxes/alignment-001-print.html
 # --- percentage-height images sizing shrink-to-fit boxes (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
 # Pass once the width of an image's box in a paragraph is measured against the paragraph root's definite height, so an image of `height: 100%` sizes its shrink-to-fit parent through its aspect ratio; KEEP in audit-vacuous-passes.
 css/css-sizing/intrinsic-percent-replaced-009.html
+
+# --- web fonts fetched from root-relative stylesheet URLs (WPT pin 97ea26e2, EXACT, Linux, 2026-10-18) ---
+# Pass once the harness loads `@font-face` sources written as `url(/fonts/...)` from the checkout, so the document's face replaces the bundled family of the same name; KEEP in audit-vacuous-passes.
+css/CSS2/visudet/content-height-004.html
+css/css-fonts/first-available-font-002.html
+css/css-fonts/font-face-unicode-range-nbsp.html
+css/css-fonts/font-synthesis-08.html
