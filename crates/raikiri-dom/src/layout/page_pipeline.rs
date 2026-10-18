@@ -2175,6 +2175,62 @@ struct CollectedPageFragmentSources {
     paragraph_cache: ParagraphCache,
 }
 
+struct SourceWalk {
+    fragments_by_parent_and_node: HashMap<(Option<usize>, usize), Vec<usize>>,
+    fragmented_nodes: HashSet<usize>,
+    repeated_placement_nodes: HashSet<usize>,
+}
+
+impl SourceWalk {
+    fn new(document: &Document) -> Self {
+        let fragments = document.layout_fragments();
+        let mut fragments_by_parent_and_node = HashMap::<_, Vec<_>>::new();
+        let mut fragmented_nodes = HashSet::new();
+        let mut fragment_counts_by_node = HashMap::<usize, usize>::new();
+        for (index, fragment) in fragments.iter().enumerate() {
+            fragments_by_parent_and_node
+                .entry((fragment.parent, fragment.node_id))
+                .or_default()
+                .push(index);
+            fragmented_nodes.insert(fragment.node_id);
+            *fragment_counts_by_node.entry(fragment.node_id).or_default() += 1;
+        }
+        let mut repeated_placement_nodes = HashSet::new();
+        let mut pending: Vec<usize> = fragment_counts_by_node
+            .into_iter()
+            .filter_map(|(node, count)| (count > 1).then_some(node))
+            .collect();
+        while let Some(node) = pending.pop() {
+            if repeated_placement_nodes.insert(node) {
+                pending.extend(document.nodes[node].children.iter().copied());
+            }
+        }
+        Self {
+            fragments_by_parent_and_node,
+            fragmented_nodes,
+            repeated_placement_nodes,
+        }
+    }
+
+    fn fragment_indices(&self, parent: Option<usize>, node: usize) -> Option<&[usize]> {
+        self.fragments_by_parent_and_node
+            .get(&(parent, node))
+            .map(Vec::as_slice)
+    }
+
+    fn is_fragmented(&self, node: usize) -> bool {
+        self.fragmented_nodes.contains(&node)
+    }
+
+    fn is_repeated(&self, node: usize) -> bool {
+        self.repeated_placement_nodes.contains(&node)
+    }
+
+    fn into_repeated_placement_nodes(self) -> HashSet<usize> {
+        self.repeated_placement_nodes
+    }
+}
+
 struct ProjectionVisit {
     node: usize,
     parent_origin: (f32, f32),
@@ -2210,27 +2266,7 @@ fn collect_page_fragment_sources(
     let mut ifc_text_lines = HashMap::new();
     let mut paragraph_cache = HashMap::<usize, ParagraphProjection>::new();
     let fragments = document.layout_fragments();
-    let mut fragments_by_parent_and_node = HashMap::<(Option<usize>, usize), Vec<usize>>::new();
-    let mut fragmented_nodes = HashSet::new();
-    let mut fragment_counts_by_node = HashMap::<usize, usize>::new();
-    for (index, fragment) in fragments.iter().enumerate() {
-        fragments_by_parent_and_node
-            .entry((fragment.parent, fragment.node_id))
-            .or_default()
-            .push(index);
-        fragmented_nodes.insert(fragment.node_id);
-        *fragment_counts_by_node.entry(fragment.node_id).or_default() += 1;
-    }
-    let mut repeated_placement_nodes = HashSet::new();
-    let mut pending: Vec<usize> = fragment_counts_by_node
-        .into_iter()
-        .filter_map(|(node, count)| (count > 1).then_some(node))
-        .collect();
-    while let Some(node) = pending.pop() {
-        if repeated_placement_nodes.insert(node) {
-            pending.extend(document.nodes[node].children.iter().copied());
-        }
-    }
+    let walk = SourceWalk::new(document);
     let mut placement_overflow_clips = Vec::new();
     let mut stack = vec![ProjectionVisit {
         node: super::initial_containing_block::root_element(document).unwrap_or(body_id),
@@ -2246,7 +2282,7 @@ fn collect_page_fragment_sources(
     while let Some(visit) = stack.pop() {
         work.check()?;
         let node_id = visit.node;
-        if repeated_placement_nodes.contains(&node_id) {
+        if walk.is_repeated(node_id) {
             work.charge(1)?;
         }
         let (parent_abs_x, parent_abs_y) = visit.parent_origin;
@@ -2261,10 +2297,8 @@ fn collect_page_fragment_sources(
         // A nested column container has a placement record and a retained
         // container root for the same source node. Enter that root before
         // visiting the node's DOM children, whose records belong to it.
-        if !visit.is_fragment_visit
-            || fragments_by_parent_and_node.contains_key(&(visit.fragment, node_id))
-        {
-            if let Some(indices) = fragments_by_parent_and_node.get(&(visit.fragment, node_id)) {
+        if !visit.is_fragment_visit || walk.fragment_indices(visit.fragment, node_id).is_some() {
+            if let Some(indices) = walk.fragment_indices(visit.fragment, node_id) {
                 for &index in indices.iter().rev() {
                     let origin = fragments[index].paint_origin(
                         visit.parent_origin,
@@ -2310,7 +2344,7 @@ fn collect_page_fragment_sources(
                 }
                 continue;
             }
-            if fragmented_nodes.contains(&node_id) {
+            if walk.is_fragmented(node_id) {
                 continue;
             }
         }
@@ -2337,7 +2371,7 @@ fn collect_page_fragment_sources(
             NodeKind::Element => true,
             _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
-        let own_overflow_source = if repeated_placement_nodes.contains(&node_id)
+        let own_overflow_source = if walk.is_repeated(node_id)
             && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
         {
             let border_box = PaintRect::new(
@@ -2460,7 +2494,7 @@ fn collect_page_fragment_sources(
                     Default::default()
                 }
             } else {
-                if repeated_placement_nodes.contains(&root_id) {
+                if walk.is_repeated(root_id) {
                     work.charge(prepared.combined.record_count)?;
                 }
                 let mut data = prepared.combined.clone();
@@ -2665,7 +2699,7 @@ fn collect_page_fragment_sources(
         nodes,
         text_roots,
         placement_overflow_clips,
-        repeated_placement_nodes,
+        repeated_placement_nodes: walk.into_repeated_placement_nodes(),
         paragraph_cache,
     })
 }
