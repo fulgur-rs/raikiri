@@ -8,7 +8,7 @@ use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
-use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
+use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext, BoxProbe};
 use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
@@ -2016,30 +2016,36 @@ fn layout_formatting_context_child(
 
     let own = own_inline_width(tree, node, &geometry);
     let (stretch, position, beside_floats) = if ctx.has_active_floats(min_y) {
-        let mut segment = None;
-        let slot = loop {
-            let slot = ctx.find_bfc_slot(
+        let slot = ctx
+            .find_box_slot(
                 min_y,
                 [margin.left, margin.right],
                 taffy::Direction::Ltr,
                 clear,
-                segment,
-            );
-            let Some(id) = slot.segment_id else {
-                break slot;
-            };
-            let slot_stretch = slot.stretch_width.max(-x_margins);
-            let width = clamp_block_width(
-                tree,
-                node,
-                geometry.width,
-                own.map_or(slot_stretch, |own| own.at(slot_stretch)),
-            );
-            if width <= slot.border_width + 0.001 {
-                break slot;
-            }
-            segment = Some(id);
-        };
+                |probe| match probe {
+                    BoxProbe::Width { stretch } => {
+                        let stretch = stretch.max(-x_margins);
+                        clamp_block_width(
+                            tree,
+                            node,
+                            geometry.width,
+                            own.map_or(stretch, |own| own.at(stretch)),
+                        )
+                    }
+                    BoxProbe::Height { width } => {
+                        let inputs = formatting_context_inputs(
+                            &geometry,
+                            RunMode::ComputeSize,
+                            width,
+                            width,
+                        );
+                        tree.compute_child_layout(taffy::NodeId::from(node), inputs)
+                            .size
+                            .height
+                    }
+                },
+            )
+            .slot;
         (
             slot.stretch_width.max(-x_margins),
             taffy::Point {
@@ -2064,32 +2070,16 @@ fn layout_formatting_context_child(
         geometry.width,
         own.map_or(stretch, |own| own.at(stretch)),
     );
-    let inputs = LayoutInput {
-        run_mode: if perform {
+    let inputs = formatting_context_inputs(
+        &geometry,
+        if perform {
             RunMode::PerformLayout
         } else {
             RunMode::ComputeSize
         },
-        sizing_mode: SizingMode::InherentSize,
-        axis: RequestedAxis::Both,
-        known_dimensions: Size {
-            width: Some(width),
-            height: None,
-        },
-        known_dimensions_are_definite: Size {
-            width: true,
-            height: true,
-        },
-        parent_size: Size {
-            width: Some(geometry.width),
-            height: geometry.definite_height,
-        },
-        available_space: Size {
-            width: AvailableSpace::Definite(stretch),
-            height: AvailableSpace::MaxContent,
-        },
-        vertical_margins_are_collapsible: Line::FALSE,
-    };
+        width,
+        stretch,
+    );
     let output = tree.compute_child_layout(taffy::NodeId::from(node), inputs);
     // `auto` side margins share the room the box leaves; beside floats the
     // slot already holds the non-`auto` margins.
@@ -2141,6 +2131,38 @@ fn layout_formatting_context_child(
         // Specifying clear introduces no clearance without relevant floats.
         top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
+    }
+}
+
+/// The input that lays out a block child that establishes a formatting
+/// context `width` wide, in a slot that leaves `stretch` for an `auto` width.
+fn formatting_context_inputs(
+    geometry: &FlowGeometry,
+    run_mode: RunMode,
+    width: f32,
+    stretch: f32,
+) -> LayoutInput {
+    LayoutInput {
+        run_mode,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(width),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: true,
+        },
+        parent_size: Size {
+            width: Some(geometry.width),
+            height: geometry.definite_height,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(stretch),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
     }
 }
 

@@ -4172,3 +4172,44 @@ fn a_relative_column_child_is_placed_without_its_inset() {
         assert_eq!(layout.size.width, 40.0, "{inset}");
     }
 }
+
+#[test]
+fn a_relative_column_child_that_holds_boxes_is_placed_without_its_inset() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // A wrapper holding a paragraph, and a nested column container, are
+    // moved by the painter together with everything inside them, so the
+    // location layout gives them is the column's own as well.
+    for inner_style in [
+        "display:block",
+        "display:block;column-count:2;column-gap:10px",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px;column-fill:auto"),
+        );
+        let child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some(format!("{inner_style};position:relative;left:5px").as_str()),
+        );
+        let paragraph =
+            doc.append_element(Some(child), "p", Style::default(), Some("display:block"));
+        doc.append_text(paragraph, "A B C");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+
+        let layout = doc.nodes[child].unrounded_layout;
+        assert_eq!(layout.location.x, 0.0, "{inner_style}");
+        assert_eq!(layout.size.width, 40.0, "{inner_style}");
+    }
+}

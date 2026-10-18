@@ -639,6 +639,83 @@ fn a_relative_block_holding_paragraphs_keeps_its_inset_across_columns() {
 }
 
 #[test]
+fn a_relative_block_holding_a_split_paragraph_is_painted_shifted_once() {
+    // Moving the wrapper by its inset moves the whole column container the
+    // same way, since the wrapper fills the column.
+    for (inset, container_margin) in [
+        ("left:5px", "margin-left:5px"),
+        ("right:-5px", "margin-left:5px"),
+        ("right:5px", "margin-left:-5px"),
+        ("left:5px;right:20px", "margin-left:5px"),
+        ("left:10%", "margin-left:4px"),
+        ("left:5px;top:3px", "margin-left:5px;margin-top:3px"),
+    ] {
+        let wrapper = |style: &str| {
+            format!("<div style='{style}background:lime'><p>A<br>B<br>C<br>D</p></div>")
+        };
+        compare(
+            &format!(
+                "<div class=mc>{}</div>",
+                wrapper(&format!("position:relative;{inset};"))
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div class=mc style='height:40px;column-fill:auto;{container_margin}'>{}</div>",
+                wrapper("")
+            ),
+        );
+    }
+}
+
+#[test]
+fn text_inside_a_relative_box_below_a_column_child_is_painted_shifted_once() {
+    // The inner box sits in a wrapper that fills the column, so offsetting it
+    // by its inset moves its text as the whole column container moves.
+    for inset in ["left:5px", "right:-5px"] {
+        compare(
+            &format!(
+                "<div class=mc><div><div style='position:relative;{inset}'><p>A<br>B<br>C<br>D</p></div></div></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            "<div class=mc style='height:40px;column-fill:auto;margin-left:5px'><div><div><p>A<br>B<br>C<br>D</p></div></div></div>",
+        );
+    }
+}
+
+#[test]
+fn a_relative_column_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc style='position:relative;left:5px;top:3px;background:lime'><p>A<br>B<br>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div class=mc style='margin:3px 0 0 5px;height:40px;column-fill:auto;background:lime'><p>A<br>B<br>C<br>D</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_nested_column_container_is_painted_shifted_once() {
+    for (inset, top) in [("left:5px", 0), ("right:-5px", 0), ("left:5px;top:3px", 3)] {
+        compare(
+            &format!(
+                "<div class=mc><div class=in style='position:relative;{inset};background:lime'><p>A<br>B<br>C<br>D</p></div></div>"
+            ),
+            ".mc{width:160px}.in{column-count:2;column-gap:10px}",
+            &format!(
+                "<div style='position:absolute;left:5px;top:{top}px;width:70px;height:40px;background:lime'></div><div style='position:absolute;left:5px;top:{top}px'>A<br>B</div><div style='position:absolute;left:45px;top:{top}px'>C<br>D</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_relative_block_holding_a_split_paragraph_in_an_rtl_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><div style='position:relative;left:5px;background:lime'><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:40px;column-fill:auto;direction:rtl}.mc p{direction:ltr}",
+        "<div class=mc style='height:40px;column-fill:auto;direction:rtl;margin-left:5px'><div style='background:lime'><p style='direction:ltr'>A<br>B<br>C<br>D</p></div></div>",
+    );
+}
+
+#[test]
 fn a_sticky_paragraph_in_a_column_keeps_its_layout_offset() {
     let paragraph = "<p style='position:sticky;left:5px;background:lime'>A<br>B</p>";
     compare(

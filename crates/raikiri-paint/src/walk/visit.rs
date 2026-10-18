@@ -212,6 +212,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     fixed_dy,
                     child_transform_x,
                     child_transform_y,
+                    placed_in_column,
                     fixed_in_viewport,
                     establishes_fixed_containing_block,
                     paint_x,
@@ -509,6 +510,16 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
                 let child_paint_offset_y = paint_offset_y + pos_dy + fixed_dy;
+                // The descendants of a box that is placed in a column are
+                // placed from the origin of its fragment, which stands where
+                // layout left it. The offset that paint adds to the box moves
+                // them as well, as it does the descendants that follow the
+                // parent chain.
+                let (child_fragment_origin_x, child_fragment_origin_y) = if placed_in_column {
+                    (fragment_origin_x + pos_dx, fragment_origin_y + pos_dy)
+                } else {
+                    (fragment_origin_x, fragment_origin_y)
+                };
                 // A paragraph inside a fixed box, or a fixed box that is a
                 // paragraph itself, repeats on every page and is not clipped
                 // like flowed text, as the text branch below does.
@@ -785,8 +796,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                             .then_some(own_multicol_clip_height)
                             .flatten(),
                         fragment_id,
-                        fragment_origin_x,
-                        fragment_origin_y,
+                        fragment_origin_x: child_fragment_origin_x,
+                        fragment_origin_y: child_fragment_origin_y,
                         fragmentainer,
                         fragment_rect: None,
                         fragment_clip: None,

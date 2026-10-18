@@ -1,6 +1,6 @@
-use super::BlockFormattingContext;
+use super::{BlockFormattingContext, BoxProbe};
 use taffy::CollapsibleMarginSet;
-use taffy::{Clear, FloatDirection, Point, Size};
+use taffy::{Clear, Direction, FloatDirection, Point, Size};
 
 #[test]
 fn rollback_preserves_prior_floats_and_discards_speculative_clearance_and_ceiling() {
@@ -193,4 +193,62 @@ fn rollback_restores_content_edges_and_origin_resolution() {
     assert!(root.origin_resolved());
     let slot = root.find_content_slot(0.0, Clear::None, None);
     assert_eq!((slot.x, slot.width), (10.0, 70.0));
+}
+
+/// Two floats of 10px height, the left one 60px wide at the top and the
+/// right one 80px wide just below it, in a 200px container.
+fn stacked_floats(owner: &mut BlockFormattingContext) -> super::BlockContext<'_> {
+    let mut flow = owner.root_block_context();
+    flow.set_width(200.0);
+    for (width, direction, clear) in [
+        (60.0, FloatDirection::Left, Clear::None),
+        (80.0, FloatDirection::Right, Clear::Left),
+    ] {
+        flow.place_floated_box(
+            Size {
+                width,
+                height: 10.0,
+            },
+            0.0,
+            direction,
+            clear,
+            false,
+        );
+    }
+    flow
+}
+
+/// An `auto`-width box 20px tall that stretches over what its slot leaves.
+fn stretching(probe: BoxProbe) -> f32 {
+    match probe {
+        BoxProbe::Width { stretch } => stretch,
+        BoxProbe::Height { .. } => 20.0,
+    }
+}
+
+#[test]
+fn a_trailing_margin_is_taken_off_the_stretch_only_once() {
+    let mut owner = BlockFormattingContext::new();
+    let flow = stacked_floats(&mut owner);
+    // The first segment leaves x = 60..200, and with the 20px margin an auto
+    // width stretches over 120px of it. The 80px float below leaves
+    // x = 0..120 and swallows that margin, so the room both leave is 60px.
+    let placed = flow.find_box_slot(0.0, [0.0, 20.0], Direction::Ltr, Clear::None, stretching);
+    assert_eq!(
+        (placed.slot.x, placed.slot.y, placed.slot.border_width),
+        (60.0, 0.0, 60.0)
+    );
+    assert_eq!((placed.slot.stretch_width, placed.width), (60.0, 60.0));
+}
+
+#[test]
+fn the_room_beside_stacked_floats_is_the_same_from_the_right() {
+    let mut owner = BlockFormattingContext::new();
+    let flow = stacked_floats(&mut owner);
+    let placed = flow.find_box_slot(0.0, [0.0, 20.0], Direction::Rtl, Clear::None, stretching);
+    assert_eq!(
+        (placed.slot.x, placed.slot.y, placed.slot.border_width),
+        (60.0, 0.0, 60.0)
+    );
+    assert_eq!((placed.slot.stretch_width, placed.width), (60.0, 60.0));
 }

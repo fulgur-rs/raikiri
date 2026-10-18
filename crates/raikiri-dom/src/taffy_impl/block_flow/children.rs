@@ -1,6 +1,6 @@
 //! Place block-flow children while retaining one shared float transaction.
 
-use super::context::BlockContext;
+use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
 use crate::layout::context::LayoutSession;
 use crate::taffy_impl::resolve_calc;
@@ -226,25 +226,41 @@ pub(super) fn layout(
         ) && !style.is_table()
             && !style.is_compressible_replaced();
         let natural_stretch = content_width - margin.horizontal_axis_sum();
-        let mut measure_width = |limit: f32| {
-            if let Some(preferred) = child_metrics.preferred.width {
-                return preferred;
+        // `Width`: the border-box width the child gets where an `auto` width
+        // resolves to `stretch`. `Height`: its border-box height at `width`.
+        let mut measure = |probe: BoxProbe| match probe {
+            BoxProbe::Width { stretch } => {
+                if let Some(preferred) = child_metrics.preferred.width {
+                    return preferred;
+                }
+                if stretches {
+                    return child_metrics.clamp_width(stretch.max(0.0));
+                }
+                let mut measure = child_input;
+                measure.run_mode = RunMode::ComputeSize;
+                measure.available_space.width = match style.size.width.expand() {
+                    taffy::ExpandedDimension::MinContent => AvailableSpace::MinContent,
+                    taffy::ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
+                    _ => AvailableSpace::Definite(stretch.max(0.0)),
+                };
+                tree.compute_child_layout_with_block_ctx(child, measure, None)
+                    .size
+                    .width
             }
-            if stretches {
-                return child_metrics.clamp_width(limit.max(0.0));
+            BoxProbe::Height { width } => {
+                let mut measure = child_input;
+                measure.run_mode = RunMode::ComputeSize;
+                measure.known_dimensions.width = Some(width);
+                measure.available_space.width = AvailableSpace::Definite(width);
+                measure.vertical_margins_are_collapsible = Line::FALSE;
+                tree.compute_child_layout_with_block_ctx(child, measure, None)
+                    .size
+                    .height
             }
-            let mut measure = child_input;
-            measure.run_mode = RunMode::ComputeSize;
-            measure.available_space.width = match style.size.width.expand() {
-                taffy::ExpandedDimension::MinContent => AvailableSpace::MinContent,
-                taffy::ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
-                _ => AvailableSpace::Definite(limit.max(0.0)),
-            };
-            tree.compute_child_layout_with_block_ctx(child, measure, None)
-                .size
-                .width
         };
-        let mut child_width = measure_width(natural_stretch);
+        let mut child_width = measure(BoxProbe::Width {
+            stretch: natural_stretch,
+        });
         let mut area_start = metrics.inset.left + margin.left;
         let mut area_width = natural_stretch;
         let mut slot_y = None;
@@ -277,30 +293,23 @@ pub(super) fn layout(
                 hypothetical
             };
             if forced || ctx.has_active_floats(search) {
-                let mut after = None;
-                loop {
-                    let slot = ctx.find_bfc_slot(
-                        search,
-                        [margin.left, margin.right],
-                        container.direction,
-                        style.clear,
-                        after,
-                    );
-                    let proposed = measure_width(slot.stretch_width);
-                    if proposed <= slot.border_width + 0.001 || slot.segment_id.is_none() {
-                        child_width = proposed;
-                        area_start = slot.x;
-                        area_width = slot.stretch_width;
-                        separated = forced || slot.y > threshold + 0.001;
-                        slot_y = Some(if joins && !separated {
-                            flow.end
-                        } else {
-                            slot.y
-                        });
-                        break;
-                    }
-                    after = slot.segment_id;
-                }
+                let placed = ctx.find_box_slot(
+                    search,
+                    [margin.left, margin.right],
+                    container.direction,
+                    style.clear,
+                    &mut measure,
+                );
+                let slot = placed.slot;
+                child_width = placed.width;
+                area_start = slot.x;
+                area_width = slot.stretch_width;
+                separated = forced || slot.y > threshold + 0.001;
+                slot_y = Some(if joins && !separated {
+                    flow.end
+                } else {
+                    slot.y
+                });
             }
         }
         let left = place_inline_axis(

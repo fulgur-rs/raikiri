@@ -932,3 +932,210 @@ fn a_last_child_margin_escapes_when_min_height_equals_the_content() {
     assert_eq!(tree.nodes[parent].unrounded_layout.size.height, 20.0);
     assert_eq!(tree.nodes[next].unrounded_layout.location.y, 120.0);
 }
+
+fn flow_root_container(tree: &mut Document) -> usize {
+    tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            ..Style::default()
+        },
+        None::<&str>,
+    )
+}
+
+fn float_box(
+    tree: &mut Document,
+    parent: usize,
+    side: Float,
+    clear: taffy::Clear,
+    width: f32,
+    height: f32,
+) -> usize {
+    let float = block(tree, parent, width, height);
+    let style = &mut tree.layout_node_with_style_mut(float).unwrap().style;
+    style.float = side;
+    style.clear = clear;
+    float
+}
+
+/// A `display: flow-root` child `height` tall, `width` wide or `auto` wide.
+fn formatting_context_box(
+    tree: &mut Document,
+    parent: usize,
+    width: Option<f32>,
+    height: f32,
+) -> usize {
+    let child = block(tree, parent, width.unwrap_or(0.0), height);
+    let style = &mut tree.layout_node_with_style_mut(child).unwrap().style;
+    style.display = Display::FlowRoot;
+    if width.is_none() {
+        style.size.width = Dimension::auto();
+    }
+    child
+}
+
+#[test]
+fn a_formatting_context_taller_than_its_gap_moves_below_the_float_it_would_overlap() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    // 140 + 80 > 200, so the second float sits below the first, at the right.
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::None,
+        140.0,
+        10.0,
+    );
+    float_box(
+        &mut tree,
+        root,
+        Float::Right,
+        taffy::Clear::None,
+        80.0,
+        30.0,
+    );
+    // 40px fit in the 60px gap beside the first float, but that gap ends
+    // after 10px while the box goes on for 30.
+    let tall = formatting_context_box(&mut tree, root, Some(40.0), 30.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let layout = tree.nodes[tall].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 10.0));
+}
+
+#[test]
+fn a_formatting_context_no_taller_than_its_gap_stays_beside_the_first_float() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::None,
+        140.0,
+        10.0,
+    );
+    float_box(
+        &mut tree,
+        root,
+        Float::Right,
+        taffy::Clear::None,
+        80.0,
+        30.0,
+    );
+    let short = formatting_context_box(&mut tree, root, Some(40.0), 10.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let layout = tree.nodes[short].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (140.0, 0.0));
+}
+
+#[test]
+fn a_formatting_context_that_fits_no_band_goes_below_all_the_floats() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::None,
+        140.0,
+        10.0,
+    );
+    float_box(
+        &mut tree,
+        root,
+        Float::Right,
+        taffy::Clear::None,
+        80.0,
+        30.0,
+    );
+    // Wider than the 60px gap, and the band below it is shared with the
+    // right float for 30px more.
+    let wide = formatting_context_box(&mut tree, root, Some(130.0), 20.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let layout = tree.nodes[wide].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (0.0, 40.0));
+}
+
+#[test]
+fn a_formatting_context_slides_to_the_room_every_band_it_reaches_shares() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    float_box(&mut tree, root, Float::Left, taffy::Clear::None, 60.0, 10.0);
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::Left,
+        100.0,
+        10.0,
+    );
+    // The second band starts 40px further in than the first, so the box
+    // keeps clear of it too.
+    let sliding = formatting_context_box(&mut tree, root, Some(50.0), 30.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let layout = tree.nodes[sliding].unrounded_layout;
+    assert_eq!((layout.location.x, layout.location.y), (100.0, 0.0));
+}
+
+#[test]
+fn an_auto_width_formatting_context_narrows_to_the_room_every_band_it_reaches_shares() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    float_box(&mut tree, root, Float::Left, taffy::Clear::None, 60.0, 10.0);
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::Left,
+        100.0,
+        10.0,
+    );
+    let stretching = formatting_context_box(&mut tree, root, None, 30.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let layout = tree.nodes[stretching].unrounded_layout;
+    assert_eq!(
+        (layout.location.x, layout.location.y, layout.size.width),
+        (100.0, 0.0, 100.0)
+    );
+}
+
+#[test]
+fn an_auto_width_formatting_context_narrows_to_the_narrowest_of_several_bands() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::None,
+        100.0,
+        10.0,
+    );
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::Left,
+        150.0,
+        10.0,
+    );
+    float_box(
+        &mut tree,
+        root,
+        Float::Left,
+        taffy::Clear::Left,
+        180.0,
+        10.0,
+    );
+    // The box reaches all three bands, and the last starts furthest in.
+    let stretching = formatting_context_box(&mut tree, root, None, 25.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let layout = tree.nodes[stretching].unrounded_layout;
+    assert_eq!(
+        (layout.location.x, layout.location.y, layout.size.width),
+        (180.0, 0.0, 20.0)
+    );
+}

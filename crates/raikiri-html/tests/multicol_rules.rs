@@ -526,3 +526,60 @@ fn a_paragraph_the_planner_declines_still_hands_its_end_to_the_next_one() {
     assert_eq!(runs[4], ("E".to_owned(), (140.0, 16.0)));
     assert_eq!(runs[5], ("F".to_owned(), (120.0, 36.0)));
 }
+
+#[test]
+fn a_relative_box_in_a_column_keeps_its_text_where_it_is_painted() {
+    // Text sits where its glyphs are painted, which is where the same box
+    // sits when a margin moves it, or the run is left out.
+    let runs = |body: &str| {
+        let document = lay_out(
+            &format!("<div class=mc{body}</div>"),
+            ".mc{height:40px;column-fill:auto}.mc2{column-count:2;height:20px;column-fill:auto}",
+        );
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect::<Vec<_>>()
+    };
+    let text = "A<br>B<br>C<br>D";
+    // The container, a paragraph it places and a box below the box it
+    // places move the text for good.
+    for (shifted, control) in [
+        (
+            format!(" style='position:relative;left:5px'><div><p>{text}</p></div>"),
+            format!(" style='margin-left:5px'><div><p>{text}</p></div>"),
+        ),
+        (
+            format!("><p style='position:relative;left:5px'>{text}</p>"),
+            format!(" style='margin-left:5px'><p>{text}</p>"),
+        ),
+        (
+            format!("><div><div style='position:relative;left:5px'><p>{text}</p></div></div>"),
+            format!(" style='margin-left:5px'><div><div><p>{text}</p></div></div>"),
+        ),
+    ] {
+        let expected = runs(&control);
+        assert_eq!(expected.len(), 4, "{control}");
+        assert_eq!(runs(&shifted), expected, "{shifted}");
+    }
+    // A box a column places, or a column container inside it, moves with
+    // the clip of its column; its text is left out rather than misplaced.
+    for (shifted, control) in [
+        (
+            format!("><div style='position:relative;left:5px'><p>{text}</p></div>"),
+            format!(" style='margin-left:5px'><div><p>{text}</p></div>"),
+        ),
+        (
+            format!(
+                "><div style='position:relative;left:5px'><div class=mc2><p>{text}</p></div></div>"
+            ),
+            format!(" style='margin-left:5px'><div><div class=mc2><p>{text}</p></div></div>"),
+        ),
+    ] {
+        let placed = runs(&shifted);
+        assert!(placed.is_empty() || placed == runs(&control), "{shifted}");
+    }
+}

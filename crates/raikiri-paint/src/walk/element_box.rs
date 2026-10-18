@@ -57,6 +57,7 @@ pub(super) struct ElementBox<'w> {
     pub(super) fixed_dy: f32,
     pub(super) child_transform_x: f32,
     pub(super) child_transform_y: f32,
+    pub(super) placed_in_column: bool,
     pub(super) fixed_in_viewport: bool,
     pub(super) establishes_fixed_containing_block: bool,
     pub(super) paint_x: f32,
@@ -100,12 +101,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             inside_fixed,
             inside_fixed_containing_block,
         } = inputs;
-        let (document, cascade, counter_snapshots, page_box, active_page_name) = (
+        let (document, cascade, counter_snapshots, page_box, active_page_name, layout_fragments) = (
             self.document,
             self.cascade,
             self.counter_snapshots,
             self.page_box,
             self.active_page_name,
+            self.layout_fragments,
         );
         let (image_cache, root_id) = (self.image_cache, self.root_id);
         let PageGeometry {
@@ -175,15 +177,26 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         };
         let child_shift_y = shift_y + own_shift;
         // Taffy and the IFC block/atomic placement paths already apply
-        // relative insets. Floats, explicit multicol fragments and
-        // manually placed table parts still use paint-side insets.
+        // relative insets. Floats, the boxes a multicol container
+        // places in its columns and manually placed table parts still
+        // use paint-side insets. The container's own fragment and the
+        // fragment of a box deeper inside a column child stand where
+        // block flow put the box, inset included.
+        let placed_in_column = is_fragment_visit
+            && fragment_id.is_some_and(|id| {
+                layout_fragments[id].parent.is_some_and(|parent| {
+                    document
+                        .get_node(layout_fragments[parent].node_id)
+                        .is_some_and(|owner| owner.is_multicol_container())
+                })
+            });
         let needs_paint_inset = raikiri_dom::placed_without_relative_offset(
             document,
             cascade,
             Some(root_id),
             node_id,
             cv,
-        ) || (is_fragment_visit && !cv.display.is_inline_level());
+        ) || (placed_in_column && !cv.display.is_inline_level());
         let (pos_dx, pos_dy) = if needs_paint_inset {
             raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
         } else if node.needs_relative_block_paint_offset() {
@@ -487,6 +500,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             fixed_dy,
             child_transform_x,
             child_transform_y,
+            placed_in_column,
             fixed_in_viewport,
             establishes_fixed_containing_block,
             paint_x,
