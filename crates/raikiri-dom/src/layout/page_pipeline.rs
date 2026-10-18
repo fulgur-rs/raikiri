@@ -1385,6 +1385,17 @@ impl<'a> PageLayoutControl<'a> {
             .map_or(page_index, |limit| page_index.min(limit.saturating_sub(1)))
     }
 
+    /// The last page to produce when pagination reached `reach_max`: that
+    /// page, or, once the page limit stopped pagination, the last page the
+    /// limit allows (the one before `max_pages`).
+    fn last_page(&self, reach_max: u32) -> u32 {
+        if self.page_limit_reached.get() {
+            self.max_pages.unwrap_or(0).saturating_sub(1)
+        } else {
+            reach_max
+        }
+    }
+
     fn check_discovery_page_index(&self, page_index: u32) -> Result<(), LayoutError> {
         match self.check_page_index(page_index) {
             Err(LayoutError::PageLimitExceeded { .. }) if self.truncate_at_page_limit => {
@@ -4383,12 +4394,8 @@ fn paginate_flow(
             let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
             // In-flow text between two blocks separates them: the next block's
             // gap is no longer a margin adjoining the previous block.
-            if participates_in_margin_adjacency
-                && let Some(parent_id) = text_ifc_root.or_else(|| {
-                    BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
-                })
-            {
-                sibling_margins.previous_bottoms.remove(&parent_id);
+            if participates_in_margin_adjacency {
+                sibling_margins.end_run_at_text(document, node_id, text_ifc_root);
             }
             // A footnote's descendants follow the moved footnote box. They are
             // deliberately not paginated independently, otherwise the stale
@@ -5159,22 +5166,31 @@ fn paginate_flow(
         control,
     )
     .and_then(|()| control.check_discovery_page_index(reach.max))?;
-    let last_page = if control.page_limit_reached.get() {
-        control.max_pages.unwrap_or(0).saturating_sub(1)
-    } else {
-        reach.max
-    };
-    Ok((0..=last_page)
+    Ok(page_slices(
+        control.last_page(reach.max),
+        &page_origins,
+        &page_names,
+    ))
+}
+
+/// The pages from the first through `last_page`, each starting at its origin
+/// in the flow and carrying the page type `page_names` gave it, if any.
+fn page_slices(
+    last_page: u32,
+    page_origins: &PageOrigins,
+    page_names: &PageNames,
+) -> Vec<PageSlice> {
+    (0..=last_page)
         .map(|page_index| PageSlice {
             page_index,
-            content_origin_y: page_origin(page_index),
+            content_origin_y: page_origins.origin(page_index),
             page_name: page_names
                 .by_page
                 .get(page_index as usize)
                 .cloned()
                 .flatten(),
         })
-        .collect())
+        .collect()
 }
 
 /// Where each table row among `candidates` sits in its parent before
@@ -7254,6 +7270,18 @@ impl SiblingMargins {
             .and_then(|parent_id| self.previous_bottoms.get(&parent_id).copied())
             .map(|(previous, bottom)| (previous, raw_y - bottom))
             .filter(|(_, gap)| gap.is_finite() && *gap > 0.0)
+    }
+
+    /// Ends the run of adjoining siblings at the in-flow text `node_id`:
+    /// text between two blocks separates them. The run is that of
+    /// `ifc_root`, the inline layout root holding the text, or else that of
+    /// the text's parent.
+    fn end_run_at_text(&mut self, document: &Document, node_id: usize, ifc_root: Option<usize>) {
+        if let Some(parent_id) = ifc_root
+            .or_else(|| BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document))
+        {
+            self.previous_bottoms.remove(&parent_id);
+        }
     }
 
     /// Moves the forced break on to `node_id`, a child of `parent_id`, or

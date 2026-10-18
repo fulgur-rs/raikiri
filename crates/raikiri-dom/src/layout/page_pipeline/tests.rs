@@ -16933,3 +16933,61 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     assert!(bounded);
     assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
 }
+
+#[test]
+fn the_last_page_stops_at_the_limit_only_once_it_was_reached() {
+    let control = PageLayoutControl::for_geometry_discovery(Some(5));
+    assert_eq!(control.last_page(2), 2);
+    control.page_limit_reached.set(true);
+    assert_eq!(control.last_page(9), 4);
+}
+
+#[test]
+fn page_slices_start_at_each_page_origin_with_the_page_type_it_was_given() {
+    let origins = PageOrigins::new(&[50.0], 100.0);
+    let mut names = PageNames::new(Some("cover".to_owned()));
+    names.current = Some("body".to_owned());
+    names.name_page(1);
+    let slices = page_slices(2, &origins, &names);
+    assert_eq!(
+        slices,
+        vec![
+            PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: Some("cover".to_owned()),
+            },
+            PageSlice {
+                page_index: 1,
+                content_origin_y: 50.0,
+                page_name: Some("body".to_owned()),
+            },
+            // A page nothing named has no page type.
+            PageSlice {
+                page_index: 2,
+                content_origin_y: 150.0,
+                page_name: None,
+            },
+        ]
+    );
+}
+
+#[test]
+fn text_between_two_blocks_ends_the_run_of_adjoining_siblings() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let text = doc.append_text(parent, "between");
+    let other = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let mut margins = SiblingMargins::default();
+    margins.record_bottom(parent, 5, true, 40.0);
+    margins.record_bottom(other, 6, true, 80.0);
+
+    // Text in a paragraph ends the run kept for its inline layout root.
+    margins.end_run_at_text(&doc, text, Some(other));
+    assert!(margins.previous_bottoms.contains_key(&parent));
+    assert!(!margins.previous_bottoms.contains_key(&other));
+
+    // Otherwise it ends the run of its own parent.
+    margins.end_run_at_text(&doc, text, None);
+    assert!(margins.previous_bottoms.is_empty());
+}
