@@ -463,10 +463,7 @@ impl PaginationState {
     ) -> Result<(), Halt> {
         let FlowEnv {
             cascade,
-            control,
             page_origins,
-            insets,
-            page_box,
             ..
         } = *env;
         let CandidateEntry {
@@ -475,7 +472,6 @@ impl PaginationState {
             ..
         } = *entry;
         let node_id = candidate.node_id;
-        let name_participates_in_flow = candidate.context.page_name_in_flow;
 
         if matches!(cascade.computed[node_id].float, FloatValue::Footnote) {
             return self.place_footnote(document, env, candidate);
@@ -557,6 +553,30 @@ impl PaginationState {
                 self.last_named = LastNamedBox::new(document, candidate, node_id, raw_y, height);
             }
         }
+        self.finish_box(document, env, candidate, effective_y)
+    }
+
+    /// Finishes the placement of the box `candidate` at `effective_y` on the
+    /// page it starts on: records the pages it runs through, the columns of
+    /// its page type it occupies, the flex item it is among the items of its
+    /// named flow, and the break pending after it.
+    pub(super) fn finish_box(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        effective_y: f32,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            control,
+            page_origins,
+            insets,
+            page_box,
+            ..
+        } = *env;
+        let node_id = candidate.node_id;
+        let height = candidate.height;
         reach_page(control, self.current_page)?;
         // A fixed-height direct block that fits on the physical paper is
         // monolithic in this minimal paginator.
@@ -578,7 +598,11 @@ impl PaginationState {
         let in_flow = !candidate.context.is_out_of_flow_descendant;
         self.record_pages(control, end_page, in_flow)?;
 
-        if box_occupies_column(&candidate.context, name_participates_in_flow, height) {
+        if box_occupies_column(
+            &candidate.context,
+            candidate.context.page_name_in_flow,
+            height,
+        ) {
             self.column_contexts
                 .occupy_enclosing(node_id, self.current_page, document, cascade);
         }

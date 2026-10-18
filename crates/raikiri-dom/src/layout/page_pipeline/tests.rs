@@ -18938,6 +18938,120 @@ fn a_box_is_recorded_among_the_siblings_whose_margins_adjoin_its_own() {
 }
 
 #[test]
+fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "height:30px");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let roots = candidates::FlowRoots::new(&doc, body);
+    let node_count = doc.nodes.len();
+    let candidate = |context| PageCandidate {
+        node_id: root,
+        raw_y: 90.0,
+        height: 30.0,
+        context,
+        page_name: None,
+        named_flex_context: Some(7),
+        ifc_root: None,
+    };
+    let mut finish = |control: &PageLayoutControl<'_>,
+                      state: &mut PaginationState,
+                      candidate: &PageCandidate,
+                      insets| {
+        let env = FlowEnv {
+            cascade: &cascade,
+            body_id: body,
+            control,
+            page_origins: &pages,
+            text_lines: &lines,
+            roots,
+            root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets,
+            page_box: page_box_800x600(),
+        };
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        state.finish_box(&mut session, &env, candidate, 90.0)
+    };
+    let mut reach_after = |candidate: &PageCandidate, insets| {
+        let mut state = pagination_state_before_first_candidate(node_count);
+        finish(&PageLayoutControl::new(None), &mut state, candidate, insets).unwrap();
+        (state.reach.max, state.reach.flow_max)
+    };
+    let direct = candidates::BoxContext {
+        is_direct_body_element: true,
+        ..Default::default()
+    };
+    let padded = PageContentInsets {
+        top: 5.0,
+        ..Default::default()
+    };
+
+    // A box that crosses the end of its page reaches the pages it runs
+    // through, in the normal flow.
+    assert_eq!(
+        reach_after(&candidate(Default::default()), Default::default()),
+        (1, 1)
+    );
+    // So does one outside it, in the pages outside the flow only.
+    let out_of_flow = candidates::BoxContext {
+        is_out_of_flow_descendant: true,
+        ..Default::default()
+    };
+    assert_eq!(
+        reach_after(&candidate(out_of_flow), Default::default()),
+        (1, 0)
+    );
+    // A fixed-height direct block that fits on the paper inside the page
+    // decoration stays on its page, whereas one on a page with no decoration
+    // runs on.
+    assert_eq!(reach_after(&candidate(direct), padded), (0, 0));
+    assert_eq!(reach_after(&candidate(direct), Default::default()), (1, 1));
+
+    // A flex item is remembered for the box after it in its named flow.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    let flex_item = candidates::BoxContext {
+        is_flex_item: true,
+        ..Default::default()
+    };
+    finish(
+        &PageLayoutControl::new(None),
+        &mut state,
+        &candidate(flex_item),
+        Default::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        state.preceding_flex_items.by_context.get(&7),
+        Some(&(30.0, 0))
+    );
+    let mut state = pagination_state_before_first_candidate(node_count);
+    finish(
+        &PageLayoutControl::new(None),
+        &mut state,
+        &candidate(Default::default()),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(state.preceding_flex_items.by_context.is_empty());
+
+    // A page past the page limit halts the placement.
+    let mut state = pagination_state_before_first_candidate(node_count);
+    state.current_page = 1;
+    assert!(matches!(
+        finish(
+            &PageLayoutControl::for_geometry_discovery(Some(1)),
+            &mut state,
+            &candidate(Default::default()),
+            Default::default(),
+        ),
+        Err(pagination_state::Halt::PageLimit)
+    ));
+}
+
+#[test]
 fn a_box_that_avoids_a_break_inside_it_is_a_page_transition() {
     let page_break = |forced_transition, page, flex_item| {
         let mut page_break = box_meeting_no_break();
