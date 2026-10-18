@@ -3578,3 +3578,60 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         assert!(!paragraphs(style), "{style}");
     }
 }
+
+#[test]
+fn an_absolute_box_in_an_empty_containing_block_starts_in_an_overflow_column() {
+    let (doc, _, ids) = absolute_fixture(
+        "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+        &[(
+            "display:block;position:relative",
+            &["position:absolute;top:300px;width:50px;height:200px"],
+        )],
+    );
+    assert_eq!(
+        fragment_rects(&doc, ids[0].1[0]),
+        vec![(3, 150.0, 0.0, 200.0), (4, 200.0, -100.0, 200.0)]
+    );
+}
+
+#[test]
+fn an_absolute_box_in_an_empty_containing_block_starts_in_the_first_column() {
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative",
+            &["position:absolute;top:0;width:10px;height:250px"],
+        )],
+    );
+    assert_eq!(
+        fragment_rects(&doc, ids[0].1[0]),
+        vec![
+            (0, 0.0, 0.0, 250.0),
+            (1, 100.0, -100.0, 250.0),
+            (2, 200.0, -200.0, 250.0),
+        ]
+    );
+}
+
+#[test]
+fn a_containing_block_with_no_block_size_is_sliced_for_the_absolute_boxes_it_holds() {
+    let supported = |block: &str, absolute: Option<&str>, out_of_flow: bool| {
+        let boxes: Vec<&str> = absolute.into_iter().collect();
+        let (doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &boxes)]);
+        lineless::supported(&doc, parent, out_of_flow).is_some()
+    };
+    let absolute = "position:absolute;top:0;width:10px;height:20px";
+    let block = "display:block;position:relative";
+    assert!(supported(block, Some(absolute), true));
+    assert!(!supported(block, Some(absolute), false));
+    // Without an absolute box there is nothing to break.
+    assert!(!supported(block, None, true));
+    // A static block is not their containing block.
+    assert!(!supported("display:block", Some(absolute), true));
+    // A fixed box has the viewport as its containing block.
+    assert!(!supported(
+        block,
+        Some("position:fixed;top:0;width:10px;height:20px"),
+        true,
+    ));
+}
