@@ -2071,11 +2071,17 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 
 /// Share Grid static alignment with fixed-box relayout, where page-area
 /// sizing can change the child's margin-box size after this dispatch.
+///
+/// `overflows` tells, per axis, whether the child's margin box is larger than
+/// the content box it is aligned in: a safe alignment of an overflowing box
+/// aligns as `start` (CSS Box Alignment 3 §4.4).
+// spec: https://www.w3.org/TR/css-align-3/#overflow-values
 pub(crate) fn auto_grid_abspos_static_alignment(
     child: &Style,
     parent: &Style,
+    overflows: Size<bool>,
 ) -> Option<Size<f32>> {
-    use taffy::{AlignItemsKeyword, GridPlacement};
+    use taffy::{AlignItemsKeyword, AlignmentSafety, GridPlacement};
 
     if child.position != TaffyPosition::Absolute
         || !child.inset.top.is_auto()
@@ -2090,22 +2096,44 @@ pub(crate) fn auto_grid_abspos_static_alignment(
         return None;
     }
 
+    // `self-start` and `self-end` follow the box's own direction where the
+    // axis is its inline axis (CSS Box Alignment 3 §5.2).
     let alignment_fraction = |self_alignment: Option<taffy::AlignSelf>,
-                              parent_alignment: taffy::AlignItems| {
-        match self_alignment.unwrap_or(parent_alignment).keyword() {
+                              parent_alignment: taffy::AlignItems,
+                              inline: bool,
+                              overflows: bool| {
+        let alignment = self_alignment
+            .unwrap_or(parent_alignment)
+            .resolve_self_relative(child.direction, parent.direction, inline);
+        let keyword = if alignment.safety == AlignmentSafety::Safe && overflows {
+            AlignItemsKeyword::Start
+        } else {
+            alignment.keyword
+        };
+        match keyword {
             AlignItemsKeyword::Center => 0.5,
             AlignItemsKeyword::End | AlignItemsKeyword::FlexEnd => 1.0,
             _ => 0.0,
         }
     };
-    let inline = alignment_fraction(child.justify_self, parent.justify_items);
+    let inline = alignment_fraction(
+        child.justify_self,
+        parent.justify_items,
+        true,
+        overflows.width,
+    );
     Some(Size {
         width: if parent.direction == taffy::Direction::Rtl {
             1.0 - inline
         } else {
             inline
         },
-        height: alignment_fraction(child.align_self, parent.align_items),
+        height: alignment_fraction(
+            child.align_self,
+            parent.align_items,
+            false,
+            overflows.height,
+        ),
     })
 }
 
@@ -2142,7 +2170,7 @@ fn align_auto_grid_abspos_children(
     let content_height =
         (size.height - border.top - border.bottom - padding.top - padding.bottom).max(0.0);
 
-    let children: Vec<(usize, Size<f32>)> =
+    let placed: Vec<(usize, taffy::Layout)> =
         TaffyChildIter::new_for_session(tree, NodeId::from(idx))
             .filter_map(|child| {
                 let child = usize::from(child);
@@ -2151,44 +2179,49 @@ fn align_auto_grid_abspos_children(
                 {
                     return None;
                 }
-                let style = &tree.layout_node_with_style(child).unwrap().style;
-                auto_grid_abspos_static_alignment(style, parent_style)
-                    .map(|alignment| (child, alignment))
+                let node = tree.layout_node_with_style(child).unwrap();
+                let style = &node.style;
+                let mut layout = node.unrounded_layout;
+                // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
+                // §10.6.4).
+                let margin = taffy::Rect {
+                    left: if style.margin.left.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.left
+                    },
+                    right: if style.margin.right.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.right
+                    },
+                    top: if style.margin.top.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.top
+                    },
+                    bottom: if style.margin.bottom.is_auto() {
+                        0.0
+                    } else {
+                        layout.margin.bottom
+                    },
+                };
+                let free_width = content_width - layout.size.width - margin.left - margin.right;
+                let free_height = content_height - layout.size.height - margin.top - margin.bottom;
+                let overflows = Size {
+                    width: free_width < 0.0,
+                    height: free_height < 0.0,
+                };
+                let alignment = auto_grid_abspos_static_alignment(style, parent_style, overflows)?;
+                layout.location.x =
+                    border.left + padding.left + margin.left + alignment.width * free_width;
+                layout.location.y =
+                    border.top + padding.top + margin.top + alignment.height * free_height;
+                Some((child, layout))
             })
             .collect();
 
-    for (child, alignment) in children {
-        let node = &tree.layout_node_with_style(child).unwrap();
-        let style = &node.style;
-        let mut layout = node.unrounded_layout;
-        // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
-        // §10.6.4).
-        let margin = taffy::Rect {
-            left: if style.margin.left.is_auto() {
-                0.0
-            } else {
-                layout.margin.left
-            },
-            right: if style.margin.right.is_auto() {
-                0.0
-            } else {
-                layout.margin.right
-            },
-            top: if style.margin.top.is_auto() {
-                0.0
-            } else {
-                layout.margin.top
-            },
-            bottom: if style.margin.bottom.is_auto() {
-                0.0
-            } else {
-                layout.margin.bottom
-            },
-        };
-        let free_width = content_width - layout.size.width - margin.left - margin.right;
-        let free_height = content_height - layout.size.height - margin.top - margin.bottom;
-        layout.location.x = border.left + padding.left + margin.left + alignment.width * free_width;
-        layout.location.y = border.top + padding.top + margin.top + alignment.height * free_height;
+    for (child, layout) in placed {
         tree.set_unrounded_layout(NodeId::from(child), &layout);
     }
 }

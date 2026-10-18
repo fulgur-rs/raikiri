@@ -327,7 +327,7 @@ fn parse_axis_self_alignment(
     let ident = input.expect_ident().ok()?.clone();
     if ident.eq_ignore_ascii_case("last") {
         input.expect_ident_matching("baseline").ok()?;
-        return Some(SelfAlignmentValue::Baseline);
+        return Some(SelfAlignmentValue::LastBaseline);
     }
     let value = match ident.to_ascii_lowercase().as_str() {
         "normal" => SelfAlignmentValue::Normal,
@@ -339,7 +339,15 @@ fn parse_axis_self_alignment(
         "right" if inline_axis => SelfAlignmentValue::End,
         "flex-start" => SelfAlignmentValue::FlexStart,
         "flex-end" => SelfAlignmentValue::FlexEnd,
-        "baseline" => SelfAlignmentValue::Baseline,
+        // `<baseline-position>` joins its keywords with `&&`, so `last` may
+        // follow `baseline` as well as precede it.
+        "baseline" => {
+            if input.try_parse(|i| i.expect_ident_matching("last")).is_ok() {
+                SelfAlignmentValue::LastBaseline
+            } else {
+                SelfAlignmentValue::Baseline
+            }
+        }
         _ => return None,
     };
     Some(

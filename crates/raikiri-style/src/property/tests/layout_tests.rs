@@ -1288,6 +1288,42 @@ fn align_items_parse_self_position_and_baseline() {
 }
 
 #[test]
+fn last_baseline_is_kept_apart_from_baseline() {
+    assert_eq!(
+        parse("last baseline", "align-items"),
+        Some(PropertyValue::AlignItems(SelfAlignmentValue::LastBaseline))
+    );
+    assert_eq!(
+        parse("last baseline", "align-self"),
+        Some(PropertyValue::AlignSelf(AlignSelfValue::Value(
+            SelfAlignmentValue::LastBaseline
+        )))
+    );
+    assert_eq!(parse("last", "align-items"), None);
+}
+
+#[test]
+fn last_baseline_keywords_may_come_in_either_order() {
+    // `<baseline-position>` is `[ first | last ]? && baseline`.
+    assert_eq!(
+        parse("baseline last", "align-items"),
+        Some(PropertyValue::AlignItems(SelfAlignmentValue::LastBaseline))
+    );
+    assert_eq!(
+        parse("baseline last", "align-self"),
+        Some(PropertyValue::AlignSelf(AlignSelfValue::Value(
+            SelfAlignmentValue::LastBaseline
+        )))
+    );
+    assert_eq!(
+        parse("baseline last", "justify-items"),
+        Some(PropertyValue::JustifyItems(
+            SelfAlignmentValue::LastBaseline
+        ))
+    );
+}
+
+#[test]
 fn align_items_rejects_auto() {
     // `auto` is only an align-self keyword, absent from align-items grammar.
     assert_eq!(parse("auto", "align-items"), None);
