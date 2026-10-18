@@ -378,6 +378,7 @@ fn element_background_paints_the_gradient_over_its_color() {
         },
         false,
         None,
+        None,
         &mut warnings,
     );
     assert!(warnings.is_empty());
@@ -486,6 +487,7 @@ fn gradient_keeps_its_clip_inside_a_matching_border() {
         },
         false,
         None,
+        None,
         &mut warnings,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -521,6 +523,7 @@ fn raster_element_background(cv: &ComputedValues, width: u32, height: u32) -> Ve
             bottom: 0.0,
         },
         false,
+        None,
         None,
         &mut warnings,
     );
@@ -854,6 +857,7 @@ fn border_area_gradients_paint_the_ring() {
             bottom: 0.0,
         },
         false,
+        None,
         None,
         &mut warnings,
     );

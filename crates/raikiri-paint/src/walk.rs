@@ -916,6 +916,7 @@ fn paint_page_background_layer(
             &layer.size,
             &layer.position,
             &layer.repeat,
+            None,
             pixel_source,
             warnings,
         ),
@@ -1053,6 +1054,7 @@ fn paint_canvas_background_layer(
         &layer.size,
         &layer.position,
         &layer.repeat,
+        None,
         pixel_source,
         warnings,
     );
@@ -1661,6 +1663,7 @@ fn paint_margin_box(
                             &image.size,
                             &image.position,
                             &image.repeat,
+                            None,
                             source,
                             warnings,
                         );
@@ -3807,6 +3810,7 @@ pub(crate) fn paint_document_impl(
                                 &paint_padding,
                                 matches!(cv.border_image.source, BackgroundImage::None)
                                     && border_hides_background_edge(painted_border, cv.color),
+                                image_cache.device_grid(scene.transform),
                                 pixel_source,
                                 warnings,
                             );
@@ -4109,6 +4113,7 @@ pub(crate) fn paint_document_impl(
                             &cv.border,
                             &paint_padding,
                             false,
+                            image_cache.device_grid(scene.transform),
                             pixel_source,
                             warnings,
                         );
@@ -5340,6 +5345,7 @@ pub(crate) fn paint_element_background(
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
     border_hides_edge: bool,
+    device_grid: Option<DeviceGrid>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -5354,6 +5360,7 @@ pub(crate) fn paint_element_background(
         border,
         padding,
         border_hides_edge,
+        device_grid,
         pixel_source,
         warnings,
         None,
@@ -5379,6 +5386,7 @@ fn paint_element_background_layers(
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
     border_hides_edge: bool,
+    device_grid: Option<DeviceGrid>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     image_slice: Option<Rect>,
@@ -5408,6 +5416,7 @@ fn paint_element_background_layers(
             border,
             padding,
             border_hides_edge,
+            device_grid,
             &layer.size,
             &layer.position,
             &layer.repeat,
@@ -5461,6 +5470,7 @@ fn paint_element_background_slice(
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
     border_hides_edge: bool,
+    device_grid: Option<DeviceGrid>,
     background_size: &ComputedBackgroundSize,
     background_position: &ComputedCssPosition,
     background_repeat: &raikiri_style::property::BackgroundRepeat,
@@ -5574,12 +5584,21 @@ fn paint_element_background_slice(
         clip
     };
     // Positioning area from `background-origin` (CSS Backgrounds 3 section 2.8).
+    // It follows the layout box rather than the snapped painting box, so a
+    // centered or sized image lands where the unsnapped geometry puts it;
+    // the tile is snapped to device pixels when it is drawn.
     // `border-area`/`text` are not valid origins; warn and fall back to the
     // spec initial `padding-box` instead of silently mispositioning.
+    let (ux0, uy0, ux1, uy1) = (
+        abs_x as f64,
+        abs_y as f64,
+        (abs_x + width) as f64,
+        (abs_y + height) as f64,
+    );
     let (px0, py0, px1, py1) = match origin {
-        VisualBox::BorderBox => (bx0, by0, bx1, by1),
-        VisualBox::PaddingBox => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
-        VisualBox::ContentBox => (bx0 + bl + pl, by0 + bt + pt, bx1 - br - pr, by1 - bb - pb),
+        VisualBox::BorderBox => (ux0, uy0, ux1, uy1),
+        VisualBox::PaddingBox => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
+        VisualBox::ContentBox => (ux0 + bl + pl, uy0 + bt + pt, ux1 - br - pr, uy1 - bb - pb),
         VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
@@ -5591,10 +5610,10 @@ fn paint_element_background_slice(
                     "background-origin has an unsupported visual box; using padding-box positioning"
                         .into(),
             });
-            (bx0 + bl, by0 + bt, bx1 - br, by1 - bb)
+            (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb)
         }
         // cov:ignore: defensive fallback for future `VisualBox` variants
-        _ => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
+        _ => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
     };
     let positioning = Rect::new(px0, py0, px1, py1);
     // Painting area from `background-clip` (CSS Backgrounds 3 section 2.7).
@@ -5673,6 +5692,7 @@ fn paint_element_background_slice(
                     // The mask already limits the background to the border
                     // ring, so there is no edge to keep clear of the image.
                     false,
+                    device_grid,
                     background_size,
                     background_position,
                     background_repeat,
@@ -5802,6 +5822,7 @@ fn paint_element_background_slice(
             background_size,
             background_position,
             background_repeat,
+            device_grid,
             source,
             warnings,
         );
@@ -5858,6 +5879,7 @@ fn paint_background_from_source(
     size: &ComputedBackgroundSize,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
+    device_grid: Option<DeviceGrid>,
     pixel_source: &dyn ImagePixelSource,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -5890,6 +5912,7 @@ fn paint_background_from_source(
             image_h,
             position,
             repeat,
+            device_grid,
         );
     } else {
         warnings.push(RenderWarning {
@@ -5924,6 +5947,9 @@ fn paint_background_from_source(
 /// rest of `painting`; `round` rescales the tile so a whole number exactly
 /// fills the positioning width/height, then places and repeats it like
 /// `repeat`. Mixed axes combine independently.
+///
+/// On a raster output (`device_grid` is known) the tiles are drawn on whole
+/// device pixels, see [`tile_spans`].
 #[allow(clippy::too_many_arguments)]
 fn paint_background_image(
     image_cache: &crate::walk::ImageBrushCache,
@@ -5935,6 +5961,7 @@ fn paint_background_image(
     image_h: f64,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
+    device_grid: Option<DeviceGrid>,
 ) {
     if decoded.width == 0 || decoded.height == 0 {
         return;
@@ -5958,13 +5985,9 @@ fn paint_background_image(
     ) else {
         return;
     };
-    let (tile_w, tile_h) = (tiles.width, tiles.height);
     let brush = image_cache.whole(decoded);
-    let tile_shape = Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64);
-    let tile_scale = Affine::scale_non_uniform(
-        tile_w / decoded.width as f64,
-        tile_h / decoded.height as f64,
-    );
+    let (image_px_w, image_px_h) = (f64::from(decoded.width), f64::from(decoded.height));
+    let tile_shape = Rect::new(0.0, 0.0, image_px_w, image_px_h);
     // A `repeat` or `round` axis places tiles edge to edge, so one fill with
     // the image repeating along that axis covers it without a seam between
     // tiles, however small they are. A `space` or `no-repeat` axis keeps one
@@ -5977,6 +6000,21 @@ fn paint_background_image(
         )
     };
     let (continuous_x, continuous_y) = (continuous(repeat.x), continuous(repeat.y));
+    let xs = tile_spans(
+        &tiles.x,
+        tiles.width,
+        repeat.x,
+        device_grid.map(|grid| (grid.scale_x, grid.offset_x)),
+    );
+    let ys = tile_spans(
+        &tiles.y,
+        tiles.height,
+        repeat.y,
+        device_grid.map(|grid| (grid.scale_y, grid.offset_y)),
+    );
+    // `background_tiles` returns a tile in each axis, so the fallbacks never apply.
+    let (origin_x, tile_w) = xs.first().copied().unwrap_or((painting.x0, tiles.width));
+    let (origin_y, tile_h) = ys.first().copied().unwrap_or((painting.y0, tiles.height));
     let mut pattern = brush.clone();
     if continuous_x {
         pattern.sampler.x_extend = PenikoExtend::Repeat;
@@ -5984,46 +6022,53 @@ fn paint_background_image(
     if continuous_y {
         pattern.sampler.y_extend = PenikoExtend::Repeat;
     }
-    // `background_tiles` returns a tile in each axis, so the fallback never applies.
-    let origin_x = tiles.x.first().copied().unwrap_or(painting.x0);
-    let origin_y = tiles.y.first().copied().unwrap_or(painting.y0);
     scene.push_clip_layer(Affine::IDENTITY, &painting);
     match (continuous_x, continuous_y) {
         (true, true) => scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
             pattern.as_ref(),
-            Some(Affine::translate((origin_x, origin_y)) * tile_scale),
+            Some(
+                Affine::translate((origin_x, origin_y))
+                    * Affine::scale_non_uniform(tile_w / image_px_w, tile_h / image_px_h),
+            ),
             &painting,
         ),
         (true, false) => {
-            for tile_y in &tiles.y {
+            for (tile_y, height) in &ys {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
                     pattern.as_ref(),
-                    Some(Affine::translate((origin_x, *tile_y)) * tile_scale),
-                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + tile_h),
+                    Some(
+                        Affine::translate((origin_x, *tile_y))
+                            * Affine::scale_non_uniform(tile_w / image_px_w, height / image_px_h),
+                    ),
+                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + height),
                 );
             }
         }
         (false, true) => {
-            for tile_x in &tiles.x {
+            for (tile_x, width) in &xs {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
                     pattern.as_ref(),
-                    Some(Affine::translate((*tile_x, origin_y)) * tile_scale),
-                    &Rect::new(*tile_x, painting.y0, *tile_x + tile_w, painting.y1),
+                    Some(
+                        Affine::translate((*tile_x, origin_y))
+                            * Affine::scale_non_uniform(width / image_px_w, tile_h / image_px_h),
+                    ),
+                    &Rect::new(*tile_x, painting.y0, *tile_x + width, painting.y1),
                 );
             }
         }
         (false, false) => {
-            for tile_y in &tiles.y {
-                for tile_x in &tiles.x {
+            for (tile_y, height) in &ys {
+                for (tile_x, width) in &xs {
                     scene.fill(
                         Fill::NonZero,
-                        Affine::translate((*tile_x, *tile_y)) * tile_scale,
+                        Affine::translate((*tile_x, *tile_y))
+                            * Affine::scale_non_uniform(width / image_px_w, height / image_px_h),
                         brush.as_ref(),
                         None,
                         &tile_shape,
@@ -6033,6 +6078,52 @@ fn paint_background_image(
         }
     }
     scene.pop_layer();
+}
+
+/// The `(start, length)` spans along one axis that a layer's tiles are drawn
+/// at, snapped to device pixels when the output grid `(scale, offset)` is
+/// known.
+///
+/// A tile is drawn on whole device pixels so its edges stay crisp, but it is
+/// still placed from the unsnapped box: each edge moves to the nearest device
+/// pixel on its own, which keeps a tile that straddles a pixel boundary from
+/// being stretched over a partial pixel. A `repeat` axis keeps only its origin
+/// tile, whose length is the pitch of the repetition: a whole number of
+/// device pixels, at least one, so the copies stay on the grid however small
+/// the unsnapped tile is. A `round` axis keeps the pitch that fits its area.
+fn tile_spans(
+    starts: &[f64],
+    length: f64,
+    keyword: raikiri_style::property::BackgroundRepeatKeyword,
+    grid: Option<(f64, f64)>,
+) -> Vec<(f64, f64)> {
+    use raikiri_style::property::BackgroundRepeatKeyword::{Repeat, Round};
+    let snap = |value: f64| match grid {
+        Some((scale, offset)) => ((value * scale + offset).round() - offset) / scale,
+        None => value,
+    };
+    match keyword {
+        Round => starts
+            .first()
+            .map(|start| (*start, length))
+            .into_iter()
+            .collect(),
+        Repeat => starts
+            .first()
+            .map(|start| match grid {
+                Some((scale, _)) => (snap(*start), (length * scale).round().max(1.0) / scale),
+                None => (*start, length),
+            })
+            .into_iter()
+            .collect(),
+        _ => starts
+            .iter()
+            .map(|start| {
+                let snapped = snap(*start);
+                (snapped, snap(*start + length) - snapped)
+            })
+            .collect(),
+    }
 }
 
 /// Paint the border image of a box whose border box is `width` × `height`
@@ -6866,6 +6957,7 @@ pub(crate) fn paint_inline_box(
         if slice.is_some() { &cv.border } else { &border },
         &background_padding,
         false,
+        image_cache.device_grid(transform),
         pixel_source,
         warnings,
         slice.map(|_| piece_rect),

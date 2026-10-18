@@ -279,6 +279,7 @@ css/css-backgrounds/background-position-subpixel-at-border.tentative.html
 css/css-backgrounds/background-position-three-four-values.html
 css/css-backgrounds/background-position-xy-three-four-values-passthru.html
 css/css-backgrounds/background-position/background-position-bottom-right-repeat-round.html
+css/css-backgrounds/background-position/subpixel-position-center.tentative.html
 css/css-backgrounds/background-repeat-round-1a.html
 css/css-backgrounds/background-repeat-round-1b.html
 css/css-backgrounds/background-repeat-round-1c.html
@@ -349,6 +350,7 @@ css/css-backgrounds/css3-background-clip.html
 # Both sides omit inset shadows; this PASS does not establish inset shadow support.
 css/css-backgrounds/fieldset-inset-shadow.html
 css/css-backgrounds/inline-background-rtl-001.html
+css/css-backgrounds/subpixel-repeat-no-repeat-mix.html
 css/css-backgrounds/table-cell-background-local.html
 
 # --- css-values parsing pin 2026-09-14 goal D (14 files) ---
