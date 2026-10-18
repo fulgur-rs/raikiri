@@ -2182,6 +2182,37 @@ fn grid_auto_abspos_static_position_uses_all_parent_padding_sides() {
 }
 
 #[test]
+fn grid_auto_abspos_last_baseline_falls_back_to_the_end_edge() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;width:100px;height:100px;padding:10px"),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some(
+            "position:absolute;width:20px;height:20px;\
+             align-self:last baseline;justify-self:last baseline",
+        ),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!((layout.location.x - 90.0).abs() < 0.01);
+    assert!((layout.location.y - 90.0).abs() < 0.01);
+}
+
+#[test]
 fn layout_page_fragments_emits_one_page_with_deterministic_items() {
     let (mut doc, cascade) = hello_world_doc();
     let pages = layout_page_fragments(&mut doc, &cascade, PageBox::A4)

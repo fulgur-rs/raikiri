@@ -997,7 +997,11 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
         };
         match value {
             SelfAlignmentValue::Center => free / 2.0,
-            SelfAlignmentValue::End | SelfAlignmentValue::FlexEnd => free,
+            // An absolutely positioned box takes no part in baseline
+            // alignment; `last baseline` falls back to `safe end`.
+            SelfAlignmentValue::End
+            | SelfAlignmentValue::FlexEnd
+            | SelfAlignmentValue::LastBaseline => free,
             _ => 0.0,
         }
     }

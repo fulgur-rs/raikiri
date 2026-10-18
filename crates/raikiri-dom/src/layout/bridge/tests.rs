@@ -1312,6 +1312,10 @@ fn self_alignment_to_taffy_maps_every_keyword() {
             SelfAlignmentValue::Baseline,
             Some(TaffyAlignItems::BASELINE),
         ),
+        (
+            SelfAlignmentValue::LastBaseline,
+            Some(TaffyAlignItems::BASELINE),
+        ),
     ] {
         assert_eq!(self_alignment_to_taffy(value), expected, "value: {value:?}");
     }
@@ -1341,6 +1345,28 @@ fn bridge_alignment_align_self_value_delegates_to_self_alignment_to_taffy() {
     let mut style = Style::default();
     bridge_alignment(&mut style, &cv);
     assert_eq!(style.align_self, Some(TaffyAlignItems::CENTER));
+}
+
+#[test]
+fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
+    // An absolutely positioned box takes no part in baseline alignment, so
+    // `last baseline` falls back to `safe end` on both axes. A box in the
+    // flow keeps aligning to the baseline.
+    for (position, expected) in [
+        (PositionValue::Absolute, TaffyAlignItems::END),
+        (PositionValue::Fixed, TaffyAlignItems::END),
+        (PositionValue::Static, TaffyAlignItems::BASELINE),
+    ] {
+        let label = format!("{position:?}");
+        let mut cv = ComputedValues::initial();
+        cv.position = position;
+        cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::LastBaseline);
+        cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::LastBaseline);
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.align_self, Some(expected), "position: {label}");
+        assert_eq!(style.justify_self, Some(expected), "position: {label}");
+    }
 }
 
 #[test]

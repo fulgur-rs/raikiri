@@ -3987,11 +3987,10 @@ css_keywords!(ContentAlignmentValue {
 /// - **(b) unsupported**: `self-start`/`self-end` (part of `<self-position>`,
 ///   keywords relative to writing mode) are not implemented because taffy's
 ///   `AlignItemsKeyword` has no matching variants.
-/// - **(b) unsupported**: the `first`/`last` prefixes for `<baseline-position>`
-///   are not implemented: taffy's `AlignItemsKeyword::Baseline` does not
-///   distinguish prefixes ("first" is the default; refinements corresponding
-///   to spec §9 "Fallback Alignment" are unsupported). Only the bare
-///   `baseline` keyword is accepted.
+/// - **(b) unsupported**: the `first` prefix for `<baseline-position>` is
+///   not accepted. `last baseline` is kept apart from `baseline` only for its
+///   fallback alignment (spec §9 "Fallback Alignment"); taffy aligns both to
+///   the first baseline.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelfAlignmentValue {
@@ -4009,8 +4008,13 @@ pub enum SelfAlignmentValue {
     FlexStart,
     /// `flex-end` — `<self-position>`.
     FlexEnd,
-    /// `baseline` — `<baseline-position>` (prefixes unsupported; see [`Self`] doc).
+    /// `baseline` or `first baseline` — `<baseline-position>`.
     Baseline,
+    /// `last baseline` — `<baseline-position>`. Taffy has no last-baseline
+    /// alignment, so layout treats it as `baseline` except where the box does
+    /// not take part in baseline alignment: its fallback alignment is then
+    /// `safe end` (CSS Box Alignment 3 §9.1) rather than `safe start`.
+    LastBaseline,
 }
 
 /// The value of the `align-self` property.

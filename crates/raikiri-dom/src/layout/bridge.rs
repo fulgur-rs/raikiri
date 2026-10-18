@@ -1271,10 +1271,19 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     style.align_content =
         content_alignment_to_taffy(cv.align_content).unwrap_or(TaffyAlignContent::NORMAL);
     style.align_items = self_alignment_to_taffy(cv.align_items).unwrap_or(TaffyAlignItems::NORMAL);
-    style.align_self = self_alignment_or_auto_to_taffy(cv.align_self);
     style.justify_items =
         self_alignment_to_taffy(cv.justify_items).unwrap_or(TaffyAlignItems::NORMAL);
-    style.justify_self = self_alignment_or_auto_to_taffy(cv.justify_self);
+    // An absolutely positioned box takes no part in baseline alignment, so
+    // `last baseline` falls back to `safe end` (CSS Box Alignment 3 §9.1).
+    let abspos = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+    let own = |value: AlignSelfValue| match value {
+        AlignSelfValue::Value(SelfAlignmentValue::LastBaseline) if abspos => {
+            AlignSelfValue::Value(SelfAlignmentValue::End)
+        }
+        value => value,
+    };
+    style.align_self = self_alignment_or_auto_to_taffy(own(cv.align_self));
+    style.justify_self = self_alignment_or_auto_to_taffy(own(cv.justify_self));
 }
 
 /// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by
@@ -1335,8 +1344,10 @@ fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
         SelfAlignmentValue::End => Some(TaffyAlignItems::END),
         SelfAlignmentValue::FlexStart => Some(TaffyAlignItems::FLEX_START),
         SelfAlignmentValue::FlexEnd => Some(TaffyAlignItems::FLEX_END),
-        SelfAlignmentValue::Baseline => Some(TaffyAlignItems::BASELINE),
-        // cov:ignore: unreachable while SelfAlignmentValue is the 8
+        SelfAlignmentValue::Baseline | SelfAlignmentValue::LastBaseline => {
+            Some(TaffyAlignItems::BASELINE)
+        }
+        // cov:ignore: unreachable while SelfAlignmentValue is the 9
         // variants matched above only; required for its #[non_exhaustive]
         // contract.
         _ => None,
