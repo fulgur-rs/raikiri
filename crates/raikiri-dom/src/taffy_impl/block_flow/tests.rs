@@ -496,6 +496,90 @@ fn block_alignment_moves_the_exported_baseline() {
     assert_eq!(output.baselines.first, Some(100.0));
 }
 
+/// A block `root` holding a 20px-tall flex container whose only item is
+/// `item_height` tall and shifted by `item_margin_top`, with `overflow` set on
+/// the container.
+fn baseline_probe(
+    overflow: taffy::Overflow,
+    item_height: f32,
+    item_margin_top: f32,
+) -> taffy::LayoutOutput {
+    let mut tree = Document::new();
+    let root = tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let child = tree.append_element(
+        Some(root),
+        "div",
+        Style {
+            display: Display::Flex,
+            overflow: taffy::Point {
+                x: overflow,
+                y: overflow,
+            },
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::length(20.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    tree.append_element(
+        Some(child),
+        "div",
+        Style {
+            display: Display::Block,
+            size: Size {
+                width: Dimension::length(20.0),
+                height: Dimension::length(item_height),
+            },
+            margin: taffy::Rect {
+                left: LengthPercentageAuto::length(0.0),
+                right: LengthPercentageAuto::length(0.0),
+                top: LengthPercentageAuto::length(item_margin_top),
+                bottom: LengthPercentageAuto::length(0.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    block_layout(&mut tree, NodeId::from(root), inputs(), None)
+}
+
+#[test]
+fn a_scroll_containers_baselines_are_clamped_to_its_border_box() {
+    let output = baseline_probe(taffy::Overflow::Hidden, 80.0, 0.0);
+    assert_eq!(output.baselines.first, Some(20.0));
+    assert_eq!(output.baselines.last, Some(20.0));
+}
+
+#[test]
+fn a_scroll_containers_baselines_are_clamped_above_its_border_box() {
+    let output = baseline_probe(taffy::Overflow::Scroll, 20.0, -100.0);
+    assert_eq!(output.baselines.first, Some(0.0));
+    assert_eq!(output.baselines.last, Some(0.0));
+}
+
+#[test]
+fn a_scroll_container_keeps_a_baseline_inside_its_border_box() {
+    let output = baseline_probe(taffy::Overflow::Hidden, 10.0, 0.0);
+    assert_eq!(output.baselines.first, Some(10.0));
+}
+
+#[test]
+fn a_box_that_is_not_a_scroll_container_keeps_a_baseline_below_its_border_box() {
+    let output = baseline_probe(taffy::Overflow::Visible, 80.0, 0.0);
+    assert_eq!(output.baselines.first, Some(80.0));
+    assert_eq!(output.baselines.last, Some(80.0));
+}
+
 #[test]
 fn containment_limits_descendant_overflow_to_the_child_border_box() {
     for contain in [taffy::Contain::LAYOUT, taffy::Contain::PAINT] {

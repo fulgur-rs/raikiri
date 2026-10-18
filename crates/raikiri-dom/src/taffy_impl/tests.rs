@@ -335,3 +335,89 @@ fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
     let layout = doc.nodes[child].unrounded_layout;
     assert_eq!((layout.location.x, layout.location.y), (50.0, 50.0));
 }
+
+/// Lays out a `container` that holds a block wrapping a `scroller` (with an
+/// 80px-tall child) and a 20px-tall sibling in a 800x600 page, and returns the
+/// top of the block and of the sibling.
+fn baseline_aligned_tops(scroller_style: &str, container: &str) -> (f32, f32) {
+    use crate::layout::test_support::{absolute_rect, page_box_800x600};
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(Some(body), "div", taffy::Style::default(), Some(container));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;width:100px"),
+    );
+    let scroller = doc.append_element(
+        Some(wrapper),
+        "div",
+        taffy::Style::default(),
+        Some(scroller_style),
+    );
+    doc.append_element(
+        Some(scroller),
+        "div",
+        taffy::Style::default(),
+        Some("width:20px;height:80px"),
+    );
+    let sibling = doc.append_element(
+        Some(parent),
+        "div",
+        taffy::Style::default(),
+        Some("width:10px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    (
+        absolute_rect(&doc, wrapper).1,
+        absolute_rect(&doc, sibling).1,
+    )
+}
+
+#[test]
+fn a_flex_scroll_container_aligns_by_its_clamped_baseline() {
+    // The scroller's content ends at 80px, outside its 20px border box. The
+    // baseline the block exports is clamped to 20px, which is where the
+    // sibling's synthesized baseline lies, so both items start at the same
+    // height.
+    let (scroller, sibling) = baseline_aligned_tops(
+        "display:flex;overflow:hidden;width:20px;height:20px",
+        "display:flex;align-items:baseline",
+    );
+    assert_eq!(scroller, sibling);
+}
+
+#[test]
+fn a_flex_box_that_does_not_scroll_aligns_by_its_content_baseline() {
+    // Without overflow, the baseline stays at the 80px content edge, so the
+    // sibling sinks 60px below the block.
+    let (scroller, sibling) = baseline_aligned_tops(
+        "display:flex;width:20px;height:20px",
+        "display:flex;align-items:baseline",
+    );
+    assert_eq!(sibling - scroller, 60.0);
+}
+
+#[test]
+fn a_grid_scroll_container_aligns_by_its_clamped_baseline() {
+    let (scroller, sibling) = baseline_aligned_tops(
+        "display:flex;overflow:hidden;width:20px;height:20px",
+        "display:grid;grid-auto-flow:column;align-items:baseline",
+    );
+    assert_eq!(scroller, sibling);
+}

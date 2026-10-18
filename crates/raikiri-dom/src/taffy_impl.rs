@@ -767,6 +767,17 @@ impl LayoutSession<'_> {
         } else {
             compute_cached_layout(self, node_id, inputs, compute)
         };
+        // A scroll container exports baselines clamped to its border box
+        // (CSS Box Alignment 3 §9.1), so content scrolled out of view does
+        // not move the baseline its parent aligns to.
+        // spec: https://www.w3.org/TR/css-align-3/#baseline-export
+        let scrolls = self.layout_node_with_style(idx).is_some_and(|node| {
+            node.style.overflow.x.is_scroll_container()
+                || node.style.overflow.y.is_scroll_container()
+        });
+        if scrolls && inputs.run_mode == RunMode::PerformLayout {
+            clamp_baselines(&mut output.baselines, output.size.height);
+        }
         // A flex container keeps the first baseline of its performed layout,
         // which a list item's outside marker aligns with. A grid container's
         // baseline is found from the first-row items its detailed grid
@@ -1557,6 +1568,14 @@ fn fragmentation_context_for_ifc(
             );
     }
     None // cov:ignore: the unsupported ancestor path remains outside the ignored nested flex-float WPT scope.
+}
+
+/// Keep each baseline of a scroll container within its border box, whose
+/// block size is `height`.
+fn clamp_baselines(baselines: &mut taffy::Baselines, height: f32) {
+    for baseline in [&mut baselines.first, &mut baselines.last] {
+        *baseline = baseline.map(|offset| offset.max(0.0).min(height));
+    }
 }
 
 /// Return the first baseline of an inline-block from the descendant layout
