@@ -1450,6 +1450,7 @@ css/css-page/page-name-propagated-002-print.html
 css/css-page/page-background-001-print.html
 css/css-page/page-background-003-print.html
 css/css-page/page-background-004-print.html
+css/css-page/page-background-005-print.html
 css/css-page/page-name-003-print.html
 css/css-page/page-name-flex-002-print.html
 css/css-page/page-name-img-001-print.html

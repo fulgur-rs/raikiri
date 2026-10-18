@@ -2807,7 +2807,10 @@ fn background_page_images_ignore_clip_and_empty_area_skips() {
             &mut scene,
             &document,
             &cascade,
-            area,
+            PageBackgroundAreas {
+                paper: area,
+                border_box: area,
+            },
             Some(&source),
             &mut warnings,
         );
@@ -2837,12 +2840,100 @@ fn background_page_images_ignore_clip_and_empty_area_skips() {
         &mut empty_scene,
         &document,
         &empty_cascade,
-        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+        PageBackgroundAreas {
+            paper: kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+            border_box: kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+        },
         Some(&source),
         &mut empty_warnings,
     );
     assert!(empty_warnings.is_empty());
     assert_eq!(background_fill_count(&empty_scene), 0);
+}
+
+#[test]
+fn background_page_image_origin_starts_at_the_page_box_inside_the_margins() {
+    struct RedPixels;
+    impl raikiri_traits::ImagePixelSource for RedPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                ],
+            }))
+        }
+    }
+    let paper = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    let page_box = kurbo::Rect::new(10.0, 10.0, 190.0, 90.0);
+    // The image starts at the edge its origin names, counted from the page
+    // box inside the margins, and still paints over the whole paper.
+    for (origin, expected) in [
+        ("border-box", (10.0, 10.0)),
+        ("padding-box", (14.0, 14.0)),
+        ("content-box", (17.0, 17.0)),
+    ] {
+        let (document, cascade) = canvas_fixture(
+            Some(&format!(
+                "@page {{ margin: 10px; border: 4px solid black; padding: 3px; background-image: url('https://example.test/red.png'); background-repeat: no-repeat; background-origin: {origin}; }}"
+            )),
+            None,
+        );
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_page_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            PageBackgroundAreas {
+                paper,
+                border_box: page_box,
+            },
+            Some(&RedPixels),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{origin}: {warnings:?}");
+        assert_eq!(background_fill_origins(&scene), vec![expected], "{origin}");
+    }
+
+    // A percentage size resolves against the page box too: half of its 180px
+    // by 80px is 90px by 40px, which scales the 2px image by 45 and 20.
+    let (document, cascade) = canvas_fixture(
+        Some(
+            "@page { margin: 10px; background-image: url('https://example.test/red.png'); background-repeat: no-repeat; background-origin: border-box; background-size: 50% 50%; }",
+        ),
+        None,
+    );
+    let mut scene = Scene::new();
+    paint_page_background_image(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        PageBackgroundAreas {
+            paper,
+            border_box: page_box,
+        },
+        Some(&RedPixels),
+        &mut Vec::new(),
+    );
+    let fill = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("the image is filled");
+    assert_eq!(
+        fill.transform.as_coeffs(),
+        [45.0, 0.0, 0.0, 20.0, 10.0, 10.0]
+    );
 }
 
 #[test]
