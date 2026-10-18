@@ -47,6 +47,10 @@ pub(super) fn walk_sources(
     while let Some(visit) = walk.stack.pop() {
         walk.visit(visit, work)?;
     }
+    // The arena index is the stable NodeId projection used by
+    // `raikiri_traits::Dom`; sorting by it reproduces fulgur's deterministic
+    // BTreeMap iteration order whatever order the walk met the nodes in.
+    walk.sources.sort_by_key(|source| source.node_id);
     Ok(WalkedSources {
         nodes: walk.sources,
         text_roots: walk.text_roots,

@@ -387,6 +387,33 @@ fn a_fixed_subtree_is_marked_as_repeating_on_every_page() {
 }
 
 #[test]
+fn the_sources_are_in_node_order_though_a_node_is_placed_more_than_once() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    for _ in 0..2 {
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block"),
+        );
+    }
+    doc.fragment_tree.fragments =
+        vec![fragment(wrapper, None, None), fragment(wrapper, None, None)];
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let walked = walk_with(&doc, &cascade, &PageLayoutControl::default()).expect("walk");
+    // The walk meets the wrapper and the boxes it holds once for each of its
+    // two placements, and hands the sources over in node order.
+    assert_eq!(sources_of(&walked, wrapper).len(), 2);
+    let ids: Vec<_> = walked.nodes.iter().map(|source| source.node_id).collect();
+    assert!(ids.windows(2).all(|pair| pair[0] <= pair[1]), "{ids:?}");
+}
+
+#[test]
 fn a_paragraph_that_stacks_its_lines_along_x_says_so() {
     let mut text = 0;
     let (mut doc, cascade, root) = ahem_paragraph_with(
