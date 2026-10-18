@@ -227,6 +227,29 @@ fn a_paragraph_of_boxes_that_take_no_room_draws_nothing() {
 }
 
 #[test]
+fn an_empty_inline_box_is_on_the_first_line() {
+    // A paragraph whose only content is the border of an empty inline box.
+    let rgba = raster(
+        "<p><span class=e></span></p>",
+        "p{color:red} p::first-line{color:blue} .e{border-left:5px solid currentColor}",
+    );
+    assert_eq!(pixel(&rgba, 2, 5), BLUE);
+    assert_eq!(count(&rgba, RED), 0);
+}
+
+#[test]
+fn preserved_white_space_is_content_on_the_first_line() {
+    // Unlike collapsible white space, the preserved space before the block
+    // forms a line of the paragraph, so the block is not on the first line.
+    let rgba = raster(
+        "<div class=outer> <div>X</div></div>",
+        ".outer{white-space:pre;color:red} .outer::first-line{color:blue}",
+    );
+    assert_eq!(count(&rgba, BLUE), 0);
+    assert_eq!(pixel(&rgba, 5, 15), RED);
+}
+
+#[test]
 fn white_space_that_is_discarded_does_not_hold_the_first_line() {
     let rgba = raster(
         "<div class=outer> <div>X</div></div>",
