@@ -1272,6 +1272,29 @@ pub(crate) fn absolute_length_factor(unit: &str) -> Option<f32> {
     }
 }
 
+/// The canonical unit of `unit` and how many of it one `unit` is, for the units that convert
+/// into one another: absolute lengths (`px`), angles (`deg`), times (`s`), frequencies (`hz`)
+/// and resolutions (`dppx`), per the canonical units of CSS Values 4 §6.
+fn canonical_unit(unit: &str) -> Option<(&'static str, f32)> {
+    if let Some(factor) = absolute_length_factor(unit) {
+        return Some(("px", factor));
+    }
+    Some(match unit {
+        "deg" => ("deg", 1.0),
+        "grad" => ("deg", 0.9),
+        "rad" => ("deg", 180.0 / std::f32::consts::PI),
+        "turn" => ("deg", 360.0),
+        "s" => ("s", 1.0),
+        "ms" => ("s", 0.001),
+        "hz" => ("hz", 1.0),
+        "khz" => ("hz", 1000.0),
+        "dppx" | "x" => ("dppx", 1.0),
+        "dpi" => ("dppx", 1.0 / 96.0),
+        "dpcm" => ("dppx", 2.54 / 96.0),
+        _ => return None,
+    })
+}
+
 pub(crate) fn normalize_math_pair(left: &mut MathValue, right: &mut MathValue) -> Option<()> {
     // Additive zero vanishes regardless of unit (CSS Values 4 §10.7
     // calculation simplification): `calc(50% + 0px)` is `50%`, `calc(0em
@@ -1290,15 +1313,19 @@ pub(crate) fn normalize_math_pair(left: &mut MathValue, right: &mut MathValue) -
         (None, None) => Some(()),
         (Some(left_unit), Some(right_unit)) if left_unit == right_unit => Some(()),
         (Some(left_unit), Some(right_unit)) => {
-            let left_factor = absolute_length_factor(left_unit)?;
-            let right_factor = absolute_length_factor(right_unit)?;
+            let (canonical, left_factor) = canonical_unit(left_unit)?;
+            let (right_canonical, right_factor) = canonical_unit(right_unit)?;
+            // `1deg + 1s` has no common unit.
+            if canonical != right_canonical {
+                return None;
+            }
             left.number *= left_factor;
             right.number *= right_factor;
             if !left.number.is_finite() || !right.number.is_finite() {
                 return None;
             }
-            left.unit = Some("px".to_owned());
-            right.unit = Some("px".to_owned());
+            left.unit = Some(canonical.to_owned());
+            right.unit = Some(canonical.to_owned());
             Some(())
         }
         _ => None,
@@ -1313,21 +1340,24 @@ pub(crate) fn normalize_math_values(values: &mut [MathValue]) -> Option<()> {
     if values.iter().all(|value| value.unit == first_unit) {
         return Some(());
     }
+    // Every value must convert to the canonical unit of the first one.
+    let (canonical, _) = canonical_unit(first_unit.as_deref()?)?;
     if !values.iter().all(|value| {
         value
             .unit
             .as_deref()
-            .is_some_and(|unit| absolute_length_factor(unit).is_some())
+            .and_then(canonical_unit)
+            .is_some_and(|(unit, _)| unit == canonical)
     }) {
         return None;
     }
     for value in values {
-        let factor = absolute_length_factor(value.unit.as_deref()?)?;
+        let (_, factor) = canonical_unit(value.unit.as_deref()?)?;
         value.number *= factor;
         if !value.number.is_finite() {
             return None;
         }
-        value.unit = Some("px".to_owned());
+        value.unit = Some(canonical.to_owned());
     }
     Some(())
 }

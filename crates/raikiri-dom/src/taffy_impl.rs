@@ -10,7 +10,7 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
+    AvailableSpace, BoxGenerationMode, Cache, CacheTree, CollapsibleMarginSet, CoreStyle,
     DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
     LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
     Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
@@ -127,6 +127,47 @@ pub(crate) fn fit_content_room(
         crate::layout::ifc::boxes::box_sizing_height_adjustment(tree, idx, edge_basis)
     };
     Some(limit + adjustment)
+}
+
+/// Whether the `height`, `min-height` or `max-height` of `node` is a
+/// percentage, or a `calc()` with one, of the height of its containing block.
+/// A box with an aspect ratio carries each of them over to its width.
+pub(crate) fn height_follows_containing_block(tree: &LayoutSession<'_>, node: usize) -> bool {
+    tree.layout_node_with_style(node).is_some_and(|node| {
+        let style = &node.style;
+        [
+            style.size.height,
+            style.min_size.height.into(),
+            style.max_size.height.into(),
+        ]
+        .into_iter()
+        .any(|height| match height.expand() {
+            ExpandedDimension::Percent(_) => true,
+            ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
+            _ => false,
+        })
+    })
+}
+
+/// Runs `measure` for `node` against a containing block of `parent_height`.
+///
+/// Taffy's cache does not key on the parent size, so a size measured against
+/// one containing height would answer a measurement against another. A box
+/// whose height follows the containing height is measured on an empty cache,
+/// which then gives way to the entries it had before.
+pub(crate) fn measure_against_parent_height<T>(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    parent_height: Option<f32>,
+    measure: impl FnOnce(&mut LayoutSession<'_>) -> T,
+) -> T {
+    let afresh = parent_height.is_some() && height_follows_containing_block(tree, node);
+    let saved = afresh.then(|| std::mem::replace(&mut tree.nodes[node].cache, Cache::new()));
+    let measured = measure(tree);
+    if let Some(saved) = saved {
+        tree.nodes[node].cache = saved;
+    }
+    measured
 }
 
 /// Resolve a padding or border length of an ifc root against the containing
@@ -773,21 +814,24 @@ impl LayoutSession<'_> {
                 return compute_ifc_root(tree, node_id, inputs, block_ctx);
             }
             if is_leaf {
-                let style = tree.layout_node_with_style(idx).unwrap().style.clone();
+                let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
+                // A replaced leaf with an `auto` side takes its size from the
+                // ratio and the min/max sizes; Taffy's ratio floor on the
+                // leaf is switched off for it.
+                let constrained = leaf_intrinsic
+                    .and_then(|natural| replaced_size::auto_sides_size(&style, &inputs, natural));
+                if constrained.is_some() {
+                    style.aspect_ratio = None;
+                }
                 compute_leaf_layout(inputs, &style, resolve_calc, |known, _available| {
                     // An explicit size from the style wins; otherwise an
                     // image's intrinsic size; a text node outside every
                     // paragraph and any other leaf measure zero.
+                    let natural = constrained.or(leaf_intrinsic);
                     Size {
-                        width: known
-                            .width
-                            .or(leaf_intrinsic.map(|s| s.width))
-                            .unwrap_or(0.0),
-                        height: known
-                            .height
-                            .or(leaf_intrinsic.map(|s| s.height))
-                            .unwrap_or(0.0),
+                        width: known.width.or(natural.map(|s| s.width)).unwrap_or(0.0),
+                        height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
                     }
                 })
             } else {
@@ -896,6 +940,7 @@ mod tests;
 pub(crate) mod block_flow;
 mod oof;
 mod orthogonal_flow;
+mod replaced_size;
 mod vertical_block;
 mod vertical_oof;
 pub(crate) use vertical_block::{TransposedBlock, block_right_to_left, is_table_box};
@@ -1359,7 +1404,8 @@ fn measure_ifc_root(
             AvailableSpace::Definite(size) => size,
             _ => 0.0,
         };
-        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis)
+        let percent_height = measure.definite_height.filter(|_| !vertical);
+        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis, percent_height)
     } else {
         crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };
@@ -1817,10 +1863,29 @@ fn compute_inline_block_shrink_wrap(
         leaf_style.aspect_ratio = None;
     }
     let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]).filter(|_| !empty);
+    // A replaced leaf with an `auto` side is sized by its ratio and its
+    // min/max sizes, not by Taffy's ratio floor, before any width is fixed.
+    let leaf_auto_sides = leaf_intrinsic.and_then(|natural| {
+        replaced_size::auto_sides_size(
+            &leaf_style,
+            &LayoutInput {
+                known_dimensions: Size::NONE,
+                ..inputs
+            },
+            natural,
+        )
+    });
+    let leaf_intrinsic_before_width = leaf_auto_sides.or(leaf_intrinsic);
     // Scalar copies so the measure closure below captures no large state.
     let sizing_mode = inputs.sizing_mode;
     let known_height = inputs.known_dimensions.height;
     let avail_height = inputs.available_space.height;
+
+    // Taffy's ratio floor is off for a leaf the helper above sizes.
+    let mut ratio_free_style = leaf_style.clone();
+    if leaf_auto_sides.is_some() {
+        ratio_free_style.aspect_ratio = None;
+    }
 
     // Intrinsic outer width under the given width constraint.
     let intrinsic_width = |tree: &mut LayoutSession<'_>, width: AvailableSpace| -> f32 {
@@ -1837,16 +1902,16 @@ fn compute_inline_block_shrink_wrap(
                     },
                     ..inputs
                 },
-                &leaf_style,
-                |_val, _basis| 0.0,
+                &ratio_free_style,
+                resolve_calc,
                 |known, _avail| Size {
                     width: known
                         .width
-                        .or(leaf_intrinsic.map(|s| s.width))
+                        .or(leaf_intrinsic_before_width.map(|s| s.width))
                         .unwrap_or(0.0),
                     height: known
                         .height
-                        .or(leaf_intrinsic.map(|s| s.height))
+                        .or(leaf_intrinsic_before_width.map(|s| s.height))
                         .unwrap_or(0.0),
                 },
             )
@@ -1914,21 +1979,20 @@ fn compute_inline_block_shrink_wrap(
         ..inputs
     };
     if is_leaf {
-        compute_leaf_layout(
-            final_inputs,
-            &leaf_style,
-            |_val, _basis| 0.0,
-            |known, _avail| Size {
-                width: known
-                    .width
-                    .or(leaf_intrinsic.map(|s| s.width))
-                    .unwrap_or(0.0),
-                height: known
-                    .height
-                    .or(leaf_intrinsic.map(|s| s.height))
-                    .unwrap_or(0.0),
-            },
-        )
+        // The width is fixed now; the height follows it through the ratio.
+        let fixed_width = leaf_intrinsic.and_then(|natural| {
+            replaced_size::auto_sides_size(&leaf_style, &final_inputs, natural)
+        });
+        if fixed_width.is_some() {
+            leaf_style.aspect_ratio = None;
+        }
+        let natural = fixed_width.or(leaf_intrinsic);
+        compute_leaf_layout(final_inputs, &leaf_style, resolve_calc, |known, _avail| {
+            Size {
+                width: known.width.or(natural.map(|s| s.width)).unwrap_or(0.0),
+                height: known.height.or(natural.map(|s| s.height)).unwrap_or(0.0),
+            }
+        })
     } else {
         match display {
             DisplayValue::InlineFlex => flex_layout(tree, node_id, final_inputs),

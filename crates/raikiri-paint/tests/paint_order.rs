@@ -1477,6 +1477,28 @@ fn paragraph_blocks_cover_negative_text_and_stay_below_the_rest() {
     }
 }
 
+/// Lines clipped to the page content box hold no boxes, so an atomic inline
+/// inside a translucent inline element paints in an opacity group of its own.
+#[test]
+fn atomic_inline_in_a_translucent_span_paints_in_its_own_group_on_a_clipping_page() {
+    let result = assert_same_order(
+        "<div>A<span style=\"opacity: 0.5\"><span style=\"display: inline-block; \
+         width: 10px; height: 10px; background: lime\"></span></span></div>",
+        NARROW_PAGE,
+    );
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let push = steps
+        .iter()
+        .position(|step| *step == Step::PushOpacity)
+        .expect("a group");
+    assert!(
+        matches!(steps[push + 1], Step::Box(_)) && steps[push + 2] == Step::PopOpacity,
+        "{}",
+        describe(&page, &steps)
+    );
+}
+
 /// Inline elements positioned below a paragraph's blocks paint in stack
 /// level order, not tree order.
 #[test]

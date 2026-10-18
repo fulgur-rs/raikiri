@@ -231,3 +231,367 @@ fn a_block_level_fallback_image_keeps_its_supplied_width() {
     crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).unwrap();
     assert_eq!(size(&doc, image), (100.0, 50.0));
 }
+
+/// Lay out one `<img>` with `image_css` inside a `<div>` styled `box_css`,
+/// and return the sizes of the box and of the image.
+fn image_in_box(box_css: &str, image_css: &str) -> ((f32, f32), (f32, f32)) {
+    let (mut parent, mut image) = (0, 0);
+    let doc = laid_out(|doc, body| {
+        parent = doc.append_element(Some(body), "div", Style::default(), Some(box_css));
+        image = doc.append_element(Some(parent), "img", Style::default(), Some(image_css));
+    });
+    (size(&doc, parent), size(&doc, image))
+}
+
+#[test]
+fn a_shrink_to_fit_box_takes_its_width_from_the_percentage_height_of_its_image() {
+    // The image is as tall as the content box of its parent, so the width the
+    // ratio gives it, not its natural width, is the width of the parent.
+    for box_css in [
+        "position:absolute;height:100px",
+        "display:inline-block;height:100px",
+        "position:absolute;height:100px;padding:6px",
+        "position:absolute;height:112px;border:6px solid;box-sizing:border-box",
+    ] {
+        let (parent, image) = image_in_box(box_css, "height:100%");
+        assert_eq!(image, (50.0, 100.0), "{box_css}");
+        assert_eq!(parent.0 - (parent.1 - 100.0), 50.0, "{box_css}");
+    }
+}
+
+#[test]
+fn a_shrink_to_fit_box_takes_its_width_from_the_percentage_height_of_its_block_image() {
+    // A block-level image reaches its parent through block flow, not through
+    // a paragraph, and is sized by the same content height.
+    for box_css in [
+        "position:absolute;height:100px",
+        "display:inline-block;height:100px",
+        "position:absolute;height:100px;padding:6px",
+        "position:absolute;height:112px;border:6px solid;box-sizing:border-box",
+    ] {
+        let (parent, image) = image_in_box(box_css, "display:block;height:100%");
+        assert_eq!(image, (50.0, 100.0), "{box_css}");
+        assert_eq!(parent.0 - (parent.1 - 100.0), 50.0, "{box_css}");
+    }
+}
+
+#[test]
+fn a_calc_percentage_height_of_a_block_image_sizes_its_shrink_to_fit_parent() {
+    let (parent, image) = image_in_box(
+        "position:absolute;height:100px",
+        "display:block;height:calc(100% - 20px)",
+    );
+    assert_eq!(image, (40.0, 80.0));
+    assert_eq!(parent, (40.0, 100.0));
+}
+
+#[test]
+fn a_percentage_height_of_a_block_image_against_an_auto_height_keeps_the_natural_width() {
+    let (parent, image) = image_in_box("display:inline-block", "display:block;height:100%");
+    assert_eq!(image, (25.0, 50.0));
+    assert_eq!(parent.0, 25.0);
+}
+
+#[test]
+fn a_length_height_of_a_block_image_does_not_follow_the_height_of_its_parent() {
+    let (parent, image) = image_in_box(
+        "position:absolute;height:100px",
+        "display:block;height:20px",
+    );
+    assert_eq!(image, (10.0, 20.0));
+    assert_eq!(parent, (10.0, 100.0));
+}
+
+#[test]
+fn a_calc_percentage_height_of_an_image_sizes_its_shrink_to_fit_parent() {
+    let (parent, image) =
+        image_in_box("position:absolute;height:100px", "height:calc(100% - 20px)");
+    assert_eq!(image, (40.0, 80.0));
+    assert_eq!(parent, (40.0, 100.0));
+}
+
+#[test]
+fn a_percentage_height_against_an_auto_height_keeps_the_natural_width() {
+    let (parent, image) = image_in_box("display:inline-block", "height:100%");
+    assert_eq!(image, (25.0, 50.0));
+    assert_eq!(parent.0, 25.0);
+}
+
+#[test]
+fn a_length_height_of_an_image_does_not_follow_the_height_of_its_parent() {
+    let (parent, image) = image_in_box("position:absolute;height:100px", "height:20px");
+    assert_eq!(image, (10.0, 20.0));
+    assert_eq!(parent, (10.0, 100.0));
+}
+
+#[test]
+fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_against() {
+    // The same image is measured against a series of heights, and against
+    // none: the size measured for one never answers another.
+    let heights = [Some(100.0), None, Some(60.0), Some(100.0)];
+    for (image_css, expected) in [
+        ("height:100%", [50.0, 25.0, 30.0, 50.0]),
+        ("height:calc(100% - 20px)", [40.0, 25.0, 20.0, 40.0]),
+        ("min-height:100%", [50.0, 25.0, 30.0, 50.0]),
+        ("min-height:calc(100% - 20px)", [40.0, 25.0, 25.0, 40.0]),
+        ("max-height:50%", [25.0, 25.0, 15.0, 25.0]),
+        ("max-height:calc(50% - 10px)", [20.0, 25.0, 10.0, 20.0]),
+    ] {
+        let mut parent = 0;
+        let mut doc = laid_out(|doc, body| {
+            parent = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:inline-block;height:100px"),
+            );
+            doc.append_element(Some(parent), "img", Style::default(), Some(image_css));
+        });
+        let widths: Vec<f32> = heights
+            .into_iter()
+            .map(|percent_height| {
+                let intrinsics = {
+                    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+                    crate::layout::ifc::boxes::intrinsics_of_boxes(
+                        &mut session,
+                        parent,
+                        100.0,
+                        percent_height,
+                    )
+                };
+                let root = doc.nodes[parent].ifc.as_ref().unwrap();
+                root.paragraph
+                    .intrinsic_sizes(
+                        &mut shodo::LayoutContext::new(),
+                        &root.options,
+                        &intrinsics.engine,
+                    )
+                    .max_content
+            })
+            .collect();
+        assert_eq!(widths, expected, "{image_css}");
+    }
+}
+
+#[test]
+fn the_width_of_a_percentage_height_container_follows_the_height_it_is_measured_against() {
+    // The image sits in a flex container whose own height is a percentage, so
+    // the width of the container follows the height of the paragraph root
+    // through the image, and so does the width of the image in the container.
+    let mut parent = 0;
+    let mut doc = laid_out(|doc, body| {
+        parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:inline-block;height:100px"),
+        );
+        let container = doc.append_element(
+            Some(parent),
+            "span",
+            Style::default(),
+            Some("display:inline-flex;height:100%"),
+        );
+        doc.append_element(
+            Some(container),
+            "img",
+            Style::default(),
+            Some("height:100%"),
+        );
+    });
+    let widths: Vec<f32> = [Some(100.0), None, Some(60.0), Some(100.0)]
+        .into_iter()
+        .map(|percent_height| {
+            let intrinsics = {
+                let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+                crate::layout::ifc::boxes::intrinsics_of_boxes(
+                    &mut session,
+                    parent,
+                    100.0,
+                    percent_height,
+                )
+            };
+            let root = doc.nodes[parent].ifc.as_ref().unwrap();
+            root.paragraph
+                .intrinsic_sizes(
+                    &mut shodo::LayoutContext::new(),
+                    &root.options,
+                    &intrinsics.engine,
+                )
+                .max_content
+        })
+        .collect();
+    assert_eq!(widths, [50.0, 25.0, 30.0, 50.0]);
+}
+
+#[test]
+fn the_width_of_a_block_level_image_follows_the_height_of_the_box_it_is_measured_in() {
+    // The same box is measured at a series of heights, and at none: the width
+    // measured for one never answers another.
+    let mut parent = 0;
+    let mut doc = laid_out(|doc, body| {
+        parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:inline-block"),
+        );
+        doc.append_element(
+            Some(parent),
+            "img",
+            Style::default(),
+            Some("display:block;height:100%"),
+        );
+    });
+    let widths: Vec<f32> = [Some(100.0), None, Some(60.0), Some(100.0)]
+        .into_iter()
+        .map(|height| {
+            let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+            let inputs = taffy::LayoutInput {
+                run_mode: taffy::RunMode::ComputeSize,
+                sizing_mode: taffy::SizingMode::InherentSize,
+                axis: taffy::RequestedAxis::Both,
+                known_dimensions: Size {
+                    width: None,
+                    height,
+                },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                parent_size: Size {
+                    width: Some(100.0),
+                    height: None,
+                },
+                available_space: Size {
+                    width: taffy::AvailableSpace::MaxContent,
+                    height: taffy::AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: taffy::Line::FALSE,
+            };
+            crate::taffy_impl::block_layout(&mut session, taffy::NodeId::from(parent), inputs, None)
+                .size
+                .width
+        })
+        .collect();
+    assert_eq!(widths, [50.0, 25.0, 30.0, 50.0]);
+}
+
+/// Lay out one `<img>` with `css` on `<body>` and return its size.
+fn image_size(css: &str) -> (f32, f32) {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        image = doc.append_element(Some(body), "img", Style::default(), Some(css));
+    });
+    size(&doc, image)
+}
+
+#[test]
+fn a_max_height_brings_an_image_without_a_size_within_it_keeping_the_ratio() {
+    // The image is 25x50, so a height capped at 25px is 12.5px wide.
+    for display in ["inline", "block", "inline-block"] {
+        assert_eq!(
+            image_size(&format!("display:{display};max-height:25px")),
+            (12.5, 25.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn a_max_width_brings_an_image_without_a_size_within_it_keeping_the_ratio() {
+    for display in ["inline", "block", "inline-block"] {
+        assert_eq!(
+            image_size(&format!("display:{display};max-width:10px")),
+            (10.0, 20.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn a_calc_max_width_brings_an_image_of_any_display_within_it() {
+    // A percentage resolves against the 100px body: 10px + 10% is 20px.
+    for display in ["inline", "block", "inline-block"] {
+        assert_eq!(
+            image_size(&format!("display:{display};max-width:calc(10px + 10%)")),
+            (20.0, 40.0),
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn an_image_without_a_size_follows_the_constraint_table_of_css_2_1() {
+    for (css, expected) in [
+        // Both maxima are exceeded: the one that shrinks it most wins.
+        ("max-width:10px;max-height:40px", (10.0, 20.0)),
+        ("max-width:20px;max-height:20px", (10.0, 20.0)),
+        // Over a max in one axis and under a min in the other.
+        ("min-width:50px;max-height:20px", (50.0, 20.0)),
+        ("max-width:10px;min-height:80px", (10.0, 80.0)),
+        // A min raises the image the same way.
+        ("min-width:50px", (50.0, 100.0)),
+        ("min-height:100px", (50.0, 100.0)),
+        // A percentage resolves against the 100px body.
+        ("max-width:20%", (20.0, 40.0)),
+        ("max-width:calc(10px + 10%)", (20.0, 40.0)),
+        // The constraints apply to the border box with `border-box`.
+        (
+            "box-sizing:border-box;padding:5px;max-width:20px",
+            (20.0, 30.0),
+        ),
+        ("padding:5px;max-width:10px", (20.0, 30.0)),
+    ] {
+        assert_eq!(image_size(css), expected, "{css}");
+    }
+}
+
+#[test]
+fn a_size_on_one_side_of_an_image_is_not_changed_by_the_constraint_table() {
+    // The specified side wins, the other side is cut by its own max, and the
+    // ratio no longer holds.
+    assert_eq!(image_size("height:50px;max-width:10px"), (10.0, 50.0));
+    assert_eq!(image_size("width:25px;max-height:20px"), (25.0, 20.0));
+    assert_eq!(
+        image_size("width:20px;height:20px;max-width:10px"),
+        (10.0, 20.0)
+    );
+}
+
+#[test]
+fn a_shrink_to_fit_box_takes_its_width_from_the_percentage_max_height_of_its_image() {
+    // A max-height of 20% of the 100px content box is 20px, which the ratio
+    // carries over to a 10px width for the parent to wrap.
+    for box_css in [
+        "position:absolute;height:100px",
+        "display:inline-block;height:100px",
+    ] {
+        for display in ["inline", "block", "inline-block"] {
+            let (parent, image) =
+                image_in_box(box_css, &format!("display:{display};max-height:20%"));
+            assert_eq!(image, (10.0, 20.0), "{box_css} {display}");
+            assert_eq!(parent.0, 10.0, "{box_css} {display}");
+        }
+    }
+}
+
+#[test]
+fn an_image_with_both_sides_authored_keeps_them_in_every_container() {
+    // Both sides are fixed by the author, so the ratio and the constraint
+    // table have nothing to decide.
+    for box_css in [
+        "display:block",
+        "display:flex;flex-direction:column",
+        "display:flex;flex-direction:row",
+        "display:grid",
+    ] {
+        let (_, image) = image_in_box(box_css, "width:20px;height:20px");
+        assert_eq!(image, (20.0, 20.0), "{box_css}");
+    }
+}
+
+#[test]
+fn a_percentage_max_height_without_a_definite_height_does_not_constrain_an_image() {
+    assert_eq!(image_size("max-height:50%"), (25.0, 50.0));
+}

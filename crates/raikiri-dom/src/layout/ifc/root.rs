@@ -571,6 +571,9 @@ pub(crate) struct IfcState {
     /// Results produced by `Document::shape_standalone_text` for this
     /// document. Atomic because shaping takes `&Document`.
     pub(crate) standalone_calls: AtomicUsize,
+    /// The runs [`crate::Document::shape_standalone_text_shared`] handed out
+    /// lately.
+    pub(crate) standalone_memo: super::standalone::StandaloneMemo,
     /// How many times a paragraph was scanned for its min- and max-content
     /// widths.
     #[cfg(test)]
@@ -643,6 +646,7 @@ impl IfcState {
             limits,
             layout_cx: LayoutContext::new(),
             standalone_calls: AtomicUsize::new(0),
+            standalone_memo: super::standalone::StandaloneMemo::default(),
             #[cfg(test)]
             intrinsic_measurements: 0,
             parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
@@ -696,8 +700,8 @@ impl fmt::Debug for IfcState {
 }
 
 // The layout context is per-owner scratch space and the call count, the
-// last build and the retained paragraphs belong to its document, so a clone
-// starts fresh. The build policy is kept: a clone holds the same font
+// shaped-run memo, the last build and the retained paragraphs belong to its
+// document, so a clone starts fresh. The build policy is kept: a clone holds the same font
 // collection.
 impl Clone for IfcState {
     fn clone(&self) -> Self {

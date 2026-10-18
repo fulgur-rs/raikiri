@@ -8,8 +8,8 @@ use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
-use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
-use crate::taffy_impl::{fit_content_room, resolve_calc};
+use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext, BoxProbe};
+use crate::taffy_impl::{fit_content_room, measure_against_parent_height, resolve_calc};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::TextGroupAlign;
@@ -2016,30 +2016,36 @@ fn layout_formatting_context_child(
 
     let own = own_inline_width(tree, node, &geometry);
     let (stretch, position, beside_floats) = if ctx.has_active_floats(min_y) {
-        let mut segment = None;
-        let slot = loop {
-            let slot = ctx.find_bfc_slot(
+        let slot = ctx
+            .find_box_slot(
                 min_y,
                 [margin.left, margin.right],
                 taffy::Direction::Ltr,
                 clear,
-                segment,
-            );
-            let Some(id) = slot.segment_id else {
-                break slot;
-            };
-            let slot_stretch = slot.stretch_width.max(-x_margins);
-            let width = clamp_block_width(
-                tree,
-                node,
-                geometry.width,
-                own.map_or(slot_stretch, |own| own.at(slot_stretch)),
-            );
-            if width <= slot.border_width + 0.001 {
-                break slot;
-            }
-            segment = Some(id);
-        };
+                |probe| match probe {
+                    BoxProbe::Width { stretch } => {
+                        let stretch = stretch.max(-x_margins);
+                        clamp_block_width(
+                            tree,
+                            node,
+                            geometry.width,
+                            own.map_or(stretch, |own| own.at(stretch)),
+                        )
+                    }
+                    BoxProbe::Height { width } => {
+                        let inputs = formatting_context_inputs(
+                            &geometry,
+                            RunMode::ComputeSize,
+                            width,
+                            width,
+                        );
+                        tree.compute_child_layout(taffy::NodeId::from(node), inputs)
+                            .size
+                            .height
+                    }
+                },
+            )
+            .slot;
         (
             slot.stretch_width.max(-x_margins),
             taffy::Point {
@@ -2064,32 +2070,16 @@ fn layout_formatting_context_child(
         geometry.width,
         own.map_or(stretch, |own| own.at(stretch)),
     );
-    let inputs = LayoutInput {
-        run_mode: if perform {
+    let inputs = formatting_context_inputs(
+        &geometry,
+        if perform {
             RunMode::PerformLayout
         } else {
             RunMode::ComputeSize
         },
-        sizing_mode: SizingMode::InherentSize,
-        axis: RequestedAxis::Both,
-        known_dimensions: Size {
-            width: Some(width),
-            height: None,
-        },
-        known_dimensions_are_definite: Size {
-            width: true,
-            height: true,
-        },
-        parent_size: Size {
-            width: Some(geometry.width),
-            height: geometry.definite_height,
-        },
-        available_space: Size {
-            width: AvailableSpace::Definite(stretch),
-            height: AvailableSpace::MaxContent,
-        },
-        vertical_margins_are_collapsible: Line::FALSE,
-    };
+        width,
+        stretch,
+    );
     let output = tree.compute_child_layout(taffy::NodeId::from(node), inputs);
     // `auto` side margins share the room the box leaves; beside floats the
     // slot already holds the non-`auto` margins.
@@ -2141,6 +2131,38 @@ fn layout_formatting_context_child(
         // Specifying clear introduces no clearance without relevant floats.
         top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
+    }
+}
+
+/// The input that lays out a block child that establishes a formatting
+/// context `width` wide, in a slot that leaves `stretch` for an `auto` width.
+fn formatting_context_inputs(
+    geometry: &FlowGeometry,
+    run_mode: RunMode,
+    width: f32,
+    stretch: f32,
+) -> LayoutInput {
+    LayoutInput {
+        run_mode,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(width),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: true,
+        },
+        parent_size: Size {
+            width: Some(geometry.width),
+            height: geometry.definite_height,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(stretch),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
     }
 }
 
@@ -2869,10 +2891,16 @@ impl BoxIntrinsics {
 
 /// Min- and max-content inline extents of the root's boxes, for the
 /// paragraph's intrinsic sizes. Each box is measured without changing layout.
+///
+/// `percent_height` is the root's definite content-box height, the basis a
+/// box's percentage height resolves against while its width is measured: it
+/// sizes a replaced box through its aspect ratio. A vertical paragraph
+/// measures along the block axis of its boxes and passes none.
 pub(crate) fn intrinsics_of_boxes(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     basis: f32,
+    percent_height: Option<f32>,
 ) -> BoxIntrinsics {
     let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
         matches!(
@@ -2934,8 +2962,13 @@ pub(crate) fn intrinsics_of_boxes(
         match b.kind {
             IfcBoxKind::Float => {
                 let margin = resolved_margins(tree, b.node, basis);
-                let (min_content, max_content) =
-                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                let (min_content, max_content) = content_widths(
+                    tree,
+                    b.node,
+                    basis,
+                    percent_height,
+                    margin.left + margin.right,
+                );
                 let style = &tree.layout_node_with_style(b.node).unwrap().style;
                 let side = match style.float.float_direction() {
                     Some(FloatDirection::Right) => FloatSide::Right,
@@ -2964,15 +2997,26 @@ pub(crate) fn intrinsics_of_boxes(
                 let (min_content, max_content) = if vertical {
                     content_heights(tree, b.node, basis, margin.top + margin.bottom)
                 } else {
-                    content_widths(tree, b.node, basis, margin.left + margin.right)
+                    content_widths(
+                        tree,
+                        b.node,
+                        basis,
+                        percent_height,
+                        margin.left + margin.right,
+                    )
                 };
                 intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
                 intrinsics.blocks.1 = intrinsics.blocks.1.max(max_content);
             }
             IfcBoxKind::Atomic => {
                 let margin = resolved_margins(tree, b.node, basis);
-                let (min_content, max_content) =
-                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                let (min_content, max_content) = content_widths(
+                    tree,
+                    b.node,
+                    basis,
+                    percent_height,
+                    margin.left + margin.right,
+                );
                 intrinsics.engine.insert_atomic(
                     shodo::node::NodeId(b.node as u64),
                     AtomicIntrinsic {
@@ -2992,9 +3036,20 @@ fn content_widths(
     tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
+    percent_height: Option<f32>,
     margins_x: f32,
 ) -> (f32, f32) {
-    content_sizes_on_axis(tree, node, basis, margins_x, RequestedAxis::Horizontal)
+    let parent_size = Size {
+        width: Some(basis),
+        height: percent_height,
+    };
+    content_sizes_on_axis(
+        tree,
+        node,
+        parent_size,
+        margins_x,
+        RequestedAxis::Horizontal,
+    )
 }
 
 fn content_heights(
@@ -3003,13 +3058,19 @@ fn content_heights(
     basis: f32,
     margins_y: f32,
 ) -> (f32, f32) {
-    content_sizes_on_axis(tree, node, basis, margins_y, RequestedAxis::Vertical)
+    let parent_size = Size {
+        width: None,
+        height: Some(basis),
+    };
+    content_sizes_on_axis(tree, node, parent_size, margins_y, RequestedAxis::Vertical)
 }
 
+/// Min- and max-content extents of `node` along `axis`, against the
+/// `parent_size` its percentages resolve against.
 fn content_sizes_on_axis(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    basis: f32,
+    parent_size: Size<Option<f32>>,
     margins: f32,
     axis: RequestedAxis,
 ) -> (f32, f32) {
@@ -3026,17 +3087,7 @@ fn content_sizes_on_axis(
                     width: true,
                     height: true,
                 },
-                parent_size: if vertical {
-                    Size {
-                        width: None,
-                        height: Some(basis),
-                    }
-                } else {
-                    Size {
-                        width: Some(basis),
-                        height: None,
-                    }
-                },
+                parent_size,
                 available_space: if vertical {
                     Size {
                         width: AvailableSpace::MaxContent,
@@ -3057,10 +3108,13 @@ fn content_sizes_on_axis(
             output.size.width + margins
         }
     };
-    (
-        measure(tree, AvailableSpace::MinContent),
-        measure(tree, AvailableSpace::MaxContent),
-    )
+    let parent_height = parent_size.height.filter(|_| !vertical);
+    measure_against_parent_height(tree, node, parent_height, |tree| {
+        (
+            measure(tree, AvailableSpace::MinContent),
+            measure(tree, AvailableSpace::MaxContent),
+        )
+    })
 }
 
 #[cfg(test)]

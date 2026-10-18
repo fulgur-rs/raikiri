@@ -12968,8 +12968,8 @@ impl MathDummy {
 /// structure is checked: `1px`, unless the function folds to one dimension, percentage or number,
 /// whose type the stand-in then keeps. `calc(20deg)` is an angle and `calc(0)` a number, so
 /// `top: calc(20deg)` and `top: calc(0)` are invalid whichever length terms an unfolded sum could
-/// have held. A function that does not fold to a single token, such as `calc(2em + 3ex)`, keeps
-/// `1px`.
+/// have held. Units of one type fold into its canonical unit, so `calc(1deg + 1rad)` is an angle
+/// too. A function that does not fold to a single token, such as `calc(2em + 3ex)`, keeps `1px`.
 pub(crate) fn folded_math_dummy(function: &str) -> String {
     const LENGTH: &str = "1px";
     let Some(folded) = crate::cascade::simplify_math_functions(function) else {

@@ -6,6 +6,40 @@ use taffy::{
     Point, Size,
 };
 
+/// How much wider than a slot a box may be and still count as fitting it.
+const FIT_SLACK: f32 = 0.001;
+
+/// What [`BlockContext::find_box_slot`] asks its caller to measure.
+#[derive(Clone, Copy)]
+pub(crate) enum BoxProbe {
+    /// The border-box width of the box in a slot whose `auto` width resolves
+    /// to `stretch`.
+    Width { stretch: f32 },
+    /// The border-box height of the box when it is `width` wide.
+    Height { width: f32 },
+}
+
+/// The room [`BlockContext::find_box_slot`] found for a box, and the
+/// border-box width the box has in it.
+#[derive(Clone, Copy)]
+pub(crate) struct BoxSlot {
+    pub(crate) slot: BfcSlot,
+    pub(crate) width: f32,
+}
+
+/// The edges of the room `slot` leaves, left to right: where a border box
+/// that fits starts and ends, then where an `auto` width stretches from and
+/// to. The side that leads in `direction` is the same for both; a trailing
+/// margin that no float reaches is left out of the stretch.
+fn room_edges(slot: BfcSlot, direction: Direction) -> [f32; 4] {
+    let fit = (slot.x, slot.x + slot.border_width);
+    let stretch = match direction {
+        Direction::Ltr => (slot.x, slot.x + slot.stretch_width),
+        Direction::Rtl => (fit.1 - slot.stretch_width, fit.1),
+    };
+    [fit.0, fit.1, stretch.0, stretch.1]
+}
+
 /// Float placement storage owned by one CSS block formatting context.
 pub(crate) struct BlockFormattingContext {
     floats: Arc<FloatContext>,
@@ -235,6 +269,137 @@ impl BlockContext<'_> {
         slot.x -= self.border_insets[0];
         slot.y -= self.origin;
         slot
+    }
+
+    /// Where a box that establishes a formatting context goes among the
+    /// floats at or below `from`, as CSS 2.1 9.5 asks: its border box must
+    /// not overlap any float, so it is set where it fits in the room the
+    /// floats leave along its whole height, and below them where it does
+    /// not. `margins` are its resolved side margins; `probe` measures it.
+    ///
+    /// The box is first tried in the segment the floats leave at its top.
+    /// When it is taller than that segment, the room is narrowed to what the
+    /// segments below it share. A box of `auto` width is measured again for
+    /// the narrower room; a box of fixed width that does not fit moves to
+    /// the next segment.
+    pub(crate) fn find_box_slot(
+        &self,
+        from: f32,
+        margins: [f32; 2],
+        direction: Direction,
+        clear: Clear,
+        mut probe: impl FnMut(BoxProbe) -> f32,
+    ) -> BoxSlot {
+        let mut after = None;
+        loop {
+            let first = self.find_bfc_slot(from, margins, direction, clear, after);
+            let width = probe(BoxProbe::Width {
+                stretch: first.stretch_width,
+            });
+            let Some(segment) = first.segment_id else {
+                return BoxSlot { slot: first, width };
+            };
+            if width <= first.border_width + FIT_SLACK
+                && let Some(placed) =
+                    self.settle_across_height(first, width, margins, direction, clear, &mut probe)
+            {
+                return placed;
+            }
+            after = Some(segment);
+        }
+    }
+
+    /// `first`, the room in the segment where a box of border-box `width`
+    /// starts, narrowed to the room every segment the box reaches shares.
+    /// `None` when the box does not fit that room.
+    fn settle_across_height(
+        &self,
+        first: BfcSlot,
+        width: f32,
+        margins: [f32; 2],
+        direction: Direction,
+        clear: Clear,
+        probe: &mut impl FnMut(BoxProbe) -> f32,
+    ) -> Option<BoxSlot> {
+        // Nothing below the segment: the box needs no height to be placed.
+        if self
+            .next_segment(first, margins, direction, clear)
+            .is_none()
+        {
+            return Some(BoxSlot { slot: first, width });
+        }
+        let mut slot = first;
+        let mut width = width;
+        let mut shifts = [0.0; 4];
+        let mut bottom = f32::NEG_INFINITY;
+        loop {
+            bottom = bottom.max(first.y + probe(BoxProbe::Height { width }));
+            let narrowed = self.narrowed_across(first, margins, direction, clear, bottom);
+            if narrowed == shifts {
+                return Some(BoxSlot { slot, width });
+            }
+            shifts = narrowed;
+            slot = BfcSlot {
+                x: first.x + shifts[0],
+                border_width: first.border_width - shifts[0] - shifts[1],
+                stretch_width: first.stretch_width - shifts[2] - shifts[3],
+                ..first
+            };
+            width = probe(BoxProbe::Width {
+                stretch: slot.stretch_width,
+            });
+            if width > slot.border_width + FIT_SLACK {
+                return None;
+            }
+        }
+    }
+
+    /// The segment below the one `slot` starts in, if floats reach into one.
+    fn next_segment(
+        &self,
+        slot: BfcSlot,
+        margins: [f32; 2],
+        direction: Direction,
+        clear: Clear,
+    ) -> Option<BfcSlot> {
+        let segment = slot.segment_id?;
+        let next = self.find_bfc_slot(slot.y, margins, direction, clear, Some(segment));
+        next.segment_id.map(|_| next)
+    }
+
+    /// How far the segments that start above `bottom` cut into the room of
+    /// `first`: at the start and end edge of the room a border box fits, then
+    /// at the start and end edge of the room an `auto` width stretches over.
+    /// The two differ where a trailing margin is, which overflows for fit
+    /// but not for stretch, so each is intersected on its own.
+    fn narrowed_across(
+        &self,
+        first: BfcSlot,
+        margins: [f32; 2],
+        direction: Direction,
+        clear: Clear,
+        bottom: f32,
+    ) -> [f32; 4] {
+        let reference = room_edges(first, direction);
+        let mut shifts = [0.0_f32; 4];
+        let mut segment = first;
+        while let Some(next) = self.next_segment(segment, margins, direction, clear) {
+            if next.y >= bottom - FIT_SLACK {
+                break;
+            }
+            let edges = room_edges(next, direction);
+            for (index, shift) in shifts.iter_mut().enumerate() {
+                // Starts move in, ends move back.
+                let cut = if index % 2 == 0 {
+                    edges[index] - reference[index]
+                } else {
+                    reference[index] - edges[index]
+                };
+                *shift = shift.max(cut);
+            }
+            segment = next;
+        }
+        shifts
     }
 
     pub(crate) fn cleared_threshold(&self, clear: Clear) -> Option<f32> {

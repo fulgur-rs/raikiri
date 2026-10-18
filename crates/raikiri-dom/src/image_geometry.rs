@@ -102,6 +102,40 @@ pub fn default_sized_object(natural: ImageIntrinsicSize, default_size: (f64, f64
     }
 }
 
+/// The constraint table of CSS 2.1 §10.4 for a replaced element whose
+/// `width` and `height` are both `auto`: a tentative `size` with a ratio
+/// is brought within `width` and `height`'s `(min, max)` bounds, keeping
+/// the ratio wherever the bounds allow. Each max is at least its min.
+pub(crate) fn constrain_with_ratio(
+    (w, h): (f32, f32),
+    (min_w, max_w): (f32, f32),
+    (min_h, max_h): (f32, f32),
+) -> (f32, f32) {
+    match (w > max_w, w < min_w, h > max_h, h < min_h) {
+        (true, _, true, _) => {
+            if max_w / w <= max_h / h {
+                (max_w, min_h.max(max_w * h / w))
+            } else {
+                (min_w.max(max_h * w / h), max_h)
+            }
+        }
+        (_, true, _, true) => {
+            if min_w / w <= min_h / h {
+                (max_w.min(min_h * w / h), min_h)
+            } else {
+                (min_w, max_h.min(min_w * h / w))
+            }
+        }
+        (_, true, true, _) => (min_w, max_h),
+        (true, _, _, true) => (max_w, min_h),
+        (true, _, _, _) => (max_w, (max_w * h / w).max(min_h)),
+        (_, true, _, _) => (min_w, (min_w * h / w).min(max_h)),
+        (_, _, true, _) => ((max_h * w / h).max(min_w), max_h),
+        (_, _, _, true) => ((min_h * w / h).min(max_w), min_h),
+        _ => (w, h),
+    }
+}
+
 fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Option<f64> {
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => Some(px as f64),

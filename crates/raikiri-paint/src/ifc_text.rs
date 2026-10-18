@@ -928,10 +928,7 @@ fn physical_glyph_transform(
         0.0,
         0.0,
     ]);
-    let skew = skew.map_or(Affine::IDENTITY, |degrees| {
-        Affine::skew(f64::from(degrees).to_radians().tan(), 0.0)
-    });
-    let transform = orientation * skew;
+    let transform = orientation * crate::text::synthetic_slant(skew);
     (transform != Affine::IDENTITY).then_some(transform)
 }
 

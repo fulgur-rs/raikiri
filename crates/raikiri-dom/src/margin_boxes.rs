@@ -11,6 +11,7 @@
 use crate::generated_content::format_counter;
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
+use crate::paint_rules::OverflowClipGeometry;
 use crate::running::element_string_value;
 use crate::{
     Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneStyle, StandaloneText,
@@ -18,16 +19,17 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
-    CssColor, FontFamilyName, PropertyKey, PropertyValue, QuoteKeyword, StringFetchMode, TextAlign,
-    TextShadowColor, VerticalAlign, VisualBox, WritingMode,
+    CssColor, FontFamilyName, OverflowValue, OverflowXY, PropertyKey, PropertyValue, QuoteKeyword,
+    StringFetchMode, TextAlign, TextShadowColor, VerticalAlign, VisualBox, WritingMode,
 };
+use raikiri_style::resolve::ComputedOverflowClipMargin;
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorder, ComputedCssPosition,
     ComputedLengthPercentageOrAuto, ComputedValues, CounterStyleRegistry,
     MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult, PageMarginBoxCascadeResult,
     PageMarginBoxSlot,
 };
-use raikiri_traits::{NodeId, PageBox, PaintInsets, PaintRect};
+use raikiri_traits::{NodeId, PageBox, PaintClip, PaintInsets, PaintRect};
 use smol_str::SmolStr;
 use std::ops::Range;
 use std::sync::Arc;
@@ -243,7 +245,8 @@ pub struct MarginBoxRunning {
 ///
 /// Positions are in CSS px with the origin at the top-left of the page box
 /// and y growing downwards. A box is drawn in this order: background color,
-/// background image, borders, then its text clipped to [`Self::rect`].
+/// background image, borders, then its text, clipped by
+/// [`Self::overflow_clip`] when the box clips its overflow.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct MarginBox {
@@ -277,6 +280,11 @@ pub struct MarginBox {
     /// Shaped content, `None` when the content is empty or the content box
     /// has no area.
     pub text: Option<MarginBoxText>,
+    /// Padding-box clip of the box's text and content image, `None` when
+    /// `overflow` is `visible` on both axes. Margin boxes follow the usual
+    /// property rules (CSS Paged Media 3 §4.2), so their content overflows
+    /// the box by default.
+    pub overflow_clip: Option<PaintClip>,
     /// Placeholders in [`Self::content`] for values not known yet, in
     /// content order. Empty unless the page context defers the page count.
     pub deferred: Vec<DeferredSlot>,
@@ -312,6 +320,7 @@ impl MarginBox {
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
+            overflow_clip: None,
             deferred: Vec::new(),
             running: None,
             lime_background: false,
@@ -326,7 +335,9 @@ impl MarginBox {
     }
 
     /// Positioned glyph runs of the box text, in the same form as the body
-    /// text runs of a page. Draw them clipped to [`Self::rect`].
+    /// text runs of a page. Consumers should clip them to
+    /// [`Self::overflow_clip`] when it is `Some`; otherwise the text may
+    /// extend beyond [`Self::rect`].
     ///
     /// Vertical writing modes are not represented by glyph runs and return
     /// no runs; [`Self::text`] still carries their shaped lines.
@@ -455,6 +466,8 @@ struct MarginBoxSpec {
     height: Option<f32>,
     text_color: CssColor,
     text_shadows: Vec<TextShadow>,
+    overflow: OverflowXY,
+    overflow_clip_margin: ComputedOverflowClipMargin,
     text_style: StandaloneStyle,
     alignment: StandaloneAlign,
     vertical_align: MarginTextVerticalAlign,
@@ -1158,6 +1171,8 @@ fn margin_box_spec(
         height,
         text_color,
         text_shadows: margin_box_text_shadows(&style),
+        overflow: style.overflow,
+        overflow_clip_margin: style.overflow_clip_margin,
         text_style,
         alignment,
         vertical_align,
@@ -1206,28 +1221,43 @@ fn place_margin_box(
         content_width,
         content_height,
     );
-    let lime_content_image = spec
-        .content_image_lime
-        .then(|| {
-            let advance = document
-                .shape_standalone_text(
-                    &spec.content,
-                    &spec.text_style,
-                    None,
-                    StandaloneAlign::Start,
-                )
-                .map_or(0.0, |text| text.width());
-            let image_x = (content_x + advance).round();
-            let right = (image_x + 100.0).min(rect.x + rect.width);
-            let bottom = (rect.y + rect.height).min(content_y + 50.0);
-            PaintRect::new(image_x, content_y, right - image_x, bottom - content_y)
-        })
-        .filter(|image| image.width > 0.0 && image.height > 0.0);
+    let lime_content_image = spec.content_image_lime.then(|| {
+        let advance = document
+            .shape_standalone_text_shared(
+                &spec.content,
+                &spec.text_style,
+                None,
+                StandaloneAlign::Start,
+            )
+            .map_or(0.0, |text| text.width());
+        let image_x = (content_x + advance).round();
+        PaintRect::new(image_x, content_y, 100.0, 50.0)
+    });
     let border = |side: Option<(f32, CssColor)>| {
         side.map(|(width, color)| {
             MarginBoxBorder::new(width.min(rect.width).min(rect.height), color)
         })
     };
+    let borders = spec.border.map(border);
+    let padding = PaintInsets::new(
+        spec.padding[0],
+        spec.padding[1],
+        spec.padding[2],
+        spec.padding[3],
+    );
+    let overflow_clip = (spec.overflow.x != OverflowValue::Visible
+        || spec.overflow.y != OverflowValue::Visible)
+        .then(|| {
+            let [top, right, bottom, left] =
+                borders.map(|side| side.map_or(0.0, |side| side.width));
+            OverflowClipGeometry::square(
+                spec.overflow,
+                spec.overflow_clip_margin,
+                PaintInsets::new(top, right, bottom, left),
+                padding,
+            )
+            .at(rect)
+        });
     Some(MarginBox {
         slot: spec.slot,
         rect,
@@ -1239,14 +1269,10 @@ fn place_margin_box(
         background_clip: spec.background_clip,
         background_layers: spec.background_layers.clone(),
         background_layer_count: spec.background_layer_count,
-        borders: spec.border.map(border),
-        padding: PaintInsets::new(
-            spec.padding[0],
-            spec.padding[1],
-            spec.padding[2],
-            spec.padding[3],
-        ),
+        borders,
+        padding,
         text,
+        overflow_clip,
         running,
         lime_background: spec.background_image_lime,
         lime_content_image,
@@ -1270,8 +1296,12 @@ fn place_margin_text(
     let style = &spec.text_style;
     let vertical = style.writing_mode.is_vertical();
     let inline_size = if vertical { height } else { width };
-    let shaped =
-        document.shape_standalone_text(&spec.content, style, Some(inline_size), spec.alignment)?;
+    let shaped = document.shape_standalone_text_shared(
+        &spec.content,
+        style,
+        Some(inline_size),
+        spec.alignment,
+    )?;
     let offset = |free: f32| match spec.vertical_align {
         MarginTextVerticalAlign::Top => 0.0,
         MarginTextVerticalAlign::Middle => free * 0.5,
@@ -1292,10 +1322,7 @@ fn place_margin_text(
     } else {
         (x, y + offset((height - shaped.height()).max(0.0)))
     };
-    Some(MarginBoxText {
-        shaped: Arc::new(shaped),
-        origin,
-    })
+    Some(MarginBoxText { shaped, origin })
 }
 
 fn margin_box_rule(
@@ -1316,7 +1343,7 @@ fn margin_box_text_width(
         None
     };
     let measured = document
-        .shape_standalone_text(
+        .shape_standalone_text_shared(
             &spec.content,
             &spec.text_style,
             inline_size,
@@ -1367,7 +1394,7 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
     }
     let text_height = if spec.text_style.writing_mode.is_vertical() {
         document
-            .shape_standalone_text(
+            .shape_standalone_text_shared(
                 &spec.content,
                 &spec.text_style,
                 None,
@@ -1387,7 +1414,7 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
             .frame(Axis::Horizontal)
             .content(spec.outer_size(Axis::Horizontal, cross_size));
         let line_count = document
-            .shape_standalone_text(
+            .shape_standalone_text_shared(
                 &spec.content,
                 &spec.text_style,
                 (column_width > 0.0).then_some(column_width),
@@ -1494,7 +1521,7 @@ fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32
         return max;
     }
     let measured = document
-        .shape_standalone_text(
+        .shape_standalone_text_shared(
             &spec.content,
             &spec.text_style,
             Some(MIN_CONTENT_PROBE),

@@ -639,6 +639,185 @@ fn a_relative_block_holding_paragraphs_keeps_its_inset_across_columns() {
 }
 
 #[test]
+fn a_relative_block_holding_a_split_paragraph_is_painted_shifted_once() {
+    // Moving the wrapper by its inset moves the whole column container the
+    // same way, since the wrapper fills the column.
+    for (inset, container_margin) in [
+        ("left:5px", "margin-left:5px"),
+        ("right:-5px", "margin-left:5px"),
+        ("right:5px", "margin-left:-5px"),
+        ("left:5px;right:20px", "margin-left:5px"),
+        ("left:10%", "margin-left:4px"),
+        ("left:5px;top:3px", "margin-left:5px;margin-top:3px"),
+    ] {
+        let wrapper = |style: &str| {
+            format!("<div style='{style}background:lime'><p>A<br>B<br>C<br>D</p></div>")
+        };
+        compare(
+            &format!(
+                "<div class=mc>{}</div>",
+                wrapper(&format!("position:relative;{inset};"))
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            &format!(
+                "<div class=mc style='height:40px;column-fill:auto;{container_margin}'>{}</div>",
+                wrapper("")
+            ),
+        );
+    }
+}
+
+#[test]
+fn text_inside_a_relative_box_below_a_column_child_is_painted_shifted_once() {
+    // The inner box sits in a wrapper that fills the column, so offsetting it
+    // by its inset moves its text as the whole column container moves.
+    for inset in ["left:5px", "right:-5px"] {
+        compare(
+            &format!(
+                "<div class=mc><div><div style='position:relative;{inset}'><p>A<br>B<br>C<br>D</p></div></div></div>"
+            ),
+            ".mc{height:40px;column-fill:auto}",
+            "<div class=mc style='height:40px;column-fill:auto;margin-left:5px'><div><div><p>A<br>B<br>C<br>D</p></div></div></div>",
+        );
+    }
+}
+
+#[test]
+fn a_relative_wrapper_with_a_width_splits_its_paragraph_and_is_shifted_once() {
+    // The width keeps the wrapper on the constrained chain, which slices the
+    // paragraph at the column end like a wrapper without a width.
+    for (inset, margin) in [
+        ("left:5px", "margin-left:5px"),
+        ("right:-5px", "margin-left:5px"),
+        ("left:10%", "margin-left:4px"),
+    ] {
+        for decoration in ["", "background:red;"] {
+            compare(
+                &format!(
+                    "<div class=mc><div style='{decoration}position:relative;{inset};width:40px'><p>A<br>B<br>C<br>D</p></div></div>"
+                ),
+                ".mc{height:40px;column-fill:auto}",
+                &format!(
+                    "<div class=mc style='height:40px;column-fill:auto'><div style='{decoration}{margin};width:40px'><p>A<br>B<br>C<br>D</p></div></div>"
+                ),
+            );
+        }
+    }
+}
+
+#[test]
+fn a_relative_paragraph_with_a_width_splits_and_is_shifted_once() {
+    compare(
+        "<div class=mc><p style='position:relative;left:5px;width:40px'>A<br>B<br>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div class=mc style='height:40px;column-fill:auto'><p style='margin-left:5px;width:40px'>A<br>B<br>C<br>D</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_box_below_a_wrapper_with_a_width_is_shifted_once() {
+    compare(
+        "<div class=mc><div style='width:40px'><div style='position:relative;left:5px'><p>A<br>B<br>C<br>D</p></div></div></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div class=mc style='height:40px;column-fill:auto'><div style='width:40px'><div style='margin-left:5px'><p>A<br>B<br>C<br>D</p></div></div></div>",
+    );
+}
+
+#[test]
+fn a_wrapper_with_a_width_splits_its_paragraph_in_a_right_to_left_container() {
+    // The wrapper keeps the right edge of its column, which is the right
+    // edge of the container for the first column and the left of it for the
+    // second. `first` and `second` give the control's `left` in each column.
+    for (style, width, first, second) in [
+        ("width:30px", 30, 70, 10),
+        ("width:30px;margin-right:5px", 30, 65, 5),
+        ("width:30px;margin-right:10%", 30, 66, 6),
+        ("width:30px;margin-left:auto", 30, 70, 10),
+        ("width:30px;margin-left:auto;margin-right:auto", 30, 65, 5),
+        ("width:30px;margin-right:auto", 30, 60, 0),
+        ("width:30px;position:relative;left:5px", 30, 75, 15),
+        // A box wider than its column overflows to the left, whichever
+        // margin is auto.
+        ("width:50px", 50, 50, -10),
+        ("width:50px;margin-left:auto", 50, 50, -10),
+        ("width:50px;margin-right:auto", 50, 50, -10),
+    ] {
+        compare(
+            &format!("<div class=mc><div style='{style}'><p>A<br>B<br>C<br>D</p></div></div>"),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;direction:rtl;left:{first}px;top:0;width:{width}px'><p>A<br>B</p></div><div style='position:absolute;direction:rtl;left:{second}px;top:0;width:{width}px'><p>C<br>D</p></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_wrapper_with_a_width_fills_three_right_to_left_columns_from_the_right() {
+    // 160px wide with 20px gaps leaves 40px columns at 120, 60 and 0.
+    compare(
+        "<div class=mc><div style='width:30px'><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div>",
+        ".mc{width:160px;column-count:3;height:40px;column-fill:auto;direction:rtl}",
+        "<div style='position:absolute;direction:rtl;left:130px;top:0;width:30px'><p>A<br>B</p></div><div style='position:absolute;direction:rtl;left:70px;top:0;width:30px'><p>C<br>D</p></div><div style='position:absolute;direction:rtl;left:10px;top:0;width:30px'><p>E<br>F</p></div>",
+    );
+}
+
+#[test]
+fn a_narrow_box_below_a_wrapper_with_a_width_keeps_the_right_edge_in_a_right_to_left_container() {
+    // The inner box fills the wrapper between its margins, so its text stays
+    // at the right edge of the room they leave.
+    for (inner, left, width) in [
+        ("width:30px", 70, 30),
+        ("margin-left:5px", 65, 35),
+        ("margin-right:5px", 60, 35),
+    ] {
+        compare(
+            &format!(
+                "<div class=mc><div style='width:40px'><div style='{inner}'><p>A<br>B<br>C<br>D</p></div></div></div>"
+            ),
+            ".mc{height:40px;column-fill:auto;direction:rtl}",
+            &format!(
+                "<div style='position:absolute;direction:rtl;left:{left}px;top:0;width:{width}px'><p>A<br>B</p></div><div style='position:absolute;direction:rtl;left:{second}px;top:0;width:{width}px'><p>C<br>D</p></div>",
+                second = left - 60
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_relative_column_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc style='position:relative;left:5px;top:3px;background:lime'><p>A<br>B<br>C<br>D</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<div class=mc style='margin:3px 0 0 5px;height:40px;column-fill:auto;background:lime'><p>A<br>B<br>C<br>D</p></div>",
+    );
+}
+
+#[test]
+fn a_relative_nested_column_container_is_painted_shifted_once() {
+    for (inset, top) in [("left:5px", 0), ("right:-5px", 0), ("left:5px;top:3px", 3)] {
+        compare(
+            &format!(
+                "<div class=mc><div class=in style='position:relative;{inset};background:lime'><p>A<br>B<br>C<br>D</p></div></div>"
+            ),
+            ".mc{width:160px}.in{column-count:2;column-gap:10px}",
+            &format!(
+                "<div style='position:absolute;left:5px;top:{top}px;width:70px;height:40px;background:lime'></div><div style='position:absolute;left:5px;top:{top}px'>A<br>B</div><div style='position:absolute;left:45px;top:{top}px'>C<br>D</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_relative_block_holding_a_split_paragraph_in_an_rtl_container_is_painted_shifted_once() {
+    compare(
+        "<div class=mc><div style='position:relative;left:5px;background:lime'><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{height:40px;column-fill:auto;direction:rtl}.mc p{direction:ltr}",
+        "<div class=mc style='height:40px;column-fill:auto;direction:rtl;margin-left:5px'><div style='background:lime'><p style='direction:ltr'>A<br>B<br>C<br>D</p></div></div>",
+    );
+}
+
+#[test]
 fn a_sticky_paragraph_in_a_column_keeps_its_layout_offset() {
     let paragraph = "<p style='position:sticky;left:5px;background:lime'>A<br>B</p>";
     compare(
@@ -1229,4 +1408,47 @@ fn display_contents_wrappers_leave_every_column_strategy_unchanged() {
             );
         }
     }
+}
+
+#[test]
+fn a_floated_paragraph_without_a_line_break_wraps_at_the_column_width() {
+    compare(
+        "<div class=mc><p style='float:left;background:lime'>A B</p></div>",
+        ".mc{height:40px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0;width:40px;background:lime'>A<br>B</p>",
+    );
+}
+
+#[test]
+fn a_right_floated_box_without_a_line_break_sits_at_the_right_edge_of_its_column() {
+    for (css, left) in [
+        (".mc{height:40px;column-fill:auto}", 20),
+        (".mc{height:40px;column-fill:auto;direction:rtl}", 80),
+    ] {
+        compare(
+            "<div class=mc><div style='float:right'><div style='width:20px;height:20px;background:blue'></div></div></div>",
+            css,
+            &format!(
+                "<div style='position:absolute;left:{left}px;top:0;width:20px;height:20px;background:blue'></div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_floated_box_that_does_not_fit_the_first_column_goes_to_the_next_one() {
+    compare(
+        "<div class=mc><p>A</p><div style='float:right;margin-right:5px'><div style='width:20px;height:20px;background:blue'></div></div></div>",
+        ".mc{height:20px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0'>A</p><div style='position:absolute;left:75px;top:0;width:20px;height:20px;background:blue'></div>",
+    );
+}
+
+#[test]
+fn adjoining_margins_before_a_trailing_float_still_collapse() {
+    compare(
+        "<div class=mc><p style='margin-bottom:20px'>A</p><p style='margin-top:20px'>B</p><div style='float:right;width:20px;height:20px'></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<p style='position:absolute;left:0;top:0'>A</p><p style='position:absolute;left:0;top:40px'>B</p>",
+    );
 }

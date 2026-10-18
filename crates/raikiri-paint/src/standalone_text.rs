@@ -168,11 +168,8 @@ pub(crate) fn draw(
                 0.0,
                 0.0,
             ]);
-            let skew = run.skew().map_or(Affine::IDENTITY, |degrees| {
-                Affine::skew(f64::from(degrees).to_radians().tan(), 0.0)
-            });
-            let glyph_transform =
-                (orientation * skew != Affine::IDENTITY).then_some(orientation * skew);
+            let slanted = orientation * crate::text::synthetic_slant(run.skew());
+            let glyph_transform = (slanted != Affine::IDENTITY).then_some(slanted);
             scene.draw_glyphs(
                 &font,
                 font_size,

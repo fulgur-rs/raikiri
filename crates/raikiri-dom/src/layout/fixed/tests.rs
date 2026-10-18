@@ -539,6 +539,61 @@ fn absolute_boxes_are_placed_against_a_positioned_ancestor_other_than_the_parent
 }
 
 #[test]
+fn shared_selection_preserves_a_positioned_immediate_parent_target() {
+    let (doc, abs) = laid_out(
+        "",
+        "position:relative;height:40px",
+        "position:absolute;left:3px;top:4px;width:10px;height:10px",
+    );
+    let parent = doc.parent_of(abs).expect("the absolute box has a parent");
+    assert_eq!(doc.taffy_parent_of(abs), Some(parent));
+
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    let (absolute, fixed) =
+        crate::layout::oof_containing_block::select_descendant_containing_blocks(
+            &doc,
+            parent,
+            &cascade.computed[parent],
+            crate::layout::oof_containing_block::ContainingBlockSelection::Page,
+            crate::layout::oof_containing_block::ContainingBlockSelection::Page,
+        );
+
+    assert_eq!(
+        absolute,
+        crate::layout::oof_containing_block::ContainingBlockSelection::Box { id: parent }
+    );
+    assert_eq!(
+        fixed,
+        crate::layout::oof_containing_block::ContainingBlockSelection::Page
+    );
+}
+
+#[test]
+fn shared_root_selection_keeps_an_absolute_ancestor_outside_the_root() {
+    let (doc, abs) = laid_out_in(
+        "",
+        "position:relative",
+        "",
+        "position:absolute;left:3px;top:4px;width:10px;height:10px",
+    );
+    let root = doc.parent_of(abs).expect("the absolute box has a root");
+    let outer = doc.parent_of(root).expect("the root has an outer ancestor");
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+
+    assert_eq!(
+        crate::layout::oof_containing_block::select_root_containing_blocks(&doc, &cascade, root),
+        (
+            crate::layout::oof_containing_block::ContainingBlockSelection::Kept {
+                reason: crate::layout::oof_containing_block::KeptReason::AncestorOutsideRoot {
+                    id: outer,
+                },
+            },
+            crate::layout::oof_containing_block::ContainingBlockSelection::Page,
+        )
+    );
+}
+
+#[test]
 fn fixed_boxes_are_placed_against_a_transformed_ancestor_other_than_the_parent() {
     let (doc, fixed) = laid_out(
         "transform:translateX(0px);margin-left:30px;width:200px;height:100px;border:2px solid",

@@ -203,6 +203,87 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
 }
 
 #[test]
+fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let block = "display:block;height:20px";
+    let float = "display:block;float:right;width:20px;height:20px";
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let mut container = |children: &[&str], text: Option<&str>| {
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;width:100px;height:40px;font:20px/20px Ahem"),
+        );
+        if let Some(text) = text {
+            doc.append_text(container, text);
+        }
+        for css in children {
+            doc.append_element(Some(container), "div", Style::default(), Some(*css));
+        }
+        container
+    };
+    let empty = container(&[], None);
+    let alone = container(&[float], None);
+    let trailing = container(&[block, float], None);
+    let leading = container(&[float, block], None);
+    let two = container(&[float, float], None);
+    let inline = container(&[float], Some("A B"));
+    let nested = container(&[block, float], None);
+    let margin = container(
+        &["display:block;height:20px;margin-bottom:20px", float],
+        None,
+    );
+    let nested_margin = container(&[block, float], None);
+    let hidden = container(&[block, float], None);
+    let wrapper = doc.nodes[nested].children[0];
+    doc.append_element(Some(wrapper), "div", Style::default(), Some(float));
+    let wrapper = doc.nodes[nested_margin].children[0];
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;margin-top:20px"),
+    );
+    let wrapper = doc.nodes[hidden].children[0];
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:none;float:left;margin-top:20px"),
+    );
+    doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 400.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    assert!(!multicol_ends_with_its_only_float(&doc, empty));
+    assert!(multicol_ends_with_its_only_float(&doc, alone));
+    assert!(multicol_ends_with_its_only_float(&doc, trailing));
+    // Content after the float wraps beside it, and a second float shares its
+    // line, also when that float is inside an earlier child.
+    assert!(!multicol_ends_with_its_only_float(&doc, leading));
+    assert!(!multicol_ends_with_its_only_float(&doc, two));
+    assert!(!multicol_ends_with_its_only_float(&doc, nested));
+    // Adjoining margins collapse on the block layout, also through a wrapper.
+    assert!(!multicol_ends_with_its_only_float(&doc, margin));
+    assert!(!multicol_ends_with_its_only_float(&doc, nested_margin));
+    // Hidden content takes no part in either.
+    assert!(multicol_ends_with_its_only_float(&doc, hidden));
+    // Lines of the container's own are laid out beside the float.
+    assert!(doc.nodes[inline].ifc.is_some());
+    assert!(!multicol_ends_with_its_only_float(&doc, inline));
+}
+
+#[test]
 fn flex_float_chain_is_not_a_scope_without_a_multicol_ancestor() {
     let mut doc = Document::new();
     let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
@@ -4097,5 +4178,46 @@ fn a_relative_column_child_is_placed_without_its_inset() {
         let layout = doc.nodes[child].unrounded_layout;
         assert_eq!(layout.location.x, 0.0, "{inset}");
         assert_eq!(layout.size.width, 40.0, "{inset}");
+    }
+}
+
+#[test]
+fn a_relative_column_child_that_holds_boxes_is_placed_without_its_inset() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // A wrapper holding a paragraph, and a nested column container, are
+    // moved by the painter together with everything inside them, so the
+    // location layout gives them is the column's own as well.
+    for inner_style in [
+        "display:block",
+        "display:block;column-count:2;column-gap:10px",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px;column-fill:auto"),
+        );
+        let child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some(format!("{inner_style};position:relative;left:5px").as_str()),
+        );
+        let paragraph =
+            doc.append_element(Some(child), "p", Style::default(), Some("display:block"));
+        doc.append_text(paragraph, "A B C");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+
+        let layout = doc.nodes[child].unrounded_layout;
+        assert_eq!(layout.location.x, 0.0, "{inner_style}");
+        assert_eq!(layout.size.width, 40.0, "{inner_style}");
     }
 }

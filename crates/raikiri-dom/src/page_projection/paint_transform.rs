@@ -6,7 +6,7 @@
 //! events, and the text runs carry the same transforms, composed.
 
 use super::records::PageFragment;
-use super::text_runs::{RunContext, box_paint_shift, column_clip_owner};
+use super::text_runs::{RunContext, column_clip_owner};
 use crate::Document;
 use crate::image_geometry::position_offset;
 use raikiri_style::resolve::ComputedTransformFunction;
@@ -212,7 +212,7 @@ pub(crate) fn box_transform(
 /// `page`, in the coordinates the element's parent paints its content in.
 ///
 /// `offset` is the element's own relative offset and translation, which
-/// [`box_paint_shift`] reports; `general` says whether its transform does
+/// [`RunContext::box_shift`] reports; `general` says whether its transform does
 /// more than translate. `ancestors` is the sum of the offsets of its
 /// ancestors. `None` when the element does not move.
 pub(super) fn element_transform(
@@ -420,10 +420,7 @@ impl MotionCache {
             let offset = cascade
                 .computed
                 .get(current)
-                .and_then(|cv| {
-                    let fragmented = context.fragmented.contains(&current);
-                    box_paint_shift(document, cascade, context.body, current, cv, fragmented).ok()
-                })
+                .and_then(|cv| context.box_shift(document, cascade, current, cv).ok())
                 .map_or((0.0, 0.0), |shift| shift.offset);
             sum = if self.viewport_fixed(document, cascade, current) {
                 offset
@@ -459,8 +456,7 @@ pub(super) fn element_motion(
     {
         return Motion::Still;
     }
-    let fragmented = context.fragmented.contains(&id);
-    let Ok(shift) = box_paint_shift(document, cascade, context.body, id, cv, fragmented) else {
+    let Ok(shift) = context.box_shift(document, cascade, id, cv) else {
         return Motion::Still;
     };
     if shift.general && is_singular(cv) {
@@ -609,14 +605,11 @@ impl<'a> PageMotion<'a> {
             }
             columns = (0.0, 0.0);
         }
-        if self.cache.in_columns(document, cascade, context, node) {
-            let fragmented = context.fragmented.contains(&node);
-            if let Ok(shift) =
-                box_paint_shift(document, cascade, context.body, node, cv, fragmented)
-                && !shift.general
-            {
-                columns = (columns.0 + shift.offset.0, columns.1 + shift.offset.1);
-            }
+        if self.cache.in_columns(document, cascade, context, node)
+            && let Ok(shift) = context.box_shift(document, cascade, node, cv)
+            && !shift.general
+        {
+            columns = (columns.0 + shift.offset.0, columns.1 + shift.offset.1);
         }
         let transform = match element_motion(
             document,

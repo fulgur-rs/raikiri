@@ -788,8 +788,10 @@ impl<'a> Page<'a> {
     /// `vertical-align` (CSS GCPM 3 §1.2.2). `None` when the box shows no
     /// running element or none applies on this page.
     ///
-    /// Draw the element's page at [`PlacedRunningElement::origin`], clipped
-    /// to the margin box, in place of [`MarginBox::text`].
+    /// Draw the element's page at [`PlacedRunningElement::origin`] in place
+    /// of [`MarginBox::text`], clipped by [`MarginBox::overflow_clip`] when
+    /// the box has one; with `overflow: visible` the element may overflow
+    /// the box.
     pub fn margin_box_running_element(
         &self,
         margin_box: &MarginBox,

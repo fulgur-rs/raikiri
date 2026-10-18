@@ -303,6 +303,7 @@ fn a_column_box_shift_resolves_a_percentage_relative_offset() {
         item,
         &cascade.computed[item],
         false,
+        false,
     )
     .unwrap();
     // Hand-computed: 10% of 60px plus 2px; the horizontal offset is
@@ -1113,9 +1114,17 @@ fn box_paint_shift_translates_the_boxes_layout_finds_transformable() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     let offset = |id: usize| {
-        box_paint_shift(&document, &cascade, None, id, &cascade.computed[id], false)
-            .unwrap()
-            .offset
+        box_paint_shift(
+            &document,
+            &cascade,
+            None,
+            id,
+            &cascade.computed[id],
+            false,
+            false,
+        )
+        .unwrap()
+        .offset
     };
     assert_eq!(offset(span), (0.0, 0.0));
     assert_eq!(offset(button), (10.0, 0.0));
