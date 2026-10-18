@@ -4582,9 +4582,9 @@ fn engine_margin_boxes_do_not_add_the_ahem_baseline_correction() {
     // Both boxes have the same height and the same resolved font, so the text
     // sits at the same y whatever the family was called.
     assert_eq!(boxes[0].1, boxes[1].1);
-    // The boxes are 10px tall at the top of the page: the baseline is the
-    // Ahem ascent, 8.
-    assert_eq!(boxes[0].1, 8.0);
+    // The boxes are 50px tall at the top of the page and centre their 10px
+    // line, which starts at 20: the baseline is the Ahem ascent, 8, below it.
+    assert_eq!(boxes[0].1, 28.0);
 }
 
 #[test]

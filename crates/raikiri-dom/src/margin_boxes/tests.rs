@@ -557,7 +557,7 @@ fn margin_box_line_height_sets_the_line_spacing_and_the_first_baseline() {
         let (doc, cascade) = page_cascade_fixture(&format!(
             "@page {{ margin: 40px; \
                @top-left {{ content: 'a\\A b'; white-space: pre; font-family: Ahem; \
-                           font-size: 10px; {line_height} }} }}"
+                           font-size: 10px; vertical-align: top; {line_height} }} }}"
         ));
         let boxes = layout_page(&doc, &cascade, small_page());
         let [head] = boxes.as_slice() else {
