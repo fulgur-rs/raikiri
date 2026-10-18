@@ -17022,3 +17022,140 @@ fn text_sets_the_page_type_unless_a_change_or_a_break_already_set_it() {
     assert!(!text_sets_page_name(10.0, true, false, true, true));
     assert!(!text_sets_page_name(10.0, true, false, false, false));
 }
+
+#[test]
+fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
+    // `body > avoiding, plain, flex > (first, last)`, all 60px blocks.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, parent, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let avoiding = block(
+        &mut doc,
+        body,
+        "display:block;height:60px;break-inside:avoid",
+    );
+    let plain = block(&mut doc, body, "display:block;height:60px");
+    let flex = block(&mut doc, body, "display:flex;flex-direction:column");
+    let first = block(&mut doc, flex, "display:block;height:60px");
+    let last = block(&mut doc, flex, "display:block;height:60px");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    let context = |set: fn(&mut candidates::BoxContext)| {
+        let mut context = candidates::BoxContext::default();
+        set(&mut context);
+        context
+    };
+    let mut breaks = AvoidedBreaks::default();
+    let headers = HeaderRepeats::default();
+    let mut trailing = TrailingFlexChildren::default();
+    // How the 60px box `node_id` at 80 moves when `fit` places it on the
+    // page from 0 to 100.
+    let mut measure =
+        |breaks: &AvoidedBreaks, node_id, context: candidates::BoxContext, fit: &BoxFit| {
+            let candidate = PageCandidate {
+                node_id,
+                raw_y: 80.0,
+                height: 60.0,
+                context,
+                page_name: None,
+                named_flex_context: None,
+                ifc_root: None,
+            };
+            breaks.measure(&doc, &cascade, &candidate, fit, &headers, &mut trailing)
+        };
+    let fit = BoxFit {
+        effective_y: 80.0,
+        flow_y: 80.0,
+        margin_top: 0.0,
+        trailing_margin: 0.0,
+        page_start: 0.0,
+        page_end: 100.0,
+        next_page_step: 100.0,
+    };
+    // A relative offset moved the box up from its normal-flow position.
+    let offset_up = BoxFit {
+        effective_y: 20.0,
+        ..fit
+    };
+    // A relative offset moved the box down from its normal-flow position.
+    let offset_down = BoxFit {
+        flow_y: 20.0,
+        ..fit
+    };
+
+    // A box that avoids nothing stays where it is.
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert!(!overflow.moves_box());
+    assert_eq!(overflow.table_row_lead, 0.0);
+
+    // A box that avoids breaks inside it moves whole, judged at its
+    // normal-flow position and through its trailing margin.
+    let overflow = measure(&breaks, avoiding, Default::default(), &fit);
+    assert!(overflow.page && overflow.moves_box());
+    assert!(!overflow.avoided_run && !overflow.table_row);
+    assert!(measure(&breaks, avoiding, Default::default(), &offset_up).page);
+    assert!(!measure(&breaks, avoiding, Default::default(), &offset_down).page);
+    let ends_inside = BoxFit {
+        effective_y: 30.0,
+        flow_y: 30.0,
+        ..fit
+    };
+    assert!(!measure(&breaks, avoiding, Default::default(), &ends_inside).page);
+    let trailing_margin = BoxFit {
+        trailing_margin: 20.0,
+        ..ends_inside
+    };
+    assert!(measure(&breaks, avoiding, Default::default(), &trailing_margin).page);
+
+    // The first box of a run of avoided breaks moves with the run, judged
+    // where the box sits with its relative offset.
+    breaks.run_ends.insert(plain, 140.0);
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert!(overflow.avoided_run && overflow.moves_box());
+    assert!(!measure(&breaks, plain, Default::default(), &offset_up).avoided_run);
+    assert!(measure(&breaks, plain, Default::default(), &offset_down).avoided_run);
+
+    // A table row moves whole, keeping the lead of the table above it. The
+    // lead is kept for a first row that stays put as well.
+    breaks.row_leads.insert(plain, 7.0);
+    let row = context(|context| context.is_table_row = true);
+    let overflow = measure(&breaks, plain, row, &fit);
+    assert!(overflow.table_row);
+    assert_eq!(overflow.table_row_lead, 7.0);
+    let overflow = measure(&breaks, plain, row, &offset_down);
+    assert!(!overflow.table_row);
+    assert_eq!(overflow.table_row_lead, 7.0);
+    assert!(measure(&breaks, plain, row, &offset_up).table_row);
+
+    // An avoided row group moves whole when it would cross the page edge.
+    breaks.row_groups.insert(plain, (140.0, 9.0));
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert_eq!(overflow.row_group_lead, Some(9.0));
+    assert!(overflow.moves_box());
+    breaks.row_groups.insert(plain, (100.0, 9.0));
+    let overflow = measure(&breaks, plain, Default::default(), &fit);
+    assert_eq!(overflow.row_group_lead, None);
+
+    // A flex item moves intact unless it is the container's trailing item,
+    // which may run on into the container's continuation. A grid item always
+    // moves. Both are judged where they sit, below their block-start margin.
+    let flex_item = context(|context| context.is_flex_item = true);
+    let overflow = measure(&breaks, first, flex_item, &fit);
+    assert!(overflow.flex_item && overflow.moves_box());
+    assert!(!measure(&breaks, first, flex_item, &offset_up).flex_item);
+    let margin_top = BoxFit {
+        margin_top: 80.0,
+        ..fit
+    };
+    assert!(!measure(&breaks, first, flex_item, &margin_top).flex_item);
+    let overflow = measure(&breaks, last, flex_item, &fit);
+    assert!(!overflow.flex_item && !overflow.moves_box());
+    let grid_item = context(|context| context.is_grid_item = true);
+    let overflow = measure(&breaks, plain, grid_item, &fit);
+    assert!(overflow.grid_item && overflow.moves_box());
+    assert!(!measure(&breaks, plain, grid_item, &margin_top).grid_item);
+}

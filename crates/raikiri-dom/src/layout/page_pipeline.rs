@@ -4101,20 +4101,14 @@ fn paginate_flow(
         HeaderRepeats::prepare(document, cascade, roots.contents, page_step, |id| {
             root_flow_offset + current_abs_y(document, id)
         });
-    let table_row_leads = table_row_leads(document, cascade, &candidates, root_flow_offset);
-    let avoided_row_groups = avoided_row_groups(
+    let avoided_breaks = AvoidedBreaks::collect(
         document,
         cascade,
         &candidates,
         &table_headers,
-        &table_row_leads,
-    );
-    let avoided_run_ends = avoided_run_ends(
-        document,
-        cascade,
-        &candidates,
         roots.contents_box,
         content_width,
+        root_flow_offset,
     );
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
@@ -4615,28 +4609,25 @@ fn paginate_flow(
             break_margins(document, cascade, node_id, content_width);
         let page_start = page_origin(current_page);
         let page_end = page_start + page_step_at(current_page);
-        let avoided_run_overflow = avoided_run_ends.get(&node_id).is_some_and(|end| {
-            avoided_run_moves(
-                *end - raw_y,
-                margin_top,
-                effective_y,
-                page_start,
-                page_end,
-                page_step_at(current_page.saturating_add(1)),
-            )
-        });
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
         let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
-        let flow_y = effective_y - relative_offset;
-        let page_overflow = box_avoids_page_break_inside(document, node_id, computed.break_inside)
-            && avoided_box_moves(
-                flow_y,
+        let overflow = avoided_breaks.measure(
+            document,
+            cascade,
+            &candidate,
+            &BoxFit {
+                effective_y,
+                flow_y: effective_y - relative_offset,
                 margin_top,
-                flow_y + height + trailing_margin,
+                trailing_margin,
                 page_start,
                 page_end,
-            );
+                next_page_step: page_step_at(current_page.saturating_add(1)),
+            },
+            &table_headers,
+            &mut trailing_flex_children,
+        );
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -4665,45 +4656,6 @@ fn paginate_flow(
                 current_page,
                 page_start,
             );
-        // Keep an ordinary table row intact when it would cross the current
-        // page. The row is a class-A boundary owned by the table engine; its
-        // cells and descendants follow the same flow shift below. Rowspans,
-        // cell-internal breaks remain out of this narrow row-boundary pass.
-        // A row that follows a repeated header must fit beside the header's
-        // copy on the next page; otherwise moving it gains nothing.
-        let repeated_header_height = table_headers.repeated_height_before(node_id);
-        let table_row_lead = table_row_leads.get(&node_id).copied().unwrap_or(0.0);
-        let table_row_overflow = candidate.context.is_table_row
-            && table_row_moves(
-                flow_y,
-                height,
-                table_row_lead + height + repeated_header_height,
-                page_start,
-                page_end,
-                page_step_at(current_page.saturating_add(1)),
-            );
-        let row_group = avoided_row_groups.get(&node_id).copied();
-        let row_group_overflow = row_group
-            .is_some_and(|(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end));
-        // A trailing flex item may extend into the containing flex box's
-        // continuation at the page edge. Earlier items still move intact when
-        // they would cross a fragmentainer, preserving the existing column
-        // flex pagination behavior.
-        let flex_item_is_last = candidate.context.is_flex_item
-            && trailing_flex_children.is_trailing(document, cascade, node_id);
-        let item_overflow = || {
-            item_moves_past_page_end(
-                effective_y,
-                height,
-                margin_top,
-                page_start,
-                page_end,
-                page_step_at(current_page.saturating_add(1)),
-            )
-        };
-        let flex_item_overflow =
-            candidate.context.is_flex_item && !flex_item_is_last && item_overflow();
-        let grid_item_overflow = candidate.context.is_grid_item && item_overflow();
 
         let collapses_with_previous_block =
             collapses_with_previous_block(document, &candidate, participates_in_margin_adjacency);
@@ -4714,14 +4666,7 @@ fn paginate_flow(
         let forced_transition = pending_break_applies
             || (forced_before && !forced_break_at_page_start)
             || named_page_change;
-        let page_transition = saw_child
-            && (forced_transition
-                || page_overflow
-                || avoided_run_overflow
-                || table_row_overflow
-                || row_group_overflow
-                || flex_item_overflow
-                || grid_item_overflow);
+        let page_transition = saw_child && (forced_transition || overflow.moves_box());
         if saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
@@ -4748,12 +4693,10 @@ fn paginate_flow(
                     target_y,
                     margin_top,
                     relative_offset,
-                    table_row_lead,
+                    overflow.table_row_lead,
                     forced_transition,
-                    row_group
-                        .filter(|_| row_group_overflow)
-                        .map(|(_, lead)| lead),
-                    table_row_overflow,
+                    overflow.row_group_lead,
+                    overflow.table_row,
                 );
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
@@ -4772,7 +4715,7 @@ fn paginate_flow(
                         &TransitionMove {
                             node_delta,
                             shift_delta,
-                            page_overflow,
+                            page_overflow: overflow.page,
                             forced_transition,
                         },
                         &mut subtree_shifts,
@@ -4790,7 +4733,7 @@ fn paginate_flow(
                     if node_target_y < target_y {
                         deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
                     }
-                    if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
+                    if overflow.page && is_floating_box_for_pagination(document, cascade, node_id) {
                         float_shifts.record_moved_float(
                             document,
                             cascade,
@@ -5340,6 +5283,192 @@ fn avoided_run_ends(
         previous = Some(candidate);
     }
     avoided_run_ends
+}
+
+/// The boxes of a flow that avoid a page break inside them or between them,
+/// found once from its candidates.
+#[derive(Default)]
+struct AvoidedBreaks {
+    /// The block end of each run of boxes joined by avoided breaks, keyed by
+    /// the run's first box (see [`avoided_run_ends`]).
+    run_ends: HashMap<usize, f32>,
+    /// How far below its table's top edge the first row of each table
+    /// starts (see [`table_row_leads`]).
+    row_leads: HashMap<usize, f32>,
+    /// The block end and table lead of each avoided table row group, keyed
+    /// by its first row (see [`avoided_row_groups`]).
+    row_groups: HashMap<usize, (f32, f32)>,
+}
+
+/// Where a box and its page stand when the box is tested for moving to the
+/// next page.
+#[derive(Clone, Copy)]
+struct BoxFit {
+    /// The top of the box's border box, with the relative offsets of the box
+    /// and its ancestors.
+    effective_y: f32,
+    /// The same position in normal-flow coordinates, without those offsets.
+    flow_y: f32,
+    margin_top: f32,
+    trailing_margin: f32,
+    /// The flow positions at which the current page starts and ends.
+    page_start: f32,
+    page_end: f32,
+    /// The block size of the page after the current one.
+    next_page_step: f32,
+}
+
+/// The ways, besides a forced break, in which a box moves to the next page.
+struct BoxOverflow {
+    /// The box avoids breaks inside it and would cross the page edge.
+    page: bool,
+    /// The box starts a run of boxes joined by avoided breaks that would
+    /// cross the page edge.
+    avoided_run: bool,
+    /// The box is a table row that would cross the page edge.
+    table_row: bool,
+    /// How far below its table's top edge the box starts when it is the
+    /// first row of a table, or zero.
+    table_row_lead: f32,
+    /// The table lead of the avoided row group that starts at the box and
+    /// moves whole, if any.
+    row_group_lead: Option<f32>,
+    /// The box is a flex item that would cross the page edge.
+    flex_item: bool,
+    /// The box is a grid item that would cross the page edge.
+    grid_item: bool,
+}
+
+impl BoxOverflow {
+    /// Whether the box moves to the next page for any of these reasons. The
+    /// table lead is no reason: it only places a first row that moves.
+    fn moves_box(&self) -> bool {
+        self.page
+            || self.avoided_run
+            || self.table_row
+            || self.row_group_lead.is_some()
+            || self.flex_item
+            || self.grid_item
+    }
+}
+
+impl AvoidedBreaks {
+    /// Finds the avoided breaks of `candidates`, whose flow starts at
+    /// `root_flow_offset` and whose class-A boxes sit in `contents_box`.
+    fn collect(
+        document: &Document,
+        cascade: &CascadeResult,
+        candidates: &[PageCandidate],
+        table_headers: &HeaderRepeats,
+        contents_box: usize,
+        content_width: f32,
+        root_flow_offset: f32,
+    ) -> Self {
+        let row_leads = table_row_leads(document, cascade, candidates, root_flow_offset);
+        let row_groups =
+            avoided_row_groups(document, cascade, candidates, table_headers, &row_leads);
+        let run_ends = avoided_run_ends(document, cascade, candidates, contents_box, content_width);
+        Self {
+            run_ends,
+            row_leads,
+            row_groups,
+        }
+    }
+
+    /// How the box of `candidate`, placed as `fit` says, moves to the next
+    /// page. `trailing_flex_children` remembers the trailing item of each
+    /// flex container it looks up.
+    fn measure(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        candidate: &PageCandidate,
+        fit: &BoxFit,
+        table_headers: &HeaderRepeats,
+        trailing_flex_children: &mut TrailingFlexChildren,
+    ) -> BoxOverflow {
+        let node_id = candidate.node_id;
+        let raw_y = candidate.raw_y;
+        let height = candidate.height;
+        let BoxFit {
+            effective_y,
+            flow_y,
+            margin_top,
+            trailing_margin,
+            page_start,
+            page_end,
+            next_page_step,
+        } = *fit;
+        let avoided_run = self.run_ends.get(&node_id).is_some_and(|end| {
+            avoided_run_moves(
+                *end - raw_y,
+                margin_top,
+                effective_y,
+                page_start,
+                page_end,
+                next_page_step,
+            )
+        });
+        let page =
+            box_avoids_page_break_inside(document, node_id, cascade.computed[node_id].break_inside)
+                && avoided_box_moves(
+                    flow_y,
+                    margin_top,
+                    flow_y + height + trailing_margin,
+                    page_start,
+                    page_end,
+                );
+        // Keep an ordinary table row intact when it would cross the current
+        // page. The row is a class-A boundary owned by the table engine; its
+        // cells and descendants follow the same flow shift below. Rowspans,
+        // cell-internal breaks remain out of this narrow row-boundary pass.
+        // A row that follows a repeated header must fit beside the header's
+        // copy on the next page; otherwise moving it gains nothing.
+        let repeated_header_height = table_headers.repeated_height_before(node_id);
+        let table_row_lead = self.row_leads.get(&node_id).copied().unwrap_or(0.0);
+        let table_row = candidate.context.is_table_row
+            && table_row_moves(
+                flow_y,
+                height,
+                table_row_lead + height + repeated_header_height,
+                page_start,
+                page_end,
+                next_page_step,
+            );
+        let row_group_lead = self
+            .row_groups
+            .get(&node_id)
+            .copied()
+            .filter(|&(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end))
+            .map(|(_, lead)| lead);
+        // A trailing flex item may extend into the containing flex box's
+        // continuation at the page edge. Earlier items still move intact when
+        // they would cross a fragmentainer, preserving the existing column
+        // flex pagination behavior.
+        let flex_item_is_last = candidate.context.is_flex_item
+            && trailing_flex_children.is_trailing(document, cascade, node_id);
+        let item_overflow = || {
+            item_moves_past_page_end(
+                effective_y,
+                height,
+                margin_top,
+                page_start,
+                page_end,
+                next_page_step,
+            )
+        };
+        let flex_item = candidate.context.is_flex_item && !flex_item_is_last && item_overflow();
+        let grid_item = candidate.context.is_grid_item && item_overflow();
+        BoxOverflow {
+            page,
+            avoided_run,
+            table_row,
+            table_row_lead,
+            row_group_lead,
+            flex_item,
+            grid_item,
+        }
+    }
 }
 
 // Pagination adjusts selected boxes after taffy has produced one normal
