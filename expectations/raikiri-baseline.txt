@@ -4608,6 +4608,7 @@ css/css-ruby/abs-in-ruby-container.html
 css/css-ruby/empty-ruby-text-container-abs.html
 css/css-ruby/empty-ruby-text-container-float.html
 css/css-ruby/empty-ruby-text-container.html
+css/css-ruby/improperly-contained-annotation-001.html
 css/css-ruby/pseudo-first-letter.html
 css/css-ruby/ruby-bidi-001.html
 css/css-ruby/ruby-dynamic-removal-001.html
