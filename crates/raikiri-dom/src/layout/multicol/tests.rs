@@ -2190,6 +2190,78 @@ fn a_cloned_nested_multicol_fills_its_rows_with_paragraph_lines_between_its_padd
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
 }
 
+/// A column container of `columns` columns, 100px high and filled in order,
+/// holding a one-column container of `lines` 10px lines styled by
+/// `inner_css`. Returns the container, its paragraph and the paragraph's
+/// column ranges as (line start, line end, fragmentainer).
+fn nested_paragraph_rows(
+    columns: usize,
+    inner_css: &str,
+    lines: usize,
+) -> (Document, usize, Vec<(usize, usize, usize)>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;width:{}px;height:100px;columns:{columns};column-gap:0;\
+             column-fill:auto",
+            columns * 100
+        )),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;columns:1;font-size:10px;line-height:10px;{inner_css}"
+        )),
+    );
+    let paragraph = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    for _ in 0..lines {
+        doc.append_text(paragraph, "a");
+        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+    }
+    layout_nested_flex_float_fixture(&mut doc);
+    let ranges = doc.nodes[paragraph]
+        .ifc_multicol_fragments()
+        .map(|ranges| {
+            ranges
+                .iter()
+                .map(|range| (range.line_start, range.line_end, range.fragmentainer))
+                .collect()
+        })
+        .unwrap_or_default();
+    (doc, inner, ranges)
+}
+
+#[test]
+fn the_paragraph_rows_of_a_nested_multicol_continue_in_outer_overflow_columns() {
+    // Three rows of a 100px column fit the content, but the outer container
+    // declares two columns, so the third row is in an overflow column.
+    let (doc, inner, ranges) = nested_paragraph_rows(2, "", 25);
+    assert_eq!(ranges, [(0, 10, 0), (10, 20, 1), (20, 25, 2)]);
+    let heights: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == inner && fragment.fragment_index > 0)
+        .map(|fragment| fragment.rect.height)
+        .collect();
+    assert_eq!(heights, [100.0, 100.0, 50.0]);
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+
+    // A box that clones its padding has less room in each row, which can
+    // need one more outer column than the lines alone.
+    let (doc, inner, ranges) =
+        nested_paragraph_rows(2, "padding:10px 0;box-decoration-break:clone", 20);
+    assert_eq!(ranges, [(0, 8, 0), (8, 16, 1), (16, 20, 2)]);
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 3);
+}
+
 #[test]
 fn the_rows_of_a_cloned_nested_multicol_start_their_column_rules_below_the_padding() {
     let (doc, inner, ..) = continued_nested_multicol("box-decoration-break:clone");

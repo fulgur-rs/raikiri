@@ -1024,7 +1024,6 @@ fn layout_column_group(
                 tree,
                 child,
                 context,
-                column,
                 cursor,
                 height,
                 margin_top,
@@ -1039,7 +1038,6 @@ fn layout_column_group(
                     tree,
                     child,
                     context,
-                    column + 1,
                     0.0,
                     height,
                     margin_top,
@@ -1317,20 +1315,19 @@ impl NestedContinuation {
     }
 }
 
-/// Plan how the nested column container `child`, laid out at `cursor` in
-/// column `column` of `outer`, continues in the following outer columns.
-/// Children that hold no lines continue in outer overflow columns past the
-/// last one. `break_before` says a break before the container is allowed,
-/// which is preferred to cutting one of those children at the end of this
-/// column. `None` when it fits in the rest of the column, when its content
-/// is neither plain paragraphs nor children without lines, or when the
-/// outer columns run out for paragraphs.
+/// Plan how the nested column container `child`, laid out at `cursor` in a
+/// column of `outer`, continues in the following outer columns.
+/// Rows continue in outer overflow columns past the last one, as the outer
+/// container has a definite height (CSS Multi-column 1, 8.2). `break_before`
+/// says a break before the container is allowed, which is preferred to
+/// cutting a child that holds no lines at the end of this column. `None`
+/// when it fits in the rest of the column, or when its content is neither
+/// plain paragraphs nor children without lines.
 #[allow(clippy::too_many_arguments)]
 fn plan_nested_continuation(
     tree: &Document,
     child: usize,
     outer: FragmentationContext,
-    column: usize,
     cursor: f32,
     fragmentainer_height: f32,
     margin_top: f32,
@@ -1346,7 +1343,13 @@ fn plan_nested_continuation(
         .horizontal
         .then(|| lineless::supported(tree, child, false))
         .flatten();
-    let rows = outer.column_count.saturating_sub(column);
+    // The outer container has a definite height here, so rows may also fill
+    // overflow columns past its last one; the fragment budget bounds them.
+    let max_pieces = tree
+        .fragment_tree
+        .limit
+        .saturating_sub(tree.fragment_tree.fragments.len());
+    let rows = max_pieces;
     // A box that avoids breaks inside, has a minimum height or generated
     // content keeps its previous layout: the rows below hold its paragraph
     // lines only.
@@ -1396,10 +1399,6 @@ fn plan_nested_continuation(
     let row_top = -(cursor + margin_top);
     let row_step = outer.column_offset_x(1);
     if let Some(children) = lineless_children {
-        let max_pieces = tree
-            .fragment_tree
-            .limit
-            .saturating_sub(tree.fragment_tree.fragments.len());
         let rows = lineless::fill_rows(
             tree,
             &children,
