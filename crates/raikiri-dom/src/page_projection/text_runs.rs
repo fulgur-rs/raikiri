@@ -487,6 +487,11 @@ pub(super) struct RunContext {
     /// Elements laid out as column fragments, which the painter places from
     /// each fragment.
     pub(super) fragmented: HashSet<usize>,
+    /// Elements a multicol container places in its columns, which the
+    /// painter offsets by their relative inset. The container's own
+    /// fragment and the fragments of boxes deeper inside a column child
+    /// stand where block flow put the box, inset included.
+    placed_in_column: HashSet<usize>,
     /// Elements with a column fragment the painter clips where it draws
     /// that fragment.
     pub(super) fragment_clipped: HashSet<usize>,
@@ -542,6 +547,17 @@ impl RunContext {
         let body = crate::paint_rules::find_paint_root(document);
         let fragments = document.layout_fragments();
         let fragmented = fragments.iter().map(|fragment| fragment.node_id).collect();
+        let placed_in_column = fragments
+            .iter()
+            .filter(|fragment| {
+                fragment.parent.is_some_and(|parent| {
+                    document
+                        .get_node(fragments[parent].node_id)
+                        .is_some_and(|owner| owner.is_multicol_container())
+                })
+            })
+            .map(|fragment| fragment.node_id)
+            .collect();
         let fragment_clipped = fragments
             .iter()
             .filter(|fragment| fragment.fragmentainer_clip.is_some())
@@ -550,10 +566,32 @@ impl RunContext {
         Self {
             overlapping,
             fragmented,
+            placed_in_column,
             fragment_clipped,
             body,
             page_areas_vary: page_areas_vary(document, pages),
         }
+    }
+}
+
+impl RunContext {
+    /// How the painter moves box `id` for its own position and transform.
+    pub(super) fn box_shift(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        id: usize,
+        cv: &ComputedValues,
+    ) -> Result<BoxShift, TextRunOmission> {
+        box_paint_shift(
+            document,
+            cascade,
+            self.body,
+            id,
+            cv,
+            self.fragmented.contains(&id),
+            self.placed_in_column.contains(&id),
+        )
     }
 }
 
@@ -594,6 +632,7 @@ pub(super) fn box_paint_shift(
     id: usize,
     cv: &ComputedValues,
     fragmented: bool,
+    placed_in_column: bool,
 ) -> Result<BoxShift, TextRunOmission> {
     let Some(node) = document.get_node(id) else {
         return Ok(BoxShift {
@@ -603,11 +642,12 @@ pub(super) fn box_paint_shift(
     };
     // Layout already applies the relative offset of boxes in normal flow,
     // flex and grid, and of boxes on lines. The body, floats and table parts
-    // and column fragments are placed without it, and the painter adds it, as
-    // it adds the block offset that manual column placement leaves out.
+    // and the boxes a multicol container places in its columns are placed
+    // without it, and the painter adds it, as it adds the block offset that
+    // manual column placement leaves out.
     let painted_inset =
         crate::layout::placed_without_relative_offset_for_layout(document, cascade, body, id)
-            || (fragmented && !node.display().is_inline_level());
+            || (placed_in_column && !node.display().is_inline_level());
     let (mut dx, mut dy) = if painted_inset {
         crate::layout::used_relative_offset_for_layout(document, cascade, id)
     } else if node.needs_relative_block_paint_offset() {
@@ -808,8 +848,7 @@ pub(super) fn paint_shift(
         ) {
             return Err(reason);
         }
-        let fragmented = context.fragmented.contains(&id);
-        let shift = box_paint_shift(document, cascade, context.body, id, cv, fragmented)?;
+        let shift = context.box_shift(document, cascade, id, cv)?;
         if shift.general && super::paint_transform::is_singular(cv) {
             return Err(TextRunOmission::SingularTransform);
         }
@@ -854,8 +893,7 @@ pub(super) fn run_translation_y(
         if document.nodes[id].position() == &PositionValue::Fixed {
             dy = 0.0;
         }
-        let fragmented = context.fragmented.contains(&id);
-        if let Ok(shift) = box_paint_shift(document, cascade, context.body, id, cv, fragmented)
+        if let Ok(shift) = context.box_shift(document, cascade, id, cv)
             && !shift.general
         {
             dy += shift.offset.1;
@@ -893,8 +931,7 @@ pub(super) fn run_transform(
             transform = PaintTransform::IDENTITY;
             ancestors = (0.0, 0.0);
         }
-        let fragmented = context.fragmented.contains(&id);
-        let Ok(shift) = box_paint_shift(document, cascade, context.body, id, cv, fragmented) else {
+        let Ok(shift) = context.box_shift(document, cascade, id, cv) else {
             continue; // cov:ignore: the runs of a box the painter cannot place are omitted first
         };
         if let Some(own) = super::paint_transform::element_transform(
