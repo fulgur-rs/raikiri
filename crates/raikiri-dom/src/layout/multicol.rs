@@ -181,8 +181,9 @@ pub(crate) fn compute_multicol_layout(
     .then(|| constrained_chain::supported(tree, index))
     .flatten();
     // Inspect fresh child layouts before opting a definite-height plain block
-    // chain into fragmentation. Atomic and constrained children keep their
-    // foundational placement path.
+    // chain into fragmentation. A chain may end in a paragraph with atomic
+    // inlines, which go to the columns of their lines. Constrained children
+    // and other boxes in a paragraph keep their foundational placement path.
     let plain_block_scope = inputs.run_mode == RunMode::PerformLayout
         && !custom_scope
         && !break_flow_scope
@@ -824,9 +825,25 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
 }
 
 fn can_balance_single_paragraph(tree: &Document, child: usize) -> bool {
+    can_balance_atomic_paragraph(tree, child) && tree.nodes[child].ifc_boxes().is_empty()
+}
+
+/// Whether `child` is a paragraph whose lines break between columns and whose
+/// boxes, if any, are atomic inlines. Those sit on the lines like text, so
+/// each goes to the column of its line.
+fn can_balance_atomic_paragraph(tree: &Document, child: usize) -> bool {
     can_balance_paragraph_box(tree, child)
         && tree.nodes[child].ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
-        && tree.nodes[child].ifc_boxes().is_empty()
+        && paragraph_boxes_are_atomic(tree, child)
+}
+
+/// Whether the paragraph `node_id` has no box but atomic inlines.
+fn paragraph_boxes_are_atomic(tree: &Document, node_id: usize) -> bool {
+    tree.nodes[node_id].ifc.as_ref().is_some_and(|root| {
+        root.boxes
+            .iter()
+            .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
+    })
 }
 
 fn can_balance_paragraph_box(tree: &Document, child: usize) -> bool {
@@ -908,7 +925,7 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
         }
         if node.ifc.is_some() {
             return node.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
-                && node.ifc_boxes().is_empty()
+                && paragraph_boxes_are_atomic(tree, child)
                 && !multicol_subtree_has_float(tree, child);
         }
         current = child;
@@ -1089,7 +1106,7 @@ fn layout_column_group(
             return None;
         }
         let node = &tree.layout_node_with_style(*child).unwrap();
-        if !can_balance_single_paragraph(tree, *child) {
+        if !can_balance_atomic_paragraph(tree, *child) {
             return None;
         }
         let lines = node.ifc.as_ref()?.lines.as_ref()?;
@@ -1291,6 +1308,12 @@ fn layout_column_group(
                 root.multicol_fragments = Some(placement.fragments.clone());
                 root.multicol_fragment_origins_recorded = true;
             }
+            refresh_paragraph_boxes(
+                tree,
+                child,
+                column_context,
+                FlexFloatChain::of_ancestors(tree, child),
+            );
         } else {
             // A block measured as one item of the balance stays whole in its
             // column, so no line of it may go to a later column.
@@ -1313,6 +1336,12 @@ fn layout_column_group(
             && let Some(root) = tree.nodes[child].ifc.as_mut()
         {
             root.multicol_fragments = Some(fragments.clone());
+            refresh_paragraph_boxes(
+                tree,
+                child,
+                column_context,
+                FlexFloatChain::of_ancestors(tree, child),
+            );
         }
         let Some(child_fragment) = tree
             .fragment_tree
@@ -2115,10 +2144,7 @@ fn record_nested_ifc_box_fragments(
             let mut current = node_id;
             while current != subtree_root {
                 path.push(current);
-                let Some(parent) = tree.parent_of(current) else {
-                    break;
-                };
-                current = parent;
+                current = tree.parent_of(current).unwrap_or(subtree_root);
             }
             path.reverse();
             let plain_block_path = !subtree_has_float
@@ -2133,6 +2159,53 @@ fn record_nested_ifc_box_fragments(
                 .iter()
                 .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)
                 .sum::<f32>();
+
+            // An atomic inline sits on a line, so it belongs to the column of
+            // that line: it gets a fragment in the paragraph's fragment of
+            // that column, as the paragraph's fragments would each paint it
+            // otherwise.
+            if (root_owns_fragments || plain_block_path)
+                && !nested_row_flex_scope
+                && tree.nodes[node_id].multicol.is_none()
+                && let (Some(ranges), Some(lines)) = (&line_ranges, &lines)
+            {
+                let (recorded, atomics) =
+                    tree.nodes[node_id]
+                        .ifc
+                        .as_ref()
+                        .map_or((false, Vec::new()), |root| {
+                            (
+                                root.multicol_fragment_origins_recorded,
+                                crate::layout::ifc::boxes::atomic_fragments(
+                                    &root.boxes,
+                                    &lines.lines,
+                                    ranges,
+                                ),
+                            )
+                        });
+                for (atomic, range) in atomics {
+                    let layout = tree.nodes[atomic].unrounded_layout;
+                    // The first line of a range is drawn at the top of its
+                    // fragment, or at the range's own offset.
+                    let range_top = if recorded { 0.0 } else { range.y };
+                    let first_line = lines.lines[range.line_start].block_offset();
+                    columns
+                        .entry(range.fragmentainer)
+                        .or_default()
+                        .placements
+                        .push(placements.len());
+                    placements.push(crate::layout::ifc::root::IfcBoxFragment {
+                        node_id: atomic,
+                        fragmentainer: range.fragmentainer,
+                        rect: crate::fragment::FragmentRect {
+                            x: layout.location.x,
+                            y: range_top + layout.location.y - first_line,
+                            width: layout.size.width,
+                            height: layout.size.height,
+                        },
+                    });
+                }
+            }
 
             for (column, entries) in columns {
                 let column_x =
@@ -2785,48 +2858,7 @@ fn refresh_nested_text_fragments_in(
                 })
             })
         };
-        let mut first_columns = HashMap::<usize, usize>::new();
-        if let Some(lines) = tree.nodes[node_id]
-            .ifc
-            .as_ref()
-            .and_then(|root| root.lines.as_ref())
-        {
-            for placement in &lines.fragment_box_placements {
-                first_columns
-                    .entry(placement.node_id)
-                    .or_insert(placement.fragmentainer);
-            }
-        }
-        let boxes = tree.nodes[node_id].ifc_boxes();
-        for child in boxes {
-            // A box may sit inside inline elements of the paragraph; only
-            // those elements lie between it and this root.
-            let between: Vec<_> = tree
-                .ancestors(child)
-                .take_while(|&id| id != node_id)
-                .collect();
-            let inside_root =
-                tree.parent_of(between.last().copied().unwrap_or(child)) == Some(node_id);
-            let child_chain = if inside_root {
-                between
-                    .into_iter()
-                    .rev()
-                    .fold(chain, |above, id| above.below(tree, id))
-                    .below(tree, child)
-            } else {
-                FlexFloatChain::of_ancestors(tree, child) // cov:ignore: paragraph boxes are descendants of their root.
-            };
-            let float_fragmentainer = (tree.parent_of(child) == Some(node_id))
-                .then(|| first_columns.get(&child).copied())
-                .flatten();
-            refresh_nested_text_fragments_in(
-                tree,
-                child,
-                context,
-                child_chain,
-                float_fragmentainer,
-            );
-        }
+        refresh_paragraph_boxes(tree, node_id, context, chain);
         return;
     }
     // This node has no paragraph, so no child has a placement in it.
@@ -2836,6 +2868,78 @@ fn refresh_nested_text_fragments_in(
             let child_chain = chain.below(tree, child);
             refresh_nested_text_fragments_in(tree, child, context, child_chain, None);
         }
+    }
+}
+
+/// Refresh the text fragments of the boxes of the paragraph `node_id`, whose
+/// own fragments are assigned. `chain` is the row-flex float chain of the
+/// paragraph.
+fn refresh_paragraph_boxes(
+    tree: &mut LayoutSession<'_>,
+    node_id: usize,
+    context: FragmentationContext,
+    chain: FlexFloatChain,
+) {
+    let mut first_columns = HashMap::<usize, usize>::new();
+    if let Some(lines) = tree.nodes[node_id]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+    {
+        for placement in &lines.fragment_box_placements {
+            first_columns
+                .entry(placement.node_id)
+                .or_insert(placement.fragmentainer);
+        }
+    }
+    // An atomic inline sits on a line, so its text lies in the column of that
+    // line, in one piece.
+    let atomic_columns: HashMap<usize, usize> = tree.nodes[node_id]
+        .ifc
+        .as_ref()
+        .filter(|_| !chain.is_scope())
+        .and_then(|root| {
+            let fragments = root.multicol_fragments.as_ref()?;
+            let lines = root.lines.as_ref()?;
+            Some(
+                crate::layout::ifc::boxes::atomic_fragments(&root.boxes, &lines.lines, fragments)
+                    .into_iter()
+                    .map(|(atomic, fragment)| (atomic, fragment.fragmentainer))
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+    let boxes = tree.nodes[node_id].ifc_boxes();
+    for child in boxes {
+        // A box may sit inside inline elements of the paragraph; only
+        // those elements lie between it and this root.
+        let between: Vec<_> = tree
+            .ancestors(child)
+            .take_while(|&id| id != node_id)
+            .collect();
+        let inside_root = tree.parent_of(between.last().copied().unwrap_or(child)) == Some(node_id);
+        let child_chain = if inside_root {
+            between
+                .into_iter()
+                .rev()
+                .fold(chain, |above, id| above.below(tree, id))
+                .below(tree, child)
+        } else {
+            FlexFloatChain::of_ancestors(tree, child) // cov:ignore: paragraph boxes are descendants of their root.
+        };
+        let float_fragmentainer = (tree.parent_of(child) == Some(node_id))
+            .then(|| first_columns.get(&child).copied())
+            .flatten();
+        let child_context = atomic_columns
+            .get(&child)
+            .map_or(context, |&column| context.confined_to(column));
+        refresh_nested_text_fragments_in(
+            tree,
+            child,
+            child_context,
+            child_chain,
+            float_fragmentainer,
+        );
     }
 }
 

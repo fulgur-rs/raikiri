@@ -1452,3 +1452,147 @@ fn adjoining_margins_before_a_trailing_float_still_collapse() {
         "<p style='position:absolute;left:0;top:0'>A</p><p style='position:absolute;left:0;top:40px'>B</p>",
     );
 }
+
+/// An inline-block that sits on its line like a glyph: 15px wide, one line
+/// tall, with a glyph inside when `glyph` is not empty.
+fn atomic(glyph: &str, color: &str) -> String {
+    format!(
+        "<span style='display:inline-block;vertical-align:top;width:15px;height:20px;background:{color}'>{glyph}</span>"
+    )
+}
+
+#[test]
+fn an_atomic_inline_of_a_child_paragraph_goes_to_the_column_of_its_line() {
+    let red = atomic("", "red");
+    compare(
+        &format!("<div class=mc><p>A<br>B<br>{red}C<br>D</p></div><p>E</p>"),
+        "",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>{red}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+        ),
+    );
+}
+
+#[test]
+fn atomic_inlines_with_text_stay_with_their_lines_in_both_columns() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><p>A{blue}<br>B{red}<br>{blue}C<br>D{red}</p></div><p>F</p>"),
+        "",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A{blue}<br>B{red}</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D{red}</div><div style='position:absolute;left:0;top:40px'>F</div>"
+        ),
+    );
+}
+
+#[test]
+fn a_definite_height_child_paragraph_with_atomics_breaks_between_its_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><p>A{red}<br>B<br>{blue}C<br>D</p></div><p>E</p>"),
+        ".mc{height:40px}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+        ),
+    );
+}
+
+#[test]
+fn atomic_inlines_of_a_child_paragraph_split_after_another_one_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for css in ["", ".mc{height:60px}"] {
+        compare(
+            &format!("<div class=mc><p>A<br>B</p><p>C{red}<br>{blue}D<br>F</p></div><p>E</p>"),
+            css,
+            &format!(
+                "<div style='position:absolute;left:0;top:0'>A<br>B<br>C{red}</div><div style='position:absolute;left:60px;top:0'>{blue}D<br>F</div><div style='position:absolute;left:0;top:60px'>E</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn atomic_inlines_of_a_right_to_left_child_paragraph_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><p>A{red}<br>B<br>{blue}C<br>D</p></div><p>E</p>"),
+        ".mc{direction:rtl}",
+        &format!(
+            "<div dir=rtl style='position:absolute;left:60px;top:0;width:40px'>A{red}<br>B</div><div dir=rtl style='position:absolute;left:0;top:0;width:40px'>{blue}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+        ),
+    );
+}
+
+#[test]
+fn an_atomic_inline_in_a_ruby_annotation_follows_the_line_of_its_ruby() {
+    let red = atomic("", "red");
+    compare(
+        &format!("<div class=mc><p>A<br>B<br><ruby>C<rt>{red}</rt></ruby><br>D</p></div>"),
+        "",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'><ruby>C<rt>{red}</rt></ruby><br>D</div>"
+        ),
+    );
+}
+
+#[test]
+fn an_atomic_inline_taller_than_its_text_makes_its_line_taller_in_the_column() {
+    let tall = "<span style='display:inline-block;vertical-align:top;width:15px;height:60px;background:red'></span>";
+    compare(
+        &format!("<div class=mc><p>A<br>{tall}B<br>C<br>D</p></div><p>E</p>"),
+        "",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A<br>{tall}B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:80px'>E</div>"
+        ),
+    );
+}
+
+#[test]
+fn atomic_inlines_of_a_paragraph_in_wrappers_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for (open, close) in [("<div>", "</div>"), ("<div><div>", "</div></div>")] {
+        compare(
+            &format!("<div class=mc>{open}<p>A{red}<br>B<br>{blue}C<br>D</p>{close}</div><p>E</p>"),
+            ".mc{height:40px}",
+            &format!(
+                "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn atomic_inlines_of_a_paragraph_in_a_wrapper_fill_three_columns() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><div><p>A{red}<br>B<br>{blue}C<br>D<br>F{red}</p></div></div>"),
+        ".mc{width:160px;column-count:3;height:40px}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div><div style='position:absolute;left:120px;top:0'>F{red}</div>"
+        ),
+    );
+}
+
+#[test]
+fn an_atomic_inline_moved_with_its_line_by_widows_is_not_left_in_the_earlier_column() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><div><p>A{red}<br>B<br>{blue}C<br>D</p></div></div>"),
+        ".mc{height:60px;orphans:2;widows:2}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div>"
+        ),
+    );
+}
+
+#[test]
+fn atomic_inlines_of_a_paragraph_in_a_right_to_left_wrapper_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    compare(
+        &format!("<div class=mc><div><p>A{red}<br>B<br>{blue}C<br>D</p></div></div><p>E</p>"),
+        ".mc{height:40px;direction:rtl}",
+        &format!(
+            "<div dir=rtl style='position:absolute;left:60px;top:0;width:40px'>A{red}<br>B</div><div dir=rtl style='position:absolute;left:0;top:0;width:40px'>{blue}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+        ),
+    );
+}
