@@ -543,6 +543,51 @@ fn margin_box_text_runs_sit_inside_the_box() {
 }
 
 #[test]
+fn margin_box_line_height_sets_the_line_spacing_and_the_first_baseline() {
+    // Each line is `line-height` tall, with the text centered in it, so the
+    // first baseline sits half of the leading lower and the next line is one
+    // `line-height` further down. The Ahem line is 10px tall with its
+    // baseline 8px below the top.
+    let origins = |line_height: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@page {{ margin: 40px; \
+               @top-left {{ content: 'a\\A b'; white-space: pre; font-family: Ahem; \
+                           font-size: 10px; {line_height} }} }}"
+        ));
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        head.text_runs()
+            .iter()
+            .map(|run| run.origin.1)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(origins(""), [8.0, 18.0]);
+    assert_eq!(origins("line-height: normal"), [8.0, 18.0]);
+    assert_eq!(origins("line-height: 3"), [18.0, 48.0]);
+    assert_eq!(origins("line-height: 25px"), [15.5, 40.5]);
+}
+
+#[test]
+fn margin_box_line_height_is_the_height_a_vertical_align_places() {
+    // The centered 30px line spans 5px to 35px of the 40px strip, and the
+    // bottom aligned one 10px to 40px.
+    for (align, baseline) in [("top", 18.0), ("middle", 23.0), ("text-bottom", 28.0)] {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@page {{ margin: 40px; \
+               @top-left {{ content: 'abc'; font-family: Ahem; font-size: 10px; \
+                           line-height: 30px; vertical-align: {align} }} }}"
+        ));
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        assert_eq!(head.text_runs()[0].origin.1, baseline, "{align}");
+    }
+}
+
+#[test]
 fn margin_box_text_runs_carry_the_text_shadow() {
     let (doc, cascade) = page_cascade_fixture(
         "html { text-shadow: 1px 1px blue } \

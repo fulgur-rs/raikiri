@@ -1144,6 +1144,14 @@ fn margin_box_spec(
         _ => MarginTextVerticalAlign::Top,
     };
     let mut text_style = text_style(font_size, &style.font_family);
+    // A unitless `line-height` multiplies the box's own font size, which can
+    // be below the floor the shaping size above is raised to.
+    text_style.line_height = match crate::layout::ifc::style::line_height_of(&style.line_height) {
+        shodo::style::LineHeight::Number(number) => {
+            shodo::style::LineHeight::Px(number * finite_or_zero(style.font_size.px()).max(0.0))
+        }
+        other => other,
+    };
     text_style.writing_mode = match style.cssom_writing_mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
         WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
@@ -1397,7 +1405,14 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec) -> f32
             )
             .map_or(0.0, |text| text.height())
     } else {
-        line_count * spec.text_style.font_size.max(0.0)
+        let font_size = spec.text_style.font_size.max(0.0);
+        // Unitless numbers were already resolved against the box's own font
+        // size when the spec was built.
+        let line_height = match spec.text_style.line_height {
+            shodo::style::LineHeight::Px(px) => px,
+            _ => font_size,
+        };
+        line_count * line_height.max(0.0)
     };
     spec.frame(Axis::Vertical).outer(text_height).max(0.0)
 }
