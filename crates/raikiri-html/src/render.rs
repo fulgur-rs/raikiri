@@ -1,15 +1,13 @@
 //! Resource-aware layout pipeline shared by document layout.
 
 use raikiri_dom::{
-    FontFaceLoader, InitialPageContextError, PageLayoutControl, PageSlice,
-    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
-    layout_pages_with_resolver_and_base_url_and_control, validate_layout_depth,
+    FontFaceLoader, InitialPageContextError, PageLayoutControl, PageSlice, validate_layout_depth,
 };
 use raikiri_dom::{ResolvedPageGeometry, resolve_page_geometry};
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, IntrinsicBox,
-    LayoutConfig, LayoutError, PageBox, PageDefaults, PolicyViolation, RenderError, RenderWarning,
+    LayoutConfig, PageBox, PageDefaults, PolicyViolation, RenderError, RenderWarning,
     ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
     ResourceKind, ResourcePolicy, WarningKind,
 };
@@ -18,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use raikiri_style::{
     Atom, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext,
-    PageCascadeResult, PageContextQuery, RuleTree, cascade_with_options,
+    PageCascadeResult, PageContextQuery, RuleTree,
 };
 
 use crate::HtmlDocument;
@@ -35,6 +33,9 @@ pub(crate) use continuation::Continuation;
 
 mod first_page;
 use first_page::FirstPage;
+mod page_layout;
+use page_layout::{LaidOut, PageLayout};
+mod stop;
 
 /// What every stage of one layout run reads.
 struct Run<'r, 'a> {
@@ -50,6 +51,11 @@ struct Run<'r, 'a> {
     base_url: Option<&'r url::Url>,
     tree: &'r RuleTree,
     signal: Option<&'r raikiri_traits::AbortSignal>,
+    is_aborted: &'r dyn Fn() -> bool,
+    /// The control of a pagination pass that confirms the final page count.
+    page_control: &'r PageLayoutControl<'r>,
+    /// The control of a provisional pass that discovers the page geometry.
+    discovery_control: &'r PageLayoutControl<'r>,
 }
 
 /// The images a run has fetched, which later fetches of the run count with:
@@ -774,18 +780,6 @@ pub(crate) struct ResumePoint {
     pub(crate) earlier_fragments: Vec<raikiri_dom::CrossingBox>,
 }
 
-/// Unwrap a layout step of [`run_pipeline`]: an abort ends the pipeline
-/// with [`PipelineRun::Aborted`], and any other error fails it.
-macro_rules! layout_step {
-    ($result:expr) => {
-        match $result {
-            Ok(value) => value,
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-            Err(error) => return Err(RenderError::from(error)),
-        }
-    };
-}
-
 pub(crate) fn run_pipeline(
     doc: &HtmlDocument,
     defaults: PageDefaults,
@@ -875,6 +869,9 @@ pub(crate) fn run_pipeline(
         base_url,
         tree: &tree,
         signal: signal.as_ref(),
+        is_aborted: &is_aborted,
+        page_control: &page_control,
+        discovery_control: &discovery_control,
     };
     let FirstPage {
         dom,
@@ -891,248 +888,22 @@ pub(crate) fn run_pipeline(
     // first-page cascade serves as the element cascade of every later page.
     let page_cascader = PageCascader::new(&tree, &first_cascade, media_context);
 
-    // A relayout of later pages runs the run's element cascade, on the same
-    // input and with the same options, with the page context of its first
-    // page; the run's own element cascade above already succeeded on them.
-    let cascade_for_page = |slice: &PageSlice| {
-        cascade_with_options(
-            &doc.uncascaded.dom,
-            &tree,
-            media_context,
-            &page_query_for_slice(slice),
-            &cascade_options,
-        )
-        .expect("cascade は常に Ok のはず")
+    let layout = PageLayout {
+        run: &run,
+        first_cascade: &first_cascade,
+        page_box,
+        page_cascader: &page_cascader,
+        cascade_options: &cascade_options,
     };
-    let page_geometries_for =
-        |slices: &[PageSlice]| resolve_page_geometries(&page_cascader, &defaults, slices).0;
-    // Pages whose content width differs from the first page's are laid out
-    // again from a copy of the document as it is before any layout.
-    let pristine = dom.clone();
-    let mut document = dom;
-    let (slices, page_geometries, page_styles, continuations) = if let Some(resume) = inputs.resume
-    {
-        let mut slices: Vec<PageSlice> = resume
-            .page_names
-            .iter()
-            .enumerate()
-            .map(|(index, name)| PageSlice {
-                page_index: index as u32,
-                content_origin_y: 0.0,
-                page_name: name.clone(),
-            })
-            .collect();
-        let mut page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
-        let resumed = continuation::resume_at(
-            &continuation::ContinuationInputs {
-                pristine: &pristine,
-                cascade_for_page: &cascade_for_page,
-                page_geometries: &page_geometries_for,
-                resolver: &resolver,
-                base_url,
-                max_pages: config.limits.max_document_pages,
-                abort_check: &is_aborted,
-                skipped: &resume.skipped,
-            },
-            &document,
-            &first_cascade,
-            &mut slices,
-            &mut page_geometries,
-            resume.first_page as usize,
-            resume.start,
-            &resume.earlier_fragments,
-        );
-        drop(pristine);
-        let Some(continuations) = layout_step!(resumed) else {
-            return Ok(PipelineRun::NotResumed);
-        };
-        let page_styles = resolve_page_geometries(&page_cascader, &defaults, &slices).1;
-        (slices, page_geometries, page_styles, continuations)
-    } else {
-        // The passes below lay the same content out with the same element
-        // cascade at other page sizes: they break the lines of the first
-        // pass's paragraphs again instead of shaping them anew.
-        document.set_ifc_retain_paragraphs(true);
-        let mut slices = layout_step!(layout_pages_with_resolver_and_base_url_and_control(
-            &mut document,
-            &first_cascade,
-            page_box,
-            &resolver,
-            base_url,
-            &discovery_control,
-        ));
-        let mut pagination_truncated = discovery_control.page_limit_reached();
-        if is_aborted() {
-            return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
-        }
-        const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
-        let mut page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
-        let mut geometry_converged = true;
-        let mut schedule_changed = false;
-        for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
-            let Some(first_geometry) = page_geometries.first().copied() else {
-                break; // cov:ignore: a successful document with a body always emits a page slice.
-            };
-            let geometry_varies = page_geometries
-                .iter()
-                .any(|geometry| *geometry != first_geometry);
-            let schedule_must_be_applied = std::mem::take(&mut schedule_changed);
-            if !geometry_varies && !pagination_truncated && !schedule_must_be_applied {
-                break;
-            }
-
-            let schedule = page_geometry_schedule(&page_geometries, &slices);
-            // The first pagination pass establishes page count, names, and source
-            // coordinates. If page selectors resolve different used geometry, rerun
-            // the existing scheduled paginator with producer-owned page steps/widths.
-            // Provisional passes stop at the configured page count and return only
-            // the prefix needed to discover page geometry. Once the schedule is
-            // stable, a strict pass confirms the final count.
-            let scheduled_control = if geometry_varies {
-                &discovery_control
-            } else {
-                &page_control
-            };
-            slices = layout_step!(
-                layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
-                    &mut document,
-                    &first_cascade,
-                    page_box,
-                    &schedule.page_steps,
-                    &schedule.page_widths,
-                    &resolver,
-                    base_url,
-                    scheduled_control,
-                )
-            );
-            if is_aborted() {
-                return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
-            }
-            pagination_truncated = geometry_varies && discovery_control.page_limit_reached();
-            // A scheduled pass can change both page count and page selectors. Re-
-            // resolve before the next iteration so the following schedule is
-            // derived from the slices it will actually replace.
-            page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
-            let mut refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
-            if refreshed_schedule == schedule && pagination_truncated {
-                // The soft pass confirmed the geometry schedule only for the
-                // configured prefix. Re-run it strictly before treating that
-                // prefix as a complete document.
-                slices = layout_step!(
-                    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
-                        &mut document,
-                        &first_cascade,
-                        page_box,
-                        &schedule.page_steps,
-                        &schedule.page_widths,
-                        &resolver,
-                        base_url,
-                        &page_control,
-                    )
-                );
-                // A cancellation arriving after the paginator's final poll is a race-only case.
-                // cov:ignore: closes the cancellation race after strict confirmation completes.
-                if is_aborted() {
-                    return Ok(PipelineRun::Aborted);
-                }
-                pagination_truncated = false;
-                page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
-                refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
-            }
-            if refreshed_schedule == schedule && !pagination_truncated {
-                break;
-            }
-            // A refreshed schedule may differ due to page names or page count even
-            // when every page currently has the same geometry. Apply it before converging.
-            schedule_changed = refreshed_schedule != schedule;
-            // cov:ignore: no current public fixture can keep a static page-rule schedule
-            // changing through all three bounded passes; the terminal status has a
-            // direct contract test in raikiri-traits.
-            if pass + 1 == MAX_PAGE_GEOMETRY_PASSES {
-                geometry_converged = false;
-            }
-        }
-        document.set_ifc_retain_paragraphs(false);
-        // cov:ignore: see the bounded non-convergence branch above; no inconsistent
-        // pages are emitted, and the structured error variant is contract-tested.
-        if !geometry_converged {
-            return Err(RenderError::PageGeometryDidNotConverge {
-                iterations: MAX_PAGE_GEOMETRY_PASSES,
-            });
-        }
-
-        let total_pages = u64::try_from(slices.len()).unwrap_or(u64::MAX);
-        if let Some(limit) = config
-            .limits
-            .max_document_pages
-            .filter(|limit| total_pages > u64::from(*limit))
-        // cov:ignore: the strict paginator rejects excess pages before returning its slice vector.
-        {
-            return Err(RenderError::LimitExceeded {
-                kind: raikiri_traits::LimitKind::Pages,
-                limit: u64::from(limit),
-                actual: u64::from(limit) + 1,
-            });
-        }
-
-        // Resolve once more after the final bounded schedule pass so metadata and
-        // page names always describe the slices that will actually be emitted.
-        let (final_geometries, page_styles) =
-            resolve_page_geometries(&page_cascader, &defaults, &slices);
-        page_geometries = final_geometries;
-
-        let geometries: Vec<_> = page_geometries
-            .iter()
-            .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
-            .collect();
-        layout_step!(document.project_pages_with_control(
-            &first_cascade,
-            page_box,
-            &slices,
-            &geometries,
-            &page_control,
-        ));
-
-        let continuations = layout_step!(continuation::continue_at_page_widths(
-            &continuation::ContinuationInputs {
-                pristine: &pristine,
-                cascade_for_page: &cascade_for_page,
-                page_geometries: &page_geometries_for,
-                resolver: &resolver,
-                base_url,
-                max_pages: config.limits.max_document_pages,
-                abort_check: &is_aborted,
-                skipped: &[],
-            },
-            &document,
-            &first_cascade,
-            &mut slices,
-            &mut page_geometries,
-        ));
-        drop(pristine);
-        let page_styles = if let Some(first) = continuations.first() {
-            // The first layout keeps only the pages before the first continuation.
-            let own = first.first_page as usize;
-            // Root and body go on in the continuations, which number their
-            // later fragments.
-            document.continue_fragments_after(continuation::root_fragments_after(
-                &document,
-                &continuations,
-                slices.len(),
-            ));
-            // These pages were projected once already with the same limits.
-            layout_step!(document.project_pages_with_control(
-                &first_cascade,
-                page_box,
-                &slices[..own],
-                &geometries[..own],
-                &page_control,
-            ));
-            resolve_page_geometries(&page_cascader, &defaults, &slices).1
-        } else {
-            page_styles
-        };
-        (slices, page_geometries, page_styles, continuations)
+    let LaidOut {
+        document,
+        slices,
+        geometries: page_geometries,
+        page_styles,
+        continuations,
+    } = match layout.lay_out(dom, inputs.resume) {
+        Ok(laid_out) => laid_out,
+        Err(stop) => return stop.into_run(),
     };
 
     // Fetch CSS background sources only after the final page schedule is known.
