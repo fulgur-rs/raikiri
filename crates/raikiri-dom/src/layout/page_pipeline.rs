@@ -4705,46 +4705,24 @@ fn paginate_flow(
                     if node_target_y < target_y {
                         deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
                     }
-                    if overflow.page && is_floating_box_for_pagination(document, cascade, node_id) {
-                        float_shifts.record_moved_float(
-                            document,
-                            cascade,
-                            body_id,
-                            &MovedFloat {
-                                node_id,
-                                side: float_side_index(computed.float),
-                                delta: node_delta,
-                                flow_page: page_before_candidate,
-                                // Floors are kept in normal-flow coordinates,
-                                // without the relative offsets of the ancestors.
-                                flow_target_y: node_target_y - relative_offset,
-                                height,
-                                margin_top,
-                                forced_transition,
-                            },
-                        );
-                        grow_float_context_to_moved_float(
-                            document,
-                            cascade,
-                            node_id,
-                            body_id,
+                    float_shifts.settle_transition(
+                        document,
+                        cascade,
+                        body_id,
+                        &candidate,
+                        &FloatTransition {
+                            page_overflow: overflow.page,
+                            forced_transition,
+                            delta: node_delta,
+                            target_y: node_target_y,
+                            relative_offset,
+                            flow_page: page_before_candidate,
                             height,
-                            &mut subtree_shifts,
-                            page_before_candidate,
-                        );
-                    } else if !candidate.context.is_float_descendant
-                        && !is_floating_box_for_pagination(document, cascade, node_id)
-                    {
-                        let flow_top = node_target_y - relative_offset;
-                        float_shifts.drop_edges_for_in_flow_candidate(
-                            document,
-                            cascade,
-                            node_id,
-                            body_id,
-                            flow_top,
+                            margin_top,
                             moved_in_bounded_ancestor,
-                        );
-                    }
+                        },
+                        &mut subtree_shifts,
+                    );
                     effective_y += node_delta;
                 }
                 current_page = target_page;
@@ -8399,6 +8377,29 @@ struct MovedFloat {
     forced_transition: bool,
 }
 
+/// A box that a page transition moved down, as the floats of its formatting
+/// context see it.
+struct FloatTransition {
+    /// Whether the box moved because it would cross a page edge it avoids.
+    page_overflow: bool,
+    /// Whether a forced or page-type break moved the box.
+    forced_transition: bool,
+    /// How far the box moved down.
+    delta: f32,
+    /// Where the box's border box starts after the move.
+    target_y: f32,
+    /// The relative offset of the box and its ancestors.
+    relative_offset: f32,
+    /// The page the flow was on before the box moved.
+    flow_page: u32,
+    /// The box's border-box height.
+    height: f32,
+    /// The box's block-start margin.
+    margin_top: f32,
+    /// Whether an ancestor's height kept it from holding the moved content.
+    moved_in_bounded_ancestor: bool,
+}
+
 /// A box that has to start below the moved floats of its formatting context.
 struct FloatClearance {
     /// The formatting context the floats are in.
@@ -8509,6 +8510,64 @@ impl FloatShifts {
             if !moved.forced_transition {
                 self.extend_later(inherited + moved.delta + moved.margin_top);
             }
+        }
+    }
+
+    /// Settles the floats of the formatting context after a page transition
+    /// moved the box `candidate`. A float that moved across a page edge it
+    /// avoids is recorded for the floats and clearing boxes after it, and
+    /// grows the context that holds it. A box in the normal flow that opened
+    /// a page ends the float edges above it. A box inside a float moves with
+    /// it and changes nothing.
+    fn settle_transition(
+        &mut self,
+        document: &mut super::context::LayoutSession<'_>,
+        cascade: &CascadeResult,
+        body_id: usize,
+        candidate: &PageCandidate,
+        moved: &FloatTransition,
+        shifts: &mut SubtreeShifts,
+    ) {
+        let node_id = candidate.node_id;
+        if moved.page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
+            self.record_moved_float(
+                document,
+                cascade,
+                body_id,
+                &MovedFloat {
+                    node_id,
+                    side: float_side_index(cascade.computed[node_id].float),
+                    delta: moved.delta,
+                    flow_page: moved.flow_page,
+                    // Floors are kept in normal-flow coordinates, without the
+                    // relative offsets of the ancestors.
+                    flow_target_y: moved.target_y - moved.relative_offset,
+                    height: moved.height,
+                    margin_top: moved.margin_top,
+                    forced_transition: moved.forced_transition,
+                },
+            );
+            grow_float_context_to_moved_float(
+                document,
+                cascade,
+                node_id,
+                body_id,
+                moved.height,
+                shifts,
+                moved.flow_page,
+            );
+        } else if !candidate.context.is_float_descendant
+            && !is_floating_box_for_pagination(document, cascade, node_id)
+        {
+            let flow_top = moved.target_y - moved.relative_offset;
+            self.drop_edges_for_in_flow_candidate(
+                document,
+                cascade,
+                node_id,
+                body_id,
+                flow_top,
+                moved.moved_in_bounded_ancestor,
+            );
         }
     }
 
