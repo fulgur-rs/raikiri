@@ -9,7 +9,7 @@ use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
-use crate::taffy_impl::{fit_content_limit, resolve_calc};
+use crate::taffy_impl::{fit_content_room, resolve_calc};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::TextGroupAlign;
@@ -2206,23 +2206,14 @@ fn content_keyword_width(
 ) -> Option<OwnWidth> {
     let size = tree.layout_node_with_style(node).unwrap().style.size;
     let keyword = if horizontal { size.width } else { size.height };
-    // The limit of `fit-content(<length-percentage>)` is a size of the
-    // box-sizing box. A percentage against an indefinite size leaves `None`,
-    // which sizes the child like `auto`.
+    // A percentage against an indefinite size leaves no room, which sizes the
+    // child like `auto`.
     let basis = if horizontal {
         parent_size.width
     } else {
         parent_size.height
     };
-    let limit = fit_content_limit(keyword.expand(), basis).map(|limit| {
-        let edge_basis = basis.unwrap_or(0.0);
-        limit
-            + if horizontal {
-                box_sizing_adjustment(tree, node, edge_basis)
-            } else {
-                box_sizing_height_adjustment(tree, node, edge_basis)
-            }
-    });
+    let room = fit_content_room(tree, node, keyword.expand(), basis, horizontal);
     let mut measure = |along: AvailableSpace| {
         let (width, height) = if horizontal {
             (along, AvailableSpace::MaxContent)
@@ -2261,17 +2252,16 @@ fn content_keyword_width(
             min: measure(AvailableSpace::MinContent),
             max: measure(AvailableSpace::MaxContent),
         }),
-        // The limit stands in for the room the root leaves the child, so the
-        // width needs no room.
+        // The limit stands in for the room the root leaves the child.
         taffy::ExpandedDimension::FitContentPx(_)
         | taffy::ExpandedDimension::FitContentPercent(_)
-        | taffy::ExpandedDimension::FitContentCalc(_) => limit.map(|limit| {
+        | taffy::ExpandedDimension::FitContentCalc(_) => room.map(|room| {
             OwnWidth::Fixed(
                 OwnWidth::Fit {
                     min: measure(AvailableSpace::MinContent),
                     max: measure(AvailableSpace::MaxContent),
                 }
-                .at(limit),
+                .at(room),
             )
         }),
         _ => None,

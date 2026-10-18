@@ -6,7 +6,7 @@ mod positioned;
 mod sizing;
 
 use crate::layout::context::{LayoutSession, TextGroupScope};
-use crate::taffy_impl::{fit_content_limit, resolve_calc};
+use crate::taffy_impl::resolve_calc;
 use context::{BlockContext, BlockFormattingContext};
 use shodo::style::TextGroupAlign;
 use sizing::Metrics;
@@ -122,25 +122,16 @@ pub(crate) fn compute_block_flow(
         let minimum = intrinsic_width(tree, node, AvailableSpace::MinContent)
             + metrics.inset.horizontal_axis_sum();
         let fit = |limit: f32| maximum.min(limit).max(minimum);
-        let size = style.size.width.expand();
-        let room = || match inputs.available_space.width {
-            AvailableSpace::MaxContent => maximum,
-            AvailableSpace::MinContent => minimum,
-            AvailableSpace::Definite(limit) => fit(limit),
-        };
-        let width = match size {
+        let width = match style.size.width.expand() {
             taffy::ExpandedDimension::MinContent => minimum,
             taffy::ExpandedDimension::MaxContent => maximum,
-            // The limit of `fit-content(<length-percentage>)` is a size in
-            // the box-sizing box; a percentage that cannot resolve sizes the
-            // box like `auto`.
-            taffy::ExpandedDimension::FitContentPx(_)
-            | taffy::ExpandedDimension::FitContentPercent(_)
-            | taffy::ExpandedDimension::FitContentCalc(_) => {
-                fit_content_limit(size, inputs.parent_size.width)
-                    .map_or_else(room, |limit| fit(limit + metrics.adjustment.width))
-            }
-            _ => room(),
+            // `fit-content(<length-percentage>)` takes the room its limit
+            // makes, which `with_fit_content_room` offers before this runs.
+            _ => match inputs.available_space.width {
+                AvailableSpace::MaxContent => maximum,
+                AvailableSpace::MinContent => minimum,
+                AvailableSpace::Definite(limit) => fit(limit),
+            },
         };
         metrics.clamp_width(width)
     };

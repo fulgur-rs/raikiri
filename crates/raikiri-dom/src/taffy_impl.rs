@@ -88,10 +88,10 @@ pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
 /// the percentage `basis` of the containing block.
 ///
 /// `None` when `size` is not that function, or when its limit needs a basis
-/// that is indefinite: CSS Sizing 3 §5.2.1 treats such a cyclic percentage
-/// as the initial value (`auto`), so the box is sized as if it had no
-/// `fit-content()` at all.
-pub(crate) fn fit_content_limit(size: taffy::ExpandedDimension, basis: Option<f32>) -> Option<f32> {
+/// that is indefinite: a percentage that cannot resolve leaves the box with no
+/// limit, which CSS Sizing 3 §5.2.1 treats as the initial value, so the room
+/// its parent offers sizes it.
+fn fit_content_limit(size: taffy::ExpandedDimension, basis: Option<f32>) -> Option<f32> {
     let limit = match size {
         taffy::ExpandedDimension::FitContentPx(limit) => limit,
         taffy::ExpandedDimension::FitContentPercent(percent) => basis? * percent,
@@ -102,6 +102,31 @@ pub(crate) fn fit_content_limit(size: taffy::ExpandedDimension, basis: Option<f3
         _ => return None,
     };
     limit.is_finite().then_some(limit.max(0.0))
+}
+
+/// The border-box size that `fit-content(<length-percentage>)` offers the
+/// box `idx` to shrink to fit in, along the width when `horizontal` and the
+/// height otherwise; `None` when `size` is not that function or its limit
+/// cannot resolve (see [`fit_content_limit`]).
+///
+/// The limit is a size of the box-sizing box, so a `content-box` needs its
+/// padding and border added. Their percentages refer to the same `basis`, an
+/// indefinite one counting as zero as it does for the box's own edges.
+pub(crate) fn fit_content_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    size: taffy::ExpandedDimension,
+    basis: Option<f32>,
+    horizontal: bool,
+) -> Option<f32> {
+    let limit = fit_content_limit(size, basis)?;
+    let edge_basis = basis.unwrap_or(0.0);
+    let adjustment = if horizontal {
+        crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, edge_basis)
+    } else {
+        crate::layout::ifc::boxes::box_sizing_height_adjustment(tree, idx, edge_basis)
+    };
+    Some(limit + adjustment)
 }
 
 /// Resolve a padding or border length of an ifc root against the containing
@@ -1272,11 +1297,21 @@ fn measure_ifc_root(
     };
     // A fixed box shrinks to fit against its containing block, the page area
     // (CSS 2.1 10.1), while taffy hands it its parent's room. A min-content or
-    // max-content measure is not a room to fit, and is kept.
+    // max-content measure is not a room to fit, and is kept; so is the room
+    // that the limit of `fit-content(<length-percentage>)` makes.
     let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
+    let limited = tree.layout_node_with_style(idx).is_some_and(|node| {
+        matches!(
+            node.style.size.width.expand(),
+            taffy::ExpandedDimension::FitContentPx(_)
+                | taffy::ExpandedDimension::FitContentPercent(_)
+                | taffy::ExpandedDimension::FitContentCalc(_)
+        )
+    });
     let available = match page_width {
         Some(page_width)
             if fixed
+                && !limited
                 && !measure.stretched_width
                 && matches!(available.width, AvailableSpace::Definite(_)) =>
         {
@@ -2155,9 +2190,8 @@ fn flex_layout_sized(
 /// Offer a box sized by `fit-content(<length-percentage>)` its limit as the
 /// room it shrinks to fit in, whatever room its parent offers.
 ///
-/// The limit is a size of the box-sizing box, so a `content-box` needs its
-/// padding and border added. A percentage against an indefinite size leaves
-/// the room alone (see [`fit_content_limit`]).
+/// A limit that cannot resolve (see [`fit_content_room`]) leaves the room
+/// alone, so the box is sized by the room it is offered.
 fn with_fit_content_room(
     tree: &LayoutSession<'_>,
     idx: usize,
@@ -2169,14 +2203,10 @@ fn with_fit_content_room(
     let Some(node) = tree.layout_node_with_style(idx) else {
         return inputs;
     };
-    let Some(limit) = fit_content_limit(node.style.size.width.expand(), inputs.parent_size.width)
-    else {
-        return inputs;
-    };
-    let basis = inputs.parent_size.width.unwrap_or(0.0);
-    inputs.available_space.width = AvailableSpace::Definite(
-        limit + crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, basis),
-    );
+    let size = node.style.size.width.expand();
+    if let Some(room) = fit_content_room(tree, idx, size, inputs.parent_size.width, true) {
+        inputs.available_space.width = AvailableSpace::Definite(room);
+    }
     inputs
 }
 

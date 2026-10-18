@@ -11,9 +11,6 @@ pub(super) struct Metrics {
     pub padding: Rect<f32>,
     pub border: Rect<f32>,
     pub inset: Rect<f32>,
-    /// What a size of the box-sizing box needs added to become a border-box
-    /// size: the padding and border of a `content-box`, nothing otherwise.
-    pub adjustment: Size<f32>,
     pub scrollbar: Size<f32>,
     pub preferred: Size<Option<f32>>,
     pub min: Size<Option<f32>>,
@@ -91,7 +88,6 @@ impl Metrics {
             padding,
             border,
             inset,
-            adjustment,
             scrollbar,
             preferred,
             min,

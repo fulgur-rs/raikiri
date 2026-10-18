@@ -1195,6 +1195,24 @@ fn min_content_fixed_paragraphs_take_their_longest_word() {
 }
 
 #[test]
+fn fixed_paragraphs_take_the_limit_of_the_fit_content_function_as_their_box_size() {
+    // The limit is a size of the box-sizing box, so the padding of a
+    // `content-box` comes on top of it. Either way the lines wrap at the
+    // content width: two 100px words fit in 260px and in 300px.
+    for (box_sizing, width) in [("content-box", 340.0), ("border-box", 300.0)] {
+        let (doc, fixed) = laid_out_with_words(&format!(
+            "position:fixed;left:5px;top:6px;font:10px Ahem;padding:0 20px;\
+             box-sizing:{box_sizing};width:fit-content(300px)"
+        ));
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (5.0, 6.0, width, 50.0),
+            "{box_sizing}"
+        );
+    }
+}
+
+#[test]
 fn a_root_filter_does_not_contain_absolute_descendants() {
     for root_css in [
         "display:block;filter:blur(0)",
