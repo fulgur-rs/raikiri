@@ -6,7 +6,7 @@ mod positioned;
 mod sizing;
 
 use crate::layout::context::{LayoutSession, TextGroupScope};
-use crate::taffy_impl::resolve_calc;
+use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};
 use shodo::style::TextGroupAlign;
 use sizing::Metrics;
@@ -77,7 +77,15 @@ fn child_inputs(parent: Size<Option<f32>>, width: Option<f32>, run_mode: RunMode
     }
 }
 
-fn intrinsic_width(tree: &mut LayoutSession<'_>, node: NodeId, space: AvailableSpace) -> f32 {
+/// The width of the content of `node` under `space`. `percent_height` is the
+/// definite height of its content box, against which a child's percentage
+/// height resolves while the child's width is measured.
+fn intrinsic_width(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    space: AvailableSpace,
+    percent_height: Option<f32>,
+) -> f32 {
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut width = 0.0_f32;
     let mut floats = taffy::FloatIntrinsicWidthCalculator::new(space);
@@ -88,9 +96,16 @@ fn intrinsic_width(tree: &mut LayoutSession<'_>, node: NodeId, space: AvailableS
         {
             continue;
         }
-        let mut inputs = child_inputs(Size::NONE, None, RunMode::ComputeSize);
+        let parent_size = Size {
+            width: None,
+            height: percent_height,
+        };
+        let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
         inputs.available_space.width = space;
-        let measured = tree.compute_child_layout_with_block_ctx(child, inputs, None);
+        let measured =
+            measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
+                tree.compute_child_layout_with_block_ctx(child, inputs, None)
+            });
         let margin = style
             .margin
             .map(|edge| edge.resolve_to_option(0.0, resolve_calc).unwrap_or(0.0));
@@ -117,10 +132,18 @@ pub(crate) fn compute_block_flow(
     let width = if let Some(width) = metrics.preferred.width {
         width
     } else {
-        let maximum = intrinsic_width(tree, node, AvailableSpace::MaxContent)
-            + metrics.inset.horizontal_axis_sum();
-        let minimum = intrinsic_width(tree, node, AvailableSpace::MinContent)
-            + metrics.inset.horizontal_axis_sum();
+        let maximum = intrinsic_width(
+            tree,
+            node,
+            AvailableSpace::MaxContent,
+            metrics.percent_height,
+        ) + metrics.inset.horizontal_axis_sum();
+        let minimum = intrinsic_width(
+            tree,
+            node,
+            AvailableSpace::MinContent,
+            metrics.percent_height,
+        ) + metrics.inset.horizontal_axis_sum();
         let fit = |limit: f32| maximum.min(limit).max(minimum);
         let width = match style.size.width.expand() {
             taffy::ExpandedDimension::MinContent => minimum,
