@@ -5891,10 +5891,9 @@ fn paint_background_image(
     if continuous_y {
         pattern.sampler.y_extend = PenikoExtend::Repeat;
     }
-    // cov:ignore: defensive, background_tiles returns Some only with a tile in each axis
-    let (Some(&origin_x), Some(&origin_y)) = (tiles.x.first(), tiles.y.first()) else {
-        return;
-    };
+    // `background_tiles` returns a tile in each axis, so the fallback never applies.
+    let origin_x = tiles.x.first().copied().unwrap_or(painting.x0);
+    let origin_y = tiles.y.first().copied().unwrap_or(painting.y0);
     scene.push_clip_layer(Affine::IDENTITY, &painting);
     match (continuous_x, continuous_y) {
         (true, true) => scene.fill(
