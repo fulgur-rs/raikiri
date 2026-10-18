@@ -17681,6 +17681,14 @@ fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
         .find(|edge| edge.node == floater)
         .unwrap();
     assert_eq!((edge.side, edge.top, edge.bottom), (0, 140.0, 154.0));
+    // While that shift is pending, no other box is cleared or looks at the
+    // edges of its context.
+    assert!(clearance(&shifts, clearing, 130.0, 0.0).is_none());
+    assert!(shifts.edges_for(&doc, &cascade, clearing, body).is_none());
+    shifts.pending = None;
+    let (context, edges) = shifts.edges_for(&doc, &cascade, clearing, body).unwrap();
+    assert_eq!(context, body);
+    assert_eq!(edges.len(), 2);
 }
 
 #[test]

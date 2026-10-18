@@ -8489,7 +8489,7 @@ impl FloatShifts {
         let floor = if !floating && candidate.context.is_float_descendant {
             None
         } else {
-            float_floor(document, cascade, node_id, context, &edges, floating)
+            float_floor(document, cascade, node_id, context, edges, floating)
         };
         let margin_top = if floating {
             document.nodes[node_id].unrounded_layout.margin.top
@@ -8666,13 +8666,13 @@ impl FloatShifts {
         cascade: &CascadeResult,
         node_id: usize,
         body_id: usize,
-    ) -> Option<(usize, Vec<FloatEdge>)> {
+    ) -> Option<(usize, &[FloatEdge])> {
         (self.later != 0.0 && self.pending.is_none())
             .then(|| {
                 let context = float_context_root(document, cascade, node_id, body_id);
                 self.edges
                     .get(&context)
-                    .map(|edges| (context, edges.clone()))
+                    .map(|edges| (context, edges.as_slice()))
             })
             .flatten()
     }
