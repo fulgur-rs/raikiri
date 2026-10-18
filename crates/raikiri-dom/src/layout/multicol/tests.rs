@@ -1979,6 +1979,50 @@ fn containers_with_content_or_replaced_children_keep_other_strategies() {
 }
 
 #[test]
+fn only_a_relative_leaf_block_keeps_its_insets_in_the_stream() {
+    let supported = |child: &str| {
+        let (doc, parent, _) = lineless_fixture(
+            "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+            &[child],
+        );
+        lineless::supported(&doc, parent, true).is_some()
+    };
+    assert!(supported(
+        "display:block;height:50px;position:relative;left:5px"
+    ));
+    assert!(supported(
+        "display:block;height:50px;position:relative;left:5px;right:-5px"
+    ));
+    // The painter adds the offset of a relative box only.
+    assert!(!supported(
+        "display:block;height:50px;position:sticky;left:5px"
+    ));
+    // A block-axis offset moves the box across pages, which pagination
+    // measures from the location the columns gave it.
+    assert!(!supported(
+        "display:block;height:50px;position:relative;top:5px"
+    ));
+    assert!(!supported(
+        "display:block;height:50px;position:relative;bottom:5px"
+    ));
+}
+
+#[test]
+fn a_relative_containing_block_with_insets_keeps_other_strategies() {
+    let supported = |block: &str| {
+        let (doc, parent, _) = absolute_fixture(
+            DEFINITE_COLUMNS,
+            &[(block, &["position:absolute;top:0;width:10px;height:20px"])],
+        );
+        lineless::supported(&doc, parent, true).is_some()
+    };
+    assert!(supported("display:block;position:relative;height:50px"));
+    assert!(!supported(
+        "display:block;position:relative;left:5px;height:50px"
+    ));
+}
+
+#[test]
 fn an_orthogonal_block_without_lines_is_not_sliced() {
     let (doc, _, children) = lineless_fixture(
         "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
@@ -3805,6 +3849,11 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     assert!(paragraphs(
         "display:block;margin:0 4px;padding-left:2px;border-right:2px solid"
     ));
+    // A relative offset is taken out of the column location, so the planner
+    // can place the paragraph.
+    assert!(paragraphs(
+        "display:block;margin:0;position:relative;left:10px;right:-10px"
+    ));
     for style in [
         "display:grid",
         "display:list-item",
@@ -3818,7 +3867,8 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;margin-top:20px",
         "display:block;margin-bottom:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
-        "display:block;margin:0;position:relative;left:10px",
+        "display:block;margin:0;position:sticky;left:10px",
+        "display:block;margin:0;position:relative;top:5px",
     ] {
         assert!(!paragraphs(style), "{style}");
     }
