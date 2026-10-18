@@ -1134,13 +1134,12 @@ fn margin_box_spec(
         TextAlign::Left => StandaloneAlign::Left,
         _ => StandaloneAlign::Start,
     };
-    // `top`/`bottom` are margin-box-specific keywords and are not yet part of
-    // the element `vertical-align` grammar.  Treat the supported explicit
-    // `text-top`/`text-bottom` values as their corresponding placement, and
-    // every other value as the top placement.
+    // Only `top`, `middle` and `bottom` place the text within the box. Table
+    // cells treat the baseline-relative keywords as their top placement, and
+    // `text-bottom` is kept as an alias of `bottom`.
     let vertical_align = match style.vertical_align {
-        VerticalAlign::TextBottom => MarginTextVerticalAlign::Bottom,
         VerticalAlign::Middle => MarginTextVerticalAlign::Middle,
+        VerticalAlign::Bottom | VerticalAlign::TextBottom => MarginTextVerticalAlign::Bottom,
         _ => MarginTextVerticalAlign::Top,
     };
     let mut text_style = text_style(font_size, &style.font_family);

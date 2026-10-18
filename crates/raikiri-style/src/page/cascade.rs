@@ -15,7 +15,8 @@ use crate::media::MediaContext;
 use crate::property::{
     BackgroundImage, BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, CssColor,
     CustomProperty, Direction, Length, LengthPercentageOrCalc, OutlineStyle, OverflowValue,
-    OverflowXY, PropertyKey, PropertyValue, Sides, TextOrientation, WritingMode,
+    OverflowXY, PropertyKey, PropertyValue, Sides, TextAlign, TextOrientation, VerticalAlign,
+    WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -498,7 +499,7 @@ impl PageCascadeResult {
     ///   root element's computed font-size, so **no relative font-size
     ///   sentinel** reaches the consumer either — same guarantee as the
     ///   `font-weight` bullet above.
-    /// - `text-align` — [`TextAlign::MatchParent`](crate::property::TextAlign::MatchParent)
+    /// - `text-align` — [`TextAlign::MatchParent`]
     ///   is resolved against the inheritance parent's computed `text-align`
     ///   **and** `direction`. CSS Text 3 §6.1
     ///   `#valdef-text-align-match-parent`
@@ -858,6 +859,10 @@ impl PageCascadeResult {
     /// computed over the page context, which is the margin context's
     /// inheritance parent (CSS Paged Media 3 §6).
     ///
+    /// The box starts from the user agent's default `text-align` and
+    /// `vertical-align` for its slot, which the rule's own declarations
+    /// override.
+    ///
     /// `normal_line_height` measures `line-height: normal` for the `lh`
     /// unit; see [`crate::CascadeResult::margin_box_style`].
     pub fn margin_box_style(
@@ -870,11 +875,23 @@ impl PageCascadeResult {
             context: ResolveContext::new(ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)),
         });
         let page = self.page_style.as_deref().unwrap_or(&INITIAL_PAGE_STYLE);
+        let (text_align, vertical_align) = margin_box_default_alignment(rule.slot);
+        // The slot defaults stand in for rules of the UA default style sheet,
+        // so every declaration of the rule itself is applied after them.
+        let slot_defaults = [
+            PropertyValue::TextAlign(text_align),
+            PropertyValue::VerticalAlign(vertical_align),
+        ];
         computed_over(
             &page.computed,
-            rule.declarations
-                .iter()
-                .map(|declaration| ComputedOverValue::Specified(declaration.value.clone())),
+            slot_defaults
+                .into_iter()
+                .chain(
+                    rule.declarations
+                        .iter()
+                        .map(|declaration| declaration.value.clone()),
+                )
+                .map(ComputedOverValue::Specified),
             &page.context,
             normal_line_height,
         )
@@ -1872,6 +1889,31 @@ pub(crate) fn cascade_page_with_normal_line_height(
         margin_boxes,
         margin_box_inheritance,
         page_style,
+    }
+}
+
+/// The `text-align` and `vertical-align` the user agent gives a margin box of
+/// `slot` before any author declaration applies.
+///
+/// CSS Paged Media 3 "Page-margin boxes and default values"
+/// (<https://www.w3.org/TR/css-page-3/#margin-text-alignment>), Table 2: user
+/// agents "must behave as though the values in the following table were
+/// established by rules in the UA default style sheet". The corner boxes
+/// align their text towards the page content (`right` in the left corners,
+/// `left` in the right ones), the top and bottom boxes left, centre and right
+/// align theirs, and the boxes on the left and right sides centre it,
+/// placing it at the top, middle or bottom of the strip.
+fn margin_box_default_alignment(slot: PageMarginBoxSlot) -> (TextAlign, VerticalAlign) {
+    use PageMarginBoxSlot::*;
+    match slot {
+        TopLeftCorner | BottomLeftCorner => (TextAlign::Right, VerticalAlign::Middle),
+        TopRightCorner | BottomRightCorner => (TextAlign::Left, VerticalAlign::Middle),
+        TopLeft | BottomLeft => (TextAlign::Left, VerticalAlign::Middle),
+        TopRight | BottomRight => (TextAlign::Right, VerticalAlign::Middle),
+        TopCenter | BottomCenter => (TextAlign::Center, VerticalAlign::Middle),
+        LeftTop | RightTop => (TextAlign::Center, VerticalAlign::Top),
+        LeftMiddle | RightMiddle => (TextAlign::Center, VerticalAlign::Middle),
+        LeftBottom | RightBottom => (TextAlign::Center, VerticalAlign::Bottom),
     }
 }
 

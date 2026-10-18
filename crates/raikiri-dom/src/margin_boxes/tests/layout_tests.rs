@@ -731,13 +731,14 @@ fn border_longhands_override_the_shorthand_and_skip_unsupported_styles() {
 }
 
 #[test]
-fn margin_boxes_inherit_page_fonts_and_text_align() {
+fn margin_boxes_inherit_page_fonts_and_an_explicitly_inherited_text_align() {
     // `vertical-align` is not inherited, so the page's value does not reach
     // the box.
     let boxes = boxes_for(
         "@page { margin: 40px; font-family: Ahem; font-size: 20px; text-align: center; \
            vertical-align: text-top; \
-           @top-left { content: 'ab'; font-size: 50%; vertical-align: text-bottom } }",
+           @top-left { content: 'ab'; font-size: 50%; text-align: inherit; \
+                       vertical-align: text-bottom } }",
     );
     let [margin_box] = boxes.as_slice() else {
         panic!("one box: {boxes:?}");
@@ -750,6 +751,150 @@ fn margin_boxes_inherit_page_fonts_and_text_align() {
     assert_eq!(y, 30.0);
     let glyphs = glyph_positions(text);
     assert_eq!(glyphs[0].0, 40.0 + 150.0);
+}
+
+/// The `text-align` and `vertical-align` the spec's default table gives each
+/// slot, by at-rule name.
+const SLOT_DEFAULT_ALIGNMENT: [(&str, StandaloneAlign, MarginTextVerticalAlign); 16] = {
+    use MarginTextVerticalAlign::{Bottom, Middle, Top};
+    use StandaloneAlign::{Center, Left, Right};
+    [
+        ("top-left-corner", Right, Middle),
+        ("top-left", Left, Middle),
+        ("top-center", Center, Middle),
+        ("top-right", Right, Middle),
+        ("top-right-corner", Left, Middle),
+        ("right-top", Center, Top),
+        ("right-middle", Center, Middle),
+        ("right-bottom", Center, Bottom),
+        ("bottom-right-corner", Left, Middle),
+        ("bottom-right", Right, Middle),
+        ("bottom-center", Center, Middle),
+        ("bottom-left", Left, Middle),
+        ("bottom-left-corner", Right, Middle),
+        ("left-bottom", Center, Bottom),
+        ("left-middle", Center, Middle),
+        ("left-top", Center, Top),
+    ]
+};
+
+fn alignment_of(rule_css: &str) -> (StandaloneAlign, MarginTextVerticalAlign) {
+    let (doc, cascade) = page_cascade_fixture(rule_css);
+    let slot = cascade.page.margin_boxes().first().unwrap().slot;
+    let rule = cascade.page.cascade_margin_box(slot).unwrap();
+    let spec = margin_box_spec(
+        &doc,
+        &cascade,
+        &cascade.page,
+        &rule,
+        100.0,
+        40.0,
+        MarginBoxPageContext::new(0, 1, false),
+        &MarginBoxNamedValues::new(),
+    )
+    .unwrap();
+    (spec.alignment, spec.vertical_align)
+}
+
+#[test]
+fn every_slot_starts_from_its_default_alignment_whatever_the_page_sets() {
+    for (slot, text_align, vertical_align) in SLOT_DEFAULT_ALIGNMENT {
+        // The page's own `text-align` is inherited, but the defaults act as
+        // UA style sheet rules on the margin box itself.
+        for page_rule in ["", "text-align: justify; vertical-align: text-bottom;"] {
+            assert_eq!(
+                alignment_of(&format!(
+                    "@page {{ {page_rule} @{slot} {{ content: 'a' }} }}"
+                )),
+                (text_align, vertical_align),
+                "{slot} {page_rule}"
+            );
+        }
+    }
+}
+
+#[test]
+fn author_alignment_overrides_the_slot_default() {
+    use MarginTextVerticalAlign::{Bottom, Middle, Top};
+    use StandaloneAlign::{Center, Left, Right};
+    let top_left = |declarations: &str| {
+        alignment_of(&format!(
+            "@page {{ text-align: right; @top-left {{ content: 'a'; {declarations} }} }}"
+        ))
+    };
+    assert_eq!(top_left(""), (Left, Middle));
+    assert_eq!(top_left("text-align: center"), (Center, Middle));
+    assert_eq!(top_left("text-align: inherit"), (Right, Middle));
+    assert_eq!(top_left("vertical-align: top"), (Left, Top));
+    assert_eq!(top_left("vertical-align: bottom"), (Left, Bottom));
+    assert_eq!(top_left("vertical-align: text-bottom"), (Left, Bottom));
+    // Anything but `middle` and the bottom keywords places the text at the top.
+    assert_eq!(top_left("vertical-align: baseline"), (Left, Top));
+    assert_eq!(top_left("vertical-align: text-top"), (Left, Top));
+    assert_eq!(top_left("vertical-align: 5px"), (Left, Top));
+    // A rule that follows a lower-priority duplicate still wins over the
+    // defaults.
+    assert_eq!(
+        alignment_of(
+            "@page { @right-top { content: 'a'; vertical-align: middle } \
+               @right-top { text-align: right } }"
+        ),
+        (Right, Middle)
+    );
+}
+
+#[test]
+fn top_boxes_align_their_text_along_the_strip_by_default() {
+    // Three 100px boxes sit at the start, the middle and the end of the 320px
+    // strip, and each text run is 10px wide.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'a'; width: 100px }} \
+           @top-center {{ content: 'b'; width: 100px }} \
+           @top-right {{ content: 'c'; width: 100px }} }}"
+    ));
+    let runs: Vec<_> = boxes
+        .iter()
+        .map(|margin_box| {
+            (
+                margin_box.slot,
+                margin_box.rect.x,
+                margin_box.text_runs()[0].origin,
+            )
+        })
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            (PageMarginBoxSlot::TopLeft, 40.0, (40.0, 23.0)),
+            (PageMarginBoxSlot::TopCenter, 150.0, (195.0, 23.0)),
+            (PageMarginBoxSlot::TopRight, 260.0, (350.0, 23.0)),
+        ]
+    );
+}
+
+#[test]
+fn side_boxes_centre_their_text_and_stack_it_from_top_to_bottom_by_default() {
+    // The three 73.33px tall boxes of a side share the strip, and the 10px
+    // line is centred across their 40px width.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @left-top {{ content: 'a' }} @left-middle {{ content: 'b' }} \
+           @left-bottom {{ content: 'c' }} @right-top {{ content: 'd' }} }}"
+    ));
+    let runs: Vec<_> = boxes
+        .iter()
+        .map(|margin_box| (margin_box.slot, margin_box.text_runs()[0].origin))
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            (PageMarginBoxSlot::LeftTop, (15.0, 48.0)),
+            (PageMarginBoxSlot::LeftMiddle, (15.0, 145.0 + 8.0)),
+            (PageMarginBoxSlot::LeftBottom, (15.0, 250.0 + 8.0)),
+            (PageMarginBoxSlot::RightTop, (375.0, 48.0)),
+        ]
+    );
 }
 
 #[test]
