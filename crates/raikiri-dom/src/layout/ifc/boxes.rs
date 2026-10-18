@@ -1586,7 +1586,9 @@ fn layout_block_child(
     }
     let mut margin = resolved_margins(tree, node, geometry.width);
     let stretch = (geometry.width - margin.left - margin.right).max(0.0);
-    let width = used_block_width(tree, node, geometry.width).unwrap_or(stretch);
+    let width = used_block_width(tree, node, geometry.width)
+        .or_else(|| min_content_extent(tree, node, true, parent_size_of(&geometry)))
+        .unwrap_or(stretch);
     let width = clamp_block_width(tree, node, geometry.width, width);
     // `auto` side margins share the room the block leaves (CSS 2.1 10.3.3),
     // as in taffy's block algorithm: both auto centre the block, one auto
@@ -1779,7 +1781,12 @@ fn layout_vertical_block_child(
     let block_start = y + pending.collapse_with_margin(block_start_margin).resolve();
     let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis)
         .map(|width| clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width));
+    let parent_size = Size {
+        width: Some(geometry.content_size.width),
+        height: Some(inline_basis),
+    };
     let height = used_block_height(tree, node, inline_basis)
+        .or_else(|| min_content_extent(tree, node, false, parent_size))
         .unwrap_or_else(|| (inline_basis - margin.top - margin.bottom).max(0.0));
     let height = clamp_block_height(tree, node, inline_basis, height);
     let inputs = LayoutInput {
@@ -1798,10 +1805,7 @@ fn layout_vertical_block_child(
             width: width.is_some(),
             height: true,
         },
-        parent_size: Size {
-            width: Some(geometry.content_size.width),
-            height: Some(inline_basis),
-        },
+        parent_size,
         available_space: Size {
             width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
             height: AvailableSpace::Definite(height),
@@ -1897,7 +1901,8 @@ fn layout_formatting_context_child(
     let margin = resolved_margins(tree, node, geometry.width);
     let style_margin = tree.layout_node_with_style(node).unwrap().style.margin;
     let clear = tree.layout_node_with_style(node).unwrap().style.clear;
-    let own_width = used_block_width(tree, node, geometry.width);
+    let own_width = used_block_width(tree, node, geometry.width)
+        .or_else(|| min_content_extent(tree, node, true, parent_size_of(&geometry)));
     let x_margins = margin.left + margin.right;
     let top_margin = pending.collapse_with_margin(margin.top);
     let hypothetical = if collapse_top {
@@ -2039,6 +2044,57 @@ fn layout_formatting_context_child(
         top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
     }
+}
+
+/// The size of the root's content box that a horizontal block child's
+/// percentages resolve against.
+fn parent_size_of(geometry: &FlowGeometry) -> Size<Option<f32>> {
+    Size {
+        width: Some(geometry.width),
+        height: geometry.definite_height,
+    }
+}
+
+/// The border-box size of the block child `node` along the physical axis its
+/// `min-content` keyword sizes, measured the way the parent's block algorithm
+/// measures such a child (CSS Sizing 3 §5.1); `None` when the size there is
+/// not that keyword. `horizontal` names the width; otherwise it is the
+/// height, the inline size of a vertical root's children.
+fn min_content_extent(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    horizontal: bool,
+    parent_size: Size<Option<f32>>,
+) -> Option<f32> {
+    let size = tree.layout_node_with_style(node).unwrap().style.size;
+    let keyword = if horizontal { size.width } else { size.height };
+    if !matches!(keyword.expand(), taffy::ExpandedDimension::MinContent) {
+        return None;
+    }
+    let (width, height) = if horizontal {
+        (AvailableSpace::MinContent, AvailableSpace::MaxContent)
+    } else {
+        (AvailableSpace::MaxContent, AvailableSpace::MinContent)
+    };
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size,
+        available_space: Size { width, height },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let output = tree.compute_child_layout_with_block_ctx(taffy::NodeId::from(node), inputs, None);
+    Some(if horizontal {
+        output.size.width
+    } else {
+        output.size.height
+    })
 }
 
 /// The border-box width a block child's own `width` gives, resolved against
