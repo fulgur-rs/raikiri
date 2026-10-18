@@ -2167,39 +2167,33 @@ fn build_page_fragments(
     (pages, flow_axis)
 }
 
-pub(crate) fn project_slices_with_control(
+struct CollectedPageFragmentSources {
+    nodes: Vec<PageFragmentSource>,
+    text_roots: Vec<ProjectedTextRoot>,
+    placement_overflow_clips: Vec<PlacementOverflowClipSource>,
+    repeated_placement_nodes: HashSet<usize>,
+    paragraph_cache: ParagraphCache,
+}
+
+struct ProjectionVisit {
+    node: usize,
+    parent_origin: (f32, f32),
+    repeat: bool,
+    fragment: Option<usize>,
+    fragment_origin: (f32, f32),
+    is_fragment_visit: bool,
+    fragment_clip: Option<PaintRect>,
+    overflow_chain: Option<usize>,
+    paragraph_column: Option<(usize, usize)>,
+}
+
+fn collect_page_fragment_sources(
     document: &Document,
     cascade: &CascadeResult,
-    page_box: PageBox,
-    slices: &[PageSlice],
-    page_geometries: &[PageFragmentPageGeometry],
-    control: &PageLayoutControl<'_>,
-) -> Result<ProjectedSlices, LayoutError> {
-    let (mut pages, flow_axis) =
-        build_page_fragments(document, cascade, page_box, slices, page_geometries);
-
-    let mut work = ProjectionWork::new(
-        control,
-        document.fragment_tree.work_limit(document.nodes.len()),
-    );
-    work.check()?;
+    body_id: usize,
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<CollectedPageFragmentSources, LayoutError> {
     let mut text_roots = Vec::new();
-    // A root with `display: none` generates no boxes, so its pages carry no
-    // fragments, text, or links.
-    let root_generates_box = BoxPropertiesRef::from_computed(cascade.root_element_computed())
-        .display()
-        != DisplayValue::None;
-    let Some(body_id) = find_body(document).filter(|_| root_generates_box) else {
-        return Ok((
-            pages,
-            text_roots,
-            BTreeMap::new(),
-            Vec::new(),
-            ParagraphCache::new(),
-            work.remaining(),
-        ));
-    };
-
     // Collect absolute post-pagination coordinates.  The arena index is the
     // stable NodeId projection used by `raikiri_traits::Dom`; sorting by it
     // reproduces fulgur's deterministic BTreeMap iteration order regardless of
@@ -2238,17 +2232,6 @@ pub(crate) fn project_slices_with_control(
         }
     }
     let mut placement_overflow_clips = Vec::new();
-    struct ProjectionVisit {
-        node: usize,
-        parent_origin: (f32, f32),
-        repeat: bool,
-        fragment: Option<usize>,
-        fragment_origin: (f32, f32),
-        is_fragment_visit: bool,
-        fragment_clip: Option<PaintRect>,
-        overflow_chain: Option<usize>,
-        paragraph_column: Option<(usize, usize)>,
-    }
     let mut stack = vec![ProjectionVisit {
         node: super::initial_containing_block::root_element(document).unwrap_or(body_id),
         parent_origin: (0.0, 0.0),
@@ -2463,7 +2446,7 @@ pub(crate) fn project_slices_with_control(
                     cascade,
                     root_id,
                     column.unwrap_or(0),
-                    &mut work,
+                    work,
                 )?);
             }
             let prepared = &paragraph_cache[&root_id];
@@ -2678,6 +2661,54 @@ pub(crate) fn project_slices_with_control(
         }
     }
     nodes.sort_by_key(|node| node.node_id);
+    Ok(CollectedPageFragmentSources {
+        nodes,
+        text_roots,
+        placement_overflow_clips,
+        repeated_placement_nodes,
+        paragraph_cache,
+    })
+}
+
+pub(crate) fn project_slices_with_control(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+    page_geometries: &[PageFragmentPageGeometry],
+    control: &PageLayoutControl<'_>,
+) -> Result<ProjectedSlices, LayoutError> {
+    let (mut pages, flow_axis) =
+        build_page_fragments(document, cascade, page_box, slices, page_geometries);
+
+    let mut work = ProjectionWork::new(
+        control,
+        document.fragment_tree.work_limit(document.nodes.len()),
+    );
+    work.check()?;
+    let text_roots = Vec::new();
+    // A root with `display: none` generates no boxes, so its pages carry no
+    // fragments, text, or links.
+    let root_generates_box = BoxPropertiesRef::from_computed(cascade.root_element_computed())
+        .display()
+        != DisplayValue::None;
+    let Some(body_id) = find_body(document).filter(|_| root_generates_box) else {
+        return Ok((
+            pages,
+            text_roots,
+            BTreeMap::new(),
+            Vec::new(),
+            ParagraphCache::new(),
+            work.remaining(),
+        ));
+    };
+
+    let collected = collect_page_fragment_sources(document, cascade, body_id, &mut work)?;
+    let mut nodes = collected.nodes;
+    let text_roots = collected.text_roots;
+    let placement_overflow_clips = collected.placement_overflow_clips;
+    let repeated_placement_nodes = collected.repeated_placement_nodes;
+    let paragraph_cache = collected.paragraph_cache;
     restore_crossing_tops(document, &mut nodes, &pages);
 
     place_sources(document, &nodes, &mut pages, flow_axis, &mut work)?;
