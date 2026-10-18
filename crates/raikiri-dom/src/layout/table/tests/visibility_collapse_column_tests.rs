@@ -711,6 +711,125 @@ fn a_border_only_a_collapsed_column_gives_the_rows_is_not_counted_twice() {
     assert_eq!(measured, 40.0);
 }
 
+/// The height of the table `rows` make with its middle column collapsed. The
+/// table must lay out as it does with the column in place: the same height,
+/// and the last row starting at the same place.
+fn height_of_a_table_that_lays_out_like_the_uncollapsed_one(rows: &[Row]) -> f32 {
+    let laid_out = |columns: &[&'static str]| {
+        let (doc, table, cells) = laid_out_rows("table-layout:fixed", 120, columns, rows);
+        let last = cells.last().expect("a last row")[0];
+        (
+            doc.nodes[table].unrounded_layout.size.height,
+            crate::layout::test_support::absolute_rect(&doc, last).1,
+        )
+    };
+    let collapsed = laid_out(&[COL, COLLAPSED_COL, COL]);
+    assert_eq!(collapsed, laid_out(&[COL, COL, COL]));
+    collapsed.0
+}
+
+#[test]
+fn borders_on_both_sides_of_a_row_line_that_only_a_collapsed_column_has_overlap() {
+    // With the column in place its two cells share the line between the rows:
+    // the bottom border of the one above and the top border of the one below
+    // are one 20px line. The rows that remain have no such line, but the rows
+    // keep the heights those cells gave them, so the line is still counted
+    // once and not twice.
+    let rows: [Row; 2] = [
+        (
+            "",
+            &[
+                ("", "X"),
+                ("border-bottom:20px solid black", "X"),
+                ("", "X"),
+            ],
+        ),
+        (
+            "",
+            &[("", "X"), ("border-top:20px solid black", "X"), ("", "X")],
+        ),
+    ];
+    assert_eq!(
+        height_of_a_table_that_lays_out_like_the_uncollapsed_one(&rows),
+        40.0
+    );
+}
+
+#[test]
+fn the_wider_border_of_a_row_line_only_a_collapsed_column_has_is_the_line() {
+    // The line is as wide as the wider of the two borders that meet there.
+    let rows: [Row; 2] = [
+        (
+            "",
+            &[
+                ("", "X"),
+                ("border-bottom:20px solid black", "X"),
+                ("", "X"),
+            ],
+        ),
+        (
+            "",
+            &[("", "X"), ("border-top:10px solid black", "X"), ("", "X")],
+        ),
+    ];
+    assert_eq!(
+        height_of_a_table_that_lays_out_like_the_uncollapsed_one(&rows),
+        40.0
+    );
+}
+
+#[test]
+fn a_row_line_a_collapsed_column_shares_is_wider_than_the_one_the_other_columns_share() {
+    // The cells beside the collapsed column share a 5px line; the collapsed
+    // column's cells share a 20px one, which sets the overlap of the rows.
+    let rows: [Row; 2] = [
+        (
+            "",
+            &[
+                ("border-bottom:5px solid black", "X"),
+                ("border-bottom:20px solid black", "X"),
+                ("", "X"),
+            ],
+        ),
+        (
+            "",
+            &[
+                ("border-top:5px solid black", "X"),
+                ("border-top:20px solid black", "X"),
+                ("", "X"),
+            ],
+        ),
+    ];
+    assert_eq!(
+        height_of_a_table_that_lays_out_like_the_uncollapsed_one(&rows),
+        40.0
+    );
+}
+
+#[test]
+fn a_collapsed_row_between_the_rows_a_collapsed_column_gives_a_line_leaves_that_line() {
+    // The rows around a collapsed row meet at the line their cells share.
+    let rows: [Row; 3] = [
+        (
+            "",
+            &[
+                ("", "X"),
+                ("border-bottom:20px solid black", "X"),
+                ("", "X"),
+            ],
+        ),
+        (COLLAPSED_ROW, &[("", "X"), ("", "X"), ("", "X")]),
+        (
+            "",
+            &[("", "X"), ("border-top:20px solid black", "X"), ("", "X")],
+        ),
+    ];
+    assert_eq!(
+        height_of_a_table_that_lays_out_like_the_uncollapsed_one(&rows),
+        40.0
+    );
+}
+
 #[test]
 fn a_collapsed_row_stays_out_of_the_borders_measured_with_the_columns_in_place() {
     // The collapsed row's wide border never takes part in resolution, so it
