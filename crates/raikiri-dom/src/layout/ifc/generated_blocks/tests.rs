@@ -832,3 +832,102 @@ fn the_lines_of_a_formatting_root_block_beside_a_float_are_not_moved_below_it() 
     assert_eq!(line_starts(&lines), [20.0, 20.0]);
     assert_eq!(blocks[0].border_box, rect(20.0, 0.0, 40.0, 20.0));
 }
+
+#[test]
+fn a_formatting_root_block_before_goes_beside_a_float_on_either_side() {
+    let before = |css: &str, float_css: &str| {
+        let (lines, blocks) = placed_after_floats(
+            &format!("div::before {{ content: 'XXX'; display: flow-root; {css} }}"),
+            TEN_PX,
+            &[float_css],
+            "A",
+        );
+        (line_starts(&lines), blocks[0].border_box)
+    };
+    // The float comes after the `::before` in the paragraph, so the box is
+    // where it was and the text after it goes beside the float.
+    assert_eq!(
+        before("width: 40px", FLOAT_20X30),
+        ([0.0, 20.0].to_vec(), rect(0.0, 0.0, 40.0, 10.0))
+    );
+    // A right float takes the room on the end side only.
+    let (lines, blocks) = placed_after_floats(
+        "div::after { content: 'XXX'; display: flow-root }",
+        TEN_PX,
+        &["float: right; width: 30px; height: 30px"],
+        "",
+    );
+    assert_eq!(line_starts(&lines), [0.0]);
+    assert_eq!(blocks[0].border_box, rect(0.0, 0.0, 70.0, 10.0));
+}
+
+#[test]
+fn a_formatting_root_block_beside_a_float_resolves_its_width_in_the_room_left() {
+    let width = |css: &str| block_after_float("flow-root", css, TEN_PX).1.width;
+    // Percentages are of the paragraph, not of the room beside the float.
+    assert_eq!(width("width: 50%"), 50.0);
+    assert_eq!(
+        width("width: 50%; box-sizing: border-box; padding: 0 5px"),
+        50.0
+    );
+    assert_eq!(width("width: 50%; padding: 0 5px"), 60.0);
+    // An `auto` width takes the room left, within its minimum and maximum.
+    assert_eq!(width("max-width: 50px"), 50.0);
+    assert_eq!(width("min-width: 70px"), 80.0);
+    // Too wide a minimum width puts the box below the float, where an `auto`
+    // width takes the whole paragraph.
+    assert_eq!(width("min-width: 90px"), 100.0);
+}
+
+/// The block `::before` of `css` before a paragraph that follows a sibling
+/// float styled `float_css`: the left edge and top of its border box.
+fn before_after_sibling_float(css: &str, float_css: &str) -> (f32, f32) {
+    let (mut doc, _, _, root) =
+        crate::layout::test_support::ahem_paragraph_beside_floats("A", &[float_css], "");
+    let style_element = doc.append_element(
+        Some(root),
+        "style",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    doc.append_text(
+        style_element,
+        format!("div > div:last-child::before {{ content: 'XXX'; display: flow-root; {css} }}"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let lines = doc.nodes[root]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("lines");
+    let [block] = lines.placed_blocks.as_slice() else {
+        panic!("one placed block: {:?}", lines.placed_blocks)
+    };
+    (block.border_box.x, block.border_box.y)
+}
+
+#[test]
+fn a_float_adjoining_the_margins_above_a_formatting_root_block_moves_with_them() {
+    // The float and the margin that escapes above the box go down together,
+    // so the box is beside the float, whatever the margin, and the layout
+    // settles where it would otherwise move the float and the box in turn.
+    for margin in ["0", "10px", "40px", "-10px"] {
+        assert_eq!(
+            before_after_sibling_float(&format!("width: 40px; margin-top: {margin}"), FLOAT_20X30)
+                .0,
+            20.0,
+            "margin-top: {margin}"
+        );
+    }
+    // A box too wide for the room beside the float goes below it.
+    for margin in ["10px", "40px"] {
+        assert_eq!(
+            before_after_sibling_float(&format!("width: 90px; margin-top: {margin}"), FLOAT_20X30),
+            (0.0, 30.0),
+            "margin-top: {margin}"
+        );
+    }
+}

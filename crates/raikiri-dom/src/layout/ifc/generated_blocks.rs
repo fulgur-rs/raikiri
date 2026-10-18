@@ -701,12 +701,16 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         .filter(|&clear_y| flow.ctx.has_adjoining_float(block.clear) || hypothetical < clear_y);
     // A box that establishes a formatting context keeps clear of the floats
     // before it: it goes beside them where it fits, else it is pushed below
-    // them like clearance, taking its margins out of the collapse.
-    let top_bound = clearance.unwrap_or(hypothetical);
+    // them, which like clearance takes its margins out of the collapse. A
+    // float adjoining the margins that escape above the box moves with them,
+    // so the box is first tried beside that float without its margin.
+    let adjoining = escapes && flow.ctx.has_adjoining_float(taffy::Clear::Both);
+    let top_bound = clearance.unwrap_or(if adjoining { *flow.y } else { hypothetical });
     let beside = block
         .formatting_root
         .then(|| block.beside_floats(&flow, &margins, &edges, top_bound))
         .flatten();
+    let cleared = clearance.is_some();
     let clearance = beside
         .as_ref()
         .map(|beside| beside.top)
@@ -739,7 +743,14 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         flow_top,
         top_set,
         starts_paragraph: flow.at_start,
-        has_clearance: clearance.is_some(),
+        // Margins that escape above the paragraph move the floats that adjoin
+        // them, so whether they escape cannot depend on where those floats
+        // are: the layout would not settle.
+        has_clearance: if escapes {
+            cleared
+        } else {
+            clearance.is_some()
+        },
         consumed: 0.0,
         inline,
         rtl: flow.rtl,
