@@ -215,10 +215,7 @@ impl ParagraphProjection {
             .ifc
             .as_ref()
             .is_some_and(|root| root.multicol_fragment_origins_recorded);
-        let LineColumns {
-            column: line_columns,
-            origin: column_origins,
-        } = LineColumns::new(ranges, count, fallback_column, origins_recorded);
+        let columns = LineColumns::new(ranges, count, fallback_column, origins_recorded);
         let mut result = Self {
             combined: ColumnProjection::default(),
             columns: HashMap::new(),
@@ -233,134 +230,16 @@ impl ParagraphProjection {
         };
         let pieces = node.ifc_inline_boxes().unwrap_or_default();
         let split = split_inline_elements(document, cascade, root, node, &pieces);
-        // A block-level `::before` or `::after` paints its own box; its
-        // pieces on the lines only hold its text.
-        let blocks = node.ifc_generated_block_pieces();
-        let block_nodes: HashSet<usize> = blocks.iter().map(|block| block.node).collect();
-        // Only `::before` and `::after` are laid out as blocks.
-        let kinds = blocks
-            .into_iter()
-            .filter_map(|block| generated_kind(block.node).map(|kind| (block, kind)));
-        for (block, (owner, kind)) in kinds {
-            work.check()?;
-            let visible = block.border_box.width > 0.0
-                && block.border_box.height > 0.0
-                && crate::generated_content::computed_for_id(cascade, block.node).is_some_and(
-                    |style| style.visibility == raikiri_style::property::Visibility::Visible,
-                );
-            if !visible {
-                continue;
-            }
-            result.generated.push((
-                owner,
-                Some(kind),
-                crate::layout::InlineBoxPiece {
-                    node: block.node,
-                    line: block.line,
-                    border_box: block.border_box,
-                    content_box: block.content_box,
-                    has_start_edge: true,
-                    has_end_edge: true,
-                    parent: None,
-                    source_container: None,
-                    source_owner: None,
-                },
-                (0.0, block.shift),
-                block.shift,
-                block.border_box.y - block.shift,
-                block.border_box.height,
-                Some((block.has_block_start_edge, block.has_block_end_edge)),
-            ));
-        }
-        for piece in pieces {
-            work.check()?;
-            if multicol {
-                work.charge(1)?;
-            }
-            let Some(offset) = positioned
-                .as_ref()
-                .and_then(|lines| lines.line_offset(piece.line))
-            else {
-                continue;
-            };
-            let shift = positioned
-                .as_ref()
-                .and_then(|lines| lines.shifts.get(piece.line))
-                .copied()
-                .unwrap_or(0.0);
-            let column = line_columns[piece.line];
-            let generated = crate::generated_content::generated_origin(piece.node);
-            if let Some((owner, kind)) = generated_kind(piece.node)
-                .map(|(owner, kind)| (owner, Some(kind)))
-                .or_else(|| {
-                    (generated.is_none() && split.contains(&piece.node))
-                        .then_some((piece.node, None))
-                })
-                && !block_nodes.contains(&piece.node)
-                && piece.border_box.width > 0.0
-                && piece.border_box.height > 0.0
-                && generated_piece_style(
-                    node,
-                    cascade,
-                    piece.node,
-                    piece.source_container,
-                    piece.source_owner,
-                    piece.line,
-                )
-                .is_some_and(|style| {
-                    style.visibility == raikiri_style::property::Visibility::Visible
-                })
-            {
-                let line = &positioned.as_ref().unwrap().all_lines()[piece.line];
-                let data = (
-                    owner,
-                    kind,
-                    piece,
-                    offset,
-                    shift,
-                    line.block_offset(),
-                    line.block_size(),
-                    None,
-                );
-                result.generated.push(data);
-                result.generated_columns.entry(column).or_default().push((
-                    owner,
-                    data.1,
-                    piece,
-                    (0.0, offset.1 - column_origins[piece.line]),
-                    shift,
-                    data.5,
-                    data.6,
-                    data.7,
-                ));
-            }
-            let rect = BoxRect {
-                x: piece.border_box.x + offset.0,
-                y: piece.border_box.y + offset.1 - shift,
-                ..piece.border_box
-            };
-            add_bounds(
-                &mut result.combined,
-                piece.node,
-                rect,
-                column as u32,
-                multicol,
-            );
-            if multicol {
-                let rect = BoxRect {
-                    x: piece.border_box.x,
-                    y: rect.y - column_origins[piece.line],
-                    ..rect
-                };
-                add_bounds(
-                    result.columns.entry(column).or_default(),
-                    piece.node,
-                    rect,
-                    column as u32,
-                    true,
-                );
-            }
-        }
+        let (generated, block_nodes) = generated_blocks(node, cascade, work)?;
+        result.generated = generated;
+        let lines = ParagraphLines {
+            node,
+            cascade,
+            positioned: positioned.as_ref(),
+            columns: &columns,
+            multicol,
+        };
+        result.add_inline_pieces(&lines, pieces, &split, &block_nodes, work)?;
         for (owner, owned) in document.ifc_text_lines_by_node(root) {
             work.check()?;
             if multicol {
@@ -384,7 +263,7 @@ impl ParagraphProjection {
                     .and_then(|lines| lines.shifts.get(raw.line))
                     .copied()
                     .unwrap_or(0.0);
-                let column = line_columns[raw.line];
+                let column = columns.column[raw.line];
                 let line = crate::IfcTextLine {
                     top: raw.top + offset.1 - shift,
                     bottom: raw.bottom + offset.1 - shift,
@@ -406,8 +285,8 @@ impl ParagraphProjection {
                         &owned,
                         index,
                         crate::IfcTextLine {
-                            top: line.top - column_origins[raw.line],
-                            bottom: line.bottom - column_origins[raw.line],
+                            top: line.top - columns.origin[raw.line],
+                            bottom: line.bottom - columns.origin[raw.line],
                             ..line
                         },
                         0.0,
@@ -442,7 +321,7 @@ impl ParagraphProjection {
                     let local = crate::PositionedMarker {
                         rect: raikiri_traits::PaintRect::new(
                             marker.rect.x,
-                            global.rect.y - column_origins[line.index],
+                            global.rect.y - columns.origin[line.index],
                             global.rect.width,
                             global.rect.height,
                         ),
@@ -451,9 +330,9 @@ impl ParagraphProjection {
                     result.markers.push((top, height, global));
                     result
                         .marker_columns
-                        .entry(line_columns[line.index])
+                        .entry(columns.column[line.index])
                         .or_default()
-                        .push((top - column_origins[line.index], height, local));
+                        .push((top - columns.origin[line.index], height, local));
                 }
             }
         }
@@ -485,7 +364,7 @@ impl ParagraphProjection {
                     let local = crate::PositionedContentImage {
                         rect: raikiri_traits::PaintRect::new(
                             image.rect.x,
-                            global.rect.y - column_origins[line.index],
+                            global.rect.y - columns.origin[line.index],
                             global.rect.width,
                             global.rect.height,
                         ),
@@ -496,9 +375,9 @@ impl ParagraphProjection {
                         .push((top, height, line.index, global));
                     result
                         .content_image_columns
-                        .entry(line_columns[line.index])
+                        .entry(columns.column[line.index])
                         .or_default()
-                        .push((top - column_origins[line.index], height, line.index, local));
+                        .push((top - columns.origin[line.index], height, line.index, local));
                 }
             }
         }
@@ -653,6 +532,203 @@ pub(super) fn split_inline_elements(
             .map(|piece| piece.node),
     );
     split
+}
+
+/// What the passes of `prepare` read to place the lines of a paragraph.
+struct ParagraphLines<'p, 'a> {
+    node: &'p crate::Node,
+    cascade: &'p CascadeResult,
+    positioned: Option<&'p PositionedLines<'a>>,
+    columns: &'p LineColumns,
+    multicol: bool,
+}
+
+/// Where line `line` of a paragraph sits.
+struct PlacedLine<'a> {
+    /// The offset of the line from the content box of the paragraph.
+    offset: (f32, f32),
+    /// How far pagination moved the line down.
+    shift: f32,
+    line: &'a shodo::Line,
+}
+
+impl<'a> ParagraphLines<'_, 'a> {
+    /// The place of line `index`, or `None` when the paragraph has no
+    /// positioned line there.
+    fn placement(&self, index: usize) -> Option<PlacedLine<'a>> {
+        let positioned = self.positioned?;
+        let line = positioned.all_lines().get(index)?;
+        let offset = positioned.line_offset(index)?;
+        let shift = positioned.shifts.get(index).copied().unwrap_or(0.0);
+        Some(PlacedLine {
+            offset,
+            shift,
+            line,
+        })
+    }
+}
+
+/// The visible block-level `::before` and `::after` boxes of the paragraph
+/// `node`, as pieces to paint, and the ids of all its block-level generated
+/// boxes. A block-level generated box paints its own box; its pieces on the
+/// lines only hold its text.
+fn generated_blocks(
+    node: &crate::Node,
+    cascade: &CascadeResult,
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<(Vec<PreparedGeneratedPiece>, HashSet<usize>), LayoutError> {
+    let blocks = node.ifc_generated_block_pieces();
+    let block_nodes: HashSet<usize> = blocks.iter().map(|block| block.node).collect();
+    // Only `::before` and `::after` are laid out as blocks.
+    let kinds = blocks
+        .into_iter()
+        .filter_map(|block| generated_kind(block.node).map(|kind| (block, kind)));
+    let mut generated = Vec::new();
+    for (block, (owner, kind)) in kinds {
+        work.check()?;
+        let visible = block.border_box.width > 0.0
+            && block.border_box.height > 0.0
+            && crate::generated_content::computed_for_id(cascade, block.node).is_some_and(
+                |style| style.visibility == raikiri_style::property::Visibility::Visible,
+            );
+        if !visible {
+            continue;
+        }
+        generated.push((
+            owner,
+            Some(kind),
+            crate::layout::InlineBoxPiece {
+                node: block.node,
+                line: block.line,
+                border_box: block.border_box,
+                content_box: block.content_box,
+                has_start_edge: true,
+                has_end_edge: true,
+                parent: None,
+                source_container: None,
+                source_owner: None,
+            },
+            (0.0, block.shift),
+            block.shift,
+            block.border_box.y - block.shift,
+            block.border_box.height,
+            Some((block.has_block_start_edge, block.has_block_end_edge)),
+        ));
+    }
+    Ok((generated, block_nodes))
+}
+
+/// The owner and kind of generated box that `piece` is painted as, when it is
+/// painted apart from the text of its line: a visible piece of a `::before`,
+/// `::after` or `::first-letter` box that is not block-level, or of an
+/// element of `split`. The kind is `None` for an element.
+fn painted_apart(
+    lines: &ParagraphLines<'_, '_>,
+    piece: &crate::layout::InlineBoxPiece,
+    split: &HashSet<usize>,
+    block_nodes: &HashSet<usize>,
+) -> Option<(usize, Option<crate::GeneratedKind>)> {
+    let (owner, kind) = generated_kind(piece.node)
+        .map(|(owner, kind)| (owner, Some(kind)))
+        .or_else(|| {
+            (crate::generated_content::generated_origin(piece.node).is_none()
+                && split.contains(&piece.node))
+            .then_some((piece.node, None))
+        })?;
+    (!block_nodes.contains(&piece.node)
+        && piece.border_box.width > 0.0
+        && piece.border_box.height > 0.0
+        && generated_piece_style(
+            lines.node,
+            lines.cascade,
+            piece.node,
+            piece.source_container,
+            piece.source_owner,
+            piece.line,
+        )
+        .is_some_and(|style| style.visibility == raikiri_style::property::Visibility::Visible))
+    .then_some((owner, kind))
+}
+
+impl ParagraphProjection {
+    /// Record the line pieces of the inline elements of a paragraph: the
+    /// bounds of each element, combined and in each column, and the pieces
+    /// painted apart from their text.
+    fn add_inline_pieces(
+        &mut self,
+        lines: &ParagraphLines<'_, '_>,
+        pieces: Vec<crate::layout::InlineBoxPiece>,
+        split: &HashSet<usize>,
+        block_nodes: &HashSet<usize>,
+        work: &mut ProjectionWork<'_, '_>,
+    ) -> Result<(), LayoutError> {
+        for piece in pieces {
+            work.check()?;
+            if lines.multicol {
+                work.charge(1)?;
+            }
+            let Some(PlacedLine {
+                offset,
+                shift,
+                line,
+            }) = lines.placement(piece.line)
+            else {
+                continue;
+            };
+            let column = lines.columns.column[piece.line];
+            let origin = lines.columns.origin[piece.line];
+            if let Some((owner, kind)) = painted_apart(lines, &piece, split, block_nodes) {
+                let data = (
+                    owner,
+                    kind,
+                    piece,
+                    offset,
+                    shift,
+                    line.block_offset(),
+                    line.block_size(),
+                    None,
+                );
+                self.generated.push(data);
+                self.generated_columns.entry(column).or_default().push((
+                    owner,
+                    data.1,
+                    piece,
+                    (0.0, offset.1 - origin),
+                    shift,
+                    data.5,
+                    data.6,
+                    data.7,
+                ));
+            }
+            let rect = BoxRect {
+                x: piece.border_box.x + offset.0,
+                y: piece.border_box.y + offset.1 - shift,
+                ..piece.border_box
+            };
+            add_bounds(
+                &mut self.combined,
+                piece.node,
+                rect,
+                column as u32,
+                lines.multicol,
+            );
+            if lines.multicol {
+                let rect = BoxRect {
+                    x: piece.border_box.x,
+                    y: rect.y - origin,
+                    ..rect
+                };
+                add_bounds(
+                    self.columns.entry(column).or_default(),
+                    piece.node,
+                    rect,
+                    column as u32,
+                    true,
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Whether the `::first-line` around the inline element `element` of the
