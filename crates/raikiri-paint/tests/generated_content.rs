@@ -82,3 +82,52 @@ fn nested_absolute_generated_content_does_not_repeat_subtree_work() {
         "painting {NESTED_BLOCKS} nested blocks used {paint_text_calls} standalone text measurements"
     );
 }
+
+#[test]
+fn generated_text_around_inline_siblings_shifts_the_ones_after_it() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    document.append_text(
+        style,
+        r#"* { font-family: Ahem; font-size: 20px }
+body, div { display: block }
+img { width: 10px; height: 10px }
+img::before { content: "ab" }
+img::after { content: "cd" }"#,
+    );
+    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let div = document.append_element(Some(body), "div", Style::default(), None::<&str>);
+    document.append_text(div, "t");
+    document.append_element(Some(div), "img", Style::default(), None::<&str>);
+    document.append_text(div, "u");
+    document.append_element(Some(div), "img", Style::default(), None::<&str>);
+
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    )))
+    .expect("Ahem font collection");
+    document.set_font_collection(fonts);
+    layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
+
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
+    // The `::before` and `::after` text of each image is a two-glyph run.
+    // The text generated around the first image (two runs of 40px) and the
+    // space between the images push the second image 100px to the right.
+    let generated_text_x: Vec<f64> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) if run.glyphs.len() == 2 => {
+                Some(run.transform.as_coeffs()[4])
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(generated_text_x, [20.0, 60.0, 130.0, 170.0]);
+}
