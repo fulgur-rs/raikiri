@@ -4,10 +4,17 @@
 
 use super::typographic::{self, BackgroundSlice, Paragraph, TypographicPaint};
 use super::{IfcPosition, piece_fixed_viewport, transform_applies};
+use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
-use raikiri_dom::generated_content::computed_for_id;
-use raikiri_dom::{Document, InlineBoxPiece, Node, PositionedLines, cumulative_offset};
+use peniko::Fill;
+use raikiri_dom::generated_content::{computed_for_id, generated_origin};
+use raikiri_dom::{
+    Document, InlineBoxPiece, Node, PositionedContentImage, PositionedLines, PositionedMarker,
+    cumulative_offset,
+};
 use raikiri_style::CascadeResult;
+use shodo::geometry::WritingMode;
+use std::collections::HashSet;
 
 /// A box laid out beside the lines, as one piece on its line and as the joined
 /// box it is sliced from.
@@ -191,6 +198,14 @@ pub(super) struct LinePaint<'a, 'r> {
     pub(super) offsets: &'a [(usize, (f32, f32))],
     /// The content-box origin of the paragraph in page coordinates.
     pub(super) base: IfcPosition,
+    pub(super) writing_mode: WritingMode,
+    /// How far pagination moved each line along the block axis.
+    pub(super) shifts: &'r [f32],
+    pub(super) root_node: &'a Node,
+    pub(super) pieces: PiecesByLine,
+    /// The nodes of the block-level boxes, which paint beside the lines
+    /// rather than on them.
+    pub(super) block_nodes: HashSet<usize>,
     pub(super) paint_transform: Affine,
     pub(super) fixed_viewport: Option<Rect>,
     pub(super) pixel_source: Option<&'r dyn raikiri_traits::ImagePixelSource>,
@@ -242,4 +257,219 @@ impl LinePaint<'_, '_> {
             );
         }
     }
+
+    /// Paint the image markers of a line, below its boxes and text.
+    fn paint_marker_images(
+        &self,
+        paint: &mut TypographicPaint,
+        markers: &[PositionedMarker],
+        position: IfcPosition,
+    ) {
+        let document = self.paragraph.document;
+        // Positioned lines list only the markers whose image the document
+        // holds.
+        let images = markers.iter().filter_map(|marker| {
+            document
+                .list_marker_image_shared(marker.owner)
+                .map(|image| (marker, image))
+        });
+        for (marker, image) in images {
+            let rect = marker.rect;
+            let brush = self.image_cache.whole(image);
+            paint.target(None).fill(
+                Fill::NonZero,
+                Affine::translate((
+                    f64::from(position.x + rect.x),
+                    f64::from(position.y + position.shift_y + rect.y),
+                )) * Affine::scale_non_uniform(
+                    f64::from(rect.width) / f64::from(image.width),
+                    f64::from(rect.height) / f64::from(image.height),
+                ),
+                brush.as_ref(),
+                None,
+                &Rect::new(0.0, 0.0, f64::from(image.width), f64::from(image.height)),
+            );
+        }
+    }
+
+    /// Paint the boxes of the inline elements on line `line_index`, which
+    /// sit at `position`.
+    ///
+    /// They go below the line's text (CSS 2.1 Appendix E: an inline box's
+    /// background and borders, then its text).
+    fn paint_line_boxes(
+        &mut self,
+        paint: &mut TypographicPaint,
+        line_index: usize,
+        position: IfcPosition,
+    ) {
+        let Paragraph {
+            document,
+            cascade,
+            root_id,
+        } = self.paragraph;
+        let background_slices = &self.pieces.slices[line_index];
+        let root_node = self.root_node;
+        let block_nodes = &self.block_nodes;
+        let styled_pieces = self.pieces.pieces[line_index]
+            .iter()
+            .enumerate()
+            .filter(|(_, piece)| {
+                !(block_nodes.contains(&piece.node)
+                    || generated_origin(piece.node)
+                        .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker))
+            })
+            .filter_map(|(piece_index, piece)| {
+                piece_style(root_node, cascade, piece, line_index)
+                    .map(|(cv, source)| (piece_index, piece, cv, source))
+            });
+        for (piece_index, piece, cv, source) in styled_pieces {
+            let (dx, dy) = cumulative_offset(document, root_id, self.offsets, source);
+            // The pieces already carry the line's pagination shift, which
+            // `position` holds too.
+            let line_shift = self.shifts.get(line_index).copied().unwrap_or(0.0);
+            let group = paint.piece_group(piece);
+            // An atomic `::before` or `::after` turns about its own box, as
+            // painted here (CSS Transforms 1 §6).
+            let mut piece_transform = self.paint_transform;
+            if let Some(turned) = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node) {
+                let outer = piece.border_box;
+                let turn = crate::walk::element_transform(
+                    turned,
+                    position.x + dx + outer.x,
+                    position.y + position.shift_y + dy - line_shift + outer.y,
+                    outer.width,
+                    outer.height,
+                );
+                piece_transform *= turn;
+                paint.turn(group, piece, turn);
+            }
+            if raikiri_dom::paint_rules::hides_own_box(cv) {
+                continue;
+            }
+            crate::walk::paint_inline_box(
+                self.image_cache,
+                paint.box_target(group, piece),
+                cv,
+                piece,
+                background_slices[piece_index].as_ref(),
+                crate::walk::InlineProgression::new(
+                    self.writing_mode,
+                    cv.direction == raikiri_style::property::Direction::Rtl,
+                ),
+                transform_applies(document, cascade, piece.node, cv),
+                position.x + dx,
+                position.y + position.shift_y + dy - line_shift,
+                self.pixel_source,
+                self.warnings,
+                piece_transform,
+                piece_fixed_viewport(self.paragraph, cv, piece, self.fixed_viewport),
+            );
+        }
+    }
+
+    /// Paint the images of `::before` and `::after` content on line
+    /// `line_index`, which sits at `position`.
+    ///
+    /// They are replaced content inside their pseudo-element's inline box:
+    /// above its background, below the line's text. They move with the
+    /// pseudo-element's relatively positioned inline ancestors.
+    fn paint_content_images(
+        &self,
+        paint: &mut TypographicPaint,
+        images: &[PositionedContentImage],
+        line_index: usize,
+        position: IfcPosition,
+    ) {
+        let Paragraph {
+            document, root_id, ..
+        } = self.paragraph;
+        // Positioned lines list only the content images whose pixels the
+        // document holds.
+        let pixel_images = images.iter().filter_map(|image| {
+            document
+                .content_image_shared(image.owner, image.pseudo, image.index)
+                .map(|pixels| (image, pixels))
+        });
+        for (image, pixels) in pixel_images {
+            let pseudo_node =
+                raikiri_dom::generated_content::generated_node_id(image.owner, image.pseudo);
+            let group = self.pieces.pieces[line_index]
+                .iter()
+                .find(|piece| piece.node == pseudo_node)
+                .and_then(|piece| paint.piece_group(piece));
+            let (dx, dy) = cumulative_offset(document, root_id, self.offsets, pseudo_node);
+            let rect = image.rect;
+            let (left, top) = (
+                f64::from(position.x + dx + rect.x),
+                f64::from(position.y + position.shift_y + dy + rect.y),
+            );
+            // An image that replaces its pseudo-element is drawn at its
+            // `object-fit` rectangle, clipped to its box.
+            let object = document
+                .content_image_object_rect(image.owner, image.pseudo, image.index)
+                .unwrap_or(raikiri_traits::PaintRect::new(
+                    0.0,
+                    0.0,
+                    rect.width,
+                    rect.height,
+                ));
+            let clipped = object.x < 0.0
+                || object.y < 0.0
+                || object.x + object.width > rect.width
+                || object.y + object.height > rect.height;
+            let target = paint.target(group);
+            if clipped {
+                target.push_clip_layer(
+                    Affine::IDENTITY,
+                    &Rect::new(
+                        left,
+                        top,
+                        left + f64::from(rect.width),
+                        top + f64::from(rect.height),
+                    ),
+                );
+            }
+            let brush = self.image_cache.whole(pixels);
+            target.fill(
+                Fill::NonZero,
+                Affine::translate((left + f64::from(object.x), top + f64::from(object.y)))
+                    * Affine::scale_non_uniform(
+                        f64::from(object.width) / f64::from(pixels.width),
+                        f64::from(object.height) / f64::from(pixels.height),
+                    ),
+                brush.as_ref(),
+                None,
+                &Rect::new(0.0, 0.0, f64::from(pixels.width), f64::from(pixels.height)),
+            );
+            if clipped {
+                target.pop_layer();
+            }
+        }
+    }
+}
+
+/// The style the box of `piece`, on line `line_index`, is painted with, and
+/// the node whose relative offset moves the box. `None` when no style applies
+/// to it.
+fn piece_style<'c>(
+    root_node: &'c Node,
+    cascade: &'c CascadeResult,
+    piece: &InlineBoxPiece,
+    line_index: usize,
+) -> Option<(&'c raikiri_style::ComputedValues, usize)> {
+    let retained =
+        root_node.ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner);
+    let cv = retained
+        .map(|(style, _)| style)
+        .or_else(|| {
+            // The first line's boxes take their values from the
+            // `::first-line` around them.
+            root_node
+                .ifc_first_line_element_style(piece.node)
+                .filter(|_| line_index == 0)
+        })
+        .or_else(|| computed_for_id(cascade, piece.node))?;
+    let source = retained.map(|(_, owner)| owner).unwrap_or(piece.node);
+    Some((cv, source))
 }

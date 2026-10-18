@@ -293,10 +293,7 @@ pub(crate) fn hold_ifc_lines<'a>(
     // Pages never cut a paragraph across its lines: each of its lines goes
     // with the paragraph's content box.
     let paragraph_box = kept_whole_box(document, root_id, page_lines, vertical, base);
-    let PiecesByLine {
-        pieces: pieces_by_line,
-        slices: slices_by_line,
-    } = PiecesByLine::new(&positioned, document, cascade, root_id);
+    let pieces = PiecesByLine::new(&positioned, document, cascade, root_id);
     let offsets = positioned.offsets;
     let hit_layout =
         (!custom_highlights.is_empty()).then(|| LineLayout::new(positioned.all_lines()));
@@ -315,18 +312,23 @@ pub(crate) fn hold_ifc_lines<'a>(
     let blocks = block_pieces(root_node, off_band);
     let block_nodes: std::collections::HashSet<usize> =
         blocks.iter().map(|(piece, _)| piece.node).collect();
-    let mut groups = LineGroups::new(paragraph, root_node, &pieces_by_line, &blocks);
-    LinePaint {
+    let mut groups = LineGroups::new(paragraph, root_node, &pieces.pieces, &blocks);
+    let mut lines = LinePaint {
         image_cache,
         paragraph,
         offsets,
         base,
+        writing_mode,
+        shifts,
+        root_node,
+        pieces,
+        block_nodes,
         paint_transform,
         fixed_viewport,
         pixel_source,
         warnings,
-    }
-    .paint_block_pieces(&mut groups, &blocks);
+    };
+    lines.paint_block_pieces(&mut groups, &blocks);
     for positioned_line in positioned.lines() {
         let line_index = positioned_line.index;
         let paint = groups.for_line(line_index);
@@ -349,162 +351,9 @@ pub(crate) fn hold_ifc_lines<'a>(
             f64::from(position.x),
             f64::from(position.y + position.shift_y),
         ));
-        let background_slices = &slices_by_line[line_index];
-        for marker in &positioned_line.markers {
-            let Some(image) = document.list_marker_image_shared(marker.owner) else {
-                continue;
-            };
-            let rect = marker.rect;
-            let brush = image_cache.whole(image);
-            paint.target(None).fill(
-                Fill::NonZero,
-                Affine::translate((
-                    f64::from(position.x + rect.x),
-                    f64::from(position.y + position.shift_y + rect.y),
-                )) * Affine::scale_non_uniform(
-                    f64::from(rect.width) / f64::from(image.width),
-                    f64::from(rect.height) / f64::from(image.height),
-                ),
-                brush.as_ref(),
-                None,
-                &Rect::new(0.0, 0.0, f64::from(image.width), f64::from(image.height)),
-            );
-        }
-        // The boxes of the inline elements on this line go below its text
-        // (CSS 2.1 Appendix E: an inline box's background and borders, then
-        // its text).
-        for (piece_index, piece) in pieces_by_line[line_index].iter().enumerate() {
-            if block_nodes.contains(&piece.node)
-                || generated_origin(piece.node)
-                    .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker)
-            {
-                continue;
-            }
-            let retained = root_node.ifc_typographic_fragment(
-                piece.node,
-                piece.source_container,
-                piece.source_owner,
-            );
-            let Some(cv) = retained
-                .map(|(style, _)| style)
-                .or_else(|| {
-                    // The first line's boxes take their values from the
-                    // `::first-line` around them.
-                    root_node
-                        .ifc_first_line_element_style(piece.node)
-                        .filter(|_| line_index == 0)
-                })
-                .or_else(|| computed_for_id(cascade, piece.node))
-            else {
-                continue;
-            };
-            let source = retained.map(|(_, owner)| owner).unwrap_or(piece.node);
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, source);
-            // The pieces already carry the line's pagination shift, which
-            // `position` holds too.
-            let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
-            let group = paint.piece_group(piece);
-            // An atomic `::before` or `::after` turns about its own box, as
-            // painted here (CSS Transforms 1 §6).
-            let mut piece_transform = paint_transform;
-            if let Some(turned) = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node) {
-                let outer = piece.border_box;
-                let turn = crate::walk::element_transform(
-                    turned,
-                    position.x + dx + outer.x,
-                    position.y + position.shift_y + dy - line_shift + outer.y,
-                    outer.width,
-                    outer.height,
-                );
-                piece_transform *= turn;
-                paint.turn(group, piece, turn);
-            }
-            if raikiri_dom::paint_rules::hides_own_box(cv) {
-                continue;
-            }
-            crate::walk::paint_inline_box(
-                image_cache,
-                paint.box_target(group, piece),
-                cv,
-                piece,
-                background_slices[piece_index].as_ref(),
-                crate::walk::InlineProgression::new(
-                    writing_mode,
-                    cv.direction == raikiri_style::property::Direction::Rtl,
-                ),
-                transform_applies(document, cascade, piece.node, cv),
-                position.x + dx,
-                position.y + position.shift_y + dy - line_shift,
-                pixel_source,
-                warnings,
-                piece_transform,
-                piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
-            );
-        }
-        // Images of `::before` and `::after` content are replaced content
-        // inside their pseudo-element's inline box: above its background,
-        // below the line's text. They move with the pseudo-element's
-        // relatively positioned inline ancestors.
-        for image in &positioned_line.content_images {
-            let Some(pixels) =
-                document.content_image_shared(image.owner, image.pseudo, image.index)
-            else {
-                continue; // cov:ignore: positioned lines list only the content images whose pixels the document holds
-            };
-            let pseudo_node =
-                raikiri_dom::generated_content::generated_node_id(image.owner, image.pseudo);
-            let group = pieces_by_line[line_index]
-                .iter()
-                .find(|piece| piece.node == pseudo_node)
-                .and_then(|piece| paint.piece_group(piece));
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, pseudo_node);
-            let rect = image.rect;
-            let (left, top) = (
-                f64::from(position.x + dx + rect.x),
-                f64::from(position.y + position.shift_y + dy + rect.y),
-            );
-            // An image that replaces its pseudo-element is drawn at its
-            // `object-fit` rectangle, clipped to its box.
-            let object = document
-                .content_image_object_rect(image.owner, image.pseudo, image.index)
-                .unwrap_or(raikiri_traits::PaintRect::new(
-                    0.0,
-                    0.0,
-                    rect.width,
-                    rect.height,
-                ));
-            let clipped = object.x < 0.0
-                || object.y < 0.0
-                || object.x + object.width > rect.width
-                || object.y + object.height > rect.height;
-            let target = paint.target(group);
-            if clipped {
-                target.push_clip_layer(
-                    Affine::IDENTITY,
-                    &Rect::new(
-                        left,
-                        top,
-                        left + f64::from(rect.width),
-                        top + f64::from(rect.height),
-                    ),
-                );
-            }
-            let brush = image_cache.whole(pixels);
-            target.fill(
-                Fill::NonZero,
-                Affine::translate((left + f64::from(object.x), top + f64::from(object.y)))
-                    * Affine::scale_non_uniform(
-                        f64::from(object.width) / f64::from(pixels.width),
-                        f64::from(object.height) / f64::from(pixels.height),
-                    ),
-                brush.as_ref(),
-                None,
-                &Rect::new(0.0, 0.0, f64::from(pixels.width), f64::from(pixels.height)),
-            );
-            if clipped {
-                target.pop_layer();
-            }
-        }
+        lines.paint_marker_images(paint, &positioned_line.markers, position);
+        lines.paint_line_boxes(paint, line_index, position);
+        lines.paint_content_images(paint, &positioned_line.content_images, line_index, position);
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
                 paint,
