@@ -1398,12 +1398,6 @@ fn build_table_grid(
     })
 }
 
-/// Authored `<col>` sizing in grid order.
-///
-/// Walks the table's direct children (and `colgroup` children) for
-/// `display: table-column` elements. `span` (HTML §4.9.8, max 1000)
-/// expands to that many entries. Direct `<col>` children (anonymous
-/// colgroup) are included in DOM order.
 /// Authored sizing of one `<col>`: width + min/max-width (lengths only;
 /// percentages and calc-with-percentage are indefinite at column-measure
 /// time and handled by the caller).
@@ -1414,6 +1408,11 @@ struct ColSizing {
     max_width: Dimension,
 }
 
+/// Authored `<col>` sizing in grid order, one entry per column.
+///
+/// The columns come from `each_column_run`, so `span` (HTML §4.9.8, max
+/// 1000) expands to that many entries and `display: contents` wrappers are
+/// looked through.
 fn collect_col_widths(
     doc: &Document,
     table_idx: usize,
@@ -1457,7 +1456,9 @@ fn collapsed_columns(doc: &Document, table_idx: usize, n_cols: u16) -> Vec<bool>
 /// is collapsed, and its length. `span` (HTML §4.9.8, max 1000) sets the
 /// length; a `<colgroup>` without `<col>` children stands for its own `span`
 /// columns and sizes them itself. Direct `<col>` children (anonymous
-/// colgroup) are included in DOM order.
+/// colgroup) are included in DOM order. A `display: contents` element makes
+/// no box, so its children take its place, both under the table and under a
+/// `<colgroup>`.
 fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize, bool, usize)) {
     fn col_span(doc: &Document, node_id: usize) -> usize {
         doc.ifc_layout_node(node_id)
@@ -1466,18 +1467,34 @@ fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize,
             .and_then(|value| value.parse::<usize>().ok())
             .map_or(1, |v| v.clamp(1, 1000))
     }
-    for &child_id in &doc.nodes[table_idx].children {
-        if !doc.nodes[child_id].is_in_document() {
-            continue;
+    // The children of `parent` that take part in the table, with each
+    // `display: contents` child replaced by its own children.
+    // spec: https://www.w3.org/TR/css-display-3/#valdef-display-contents
+    fn box_children(doc: &Document, parent: usize, out: &mut Vec<usize>) {
+        // An explicit stack keeps deeply nested wrappers off the call stack.
+        let mut pending: Vec<usize> = doc.nodes[parent].children.iter().rev().copied().collect();
+        while let Some(child_id) = pending.pop() {
+            if !doc.nodes[child_id].is_in_document() {
+                continue;
+            }
+            if doc.nodes[child_id].display() == DisplayValue::Contents {
+                pending.extend(doc.nodes[child_id].children.iter().rev());
+            } else {
+                out.push(child_id);
+            }
         }
+    }
+    let mut table_children = Vec::new();
+    box_children(doc, table_idx, &mut table_children);
+    let mut group_children = Vec::new();
+    for child_id in table_children {
         match doc.nodes[child_id].display() {
             DisplayValue::TableColumnGroup => {
                 let group_collapsed = doc.nodes[child_id].collapses_table_columns;
                 let mut has_columns = false;
-                for &col_id in &doc.nodes[child_id].children {
-                    if !doc.nodes[col_id].is_in_document() {
-                        continue;
-                    }
+                group_children.clear();
+                box_children(doc, child_id, &mut group_children);
+                for &col_id in &group_children {
                     match doc.nodes[col_id].display() {
                         DisplayValue::TableColumn => {}
                         // A `<col>` that generates no box still ends the
