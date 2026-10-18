@@ -687,6 +687,45 @@ fn boxes_that_are_not_visible_list_no_decoration() {
     );
 }
 
+/// A replaced element that is not visible lists no decoration but still lists
+/// its content: an SVG root keeps its vector source so that descendants that
+/// set `visibility:visible` can paint, and an image is withheld by
+/// `Page::raster_image` instead.
+#[test]
+fn a_replaced_element_that_is_not_visible_still_lists_its_content() {
+    for keyword in ["hidden", "collapse"] {
+        let result = lay_out(
+            &format!(
+                "<svg id=s width='20' height='10' \
+                 style='display:block;background:red;visibility:{keyword}'>\
+                 <rect width='10' height='10' visibility='visible'/></svg>"
+            ),
+            "@page { size: 100px 100px; margin: 0 }",
+        );
+        let page = result.page(0).unwrap();
+        let dom = page.dom();
+        let events = page.paint_order();
+        let is_svg = |node| dom.attr(node, "id") == Some("s");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, PaintEvent::Box(f) if is_svg(f.node()))),
+            "{keyword}: the root lists no decoration"
+        );
+        let content = events
+            .iter()
+            .find_map(|e| match e {
+                PaintEvent::Replaced(f) if is_svg(f.node()) => Some(f),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{keyword}: the root lists its content"));
+        assert!(
+            page.inline_svg(content).unwrap().is_some(),
+            "{keyword}: the root keeps its vector source"
+        );
+    }
+}
+
 /// A translucent `::first-line` composites the first line's content as one
 /// group, listed after the paragraph's other lines, and splits the groups
 /// of the inline elements on it.

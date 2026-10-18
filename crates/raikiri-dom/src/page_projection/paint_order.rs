@@ -81,8 +81,9 @@ pub enum PaintEvent<'a> {
     GroupTextLine(TextLineId, NodeId),
     /// The content of a replaced element (an image, an inline SVG or a
     /// canvas). Follows the element's [`PaintEvent::Box`], if it lists one.
-    /// The content of an element that is not `visible` is not painted: it has
-    /// no raster image or prepared SVG.
+    /// An element that is not `visible` still lists it: its image has no
+    /// raster image to paint, but an SVG root keeps its vector source so that
+    /// descendants that set `visibility:visible` can paint.
     Replaced(Fragment<'a>),
     /// Prepared raster marker of a list item. Its placement is owned by this page.
     MarkerImage(NodeId),
