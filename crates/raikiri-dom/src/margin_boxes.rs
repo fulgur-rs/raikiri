@@ -558,7 +558,9 @@ impl MarginBoxSpec {
     /// solved for like an `auto` one, so that it may come out negative. A
     /// single `auto` value follows from the equality, and two `auto` margins
     /// are equal. An `auto` size takes what the margins leave, none of which
-    /// the `auto` margins claim, and is never negative.
+    /// the `auto` margins claim. It is never negative: where nothing is left
+    /// it is zero, and the box is over-constrained like one with a specified
+    /// size.
     fn fixed_extent(&self, axis: Axis, region: f32, dropped: DroppedMargin) -> FixedExtent {
         let [first, last] = axis.edges();
         let border = self.border_widths();
@@ -581,7 +583,14 @@ impl MarginBoxSpec {
             (Some(size), [None, None]) => ((rest - size) / 2.0, size),
             (None, [start, end]) => {
                 let (start, end) = (start.unwrap_or(0.0), end.unwrap_or(0.0));
-                (start, (rest - start - end).max(0.0))
+                let free = rest - start - end;
+                match dropped {
+                    // A negative size is zero, which over-constrains the box
+                    // like a specified size does: the dropped margin takes
+                    // up the difference.
+                    DroppedMargin::Start if free < 0.0 => (rest - end, 0.0),
+                    _ => (start, free.max(0.0)),
+                }
             }
         };
         FixedExtent {

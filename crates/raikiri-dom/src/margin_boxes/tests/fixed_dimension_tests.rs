@@ -177,6 +177,51 @@ fn an_auto_height_never_goes_negative() {
 }
 
 #[test]
+fn an_auto_size_that_would_be_negative_over_constrains_the_box() {
+    // The padding alone is taller than the 40px page margin, so the height is
+    // zero and the margin towards the page edge gives way, whether the
+    // margins are auto or not. The overflow points away from the page area.
+    let padding = "padding-top: 30px; padding-bottom: 30px;";
+    for margins in ["margin-top: auto; margin-bottom: auto", ""] {
+        assert_eq!(
+            in_40px_margins("top-center", &format!("{padding} {margins}")),
+            [40.0, -20.0, 320.0, 60.0],
+            "{margins}"
+        );
+        assert_eq!(
+            in_40px_margins("bottom-center", &format!("{padding} {margins}")),
+            [40.0, 260.0, 320.0, 60.0],
+            "{margins}"
+        );
+    }
+    // The margin on the side of the page area is kept.
+    assert_eq!(
+        in_40px_margins(
+            "top-center",
+            &format!("{padding} margin-top: 5px; margin-bottom: 3px")
+        ),
+        [40.0, -23.0, 320.0, 60.0]
+    );
+    assert_eq!(
+        in_40px_margins(
+            "bottom-center",
+            &format!("{padding} margin-top: 5px; margin-bottom: 3px")
+        ),
+        [40.0, 265.0, 320.0, 60.0]
+    );
+    // The same goes for the width of side boxes.
+    let padding = "padding-left: 30px; padding-right: 30px;";
+    assert_eq!(
+        in_40px_margins("left-middle", padding),
+        [-20.0, 40.0, 60.0, 220.0]
+    );
+    assert_eq!(
+        in_40px_margins("right-middle", padding),
+        [360.0, 40.0, 60.0, 220.0]
+    );
+}
+
+#[test]
 fn a_side_box_solves_its_width_like_a_top_box_solves_its_height() {
     // With both margins auto it is centered in the 40px column.
     assert_eq!(
