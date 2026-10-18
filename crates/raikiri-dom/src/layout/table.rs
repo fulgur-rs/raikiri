@@ -446,13 +446,28 @@ fn compute_table_layout_checked(
     let cell_index =
         (collapse && !grid.rows.is_empty() && grid.n_cols > 0).then(|| CellIndex::new(&grid));
     let collapsed_rows = collapsed_rows(doc, &grid);
-    // Collapsed rows take no part in border conflict resolution: the rows
-    // around them, and the table edge, resolve against each other.
-    let shown = (cell_index.is_some() && collapsed_rows.contains(&true))
-        .then(|| without_collapsed_rows(&grid, &collapsed_rows));
+    let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
+    // A vertical table stacks its columns along the block axis, which the
+    // collapse rules here do not model.
+    let collapsed_cols = if vertical_writing {
+        vec![false; usize::from(grid.n_cols)]
+    } else {
+        collapsed_columns(doc, table_idx, grid.n_cols)
+    };
+    let columns_collapse = collapsed_cols.contains(&true);
+    // Collapsed rows and columns take no part in border conflict resolution:
+    // the tracks around them, and the table edge, resolve against each other.
+    let shown = (cell_index.is_some() && (columns_collapse || collapsed_rows.contains(&true)))
+        .then(|| {
+            without_collapsed_columns(
+                &without_collapsed_rows(&grid, &collapsed_rows),
+                &collapsed_cols,
+                true,
+            )
+        });
     let shown_index = shown
         .as_ref()
-        .filter(|shown| !shown.rows.is_empty())
+        .filter(|shown| !shown.rows.is_empty() && shown.n_cols > 0)
         .map(CellIndex::new);
     if let Some(index) = cell_index.as_ref() {
         let (resolved, index) = match (shown.as_ref(), shown_index.as_ref()) {
@@ -466,7 +481,6 @@ fn compute_table_layout_checked(
             resolve_collapsed_table_edges(doc, resolved, table_idx);
         }
     }
-    let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
     let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
@@ -527,23 +541,34 @@ fn compute_table_layout_checked(
                 &table_border,
                 inputs.parent_size.width,
             );
-            let kept: Vec<usize> = (0..collapsed_rows.len())
+            let kept_rows: Vec<usize> = (0..collapsed_rows.len())
                 .filter(|&row| !collapsed_rows[row])
                 .collect();
+            let kept_cols: Vec<usize> = (0..collapsed_cols.len())
+                .filter(|&column| !collapsed_cols[column])
+                .collect();
             let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
-            for (line, rows) in lines.row_overlaps.iter().zip(kept.windows(2)) {
+            for (line, rows) in lines.row_overlaps.iter().zip(kept_rows.windows(2)) {
                 row_overlaps[rows[0]] = *line;
+            }
+            let mut col_overlaps = vec![0.0; usize::from(grid.n_cols) - 1];
+            for (line, columns) in lines.col_overlaps.iter().zip(kept_cols.windows(2)) {
+                col_overlaps[columns[0]] = *line;
             }
             CollapsedLines {
                 row_overlaps,
+                col_overlaps,
                 ..lines
             }
         }
-        (Some(index), Some(_), None) => CollapsedLines {
+        // Nothing shows, so no cell border meets the table's own.
+        (Some(_), Some(_), None) => CollapsedLines {
+            col_overlaps: vec![0.0; usize::from(grid.n_cols) - 1],
             row_overlaps: vec![0.0; grid.rows.len() - 1],
+            outer_left: table_border.left,
+            outer_right: table_border.right,
             outer_top: table_border.top,
             outer_bottom: table_border.bottom,
-            ..compute_collapsed_lines(doc, &grid, index, &table_border, inputs.parent_size.width)
         },
     };
     let border_spacing = if collapse {
@@ -660,8 +685,17 @@ fn compute_table_layout_checked(
         .iter()
         .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
         .collect();
+    let shown_columns = collapsed_cols
+        .iter()
+        .filter(|collapsed| !**collapsed)
+        .count();
     let spacing = Size {
-        width: border_spacing.0 * (grid.n_cols as f32 + 1.0),
+        // With every column collapsed nothing remains to space apart.
+        width: if shown_columns == 0 {
+            0.0
+        } else {
+            border_spacing.0 * (shown_columns as f32 + 1.0)
+        },
         // With every row collapsed nothing remains to space apart.
         height: if collapsed_rows.iter().all(|collapsed| *collapsed) {
             0.0
@@ -710,63 +744,36 @@ fn compute_table_layout_checked(
         },
         ..inputs
     };
-    let mut column_widths = if table_layout == TableLayoutValue::Fixed {
-        // Fixed with an indefinite (auto/percent-of-indefinite) table width
-        // has no basis for the §17.5.2.1 distribution — fall back to auto.
-        // Crucially the container width is NOT a substitute basis: a
-        // fixed+auto table shrink-wraps like an auto table (WPT
-        // table_grid_size_col_colspan), it does not fill its container.
-        let avail = specified_width
-            .map(|w| f32_max_compat(w.max(caption_minimum) - distrib_insets.width, 0.0));
-        match avail {
-            Some(avail) => {
-                for cell in &mut grid.cells {
-                    if cell.row != 0 {
-                        continue;
-                    }
-                    let style = doc
-                        .layout_style_for_key(cell.node_id)
-                        .expect("table cell layout style");
-                    if let Some(minimum) = style
-                        .min_size
-                        .width
-                        .maybe_resolve(Some(avail), crate::taffy_impl::resolve_calc)
-                    {
-                        let padding = style
-                            .padding
-                            .resolve_or_zero(Some(avail), crate::taffy_impl::resolve_calc);
-                        let border = style
-                            .border
-                            .resolve_or_zero(Some(avail), crate::taffy_impl::resolve_calc);
-                        let insets = padding.left + padding.right + border.left + border.right;
-                        let outer = if style.box_sizing == taffy::BoxSizing::ContentBox {
-                            minimum + insets
-                        } else {
-                            minimum.max(insets)
-                        };
-                        let gaps =
-                            border_spacing.0 * usize::from(cell.col_span).saturating_sub(1) as f32;
-                        cell.specified_min_width = Dimension::length((outer - gaps).max(0.0));
-                    }
+    let pass = ColumnPass {
+        table_layout,
+        specified_width,
+        caption_minimum,
+        inputs: inputs_for_columns,
+        border_spacing_x: border_spacing.0,
+    };
+    // A collapsed column leaves the table, but its cells still count toward
+    // the row heights, which keep the widths the columns had before the
+    // collapse ("col visibility:collapse doesn't change table height").
+    let natural_insets_width =
+        padding_border_size.width - overlap_w + border_spacing.0 * (grid.n_cols as f32 + 1.0);
+    let natural_widths = columns_collapse
+        .then(|| resolve_table_columns(doc, &mut grid, &pass, natural_insets_width));
+    let mut column_widths = if columns_collapse {
+        let mut remaining = without_collapsed_columns(&grid, &collapsed_cols, false);
+        let mut widths =
+            resolve_table_columns(doc, &mut remaining, &pass, distrib_insets.width).into_iter();
+        collapsed_cols
+            .iter()
+            .map(|collapsed| {
+                if *collapsed {
+                    0.0
+                } else {
+                    widths.next().unwrap_or(0.0)
                 }
-                resolve_fixed_column_widths(&grid, avail)
-            }
-            None => resolve_column_widths(
-                doc,
-                &grid,
-                inputs_for_columns,
-                distrib_insets,
-                border_spacing.0,
-            ),
-        }
+            })
+            .collect()
     } else {
-        resolve_column_widths(
-            doc,
-            &grid,
-            inputs_for_columns,
-            distrib_insets,
-            border_spacing.0,
-        )
+        resolve_table_columns(doc, &mut grid, &pass, distrib_insets.width)
     };
 
     // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
@@ -806,18 +813,25 @@ fn compute_table_layout_checked(
     // Extra min-width grows columns (mirrors the min-height→rows path
     // below, and the definite-width distribution above). Must run before
     // row heights are measured so cells lay out at final column widths.
-    if let Some(mn) = min_w_outer {
-        let target = f32_max_compat(mn - distrib_insets.width, 0.0);
-        distribute_extra(&mut column_widths, None, target);
-    }
-    distribute_extra(
+    let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
+        if let Some(mn) = min_w_outer {
+            distribute_extra(widths, hidden, f32_max_compat(mn - insets_width, 0.0));
+        }
+        distribute_extra(widths, hidden, (caption_minimum - insets_width).max(0.0));
+    };
+    grow_columns(
         &mut column_widths,
-        None,
-        (caption_minimum - distrib_insets.width).max(0.0),
+        distrib_insets.width,
+        columns_collapse.then_some(&collapsed_cols[..]),
     );
+    let natural_widths = natural_widths.map(|mut widths| {
+        grow_columns(&mut widths, natural_insets_width, None);
+        widths
+    });
 
     // Row heights
-    let mut row_heights = resolve_row_heights(doc, &mut grid, &column_widths, border_spacing)?;
+    let height_widths = natural_widths.as_deref().unwrap_or(&column_widths);
+    let mut row_heights = resolve_row_heights(doc, &mut grid, height_widths, border_spacing)?;
     for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
         if *hidden {
             *height = 0.0;
@@ -969,13 +983,38 @@ fn compute_table_layout_checked(
     }
 
     // Position cells: origin includes padding + collapsed outer border.
-    let x_origin = pad.left + collapsed.outer_left + border_spacing.0 + grid_origin.x;
+    let x_origin = pad.left
+        + collapsed.outer_left
+        + if shown_columns == 0 {
+            0.0
+        } else {
+            border_spacing.0
+        }
+        + grid_origin.x;
     let y_origin = pad.top + collapsed.outer_top + border_spacing.1 + grid_origin.y;
     // A separated gap is a negative overlap between adjoining tracks.
+    // The gap after a column sits before the next column that shows, and
+    // none sits before the first one.
+    let mut seen_shown = false;
+    let col_gaps: Vec<f32> = (0..collapsed_cols.len())
+        .map(|column| {
+            seen_shown |= !collapsed_cols[column];
+            let next_shown = collapsed_cols.get(column + 1).is_some_and(|next| !next);
+            if seen_shown && next_shown {
+                border_spacing.0
+            } else {
+                0.0
+            }
+        })
+        .collect();
     let col_steps = if collapse {
         collapsed.col_overlaps.clone()
     } else {
-        vec![-border_spacing.0; usize::from(grid.n_cols).saturating_sub(1)]
+        col_gaps
+            .iter()
+            .take(usize::from(grid.n_cols).saturating_sub(1))
+            .map(|gap| -*gap)
+            .collect()
     };
     let row_steps = if collapse {
         collapsed.row_overlaps.clone()
@@ -987,7 +1026,7 @@ fn compute_table_layout_checked(
     place_cells(
         doc,
         &mut grid,
-        &column_widths,
+        (&column_widths, &col_gaps, &collapsed_cols),
         (&row_heights, &row_gaps, &collapsed_rows),
         (&col_origins, &row_origins),
         border_spacing,
@@ -1379,6 +1418,47 @@ fn collect_col_widths(
     doc: &Document,
     table_idx: usize,
 ) -> Result<Vec<ColSizing>, raikiri_traits::LayoutError> {
+    let mut out = Vec::new();
+    let mut too_many = false;
+    each_column_run(doc, table_idx, |sizing_node, _, span| {
+        let st = &doc.layout_node_with_style(sizing_node).unwrap().style;
+        let sizing = ColSizing {
+            width: st.size.width,
+            min_width: st.min_size.width.into(),
+            max_width: st.max_size.width.into(),
+        };
+        if span > usize::from(u16::MAX) - out.len() {
+            too_many = true;
+        } else {
+            out.extend(std::iter::repeat_n(sizing, span));
+        }
+    });
+    if too_many {
+        return Err(table_column_error());
+    }
+    Ok(out)
+}
+
+/// Columns removed by `visibility: collapse` on the `<col>` or its
+/// `<colgroup>` (CSS Tables 3, "Visibility-collapse rendering"), one entry
+/// per grid column.
+fn collapsed_columns(doc: &Document, table_idx: usize, n_cols: u16) -> Vec<bool> {
+    let mut out = Vec::new();
+    // `collect_col_widths` has already rejected a column count past `u16`.
+    each_column_run(doc, table_idx, |_, collapsed, span| {
+        out.extend(std::iter::repeat_n(collapsed, span));
+    });
+    out.resize(usize::from(n_cols), false);
+    out
+}
+
+/// Walks the table's `<col>` and `<colgroup>` children in grid order and
+/// calls `each` with the node that sizes a run of columns, whether the run
+/// is collapsed, and its length. `span` (HTML §4.9.8, max 1000) sets the
+/// length; a `<colgroup>` without `<col>` children stands for its own `span`
+/// columns and sizes them itself. Direct `<col>` children (anonymous
+/// colgroup) are included in DOM order.
+fn each_column_run(doc: &Document, table_idx: usize, mut each: impl FnMut(usize, bool, usize)) {
     fn col_span(doc: &Document, node_id: usize) -> usize {
         doc.ifc_layout_node(node_id)
             .expect("table box layout view")
@@ -1386,51 +1466,49 @@ fn collect_col_widths(
             .and_then(|value| value.parse::<usize>().ok())
             .map_or(1, |v| v.clamp(1, 1000))
     }
-    fn sizing_of(doc: &Document, col_id: usize) -> ColSizing {
-        let st = &doc.layout_node_with_style(col_id).unwrap().style;
-        ColSizing {
-            width: st.size.width,
-            min_width: st.min_size.width.into(),
-            max_width: st.max_size.width.into(),
-        }
-    }
-    fn append_columns(
-        out: &mut Vec<ColSizing>,
-        sizing: ColSizing,
-        span: usize,
-    ) -> Result<(), raikiri_traits::LayoutError> {
-        if span > usize::from(u16::MAX) - out.len() {
-            return Err(table_column_error());
-        }
-        out.extend(std::iter::repeat_n(sizing, span));
-        Ok(())
-    }
-    let mut out = Vec::new();
-    for &child_id in &doc.nodes[table_idx].children.clone() {
+    for &child_id in &doc.nodes[table_idx].children {
         if !doc.nodes[child_id].is_in_document() {
             continue;
         }
         match doc.nodes[child_id].display() {
             DisplayValue::TableColumnGroup => {
-                for &col_id in &doc.nodes[child_id].children.clone() {
+                let group_collapsed = doc.nodes[child_id].collapses_table_columns;
+                let mut has_columns = false;
+                for &col_id in &doc.nodes[child_id].children {
                     if !doc.nodes[col_id].is_in_document() {
                         continue;
                     }
-                    if doc.nodes[col_id].display() != DisplayValue::TableColumn {
-                        continue;
+                    match doc.nodes[col_id].display() {
+                        DisplayValue::TableColumn => {}
+                        // A `<col>` that generates no box still ends the
+                        // group's own `span`.
+                        DisplayValue::None => {
+                            has_columns = true;
+                            continue;
+                        }
+                        _ => continue,
                     }
-                    let sz = sizing_of(doc, col_id);
-                    append_columns(&mut out, sz, col_span(doc, col_id))?;
+                    has_columns = true;
+                    each(
+                        col_id,
+                        group_collapsed || doc.nodes[col_id].collapses_table_columns,
+                        col_span(doc, col_id),
+                    );
+                }
+                if !has_columns {
+                    each(child_id, group_collapsed, col_span(doc, child_id));
                 }
             }
             DisplayValue::TableColumn => {
-                let sz = sizing_of(doc, child_id);
-                append_columns(&mut out, sz, col_span(doc, child_id))?;
+                each(
+                    child_id,
+                    doc.nodes[child_id].collapses_table_columns,
+                    col_span(doc, child_id),
+                );
             }
             _ => {}
         }
     }
-    Ok(out)
 }
 
 /// Visual section ordering for a table's direct children.
@@ -1716,6 +1794,73 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
         doc.table_layout_node_mut(cell_id).cache = cache;
     }
     output.size.width
+}
+
+/// What the column pass needs besides the grid and the room the tracks share.
+struct ColumnPass {
+    table_layout: TableLayoutValue,
+    specified_width: Option<f32>,
+    caption_minimum: f32,
+    inputs: LayoutInput,
+    border_spacing_x: f32,
+}
+
+/// Column widths for `grid` by the automatic or fixed algorithm (CSS 2.1
+/// §17.5.2). `insets_width` is the table width the tracks do not share:
+/// padding, borders and spacing net of collapsed-line overlaps.
+fn resolve_table_columns(
+    doc: &mut LayoutSession<'_>,
+    grid: &mut TableGrid,
+    pass: &ColumnPass,
+    insets_width: f32,
+) -> Vec<f32> {
+    let insets = Size {
+        width: insets_width,
+        height: 0.0,
+    };
+    if pass.table_layout != TableLayoutValue::Fixed {
+        return resolve_column_widths(doc, grid, pass.inputs, insets, pass.border_spacing_x);
+    }
+    // Fixed with an indefinite (auto/percent-of-indefinite) table width
+    // has no basis for the §17.5.2.1 distribution — fall back to auto.
+    // Crucially the container width is NOT a substitute basis: a
+    // fixed+auto table shrink-wraps like an auto table (WPT
+    // table_grid_size_col_colspan), it does not fill its container.
+    let avail = pass
+        .specified_width
+        .map(|w| f32_max_compat(w.max(pass.caption_minimum) - insets_width, 0.0));
+    let Some(avail) = avail else {
+        return resolve_column_widths(doc, grid, pass.inputs, insets, pass.border_spacing_x);
+    };
+    for cell in &mut grid.cells {
+        if cell.row != 0 {
+            continue;
+        }
+        let style = doc
+            .layout_style_for_key(cell.node_id)
+            .expect("table cell layout style");
+        if let Some(minimum) = style
+            .min_size
+            .width
+            .maybe_resolve(Some(avail), crate::taffy_impl::resolve_calc)
+        {
+            let padding = style
+                .padding
+                .resolve_or_zero(Some(avail), crate::taffy_impl::resolve_calc);
+            let border = style
+                .border
+                .resolve_or_zero(Some(avail), crate::taffy_impl::resolve_calc);
+            let cell_insets = padding.left + padding.right + border.left + border.right;
+            let outer = if style.box_sizing == taffy::BoxSizing::ContentBox {
+                minimum + cell_insets
+            } else {
+                minimum.max(cell_insets)
+            };
+            let gaps = pass.border_spacing_x * usize::from(cell.col_span).saturating_sub(1) as f32;
+            cell.specified_min_width = Dimension::length((outer - gaps).max(0.0));
+        }
+    }
+    resolve_fixed_column_widths(grid, avail)
 }
 
 // ---------------------------------------------------------------------------
@@ -2063,6 +2208,51 @@ fn without_collapsed_rows(grid: &TableGrid, collapsed: &[bool]) -> TableGrid {
             .collect(),
         cells,
         col_widths: grid.col_widths.clone(),
+    }
+}
+
+/// The grid as it shows once `collapsed` columns are removed: later columns
+/// move left. With `keep_crossing`, each cell keeps only the columns of its
+/// span that remain; without it, a cell spanning a collapsed column is left
+/// out, so its content cannot widen the columns that stay.
+fn without_collapsed_columns(
+    grid: &TableGrid,
+    collapsed: &[bool],
+    keep_crossing: bool,
+) -> TableGrid {
+    let mut shown_before = Vec::with_capacity(collapsed.len() + 1);
+    let mut shown = 0u16;
+    for &column_collapsed in collapsed {
+        shown_before.push(shown);
+        shown += u16::from(!column_collapsed);
+    }
+    shown_before.push(shown);
+    let cells = grid
+        .cells
+        .iter()
+        .filter_map(|cell| {
+            let start = cell.col_start as usize;
+            let end = (start + cell.col_span as usize).min(collapsed.len());
+            let col_span = shown_before[end] - shown_before[start];
+            let crosses = usize::from(col_span) != end - start;
+            (col_span > 0 && (keep_crossing || !crosses)).then_some(CellPlacement {
+                col_start: shown_before[start],
+                col_span,
+                ..*cell
+            })
+        })
+        .collect();
+    TableGrid {
+        n_cols: shown,
+        rows: grid.rows.clone(),
+        cells,
+        col_widths: grid
+            .col_widths
+            .iter()
+            .zip(collapsed)
+            .filter(|(_, collapsed)| !**collapsed)
+            .map(|(&sizing, _)| sizing)
+            .collect(),
     }
 }
 
@@ -2423,12 +2613,13 @@ fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
 fn place_cells(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
-    column_widths: &[f32],
+    col_tracks: (&[f32], &[f32], &[bool]),
     row_tracks: (&[f32], &[f32], &[bool]),
     origins: (&[f32], &[f32]),
     spacing: (f32, f32),
     vertical_writing: bool,
 ) -> Result<(), raikiri_traits::LayoutError> {
+    let (column_widths, col_gaps, collapsed_cols) = col_tracks;
     let (row_heights, row_gaps, collapsed_rows) = row_tracks;
     let (col_x, row_y) = origins;
     // A cell moved past collapsed rows aligns with the row it now starts in.
@@ -2458,14 +2649,29 @@ fn place_cells(
         let spans_collapsed_row = collapsed_rows[cell.row as usize..span_end]
             .iter()
             .any(|collapsed| *collapsed);
-        doc.nodes[cell.node_id].clips_collapsed_table_span = spans_collapsed_row;
-        let cell_x = *col_x.get(columns.start).ok_or_else(table_column_error)?;
+        // The same holds across columns: the cell keeps the columns that
+        // remain, and none of its width when they all collapse.
+        let mut shown_columns = columns.clone().filter(|&column| !collapsed_cols[column]);
+        let first_shown_column = shown_columns.next();
+        let (start_col, end_col) = match first_shown_column {
+            Some(first) => (first, shown_columns.next_back().unwrap_or(first) + 1),
+            None => (columns.start, columns.start),
+        };
+        let spans_collapsed_column = collapsed_cols[columns.clone()]
+            .iter()
+            .any(|collapsed| *collapsed);
+        doc.nodes[cell.node_id].clips_collapsed_table_span =
+            spans_collapsed_row || spans_collapsed_column;
+        let cell_x = *col_x.get(start_col).ok_or_else(table_column_error)?;
         let cell_y = row_y[start_row];
         // Full spanned widths — origins already net out the collapsed
         // overlaps for *positioning*; shrinking the box by the overlap as
         // well would double-count the absorbed line. Separated borders add
         // the spanned gaps instead, matching the origin differences.
-        let cell_width = spanned_size(&column_widths[columns], spacing.0);
+        let cell_width = column_widths[start_col..end_col].iter().sum::<f32>()
+            + col_gaps[start_col..end_col.saturating_sub(1).max(start_col)]
+                .iter()
+                .sum::<f32>();
         let cell_height = row_heights[start_row..end_row].iter().sum::<f32>()
             + row_gaps[start_row..end_row.saturating_sub(1).max(start_row)]
                 .iter()
@@ -2537,6 +2743,13 @@ fn place_cells(
             padding.bottom = 0.0;
             border.top = 0.0;
             border.bottom = 0.0;
+        }
+        if first_shown_column.is_none() {
+            // Likewise a cell in collapsed columns has no inline extent.
+            padding.left = 0.0;
+            padding.right = 0.0;
+            border.left = 0.0;
+            border.right = 0.0;
         }
         let extra = if vertical_cell {
             0.0

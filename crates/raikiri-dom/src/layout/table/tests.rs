@@ -11,6 +11,7 @@ use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 mod anonymous_table_tests;
 mod cell_index_tests;
 mod rowspan_tests;
+mod visibility_collapse_column_tests;
 mod visibility_collapse_tests;
 
 fn with_layout_session<R>(
@@ -61,11 +62,13 @@ fn place_cells_in_session(
     spacing: (f32, f32),
     vertical_writing: bool,
 ) -> Result<(), raikiri_traits::LayoutError> {
+    let gaps = vec![spacing.0; column_widths.len()];
+    let collapsed = vec![false; column_widths.len()];
     with_layout_session(document, |session| {
         super::place_cells(
             session,
             grid,
-            column_widths,
+            (column_widths, &gaps, &collapsed),
             row_tracks,
             origins,
             spacing,
