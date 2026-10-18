@@ -16662,3 +16662,49 @@ fn an_empty_page_area_advances_by_the_paper_height() {
     assert_eq!(fixed_page_step(f32::NAN, 800.0), 800.0);
     assert_eq!(fixed_page_step(-5.0, 0.0), 1.0);
 }
+
+#[test]
+fn a_first_line_straddling_the_page_end_pushes_its_block_to_a_later_page() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // A 30px line at y=80 ends on page 1, so the block moves there.
+    assert_eq!(
+        pages.first_line_push_page(80.0, 30.0, 60.0, 50.0, 0),
+        Some(1)
+    );
+    // A line that ends at the page end stays.
+    assert_eq!(pages.first_line_push_page(70.0, 30.0, 60.0, 50.0, 0), None);
+    // A line reaching past the next page moves the block to the page it ends on.
+    assert_eq!(
+        pages.first_line_push_page(80.0, 250.0, 60.0, 50.0, 0),
+        Some(3)
+    );
+    // The page is measured from the current page's own origin.
+    assert_eq!(
+        pages.first_line_push_page(180.0, 30.0, 160.0, 50.0, 1),
+        Some(2)
+    );
+    // A block that starts on a later page is left to that page.
+    assert_eq!(
+        pages.first_line_push_page(180.0, 30.0, 160.0, 50.0, 0),
+        None
+    );
+    // Scheduled page heights set both the page end and the target.
+    let scheduled = PageOrigins::new(&[100.0, 200.0], 50.0);
+    assert_eq!(
+        scheduled.first_line_push_page(250.0, 100.0, 120.0, 150.0, 1),
+        Some(3)
+    );
+    assert_eq!(
+        scheduled.first_line_push_page(250.0, 60.0, 120.0, 150.0, 1),
+        Some(2)
+    );
+}
+
+#[test]
+fn a_block_fits_a_page_step_within_a_thousandth() {
+    assert!(block_fits_page_step(100.0, 100.0));
+    assert!(block_fits_page_step(100.001, 100.0));
+    assert!(!block_fits_page_step(100.01, 100.0));
+    assert!(!block_fits_page_step(f32::NAN, 100.0));
+    assert!(!block_fits_page_step(f32::INFINITY, f32::INFINITY));
+}

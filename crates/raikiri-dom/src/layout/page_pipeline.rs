@@ -1507,6 +1507,32 @@ impl PageOrigins {
         }
     }
 
+    /// The page a fixed-height block is pushed to when its first line, the
+    /// text of `text_height` at `text_y`, would straddle the end of
+    /// `current_page` (see [`first_line_overflows`]), or `None` when the block
+    /// stays. The block moves at least to the page after `current_page`.
+    fn first_line_push_page(
+        &self,
+        text_y: f32,
+        text_height: f32,
+        block_y: f32,
+        block_height: f32,
+        current_page: u32,
+    ) -> Option<u32> {
+        first_line_overflows(
+            text_y,
+            text_height,
+            block_y,
+            block_height,
+            self.origin(current_page),
+            self.step_at(current_page),
+        )
+        .then(|| {
+            let natural_page = self.page_index_for_y(text_y + text_height);
+            current_page.saturating_add(1).max(natural_page)
+        })
+    }
+
     /// Where a box starts when an unforced break falls in the collapsed
     /// margin above it at the edge that opens `natural_page`: the top of the
     /// page it lands on and its border-box top.
@@ -4423,16 +4449,13 @@ fn paginate_flow(
                     root_flow_offset,
                     flow_shift,
                 );
-                if first_line_overflows(
+                if let Some(target_page) = page_origins.first_line_push_page(
                     effective_y,
                     height,
                     block_effective_y,
                     block_height,
-                    page_origin(current_page),
-                    page_step_at(current_page),
+                    current_page,
                 ) {
-                    let natural_page = page_index_for_y(effective_y + height);
-                    let target_page = current_page.saturating_add(1).max(natural_page);
                     check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
                     let delta = move_line_block(
@@ -4484,8 +4507,7 @@ fn paginate_flow(
                     cascade.computed[block_id].widows,
                 );
                 let block_height = document.nodes[block_id].unrounded_layout.size.height;
-                let fits_on_page =
-                    block_height.is_finite() && block_height <= page_step_at(current_page) + 0.001;
+                let fits_on_page = block_fits_page_step(block_height, page_step_at(current_page));
                 // Lines move down inside the paragraph only when it has
                 // lines enough for both constraints, is its own inline layout
                 // root, has no earlier split pending, and can shift its lines.
@@ -7047,6 +7069,12 @@ fn flex_line_paragraph(
         })
 }
 
+/// Whether a block of `block_height` is no taller than a page of `page_step`,
+/// give or take 0.001, so that moving it whole to a page can hold it.
+fn block_fits_page_step(block_height: f32, page_step: f32) -> bool {
+    block_height.is_finite() && block_height <= page_step + 0.001
+}
+
 /// Whether the text from `text_y` with `text_height` starts at or below the
 /// start of the page that starts at `page_start` and is `page_step` tall and
 /// ends past that page's end, while its block, from `block_y` with
@@ -7066,8 +7094,7 @@ fn first_line_overflows(
         && text_y >= page_start
         && block_y >= page_start
         && block_y < page_end
-        && block_height.is_finite()
-        && block_height <= page_step + 0.001
+        && block_fits_page_step(block_height, page_step)
         && text_y + text_height > page_end
 }
 
