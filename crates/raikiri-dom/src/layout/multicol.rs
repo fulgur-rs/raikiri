@@ -536,19 +536,54 @@ fn column_horizontal_margins(
 }
 
 /// The width a column imposes on a child it lays out, or `None` when an
-/// element's authored width resolves against the column width instead.
+/// element's authored width resolves against the column width instead, or a
+/// float fits its content within the column.
 fn column_child_known_width(tree: &Document, child: usize, column_width: f32) -> Option<f32> {
     let node = &tree.layout_node_with_style(child).unwrap();
     if node.kind() != NodeKind::Element {
         return Some(column_width);
     }
-    if node.style.size.width != Dimension::auto() {
+    // A float with an auto width shrinks to fit its content within the column
+    // instead of filling it.
+    if node.style.size.width != Dimension::auto() || node.style.float.is_floated() {
         return None;
     }
     // An auto width fills the column between the horizontal margins; an auto
     // margin counts as zero.
     let (left, right) = column_definite_margins(tree, child, column_width);
     Some((column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0))
+}
+
+/// The input that lays `child` out in a column of `column_width`: at the
+/// width the column imposes on it, if any, and for a float with an auto width
+/// within the room its margins leave.
+fn column_child_layout_input(
+    tree: &Document,
+    child: usize,
+    column_width: f32,
+    parent_height: Option<f32>,
+    available_height: AvailableSpace,
+) -> LayoutInput {
+    let mut input = column_child_input(
+        column_child_known_width(tree, child, column_width),
+        column_width,
+        parent_height,
+        available_height,
+    );
+    if input.known_dimensions.width.is_none()
+        && tree
+            .layout_node_with_style(child)
+            .unwrap()
+            .style
+            .float
+            .is_floated()
+    {
+        let (left, right) = column_definite_margins(tree, child, column_width);
+        input.available_space.width = AvailableSpace::Definite(
+            (column_width - left.unwrap_or(0.0) - right.unwrap_or(0.0)).max(0.0),
+        );
+    }
+    input
 }
 
 pub(crate) fn multicol_definite_dimension(
@@ -962,8 +997,9 @@ fn layout_column_group(
     {
         let mut measurements = Vec::with_capacity(children.len());
         for &child in children {
-            let child_inputs = column_child_input(
-                column_child_known_width(tree, child, context.column_width),
+            let child_inputs = column_child_layout_input(
+                tree,
+                child,
                 context.column_width,
                 context.available_height,
                 AvailableSpace::MaxContent,
@@ -1038,8 +1074,9 @@ fn layout_column_group(
                     Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
                     None => AvailableSpace::MaxContent,
                 };
-                let child_inputs = column_child_input(
-                    column_child_known_width(tree, child, context.column_width),
+                let child_inputs = column_child_layout_input(
+                    tree,
+                    child,
                     context.column_width,
                     context.available_height,
                     child_height,
@@ -1171,8 +1208,13 @@ fn layout_column_group(
             column_horizontal_margins(tree, child, context.column_width, child_output.size.width);
         // A right-to-left container aligns its blocks to the right edge of
         // the column, leaving the room a narrower block does not use to its
-        // left.
-        let x = if context.rtl {
+        // left. A float sits at the edge of its own side in either direction.
+        let flush_right = match tree.layout_node_with_style(child).unwrap().style.float {
+            taffy::Float::Left => false,
+            taffy::Float::Right => true,
+            taffy::Float::None => context.rtl,
+        };
+        let x = if flush_right {
             content_origin.x + context.right_flush_offset_x(column, child_output.size.width)
                 - margin_right
         } else {
