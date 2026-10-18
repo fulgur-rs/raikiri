@@ -3396,6 +3396,35 @@ fn tile_spans_keep_a_tile_thinner_than_a_device_pixel() {
 }
 
 #[test]
+fn a_snapped_repeat_keeps_the_phase_of_the_placed_tile() {
+    use raikiri_style::property::BackgroundRepeatKeyword::{NoRepeat, Repeat};
+    // A 1.6px tile placed at 0.2px repeats every 2 device pixels from device
+    // pixel 0, whichever tile covers the start of the painting area.
+    let grid = Some((1.0, 0.0));
+    for (painting_start, covering_start) in [(-1.0, -1.4), (0.0, 0.2), (3.5, 3.4)] {
+        let spans = axis_tile_spans(&[covering_start], 1.6, Repeat, (0.2, painting_start), grid);
+        let [(start, pitch)] = spans[..] else {
+            panic!("a repeat axis keeps one tile: {spans:?}");
+        };
+        assert_eq!(pitch, 2.0);
+        assert_eq!(start % 2.0, 0.0, "{spans:?} is off the lattice 0, 2, 4");
+        assert!(
+            start <= painting_start && painting_start < start + pitch,
+            "{spans:?} does not cover {painting_start}"
+        );
+    }
+    // Without a grid the tile that covers the painting start is kept as it is.
+    let unsnapped = axis_tile_spans(&[-1.4], 1.6, Repeat, (0.2, -1.0), None);
+    assert_eq!(unsnapped.len(), 1);
+    assert!((unsnapped[0].0 + 1.4).abs() < 1e-9 && unsnapped[0].1 == 1.6);
+    // Other keywords are snapped from their own tiles.
+    assert_eq!(
+        axis_tile_spans(&[10.4], 0.2, NoRepeat, (10.4, 0.0), grid),
+        vec![(10.0, 1.0)]
+    );
+}
+
+#[test]
 fn background_tile_is_placed_unsnapped_and_drawn_on_device_pixels() {
     struct BluePixels;
     impl raikiri_traits::ImagePixelSource for BluePixels {

@@ -6064,16 +6064,26 @@ fn paint_background_image(
         )
     };
     let (continuous_x, continuous_y) = (continuous(repeat.x), continuous(repeat.y));
-    let xs = tile_spans(
+    let xs = axis_tile_spans(
         &tiles.x,
         tiles.width,
         repeat.x,
+        (
+            positioning.x0
+                + position_offset(position.horizontal, positioning.width() - tiles.width),
+            painting.x0,
+        ),
         device_grid.map(|grid| (grid.scale_x, grid.offset_x)),
     );
-    let ys = tile_spans(
+    let ys = axis_tile_spans(
         &tiles.y,
         tiles.height,
         repeat.y,
+        (
+            positioning.y0
+                + position_offset(position.vertical, positioning.height() - tiles.height),
+            painting.y0,
+        ),
         device_grid.map(|grid| (grid.scale_y, grid.offset_y)),
     );
     // `background_tiles` returns a tile in each axis, so the fallbacks never apply.
@@ -6142,6 +6152,37 @@ fn paint_background_image(
         }
     }
     scene.pop_layer();
+}
+
+/// [`tile_spans`] for one axis of a layer, where `placed` is the start of the
+/// tile that `background-position` puts in the positioning area and
+/// `painting_start` the start of the painting area, both along that axis.
+///
+/// A `repeat` axis repeats from the placed tile, which can lie outside the
+/// painting area. When its pitch snaps to a different length than the CSS
+/// one, the repetition has to keep that tile as its anchor, or its phase would
+/// follow the painting area instead of `background-position`. The span
+/// returned is the tile of that repetition at or before `painting_start`. Any
+/// other axis is left to [`tile_spans`].
+fn axis_tile_spans(
+    starts: &[f64],
+    length: f64,
+    keyword: raikiri_style::property::BackgroundRepeatKeyword,
+    (placed, painting_start): (f64, f64),
+    grid: Option<(f64, f64)>,
+) -> Vec<(f64, f64)> {
+    use raikiri_style::property::BackgroundRepeatKeyword::Repeat;
+    let anchored = match keyword {
+        Repeat => tile_spans(&[placed], length, keyword, grid)
+            .first()
+            .copied(),
+        _ => None,
+    };
+    let Some((anchor, pitch)) = anchored else {
+        return tile_spans(starts, length, keyword, grid);
+    };
+    let tile_index = ((painting_start - anchor) / pitch).floor();
+    vec![(anchor + tile_index * pitch, pitch)]
 }
 
 /// The `(start, length)` spans along one axis that a layer's tiles are drawn
