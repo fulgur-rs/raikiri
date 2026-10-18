@@ -16,10 +16,9 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
     {
         return false;
     }
-    let mut pending: Vec<_> = tree.nodes[root]
-        .children
-        .iter()
-        .copied()
+    let mut pending: Vec<_> = tree
+        .children_through_contents(root)
+        .into_iter()
         .map(|id| (id, 0usize, true, false))
         .collect();
     let mut visible = false;
@@ -140,7 +139,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         let descendants_projected = projected && !atomic(tree, id);
         let descendants_inside_context =
             inside_formatting_context || node.display().is_block_flex_or_grid_container();
-        pending.extend(node.children.iter().copied().map(|child| {
+        pending.extend(tree.children_through_contents(id).into_iter().map(|child| {
             (
                 child,
                 depth + 1,
@@ -231,7 +230,7 @@ fn in_paragraph_with_lines(tree: &Document, id: usize) -> bool {
 }
 
 fn has_rendered_element_child(tree: &Document, id: usize) -> bool {
-    tree.nodes[id].children.iter().any(|&child| {
+    tree.children_through_contents(id).into_iter().any(|child| {
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
             && matches!(tree.nodes[child].data, NodeData::Element(_))
@@ -257,7 +256,7 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
     if depth >= 128 || tree.nodes[id].display().is_block_flex_or_grid_container() {
         return own;
     }
-    let children = &tree.nodes[id].children;
+    let children = tree.children_through_contents(id);
     let in_flow = |&&child: &&usize| {
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
@@ -336,7 +335,7 @@ fn collect(
                 taffy::Float::Right => context.column_width - output.size.width,
                 taffy::Float::Left => 0.0,
                 taffy::Float::None => {
-                    if tree.nodes[id].parent.is_some_and(|parent| {
+                    if tree.taffy_parent_of(id).is_some_and(|parent| {
                         tree.layout_node_with_style(parent).unwrap().style.direction == taffy::Direction::Rtl
                     }) {
                         context.column_width - output.size.width
@@ -359,7 +358,7 @@ fn collect(
                 // translated child continuations to replay in later columns.
                 && !has_rendered_element_child(tree, id)
                 && !tree.nodes[id].has_before_or_after_content
-                && !tree.nodes[id].children.iter().any(|&child| {
+                && !tree.children_through_contents(id).into_iter().any(|child| {
                     let child = &tree.layout_node_with_style(child).unwrap();
                     child.is_in_document()
                         && !child.is_display_none()
@@ -374,8 +373,7 @@ fn collect(
     }
     let start = out.len();
     ancestors.push(id);
-    for index in 0..tree.nodes[id].children.len() {
-        let child = tree.nodes[id].children[index];
+    for child in tree.children_through_contents(id) {
         collect(tree, child, context, ancestors, out);
         if tree.fragment_tree.limit_exceeded {
             break;
@@ -492,8 +490,7 @@ pub(super) fn layout(
         return fallback.height;
     }
     let mut boxes = Vec::new();
-    for index in 0..tree.nodes[root].children.len() {
-        let child = tree.nodes[root].children[index];
+    for child in tree.children_through_contents(root) {
         collect(tree, child, context, &mut Vec::new(), &mut boxes);
         if tree.fragment_tree.limit_exceeded {
             return fallback.height;

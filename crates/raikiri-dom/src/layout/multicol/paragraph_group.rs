@@ -98,10 +98,13 @@ fn collect(
                     .as_ref()
                     .is_none_or(|lines| lines.lines.is_empty())
             })
-            && node.children.iter().all(|&child| {
-                tree.nodes[child].kind() == NodeKind::Text
-                    && tree.nodes[child].unrounded_layout.size.height == 0.0
-            })
+            && tree
+                .children_through_contents(child)
+                .into_iter()
+                .all(|child| {
+                    tree.nodes[child].kind() == NodeKind::Text
+                        && tree.nodes[child].unrounded_layout.size.height == 0.0
+                })
             && node
                 .authored_writing_mode
                 .is_none_or(|mode| !mode.is_vertical())
