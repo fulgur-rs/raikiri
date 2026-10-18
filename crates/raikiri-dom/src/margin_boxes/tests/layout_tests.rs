@@ -832,6 +832,15 @@ fn author_alignment_overrides_the_slot_default() {
     assert_eq!(top_left("vertical-align: baseline"), (Left, Top));
     assert_eq!(top_left("vertical-align: text-top"), (Left, Top));
     assert_eq!(top_left("vertical-align: 5px"), (Left, Top));
+    // A declaration that is invalid at computed-value time behaves as `unset`
+    // rather than falling back to the slot default: `text-align` is inherited
+    // from the page and `vertical-align` takes its initial value.
+    assert_eq!(top_left("text-align: var(--missing)"), (Right, Middle));
+    assert_eq!(top_left("vertical-align: var(--missing)"), (Left, Top));
+    assert_eq!(
+        top_left("--align: center; text-align: var(--align)"),
+        (Center, Middle)
+    );
     // A rule that follows a lower-priority duplicate still wins over the
     // defaults.
     assert_eq!(

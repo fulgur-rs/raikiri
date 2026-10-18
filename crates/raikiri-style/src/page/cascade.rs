@@ -136,6 +136,11 @@ pub struct PageMarginBoxCascadeResult {
     pub specificity: (u32, u32, u32),
     /// Normal layer rank evaluated for the enclosing page media context.
     layer_order: u32,
+    /// Properties whose winning declaration was invalid at computed-value
+    /// time (a `var()` that failed to substitute) and was therefore left out
+    /// of [`Self::declarations`]. Such a declaration behaves as `unset`, so
+    /// the slot's default values must not stand in for it.
+    invalid_at_computed_value_time: Vec<PropertyKey>,
 }
 
 impl PageMarginBoxCascadeResult {
@@ -350,10 +355,15 @@ impl PageMarginBoxCascadeResult {
                 decl_index,
             )
         });
+        let mut invalid_at_computed_value_time = Vec::new();
         merged.declarations = winners
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
-                let value = margin_box_text_shadow_default(resolved_value(&decl.value)?)?;
+                let Some(resolved) = resolved_value(&decl.value) else {
+                    invalid_at_computed_value_time.push(decl.value.key());
+                    return None;
+                };
+                let value = margin_box_text_shadow_default(resolved)?;
                 Some(Declaration::new(
                     resolve_css_wide_color_font(
                         value,
@@ -366,6 +376,7 @@ impl PageMarginBoxCascadeResult {
                 ))
             })
             .collect();
+        merged.invalid_at_computed_value_time = invalid_at_computed_value_time;
         let own_color = merged
             .declarations
             .iter()
@@ -877,7 +888,9 @@ impl PageCascadeResult {
         let page = self.page_style.as_deref().unwrap_or(&INITIAL_PAGE_STYLE);
         let (text_align, vertical_align) = margin_box_default_alignment(rule.slot);
         // The slot defaults stand in for rules of the UA default style sheet,
-        // so every declaration of the rule itself is applied after them.
+        // so every declaration of the rule itself is applied after them. A
+        // declaration that lost to a failed `var()` substitution still beats
+        // the default, as `unset`, so the default is left out for it.
         let slot_defaults = [
             PropertyValue::TextAlign(text_align),
             PropertyValue::VerticalAlign(vertical_align),
@@ -886,6 +899,7 @@ impl PageCascadeResult {
             &page.computed,
             slot_defaults
                 .into_iter()
+                .filter(|value| !rule.invalid_at_computed_value_time.contains(&value.key()))
                 .chain(
                     rule.declarations
                         .iter()
@@ -1383,6 +1397,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
                     origin: rule.origin,
                     specificity: (spec.f, spec.g, spec.h),
                     layer_order: layers.rank(rule.layer, rule.origin),
+                    invalid_at_computed_value_time: Vec::new(),
                 });
             }
             for decl in &rule.declarations {
