@@ -926,6 +926,24 @@ fn display_contents_does_not_end_a_run_of_improper_annotations() {
 }
 
 #[test]
+fn out_of_flow_boxes_do_not_end_a_run_of_improper_annotations() {
+    // An absolutely positioned box between two annotations takes no part in
+    // the line, so the annotations stay consecutive.
+    let positions = |out_of_flow: bool| {
+        glyph_positions(|doc, ruby| {
+            let span = element(doc, ruby, "span", "display:inline");
+            doc.append_text(span, "B");
+            rt(doc, span, "A");
+            if out_of_flow {
+                element(doc, span, "span", "position:absolute");
+            }
+            rt(doc, span, "C");
+        })
+    };
+    assert_eq!(positions(true), positions(false));
+}
+
+#[test]
 fn text_between_improper_annotations_ends_their_run() {
     let positions = glyph_positions(|doc, ruby| {
         let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");

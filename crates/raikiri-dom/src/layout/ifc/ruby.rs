@@ -991,16 +991,15 @@ impl Content<'_, '_> {
         let mut white_space = Vec::new();
         while let Some(&id) = nodes.get(look) {
             look += 1;
-            if is_skipped(self.doc, id) {
+            // Boxes that take no part in the line do not separate annotations.
+            if is_skipped(self.doc, id) || is_out_of_flow(self.doc, self.cascade, id) {
                 continue;
             }
             if is_white_space_text(self.doc, id) {
                 white_space.push(id);
                 continue;
             }
-            if self.doc.nodes[id].display() != DisplayValue::RubyText
-                || is_out_of_flow(self.doc, self.cascade, id)
-            {
+            if self.doc.nodes[id].display() != DisplayValue::RubyText {
                 break;
             }
             if let Some(previous) = run.last_mut() {
