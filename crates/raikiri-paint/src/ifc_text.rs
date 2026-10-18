@@ -442,7 +442,7 @@ pub(crate) fn hold_ifc_lines<'a>(
             pixel_source,
             warnings,
             paint_transform,
-            piece_fixed_viewport(paragraph, cv, piece.node, fixed_viewport),
+            piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
         );
     }
     for positioned_line in positioned.lines() {
@@ -559,7 +559,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 pixel_source,
                 warnings,
                 piece_transform,
-                piece_fixed_viewport(paragraph, cv, piece.node, fixed_viewport),
+                piece_fixed_viewport(paragraph, cv, piece, fixed_viewport),
             );
         }
         // Images of `::before` and `::after` content are replaced content
@@ -877,7 +877,7 @@ pub(crate) fn draw_ifc_lines(
 }
 
 /// The page area in which the `fixed` background layers of the inline box
-/// `node`, styled `cv`, are positioned, given the page area `fixed_viewport`
+/// `piece`, styled `cv`, are positioned, given the page area `fixed_viewport`
 /// that the layers of its paragraph's block are positioned in. A box without
 /// a `fixed` layer needs none. Inside an inline element that is the
 /// containing block of fixed-position boxes, a `fixed` layer is positioned
@@ -885,14 +885,14 @@ pub(crate) fn draw_ifc_lines(
 fn piece_fixed_viewport(
     paragraph: Paragraph<'_>,
     cv: &raikiri_style::ComputedValues,
-    node: usize,
+    piece: &raikiri_dom::InlineBoxPiece,
     fixed_viewport: Option<Rect>,
 ) -> Option<Rect> {
     fixed_viewport.filter(|_| {
         cv.background_layers()
             .iter()
             .any(|layer| layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed)
-            && !typographic::in_fixed_containing_block(paragraph, node)
+            && !typographic::in_fixed_containing_block(paragraph, piece)
     })
 }
 

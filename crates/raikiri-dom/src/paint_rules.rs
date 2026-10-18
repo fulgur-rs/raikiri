@@ -6,7 +6,7 @@ use crate::layout::{BoxParentScope, box_parent};
 use raikiri_style::property::{
     BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue, EmptyCellsValue,
     FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, VisualBox,
-    WhiteSpaceCollapse, ZIndexValue,
+    WhiteSpaceCollapse, WillChange, ZIndexValue,
 };
 use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
@@ -463,6 +463,18 @@ pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedV
             || matches!(cv.content.as_slice(), [ContentComponent::Image { .. }]))
         && !cv.transform.is_empty())
     .then_some(cv)
+}
+
+/// Whether the `::before` or `::after` with generated id `id`, laid out in
+/// its paragraph, is by its own style the containing block of fixed-position
+/// descendants: it has a filter, or a transform that applies to it (see
+/// [`pseudo_transform`]).
+pub fn pseudo_establishes_fixed_containing_block(cascade: &CascadeResult, id: usize) -> bool {
+    pseudo_transform(cascade, id).is_some()
+        || crate::generated_content::generated_origin(id)
+            .filter(|(_, pseudo)| matches!(pseudo, PseudoElem::Before | PseudoElem::After))
+            .and_then(|_| crate::generated_content::computed_for_id(cascade, id))
+            .is_some_and(|cv| !cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER))
 }
 
 /// How the `::before` or `::after` with generated id `id` transforms its box

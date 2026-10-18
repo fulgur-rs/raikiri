@@ -236,9 +236,21 @@ fn a_fixed_layer_of_an_anonymous_table_cell_paragraph_is_positioned_in_the_page_
     assert_page_positioned(&pixels);
 }
 
-#[test]
-fn a_fixed_layer_of_a_block_level_pseudo_element_is_positioned_in_the_page_area() {
+/// Pixels of a 100×80 page whose 40px-wide block, 30px from the left, is
+/// styled by the style sheet `css` and holds the elements that `build`
+/// appends, with 10px Ahem on 20px lines.
+fn paint_sheet(css: &str, build: impl FnOnce(&mut Document, usize)) -> Vec<u8> {
     let mut doc = Document::new();
+    doc.set_font_collection(
+        build_bundled_font_collection(
+            vec![BundledFace {
+                family: "Ahem".into(),
+                bytes: AHEM.to_vec(),
+            }],
+            false,
+        )
+        .unwrap(),
+    );
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
@@ -246,14 +258,13 @@ fn a_fixed_layer_of_a_block_level_pseudo_element_is_positioned_in_the_page_area(
         style,
         format!(
             "html, body {{ display: block; margin: 0 }} \
-             div::before {{ content: ''; display: block; width: 40px; height: 20px; \
-             margin-left: 30px; {}; background-size: 150% 100% }}",
-            fixed()
+             div {{ display: block; width: 40px; margin-left: 30px; \
+             font: 10px/20px Ahem; color: transparent }} {css}"
         ),
     );
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    doc.append_text(div, "A");
+    let div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    build(&mut doc, div);
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     let mut page = PageBox::new();
@@ -263,18 +274,87 @@ fn a_fixed_layer_of_a_block_level_pseudo_element_is_positioned_in_the_page_area(
     let mut scene = Scene::new();
     raikiri_paint::paint_single_page_with_images(&mut scene, &doc, &computed, page, &TwoColor)
         .unwrap();
-    let pixels = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| {
             use anyrender::PaintScene;
             out.append_scene(scene, kurbo::Affine::IDENTITY);
         },
         100,
         80,
-    );
-    // The image is 150px wide in the page area, so its middle is at x = 75;
-    // laid over the pseudo-element's 40px box it would be 60px wide and have
-    // its middle at x = 60.
+    )
+}
+
+/// A `fixed` layer 150px wide in the page area, which places the middle of
+/// the image at x = 75. Laid over a 40px box it would be 60px wide: x = 35
+/// is left of its middle and x = 65 right of it.
+fn wide_fixed() -> String {
+    format!("{}; background-size: 150% 100%", fixed())
+}
+
+/// Assert that the image is placed in the page area: the middle of the
+/// 150px-wide image is right of both x = 35 and x = 65.
+fn assert_wide_page_positioned(pixels: &[u8], y: usize) {
     for x in [35, 65] {
-        assert!(leans_red(&pixels, x, 10), "x={x}");
+        assert!(leans_red(pixels, x, y), "x={x}");
     }
+}
+
+/// Assert that the image is placed in the 40px box at x = 30..70.
+fn assert_wide_box_positioned(pixels: &[u8], y: usize) {
+    assert!(leans_red(pixels, 35, y), "left of the box's middle");
+    assert!(!leans_red(pixels, 65, y), "right of the box's middle");
+}
+
+#[test]
+fn a_fixed_layer_of_a_block_level_pseudo_element_is_positioned_in_the_page_area() {
+    let pixels = paint_sheet(
+        &format!(
+            "div::before {{ content: ''; display: block; height: 20px; {} }}",
+            wide_fixed()
+        ),
+        |doc, div| {
+            doc.append_text(div, "A");
+        },
+    );
+    assert_wide_page_positioned(&pixels, 10);
+}
+
+#[test]
+fn a_fixed_layer_of_an_inline_pseudo_element_is_positioned_in_the_page_area() {
+    let pixels = paint_sheet(
+        &format!("div::before {{ content: 'AAAA'; {} }}", wide_fixed()),
+        |_, _| {},
+    );
+    assert_wide_page_positioned(&pixels, 10);
+}
+
+#[test]
+fn a_fixed_layer_of_a_filtered_pseudo_element_stays_in_the_pseudo_element() {
+    let pixels = paint_sheet(
+        &format!(
+            "div::before {{ content: 'AAAA'; filter: opacity(1); {} }}",
+            wide_fixed()
+        ),
+        |_, _| {},
+    );
+    assert_wide_box_positioned(&pixels, 10);
+}
+
+#[test]
+fn a_fixed_layer_of_a_pseudo_element_in_a_filtered_inline_element_stays_in_the_box() {
+    let css = format!("span::before {{ content: 'AAAA'; {} }}", wide_fixed());
+    let build = |doc: &mut Document, div: usize| {
+        doc.append_element(
+            Some(div),
+            "span",
+            Style::default(),
+            Some("display:inline;filter:opacity(1)"),
+        );
+    };
+    assert_wide_box_positioned(&paint_sheet(&css, build), 10);
+    // Without the filter the layer is positioned in the page area.
+    let plain = |doc: &mut Document, div: usize| {
+        doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
+    };
+    assert_wide_page_positioned(&paint_sheet(&css, plain), 10);
 }
