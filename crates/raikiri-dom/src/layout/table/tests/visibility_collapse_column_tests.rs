@@ -482,3 +482,23 @@ fn a_vertical_table_keeps_its_collapsed_columns() {
     assert!(layout.size.width > 0.0 && layout.size.height > 0.0);
     assert!(!fixture.doc.nodes[fixture.cells[0][1]].clips_collapsed_table_span);
 }
+
+#[test]
+fn a_column_group_without_columns_sizes_the_columns_it_stands_for() {
+    // In a fixed table the two columns of `<colgroup span=2 width=50px>` take
+    // 50px each, not the 10px of their cells.
+    let fixture = table_with(
+        FIXED,
+        &[Column::EmptyGroup(
+            "display:table-column-group;width:50px",
+            Some(2),
+        )],
+        &[10.0, 10.0, 10.0],
+        1,
+        None,
+        "",
+    );
+    let cells = &fixture.cells[0];
+    assert_eq!(column_box(&fixture.doc, cells[0]), (10.0, 50.0));
+    assert_eq!(column_box(&fixture.doc, cells[1]), (70.0, 50.0));
+}
