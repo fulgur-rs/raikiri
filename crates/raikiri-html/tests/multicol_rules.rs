@@ -163,11 +163,18 @@ fn public_rules_of_an_rtl_container_sit_in_the_gaps_after_each_column_to_the_lef
 fn relative_content_offsets_do_not_change_column_occupancy() {
     for body in [
         "<div class=mc><span style='display:inline-block;width:20px;height:20px;position:relative;left:60px;background:blue'></span></div>",
-        "<div class=mc><div style='height:20px;position:relative;left:60px;background:blue'></div><div style='height:20px;background:lime'></div></div>",
+        "<div class=mc><div style='height:20px;position:relative;left:60px;background:blue'></div></div>",
     ] {
         let document = lay_out(body, ".mc{height:20px;column-rule:2px solid red}");
         assert!(rules(&document).is_empty(), "{body}");
     }
+    // The shifted block still fills the first column, so the next one starts
+    // the second column and the rule sits between them as without the offset.
+    let document = lay_out(
+        "<div class=mc><div style='height:20px;position:relative;left:60px;background:blue'></div><div style='height:20px;background:lime'></div></div>",
+        ".mc{height:20px;column-rule:2px solid red}",
+    );
+    assert_eq!(rules(&document), [(49.0, 0.0, 2.0, 20.0)]);
 }
 
 #[test]
