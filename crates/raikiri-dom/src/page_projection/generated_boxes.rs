@@ -27,7 +27,9 @@ pub struct GeneratedBox<'a> {
     /// leaves the paint transforms around it to the enclosing
     /// [`crate::PaintEvent::PushTransform`] events.
     pub rect: PaintRect,
-    /// The pseudo-element's computed style.
+    /// The pseudo-element's computed style. A `::before` or `::after` piece
+    /// on the paragraph's first formatted line has the values the
+    /// `::first-line` around the pseudo-element gives it.
     pub style: &'a ComputedValues,
     /// Innermost source element whose overflow clips the decoration.
     pub clip_owner: NodeId,
@@ -52,8 +54,14 @@ pub struct GeneratedBox<'a> {
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct LineBox<'a> {
-    /// The element's box on the page, whose node and style the piece paints.
+    /// The element's box on the page, whose node the piece paints.
     pub fragment: crate::Fragment<'a>,
+    /// The element's values the piece is painted with. On the paragraph's
+    /// first formatted line these are the values the `::first-line` around
+    /// the element gives it, so that `currentColor` in its borders or
+    /// background follows the line's color; on other lines they are the
+    /// element's computed style.
+    pub style: &'a ComputedValues,
     /// Paragraph line the piece is on.
     pub line: crate::TextLineId,
     /// Border box of the piece in page-local CSS pixels, in the coordinates

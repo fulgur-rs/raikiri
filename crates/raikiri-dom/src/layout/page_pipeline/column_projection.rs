@@ -345,6 +345,7 @@ impl ParagraphProjection {
                     piece.node,
                     piece.source_container,
                     piece.source_owner,
+                    piece.line,
                 )
                 .is_some_and(|style| {
                     style.visibility == raikiri_style::property::Visibility::Visible
@@ -585,17 +586,24 @@ impl ParagraphProjection {
     }
 }
 
-/// The style of a generated inline box piece: the retained style of a
-/// typographic pseudo-element such as `::first-letter`, which depends on the
-/// text it wraps, or else the pseudo-element's computed style.
+/// The style of a generated inline box piece on paragraph line `line`: the
+/// retained style of a typographic pseudo-element such as `::first-letter`,
+/// which depends on the text it wraps; on the first line, the values the
+/// `::first-line` around the box gives it; or else the pseudo-element's
+/// computed style.
 pub(crate) fn generated_piece_style<'a>(
     root: &'a crate::Node,
     cascade: &'a CascadeResult,
     node: usize,
     source_container: Option<usize>,
     source_owner: Option<usize>,
+    line: usize,
 ) -> Option<&'a raikiri_style::ComputedValues> {
     root.ifc_typographic_fragment(node, source_container, source_owner)
         .map(|(style, _)| style)
+        .or_else(|| {
+            root.ifc_first_line_element_style(node)
+                .filter(|_| line == 0)
+        })
         .or_else(|| crate::generated_content::computed_for_id(cascade, node))
 }

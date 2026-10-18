@@ -4,8 +4,8 @@
 //! downstream painter that does not depend on the DOM crate would write it.
 
 use raikiri_html::{
-    ClipKind, DocumentLayout, LayoutOptions, LayoutStatus, PaintEvent, RenderResources,
-    WarningKind, layout, parse_html_with_resources,
+    ClipKind, DocumentLayout, GeneratedKind, LayoutOptions, LayoutStatus, PaintEvent,
+    RenderResources, WarningKind, layout, parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
@@ -968,6 +968,61 @@ fn translucent_first_line_splits_the_boxes_of_inline_elements_by_line() {
                 && piece.rect.y + piece.rect.height <= whole.y + whole.height + 0.01
         );
     }
+}
+
+/// The piece of a split inline element on the first line carries the values
+/// the `::first-line` gives the element, and its pieces on later lines carry
+/// the element's own.
+#[test]
+fn split_inline_line_pieces_carry_the_first_line_values() {
+    let result = lay_out_with_font(
+        "<p id=p>A<span id=s>B<br>C</span></p>",
+        "p {margin:0} #p::first-line {opacity:.5;color:rgb(255,0,0)} \
+         #s {background:blue;border:1px solid currentColor}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    let color_of = |index: usize| {
+        let piece = page
+            .paint_order_for_text_runs(&runs)
+            .into_iter()
+            .find_map(|event| match event {
+                PaintEvent::LineBox(piece) if piece.line.index == index => Some(piece),
+                _ => None,
+            })
+            .unwrap();
+        let color = piece.style.color;
+        (color.r, color.g, color.b)
+    };
+    assert_eq!(color_of(0), (255, 0, 0));
+    assert_eq!(color_of(1), (0, 0, 0));
+}
+
+/// A `::before` on the first line carries the values the `::first-line` gives
+/// it, and a `::after` on a later line its own.
+#[test]
+fn generated_boxes_carry_the_first_line_values_on_the_first_line() {
+    let result = lay_out_with_font(
+        "<p id=p>A<br>B</p>",
+        "p {margin:0} #p::first-line {color:rgb(255,0,0)} \
+         #p::before, #p::after {content:'X';background:blue}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    let color_of = |kind: GeneratedKind| {
+        let generated = page
+            .paint_order_for_text_runs(&runs)
+            .into_iter()
+            .find_map(|event| match event {
+                PaintEvent::GeneratedBox(generated) if generated.kind == kind => Some(generated),
+                _ => None,
+            })
+            .unwrap();
+        let color = generated.style.color;
+        (generated.line.index, (color.r, color.g, color.b))
+    };
+    assert_eq!(color_of(GeneratedKind::Before), (0, (255, 0, 0)));
+    assert_eq!(color_of(GeneratedKind::After), (1, (0, 0, 0)));
 }
 
 /// The line pieces of a split inline element are clipped like its box, and
