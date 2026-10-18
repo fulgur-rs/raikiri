@@ -637,6 +637,32 @@ fn inline_ancestors(
         })
 }
 
+/// Whether the box of `piece` is inside the containing block of
+/// fixed-position descendants made by an inline element of `paragraph`, or by
+/// the box itself, as `transform`, `filter` and layout containment make it. A
+/// `fixed` background layer inside one is positioned like a `scroll` layer.
+///
+/// A generated box is inside the element it is generated for, and has a style
+/// of its own.
+pub(super) fn in_fixed_containing_block(paragraph: Paragraph<'_>, piece: &InlineBoxPiece) -> bool {
+    let key = FragmentKey {
+        node: piece.node,
+        owner: piece.source_owner,
+    };
+    raikiri_dom::paint_rules::pseudo_establishes_fixed_containing_block(paragraph.cascade, key.node)
+        || enclosing_element(paragraph.document, key).is_some_and(|element| {
+            inline_ancestors(paragraph, element).any(|(ancestor, _)| {
+                paragraph.cascade.computed.get(ancestor).is_some_and(|cv| {
+                    raikiri_dom::establishes_fixed_containing_block(
+                        paragraph.document,
+                        ancestor,
+                        cv,
+                    )
+                })
+            })
+        })
+}
+
 /// The opacities of the translucent inline elements of `paragraph` around
 /// `id`, a box laid out beside its lines, outermost first.
 pub(crate) fn enclosing_inline_opacities(paragraph: Paragraph<'_>, id: usize) -> Vec<(usize, f32)> {
