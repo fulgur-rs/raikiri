@@ -2404,22 +2404,19 @@ pub(crate) fn move_atomics_to_columns(
     for fragment in fragments {
         let dx = fragment.x;
         let dy = fragment.y - lines[fragment.line_start].block_offset();
-        for line in &lines[fragment.line_start..fragment.line_end] {
-            let moved = line.fragments().filter_map(|piece| match piece {
-                shodo::Fragment::Atomic(atomic)
-                    if box_nodes.contains(&(atomic.node.0 as usize)) =>
-                {
-                    Some(atomic.node.0 as usize)
+        // The atomics in a ruby annotation go with the line of their ruby.
+        for_each_atomic(
+            &lines[fragment.line_start..fragment.line_end],
+            |atomic, _, _| {
+                let node = atomic.node.0 as usize;
+                if box_nodes.contains(&node) {
+                    let mut layout = tree.nodes[node].unrounded_layout;
+                    layout.location.x += dx;
+                    layout.location.y += dy;
+                    tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
                 }
-                _ => None,
-            });
-            for node in moved {
-                let mut layout = tree.nodes[node].unrounded_layout;
-                layout.location.x += dx;
-                layout.location.y += dy;
-                tree.set_unrounded_layout(taffy::NodeId::from(node), &layout);
-            }
-        }
+            },
+        );
     }
 }
 
