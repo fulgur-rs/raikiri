@@ -2369,6 +2369,39 @@ fn grid_auto_abspos_last_baseline_overflowing_an_rtl_container_keeps_its_right_e
 }
 
 #[test]
+fn abspos_with_both_insets_keeps_the_start_edge_under_a_last_baseline_container() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    // `auto` takes the container's `last baseline` only for a static
+    // position; with both insets specified it behaves as `normal`.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;position:relative;width:100px;height:100px;\
+             align-items:last baseline;justify-items:last baseline",
+        ),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("position:absolute;left:0;right:0;top:0;bottom:0;width:20px;height:20px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    let layout = doc.nodes[child].unrounded_layout;
+    assert!(layout.location.x.abs() < 0.01);
+    assert!(layout.location.y.abs() < 0.01);
+}
+
+#[test]
 fn grid_auto_abspos_takes_last_baseline_from_the_container() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

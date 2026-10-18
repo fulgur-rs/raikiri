@@ -1292,10 +1292,13 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
 }
 
 /// An absolutely positioned box whose `align-self` / `justify-self` is `auto`
-/// takes the container's `align-items` / `justify-items`. When that is
+/// takes the container's `align-items` / `justify-items` for its static
+/// position, where both insets of the axis are `auto`. When that is
 /// `last baseline`, the box falls back to `safe self-end` like an explicit
 /// `last baseline` does (see [`bridge_alignment`]); taffy alone would
-/// inherit the container's plain baseline.
+/// inherit the container's plain baseline. With an inset specified, `auto`
+/// behaves as `normal` and the box stays at the start.
+// spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-auto
 fn bridge_inherited_last_baseline(
     style: &mut taffy::Style,
     cv: &ComputedValues,
@@ -1304,13 +1307,20 @@ fn bridge_inherited_last_baseline(
     if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
         return;
     }
+    let auto = |value: ComputedLengthPercentageOrAuto| {
+        matches!(value, ComputedLengthPercentageOrAuto::Auto)
+    };
     if matches!(cv.align_self, AlignSelfValue::Auto)
         && parent.align_items == SelfAlignmentValue::LastBaseline
+        && auto(cv.top)
+        && auto(cv.bottom)
     {
         style.align_self = Some(TaffyAlignItems::SAFE_SELF_END);
     }
     if matches!(cv.justify_self, AlignSelfValue::Auto)
         && parent.justify_items == SelfAlignmentValue::LastBaseline
+        && auto(cv.left)
+        && auto(cv.right)
     {
         style.justify_self = Some(TaffyAlignItems::SAFE_SELF_END);
     }

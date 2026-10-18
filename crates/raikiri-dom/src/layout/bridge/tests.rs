@@ -1394,6 +1394,33 @@ fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
 }
 
 #[test]
+fn abspos_auto_alignment_takes_the_containers_last_baseline_only_for_the_static_position() {
+    // `auto` borrows the container's `last baseline` only in an axis whose
+    // insets are both `auto`; with one specified it behaves as `normal`.
+    let mut parent = ComputedValues::initial();
+    parent.align_items = SelfAlignmentValue::LastBaseline;
+    parent.justify_items = SelfAlignmentValue::LastBaseline;
+    let mut cv = ComputedValues::initial();
+    cv.position = PositionValue::Absolute;
+    cv.left = ComputedLengthPercentageOrAuto::Px(0.0);
+    cv.bottom = ComputedLengthPercentageOrAuto::Px(0.0);
+    let mut style = Style::default();
+    bridge_alignment(&mut style, &cv);
+    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    assert_eq!(style.align_self, None);
+    assert_eq!(style.justify_self, None);
+
+    cv.left = ComputedLengthPercentageOrAuto::Auto;
+    cv.bottom = ComputedLengthPercentageOrAuto::Auto;
+    cv.top = ComputedLengthPercentageOrAuto::Px(0.0);
+    let mut style = Style::default();
+    bridge_alignment(&mut style, &cv);
+    bridge_inherited_last_baseline(&mut style, &cv, &parent);
+    assert_eq!(style.align_self, None);
+    assert_eq!(style.justify_self, Some(TaffyAlignItems::SAFE_SELF_END));
+}
+
+#[test]
 fn abspos_own_alignment_overrides_the_containers_last_baseline() {
     let mut parent = ComputedValues::initial();
     parent.align_items = SelfAlignmentValue::LastBaseline;
