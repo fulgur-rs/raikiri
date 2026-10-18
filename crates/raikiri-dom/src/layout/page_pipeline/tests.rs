@@ -18258,6 +18258,10 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
         text_lines: &lines,
         roots: candidates::FlowRoots::new(&doc, body),
         root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
     };
     let node_count = doc.nodes.len();
     let new_state = || pagination_state_before_first_candidate(node_count);
@@ -18464,6 +18468,10 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
             text_lines: &lines,
             roots,
             root_flow_offset: 0.0,
+            content_width: 800.0,
+            avoided_breaks: &AvoidedBreaks::default(),
+            insets: PageContentInsets::default(),
+            page_box: page_box_800x600(),
         };
         let mut session = crate::layout::context::LayoutSession::new(doc);
         state.begin_candidate(&mut session, &env, candidate)
@@ -18482,7 +18490,7 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
     assert!(matches!(skipped, Ok(None)));
 
     // Any other candidate is placed with what its start settled.
-    let place = |start: Result<Option<CandidateEntry>, LayoutError>| match start {
+    let place = |start: Result<Option<pagination_state::CandidateEntry>, LayoutError>| match start {
         Ok(Some(entry)) => entry,
         _ => panic!("the candidate is placed"),
     };
@@ -18529,6 +18537,10 @@ fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
         text_lines: &lines,
         roots: candidates::FlowRoots::new(&doc, body),
         root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
     };
     let candidate = PageCandidate {
         node_id: text,
@@ -18565,4 +18577,58 @@ fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
     assert_eq!(flow, Flow::Next);
     assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
     assert_eq!(state.page_names.current.as_deref(), Some("b"));
+}
+
+#[test]
+fn a_page_type_change_leaves_a_box_at_a_non_finite_position_where_it_is() {
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let body = doc.parent_of(root).unwrap();
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = TextLineIndex::default();
+    let control = PageLayoutControl::new(Some(5));
+    let env = FlowEnv {
+        cascade: &cascade,
+        body_id: body,
+        control: &control,
+        page_origins: &pages,
+        text_lines: &lines,
+        roots: candidates::FlowRoots::new(&doc, body),
+        root_flow_offset: 0.0,
+        content_width: 800.0,
+        avoided_breaks: &AvoidedBreaks::default(),
+        insets: PageContentInsets::default(),
+        page_box: page_box_800x600(),
+    };
+    let candidate = PageCandidate {
+        node_id: root,
+        raw_y: f32::INFINITY,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: Some("b".to_string()),
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let entry = pagination_state::CandidateEntry {
+        name_context_seen: true,
+        comparison_page_name: Some("a".to_string()),
+        keep_local_page_type: false,
+        page_before_candidate: 0,
+        ifc_root: None,
+        participates_in_margin_adjacency: false,
+        uses_positioned_coordinates: false,
+    };
+    let mut state = pagination_state_before_first_candidate(doc.nodes.len());
+    state.saw_child = true;
+    state.page_names = PageNames::new(Some("a".to_string()));
+
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let flow = state
+        .place_box(&mut session, &env, &candidate, &entry)
+        .unwrap();
+
+    // The box opens the next page for the page type it names, but it has no
+    // position to land at the start of that page from.
+    assert_eq!(flow, Flow::Next);
+    assert_eq!((state.flow_shift, state.current_page), (0.0, 1));
 }

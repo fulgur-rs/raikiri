@@ -12,7 +12,7 @@ use candidates::{CandidateCollector, PageCandidate, has_display_none_descendant}
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use footnotes::FootnoteAreas;
 pub(crate) use link_events::page_fragment_events_from_pages;
-use pagination_state::{CandidateEntry, Flow, FlowEnv, PaginationState};
+use pagination_state::{Flow, FlowEnv, PaginationState};
 
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
@@ -4165,14 +4165,6 @@ fn paginate_flow(
         })),
         ColumnContexts::new(document.nodes.len()),
     );
-    macro_rules! check_candidate_page {
-        ($label:lifetime, $page_index:expr) => {
-            if !control.within_page_limit($page_index)? {
-                break $label;
-            }
-        };
-    }
-
     let env = FlowEnv {
         cascade,
         body_id,
@@ -4181,385 +4173,28 @@ fn paginate_flow(
         text_lines: &text_lines,
         roots,
         root_flow_offset,
+        content_width,
+        avoided_breaks: &avoided_breaks,
+        insets,
+        page_box,
     };
     let mut candidates = candidates.into_iter();
     // Each candidate is placed while the page limit lets pagination reach the
     // page the flow is on.
-    'candidate_loop: while let Some(candidate) = candidates.next()
+    while let Some(candidate) = candidates.next()
         && control.within_page_limit(state.current_page)?
     {
         let Some(entry) = state.begin_candidate(document, &env, &candidate)? else {
             continue;
         };
-        if candidate.context.is_text {
-            match state.place_text(document, &env, &candidate, &entry)? {
-                Flow::Next => continue,
-                Flow::Stop => break 'candidate_loop,
-            }
-        }
-        let CandidateEntry {
-            name_context_seen,
-            comparison_page_name,
-            keep_local_page_type,
-            page_before_candidate,
-            participates_in_margin_adjacency,
-            uses_positioned_coordinates,
-            ..
-        } = entry;
-        let node_id = candidate.node_id;
-        let name_participates_in_flow = candidate.context.page_name_in_flow;
-
-        let computed = &cascade.computed[node_id];
-        let candidate_page_name = candidate.page_name.clone();
-        // `float: footnote` is a page-local out-of-flow placement. Keep the
-        // anchor's page, stack multiple notes from the bottom, and remove the
-        // note's ordinary-flow footprint so following content can continue.
-        if matches!(computed.float, FloatValue::Footnote) {
-            let placement = state.footnote_areas.candidate(
-                candidate.raw_y,
-                candidate.height,
-                state.flow_shift,
-                state.current_page,
-                &page_origins,
-            );
-            check_candidate_page!('candidate_loop, placement.page);
-            state
-                .footnote_areas
-                .place(document, node_id, placement, &page_origins);
-            state.flow_shift -= placement.height;
-            state.reach.include(placement.page, false);
-            state.saw_child = true;
-            continue;
-        }
-        // Copy layout data before any break adjustment so the immutable node
-        // borrow does not overlap the in-place location update below.
-        let raw_y = candidate.raw_y;
-        let height = candidate.height;
-        place_first_table_header(
-            document,
-            &mut state.table_headers,
-            node_id,
-            state.flow_shift,
-            &page_origins,
-        );
-        let mut effective_y = if uses_positioned_coordinates {
-            current_abs_y(document, node_id)
+        let flow = if candidate.context.is_text {
+            state.place_text(document, &env, &candidate, &entry)?
         } else {
-            raw_y + state.flow_shift
+            state.place_box(document, &env, &candidate, &entry)?
         };
-        materialize_y(document, node_id, effective_y);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before);
-        // Set when a forced break starts this box's page, which makes the box
-        // the owner of the margins after the break.
-        let mut starts_after_forced_break = false;
-        // A block box with no block size and no in-flow content lets its
-        // block-start and block-end margins collapse through it.
-        let margins_collapse_through = collapses_through(document, cascade, node_id, height);
-        let (margin_top, trailing_margin) =
-            break_margins(document, cascade, node_id, content_width);
-        let page_start = page_origin(state.current_page);
-        let page_end = page_start + page_step_at(state.current_page);
-        // Whether the box fits is decided at its normal-flow position,
-        // before any relative offset.
-        let relative_offset = accumulated_relative_offset_y(document, cascade, body_id, node_id);
-        let overflow = avoided_breaks.measure(
-            document,
-            cascade,
-            &candidate,
-            &BoxFit {
-                effective_y,
-                flow_y: effective_y - relative_offset,
-                margin_top,
-                trailing_margin,
-                page_start,
-                page_end,
-                next_page_step: page_step_at(state.current_page.saturating_add(1)),
-            },
-            &state.table_headers,
-            &mut state.trailing_flex_children,
-        );
-        // A named page requested by a class-A box starts a new page when it
-        // differs from the current named page. `auto` leaves the current page
-        // type in place; it does not manufacture a second break boundary.
-        // Any non-empty class-A box with a different page name starts a new
-        // page.  `None` is the anonymous/unnamed page type, so an anonymous
-        // box after a named one is a transition too.  Named boxes that start
-        // at the coordinate of a preceding zero-height named box join its
-        // transition: no block-size has been consumed on that page yet, so a
-        // break there would only leave the zero-height boxes alone on a page.
-        // This matters for chains of empty named boxes with overflowing text,
-        // including the first non-empty box that follows the chain.
-        let named_page_change = box_changes_page_name(
-            name_context_seen,
-            &candidate_page_name,
-            &comparison_page_name,
-            state.last_named.joins_transition(&candidate),
-        );
-        // A forced break at the start of a page already opened by natural
-        // overflow describes the same boundary and must not create a blank
-        // page. The forced break sits before the box's margin box, so the
-        // test uses its block-start margin edge.
-        let forced_break_at_page_start = forced_before
-            && margin_box_starts_page(
-                &page_origins,
-                effective_y - margin_top.max(0.0),
-                state.current_page,
-                page_start,
-            );
-
-        let collapses_with_previous_block =
-            collapses_with_previous_block(document, &candidate, participates_in_margin_adjacency);
-        let pending_break_applies = state.pending_break.applies_to(document, node_id);
-        // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
-        // truncated, while a forced break keeps the block-start margin of the
-        // box after it.
-        let forced_transition = pending_break_applies
-            || (forced_before && !forced_break_at_page_start)
-            || named_page_change;
-        let page_transition = state.saw_child && (forced_transition || overflow.moves_box());
-        if state.saw_child {
-            // A break-after on the preceding box and a break-before (or named
-            // page transition) on this box describe the same boundary, not two
-            // blank pages.
-            if page_transition {
-                // Content kept on its page as monolithic (see
-                // `monolithic_paper_fit`) has not opened a later page.
-                let natural_page = page_origins.transition_natural_page(
-                    effective_y,
-                    margin_top,
-                    state.current_page,
-                    state.reach.flow_max,
-                    named_page_change,
-                );
-                let target_page = forced_target_page(state.current_page, natural_page);
-                check_candidate_page!('candidate_loop, target_page);
-                // A negative block-start margin can pull a forced-break box
-                // back into the preceding page.  Keep the break boundary for
-                // following siblings (and for page count), but materialize
-                // this box at the underflowed coordinate.  This is the
-                // `underflow-from-next-page` case from CSS Break.
-                let landing = TransitionLanding::new(
-                    page_origin(target_page),
-                    effective_y,
-                    margin_top,
-                    relative_offset,
-                    forced_transition,
-                    &overflow,
-                );
-                let row_flex_break_before =
-                    forced_before && in_row_flex_container(document, cascade, node_id);
-                if landing.is_finite() {
-                    let moved_in_bounded_ancestor = move_box_for_transition(
-                        document,
-                        cascade,
-                        body_id,
-                        &candidate,
-                        &TransitionMove {
-                            node_delta: landing.node_delta,
-                            shift_delta: landing.shift_delta,
-                            page_overflow: overflow.page,
-                            forced_transition,
-                        },
-                        &mut state.subtree_shifts,
-                        page_before_candidate,
-                    );
-                    // A forced break on one wrapped row-flex item belongs to
-                    // its whole flex line. Move same-line siblings together;
-                    // other lines keep their existing flow coordinates.
-                    if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
-                        move_flex_line_siblings(
-                            document,
-                            parent_id,
-                            node_id,
-                            raw_y,
-                            landing.shift_delta,
-                        );
-                    }
-                    // A kept margin moves the box's descendants and its
-                    // later siblings along with the box.
-                    state.flow_shift += landing.node_delta;
-                    if let Some(correction) = landing.underflow_correction() {
-                        state.deferred_shifts.underflow = Some((node_id, correction));
-                    }
-                    state.float_shifts.settle_transition(
-                        document,
-                        cascade,
-                        body_id,
-                        &candidate,
-                        &FloatTransition {
-                            page_overflow: overflow.page,
-                            forced_transition,
-                            delta: landing.node_delta,
-                            target_y: landing.target_y,
-                            relative_offset,
-                            flow_page: page_before_candidate,
-                            height,
-                            margin_top,
-                            moved_in_bounded_ancestor,
-                        },
-                        &mut state.subtree_shifts,
-                    );
-                    effective_y += landing.node_delta;
-                }
-                state.current_page = target_page;
-                if forced_transition {
-                    state.sibling_margins.forced_break_box =
-                        margins_collapse_through.then_some(node_id);
-                    starts_after_forced_break = true;
-                }
-                if pending_break_applies {
-                    state.pending_break.clear();
-                }
-            } else if effective_y.is_finite() && effective_y >= 0.0 {
-                let mut natural_page = page_origins.start_page(effective_y, height);
-                // A forced break that coincides with a page edge also starts
-                // that page.
-                if forced_before {
-                    state.sibling_margins.forced_break_box =
-                        margins_collapse_through.then_some(node_id);
-                    starts_after_forced_break = true;
-                }
-                // An unforced break that falls inside the collapsed margin
-                // between this box and its preceding sibling truncates that
-                // margin (CSS Fragmentation 3 §5.2): the box starts at the
-                // top of the page instead of keeping the part of the margin
-                // that crossed the page edge.
-                let truncation = state.sibling_margins.truncation_at_break(
-                    document,
-                    cascade,
-                    &page_origins,
-                    &MarginBreak {
-                        node_id,
-                        raw_y,
-                        effective_y,
-                        natural_page,
-                        forced_before,
-                        margin_top,
-                        collapses_with_previous_block,
-                    },
-                );
-                if let Some(MarginTruncation { delta, underflow }) = truncation {
-                    state.sibling_margins.moved_boxes |= delta != 0.0;
-                    move_box_by_truncated_margin(document, cascade, node_id, delta, body_id);
-                    state.flow_shift += delta;
-                    effective_y += delta;
-                    if let Some(underflow) = underflow {
-                        // Descendants follow the negative margin; later
-                        // siblings still follow the forced break boundary.
-                        state.deferred_shifts.underflow = Some((node_id, underflow));
-                    } else {
-                        natural_page = page_index_for_y(effective_y);
-                    }
-                }
-                check_candidate_page!('candidate_loop, natural_page);
-                state.current_page = state.current_page.max(natural_page);
-            }
-            reset_inline_x_for_page_transition(
-                document,
-                node_id,
-                page_transition,
-                candidate.context.is_direct_body_element,
-            );
-        } else {
-            // A forced break before the first class-A box does not manufacture
-            // a leading blank page.
-            state.saw_child = true;
-            state.current_page = 0;
+        if flow == Flow::Stop {
+            break;
         }
-        // Parallel flows do not interrupt adjoining normal-flow siblings.
-        if participates_in_margin_adjacency
-            && let Some(parent_id) =
-                BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
-        {
-            if !starts_after_forced_break {
-                state.sibling_margins.pass_on_forced_break(
-                    document,
-                    cascade,
-                    parent_id,
-                    node_id,
-                    collapses_with_previous_block && margins_collapse_through,
-                );
-            }
-            state.sibling_margins.record_bottom(
-                parent_id,
-                node_id,
-                collapses_with_previous_block,
-                raw_y + height,
-            );
-        }
-
-        let header_delta = make_room_for_table_header(
-            document,
-            &mut state.table_headers,
-            node_id,
-            effective_y,
-            height,
-            state.current_page,
-            &page_origins,
-        );
-        effective_y += header_delta;
-        state.flow_shift += header_delta;
-
-        if box_sets_page_name(
-            &candidate.context,
-            page_transition,
-            page_type_leaves_local_flow(
-                keep_local_page_type,
-                state.current_page,
-                page_before_candidate,
-            ),
-        ) {
-            state.page_names.current = candidate_page_name;
-            if candidate.context.is_direct_body_element || candidate.named_flex_context.is_some() {
-                state.last_named = LastNamedBox::new(document, &candidate, node_id, raw_y, height);
-            }
-        }
-        check_candidate_page!('candidate_loop, state.current_page);
-        // A fixed-height direct block that fits on the physical paper is
-        // monolithic in this minimal paginator.
-        let monolithic_paper_fit = || {
-            candidate.context.is_direct_body_element
-                && fits_decorated_paper(
-                    document,
-                    node_id,
-                    insets,
-                    page_origin(state.current_page),
-                    page_box.height,
-                    effective_y,
-                    height,
-                )
-        };
-        let end_page = page_origins
-            .end_page(effective_y, height)
-            .filter(|_| !monolithic_paper_fit());
-        let in_flow = !candidate.context.is_out_of_flow_descendant;
-        record_candidate_pages(
-            &mut state.reach,
-            &mut state.page_names,
-            control,
-            state.current_page,
-            end_page,
-            in_flow,
-        )?;
-
-        if box_occupies_column(&candidate.context, name_participates_in_flow, height) {
-            state
-                .column_contexts
-                .occupy_enclosing(node_id, state.current_page, document, cascade);
-        }
-        if candidate.context.is_flex_item
-            && let Some(context) = candidate.named_flex_context
-        {
-            state
-                .preceding_flex_items
-                .record(context, height, state.current_page);
-        }
-        state.pending_break.note_after(
-            document,
-            cascade,
-            node_id,
-            candidate.context.deferred_named_break_after,
-        );
     }
 
     follow_moved_table_rows(document, table_row_origins, &state.table_headers);
