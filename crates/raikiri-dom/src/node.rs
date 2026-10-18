@@ -907,6 +907,25 @@ impl Node {
             .map(|style| (style.box_id, style.source_owner, &style.computed))
     }
 
+    /// The values the inline element or generated box `id` of an ifc root has
+    /// on the first formatted line of the root, which the `::first-line`
+    /// around it gives, if one reaches the root.
+    pub fn ifc_first_line_element_style(
+        &self,
+        id: usize,
+    ) -> Option<&raikiri_style::ComputedValues> {
+        self.ifc.as_ref()?.first_line_element_style(id)
+    }
+
+    /// The `::first-line` boxes with a text decoration whose decorations reach
+    /// the first formatted line of an ifc root, outermost first. Each is
+    /// paired with the id of the block it belongs to.
+    pub fn ifc_first_line_decorating(&self) -> &[(usize, raikiri_style::ComputedValues)] {
+        self.ifc
+            .as_ref()
+            .map_or(&[], |ifc| ifc.first_line_decorating())
+    }
+
     /// Enclosing typographic pseudo box, when ancestor block letters nest.
     pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
         self.ifc.as_ref()?.typographic_parent(box_id)

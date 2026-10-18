@@ -82,8 +82,81 @@ impl CascadeResult {
         actual_parent: StyleNodeId,
         generated: Option<crate::PseudoElem>,
     ) -> Option<ComputedValues> {
-        let &line_origin = line_origins.first()?;
         let inputs = self.first_letter_inputs.get(&letter_origin)?;
+        self.first_line_chain(
+            dom,
+            &inputs.context,
+            line_origins,
+            None,
+            actual_parent,
+            generated,
+        )
+    }
+
+    /// Whether any element has `::first-line` declarations.
+    pub fn has_first_line_styles(&self) -> bool {
+        !self.first_line_contexts.is_empty()
+    }
+
+    /// The computed values `element` has as part of the first formatted line
+    /// of the blocks `line_origins`, outermost first (CSS Pseudo 4 section
+    /// 2.1.2): each `::first-line` among them is the parent of the inline
+    /// content on the line, and every element between them and `element`
+    /// inherits through it. With `generated`, the values of `element`'s
+    /// `::before` or `::after` instead.
+    ///
+    /// `element` is `paragraph` or one of its descendants. `paragraph` is the
+    /// block that holds the line's inline content. It and
+    /// the blocks around it have a first line of their own only through their
+    /// `::first-line`, so their other declarations do not reach the line:
+    /// text inside takes the inherited values of the `::first-line` it sits
+    /// in, even where a block between has set them differently. The elements
+    /// below `paragraph` keep their own declarations.
+    ///
+    /// Only inherited properties pass through a `::first-line`; custom
+    /// properties and the rest keep their ordinary inheritance. `None` when
+    /// `line_origins` is empty, has no first-line style or does not enclose
+    /// `element`.
+    pub fn first_line_style<D: crate::StyleDom>(
+        &self,
+        dom: &D,
+        line_origins: &[StyleNodeId],
+        paragraph: StyleNodeId,
+        element: StyleNodeId,
+        generated: Option<crate::PseudoElem>,
+    ) -> Option<ComputedValues> {
+        let context = self.first_line_contexts.get(line_origins.first()?)?;
+        self.first_line_chain(
+            dom,
+            context,
+            line_origins,
+            Some(paragraph),
+            element,
+            generated,
+        )
+    }
+
+    /// The computed values of a text node `text` directly inside an element
+    /// whose first-line values are `parent`: its ordinary values, with the
+    /// inherited properties taken from `parent`.
+    pub fn first_line_text_style(
+        &self,
+        text: StyleNodeId,
+        parent: &ComputedValues,
+    ) -> ComputedValues {
+        super::first_line::first_line_parent(&self.computed[text.0 as usize], parent)
+    }
+
+    fn first_line_chain<D: crate::StyleDom>(
+        &self,
+        dom: &D,
+        context: &ResolveContext,
+        line_origins: &[StyleNodeId],
+        paragraph: Option<StyleNodeId>,
+        actual_parent: StyleNodeId,
+        generated: Option<crate::PseudoElem>,
+    ) -> Option<ComputedValues> {
+        let &line_origin = line_origins.first()?;
         let mut computed = self
             .pseudo
             .get(&(line_origin, crate::PseudoElem::FirstLine))?
@@ -97,12 +170,21 @@ impl CascadeResult {
             .clone();
         let mut chain = Vec::new();
         let mut current = actual_parent;
+        // Whether the chain has met `paragraph`: from there outwards the
+        // elements are blocks.
+        let mut blocks_from = None;
         while current != line_origin {
+            if Some(current) == paragraph {
+                blocks_from = Some(chain.len());
+            }
             chain.push(current);
             current = dom.parent_id(current)?;
         }
+        if paragraph == Some(line_origin) {
+            blocks_from = Some(chain.len());
+        }
         let mut parent_id = line_origin;
-        for &id in chain.iter().rev() {
+        for (position, &id) in chain.iter().enumerate().rev() {
             let inherited = super::first_line::first_line_parent(
                 &self.computed[parent_id.0 as usize],
                 &computed,
@@ -110,7 +192,12 @@ impl CascadeResult {
             let pseudo = line_origins
                 .contains(&id)
                 .then_some(crate::PseudoElem::FirstLine);
-            computed = self.recompute_typographic_child(id, pseudo, &inherited, &inputs.context);
+            let block = blocks_from.is_some_and(|from| position >= from);
+            computed = if block && pseudo.is_none() {
+                self.inherit_only(id, &inherited, context)
+            } else {
+                self.recompute_typographic_child(id, pseudo, &inherited, context)
+            };
             parent_id = id;
         }
         if let Some(pseudo) = generated {
@@ -118,14 +205,30 @@ impl CascadeResult {
                 &self.computed[actual_parent.0 as usize],
                 &computed,
             );
-            computed = self.recompute_typographic_child(
-                actual_parent,
-                Some(pseudo),
-                &inherited,
-                &inputs.context,
-            );
+            computed =
+                self.recompute_typographic_child(actual_parent, Some(pseudo), &inherited, context);
         }
         Some(computed)
+    }
+
+    /// The values of `id` when its declarations do not apply: those it
+    /// inherits from `inherited`, with the custom properties of its ordinary
+    /// style.
+    fn inherit_only(
+        &self,
+        id: StyleNodeId,
+        inherited: &ComputedValues,
+        context: &ResolveContext,
+    ) -> ComputedValues {
+        let ordinary = &self.computed[id.0 as usize];
+        let mut computed = SpecifiedValues::inherit_from(inherited).finalize_with(
+            inherited,
+            context,
+            self.normal_line_height(),
+        );
+        computed.custom_properties = ordinary.custom_properties.clone();
+        computed.local_custom_properties = ordinary.local_custom_properties.clone();
+        computed
     }
 
     fn recompute_typographic_child(
