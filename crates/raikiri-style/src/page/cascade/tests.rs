@@ -5255,7 +5255,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
     fn length_or_auto(l: LengthOrAuto) -> Option<&'static str> {
         match l {
-            LengthOrAuto::Auto | LengthOrAuto::MinContent => None,
+            LengthOrAuto::Auto
+            | LengthOrAuto::MinContent
+            | LengthOrAuto::MaxContent
+            | LengthOrAuto::FitContent => None,
             LengthOrAuto::Calc(_) => Some("calc()"),
             LengthOrAuto::RelativeCalc(_) => Some("LengthOrAuto::RelativeCalc"),
             LengthOrAuto::Length(l) => length(l),
@@ -7609,6 +7612,22 @@ fn cascade_page_min_content_width_is_kept() {
     assert_eq!(
         result.declarations().get(&PropertyKey::Width),
         Some(&PropertyValue::Width(LengthOrAuto::MinContent)),
+    );
+}
+
+/// `max-content` and `fit-content` survive page-context absolutization.
+#[test]
+fn cascade_page_max_and_fit_content_widths_are_kept() {
+    let root = ComputedValues::initial();
+    let max = page("@page { width: max-content }", &root);
+    assert_eq!(
+        max.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::MaxContent)),
+    );
+    let fit = page("@page { width: fit-content }", &root);
+    assert_eq!(
+        fit.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(LengthOrAuto::FitContent)),
     );
 }
 

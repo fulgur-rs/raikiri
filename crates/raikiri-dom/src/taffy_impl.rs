@@ -2080,6 +2080,7 @@ pub(crate) fn flex_layout(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let inputs = with_fit_content_width(tree, node_id, inputs);
     let idx = usize::from(node_id);
     let (size, inset, _) = tree.block_definite_size(idx, &inputs);
     let basis = Size {
@@ -2092,6 +2093,44 @@ pub(crate) fn flex_layout(
     tree.context.flex_item_percent_bases.pop();
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
+}
+
+/// Give a flex container with a `fit-content` width the width CSS Sizing 3
+/// §3.1.1 defines for it: the room offered, but at least its min-content and at
+/// most its max-content width. Taffy's flexbox algorithm reads the keyword as
+/// `max-content`.
+fn with_fit_content_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    let AvailableSpace::Definite(room) = inputs.available_space.width else {
+        return inputs;
+    };
+    if inputs.known_dimensions.width.is_some()
+        || !tree
+            .layout_node_with_style(usize::from(node_id))
+            .is_some_and(|node| {
+                matches!(
+                    node.style.size.width.expand(),
+                    taffy::ExpandedDimension::FitContent
+                )
+            })
+    {
+        return inputs;
+    }
+    let mut measure = |space: AvailableSpace| {
+        let mut probe = inputs;
+        probe.run_mode = RunMode::ComputeSize;
+        probe.axis = RequestedAxis::Horizontal;
+        probe.available_space.width = space;
+        flex_layout(tree, node_id, probe).size.width
+    };
+    let min_content = measure(AvailableSpace::MinContent);
+    let max_content = measure(AvailableSpace::MaxContent);
+    inputs.known_dimensions.width = Some(max_content.min(min_content.max(room)));
+    inputs.known_dimensions_are_definite.width = true;
+    inputs
 }
 
 /// Lay out the grid container `node_id` with taffy's grid algorithm.

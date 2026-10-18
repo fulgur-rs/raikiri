@@ -191,7 +191,8 @@ fn apply_computed_to_style_in_session_inner(
             continue;
         }
         let vertical_sized = vertical_logical_sized(cascade, idx);
-        let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
+        let values = layout_values(doc, cascade, idx, vertical_sized.as_ref());
+        let cv = &*values;
         // Taffy does not carry CSS `order` in Style. Retain the computed value
         // on Node so flex/grid child traversal can build order-modified order.
         doc.nodes[idx].order = cv.order;
@@ -458,7 +459,8 @@ fn apply_computed_to_style_in_session_inner(
         // The sizes bridged above, which a vertical box takes from its
         // logical sizing properties.
         let vertical_sized = vertical_logical_sized(cascade, idx);
-        let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
+        let values = layout_values(doc, cascade, idx, vertical_sized.as_ref());
+        let cv = &*values;
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
         doc.nodes[idx].text_group_align = shodo_group_align(cv.text_group_align);
@@ -663,6 +665,85 @@ fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes
     } else {
         TaffyDirection::Ltr
     };
+}
+
+/// The computed values the layout of element `idx` reads: `vertical_sized` when
+/// a vertical box takes its sizes from its logical properties, else the
+/// cascade's own. A `max-content` or `fit-content` size a box is not sized by
+/// (see [`sized_by_content_keyword`]) is `auto` here. A vertical box takes its
+/// inline size from `height`.
+fn layout_values<'a>(
+    doc: &Document,
+    cascade: &'a CascadeResult,
+    idx: usize,
+    vertical_sized: Option<&'a ComputedValues>,
+) -> std::borrow::Cow<'a, ComputedValues> {
+    let cv = vertical_sized.unwrap_or(&cascade.computed[idx]);
+    let content_keyword = |size| {
+        matches!(
+            size,
+            ComputedLengthPercentageOrAuto::MaxContent | ComputedLengthPercentageOrAuto::FitContent
+        )
+    };
+    let width = content_keyword(cv.width);
+    let height = vertical_sized.is_some() && content_keyword(cv.height);
+    if !(width || height) || sized_by_content_keyword(doc, cascade, idx, cv) {
+        return std::borrow::Cow::Borrowed(cv);
+    }
+    let mut plain = cv.clone();
+    if width {
+        plain.width = ComputedLengthPercentageOrAuto::Auto;
+    }
+    if height {
+        plain.height = ComputedLengthPercentageOrAuto::Auto;
+    }
+    std::borrow::Cow::Owned(plain)
+}
+
+/// Whether the width of element `idx` is a sizing keyword its layout sizes the
+/// box by: `min-content`, or a `max-content` or `fit-content` width that
+/// [`layout_values`] keeps.
+pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let cv = &cascade.computed[idx];
+    match cv.width {
+        ComputedLengthPercentageOrAuto::MinContent => true,
+        ComputedLengthPercentageOrAuto::MaxContent | ComputedLengthPercentageOrAuto::FitContent => {
+            sized_by_content_keyword(doc, cascade, idx, cv)
+        }
+        _ => false,
+    }
+}
+
+/// Whether the layout of element `idx`, whose computed values are `cv`, sizes
+/// it by a `max-content` or `fit-content` size (CSS Sizing 3 §3.1.1).
+///
+/// A box in a block formatting context and an absolutely positioned box are;
+/// so are flex, grid and table containers the block algorithm measures. The
+/// others keep sizing themselves as if the size were `auto`:
+/// - a replaced element takes its natural size, and an `auto` size is what
+///   transfers its aspect ratio;
+/// - a multicol container has no intrinsic inline size yet;
+/// - a flex or grid item is sized by the Taffy algorithm, which reads such a
+///   keyword as `auto` yet no longer stretches the item.
+fn sized_by_content_keyword(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    cv: &ComputedValues,
+) -> bool {
+    if crate::paint_rules::is_replaced_element(doc, idx)
+        || multicol_style_from_computed(cv).is_some_and(|_| !lays_out_without_columns(cv.display))
+    {
+        return false;
+    }
+    if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
+        return true;
+    }
+    // A `display: contents` ancestor has no box: its parent is the container.
+    let container = std::iter::successors(doc.parent_of(idx), |&id| doc.parent_of(id))
+        .map(|id| cascade.computed[id].display)
+        .find(|display| *display != DisplayValue::Contents);
+    !container.is_some_and(|display| display.is_flex_or_grid_container())
 }
 
 /// Whether a box of `display` lays its content out by an algorithm of its
@@ -1863,8 +1944,10 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
             Dimension::percent(sanitize_taffy(p / 100.0, site, diag))
         }
         ComputedLengthPercentageOrAuto::Auto => Dimension::auto(),
-        // CSS Sizing 3 §3.1.1: the min-content size in that axis.
+        // CSS Sizing 3 §3.1.1: the intrinsic size keywords in that axis.
         ComputedLengthPercentageOrAuto::MinContent => Dimension::min_content(),
+        ComputedLengthPercentageOrAuto::MaxContent => Dimension::max_content(),
+        ComputedLengthPercentageOrAuto::FitContent => Dimension::fit_content(),
         ComputedLengthPercentageOrAuto::Calc(value) => {
             let pointer = crate::taffy_impl::push_calc(calc_values, value, true);
             Dimension::calc(pointer)
@@ -1893,11 +1976,12 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
         ComputedLengthPercentageOrAuto::Percent(p) => {
             LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
         }
-        // Min/max sizes never parse `min-content` yet; treat it as no
+        // Min/max sizes never parse the sizing keywords yet; treat them as no
         // constraint.
-        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
-            LengthPercentageAuto::auto()
-        }
+        ComputedLengthPercentageOrAuto::Auto
+        | ComputedLengthPercentageOrAuto::MinContent
+        | ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent => LengthPercentageAuto::auto(),
         ComputedLengthPercentageOrAuto::Calc(value) => {
             let pointer = crate::taffy_impl::push_calc(calc_values, value, non_negative);
             LengthPercentageAuto::calc(pointer)
@@ -1935,8 +2019,10 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
             let pointer = crate::taffy_impl::push_calc(calc_values, value, false);
             LengthPercentageAuto::calc(pointer)
         }
-        // Margins never compute to `min-content`.
-        ComputedLengthPercentageOrAuto::MinContent => LengthPercentageAuto::length(0.0), // cov:ignore: only the width / inline-size parser produces min-content
+        // Margins never compute to a sizing keyword.
+        ComputedLengthPercentageOrAuto::MinContent
+        | ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent => LengthPercentageAuto::length(0.0),
     }
 }
 

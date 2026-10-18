@@ -165,7 +165,7 @@ fn parse_start_end_shorthand<T: Copy>(
     Some(StartEnd { start, end })
 }
 
-/// Parse `width: auto | <length-percentage [0,∞]>`.
+/// Parse `width: auto | min-content | max-content | fit-content | <length-percentage [0,∞]>`.
 ///
 /// Grammar reference: CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>
 /// "Value: `auto | <length-percentage [0,∞]> | min-content | max-content |
@@ -173,9 +173,8 @@ fn parse_start_end_shorthand<T: Copy>(
 ///
 /// # Not supported (spec-valid, future support)
 ///
-/// The intrinsic sizing forms `min-content`, `max-content`, and `fit-content()` are not implemented.
-/// They return `None`: `expect_ident_matching("auto")` rejects their identifiers, and the following
-/// `parse_length_value` rejects their keyword or function tokens in its Dimension / Percentage match.
+/// The `fit-content(<length-percentage>)` function is parsed and checked, but it still computes to
+/// `auto`: the limit is not carried to layout yet.
 /// Negative values (`width: -10px`) also violate the specification's `[0,∞]` grammar and are dropped.
 ///
 /// # Order of alternatives
@@ -205,21 +204,13 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         .try_parse(|i| i.expect_ident_matching("max-content"))
         .is_ok()
     {
-        return Some(LengthOrAuto::Auto);
+        return Some(LengthOrAuto::MaxContent);
     }
     if input
         .try_parse(|i| i.expect_ident_matching("fit-content"))
         .is_ok()
     {
-        let _ = input.try_parse(|i| {
-            i.expect_parenthesis_block()?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
-        });
-        return Some(LengthOrAuto::Auto);
+        return Some(LengthOrAuto::FitContent);
     }
     if input
         .try_parse(|i| {

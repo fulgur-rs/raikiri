@@ -1229,6 +1229,13 @@ pub enum LengthOrAuto {
     /// inside an inline formatting context, and a vertical box's block axis
     /// still size it like `auto`.
     MinContent,
+    /// The `max-content` sizing keyword (CSS Sizing 3 §3.1.1), produced by
+    /// the `width` / `inline-size` parser and honored where `min-content` is.
+    MaxContent,
+    /// The bare `fit-content` sizing keyword (CSS Sizing 3 §3.1.1):
+    /// `min(max-content, max(min-content, stretch-fit))`. Produced by the
+    /// `width` / `inline-size` parser and honored where `min-content` is.
+    FitContent,
 }
 
 /// A `<length-percentage>` that keeps a mixed-unit `calc()` until it can be

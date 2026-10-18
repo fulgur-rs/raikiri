@@ -74,18 +74,12 @@ impl PageLengthBasis<'_> {
     }
     /// `<length-percentage> | auto` — same mapping, `auto` preserved.
     fn lpa(self, specified: LengthOrAuto) -> LengthOrAuto {
-        match resolve_length_percentage_or_auto(
+        lift_length_percentage_or_auto(resolve_length_percentage_or_auto(
             specified,
             self.font_size,
             self.own_line_height,
             self.ctx,
-        ) {
-            ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
-            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
-            ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
-            ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
-            ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
-        }
+        ))
     }
     /// `<length-percentage> | auto` for the sizing properties — same mapping
     /// as [`Self::lpa`], routed through
@@ -109,18 +103,12 @@ impl PageLengthBasis<'_> {
     /// (which is `width`/`height`'s initial, and which would trigger real
     /// auto-margin layout behaviour if used here — see that function's doc).
     fn margin_lpa(self, specified: LengthOrAuto) -> LengthOrAuto {
-        match resolve_margin_length_or_auto(
+        lift_length_percentage_or_auto(resolve_margin_length_or_auto(
             specified,
             self.font_size,
             self.own_line_height,
             self.ctx,
-        ) {
-            ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
-            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
-            ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
-            ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
-            ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent, // cov:ignore: only the width / inline-size parser produces min-content
-        }
+        ))
     }
     /// `flex-basis: content | <'width'>` — same mapping as [`Self::lpa`], with
     /// `content` preserved as its own keyword (`ComputedFlexBasis::Content`
@@ -143,17 +131,7 @@ impl PageLengthBasis<'_> {
     /// per axis via [`resolve_background_size`]; `cover`/`contain` carry no
     /// length and pass straight through.
     fn background_size(self, specified: BackgroundSize) -> BackgroundSize {
-        fn lift(computed: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
-            match computed {
-                ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
-                ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
-                ComputedLengthPercentageOrAuto::Percent(p) => {
-                    LengthOrAuto::Length(Length::Percent(p))
-                }
-                ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
-                ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent, // cov:ignore: only the width / inline-size parser produces min-content
-            }
-        }
+        let lift = lift_length_percentage_or_auto;
         match resolve_background_size(specified, self.font_size, self.own_line_height, self.ctx) {
             ComputedBackgroundSize::Cover => BackgroundSize::Cover,
             ComputedBackgroundSize::Contain => BackgroundSize::Contain,
@@ -393,6 +371,20 @@ impl PageLengthBasis<'_> {
             TransformFunction::SkewX(a) => TransformFunction::SkewX(a),
             TransformFunction::SkewY(a) => TransformFunction::SkewY(a),
         }
+    }
+}
+
+/// A computed `<length-percentage> | auto` or sizing keyword as the specified
+/// value it round-trips to.
+fn lift_length_percentage_or_auto(computed: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
+    match computed {
+        ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+        ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+        ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
+        ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
+        ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
+        ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
+        ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::FitContent,
     }
 }
 

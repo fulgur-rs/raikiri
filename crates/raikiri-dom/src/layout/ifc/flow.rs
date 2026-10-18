@@ -330,9 +330,10 @@ pub(crate) fn rebreak_roots(
         .collect();
     let widths = crate::layout::multicol::AncestorFacts::new(doc, cascade, max_advance);
     for id in roots {
-        // A root inside a `min-content` box keeps the lines its intrinsic
-        // width was measured with; no page width applies to it.
-        if widths.in_min_content(id) {
+        // A root inside a `min-content`, `max-content` or `fit-content` box
+        // keeps the lines its intrinsic width was measured with; no page
+        // width applies to it.
+        if widths.in_intrinsic_width(id) {
             continue;
         }
         // The search starts at the parent of the text, so the root's first

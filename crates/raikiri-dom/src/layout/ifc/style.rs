@@ -144,7 +144,10 @@ impl InlineRelativeInsets {
                 px: calc.px,
                 percent: Some(calc.percent),
             }),
-            LengthOrAuto::Auto | LengthOrAuto::MinContent => None,
+            LengthOrAuto::Auto
+            | LengthOrAuto::MinContent
+            | LengthOrAuto::MaxContent
+            | LengthOrAuto::FitContent => None,
         };
         Some(Self {
             left: terms(cv.left),
@@ -871,7 +874,10 @@ pub(crate) fn inline_edges(
         LengthOrAuto::Percent(percent) => (0.0, percent / 100.0),
         LengthOrAuto::Calc(calc) => (calc.px, calc.percent / 100.0),
         // `auto` inline margins are zero (CSS 2.1 §10.3.1).
-        LengthOrAuto::Auto | LengthOrAuto::MinContent => (0.0, 0.0),
+        LengthOrAuto::Auto
+        | LengthOrAuto::MinContent
+        | LengthOrAuto::MaxContent
+        | LengthOrAuto::FitContent => (0.0, 0.0),
     };
     let writing_mode = match cv.cssom_writing_mode {
         p::WritingMode::HorizontalTb => WritingMode::HorizontalTb,

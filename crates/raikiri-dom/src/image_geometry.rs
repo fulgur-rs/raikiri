@@ -106,7 +106,10 @@ fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Optio
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => Some(px as f64),
         ComputedLengthPercentageOrAuto::Percent(percent) => Some(basis * percent as f64 / 100.0),
-        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => None,
+        ComputedLengthPercentageOrAuto::Auto
+        | ComputedLengthPercentageOrAuto::MinContent
+        | ComputedLengthPercentageOrAuto::MaxContent
+        | ComputedLengthPercentageOrAuto::FitContent => None,
         // `background-size` does not accept negative values, so a `calc()`
         // that resolves below zero clamps to zero (CSS Values 4 "Range
         // Checking").

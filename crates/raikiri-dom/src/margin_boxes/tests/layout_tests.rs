@@ -629,6 +629,8 @@ fn box_lengths_resolve_against_their_basis() {
     assert_eq!(px(ComputedLengthPercentageOrAuto::Px(-5.0)), Some(-5.0));
     assert_eq!(px(ComputedLengthPercentageOrAuto::Px(f32::NAN)), Some(0.0));
     assert_eq!(px(ComputedLengthPercentageOrAuto::MinContent), None);
+    assert_eq!(px(ComputedLengthPercentageOrAuto::MaxContent), None);
+    assert_eq!(px(ComputedLengthPercentageOrAuto::FitContent), None);
     let calc = |px, percent| {
         ComputedLengthPercentageOrAuto::Calc(raikiri_style::property::CalcLengthPercentage {
             px,

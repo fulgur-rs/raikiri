@@ -879,6 +879,64 @@ fn resolve_margin_length_or_auto_lh_falls_back_to_zero_when_unresolvable() {
     );
 }
 
+/// `width: max-content` and `width: fit-content` stay keywords in the
+/// computed layer, like `min-content`.
+#[test]
+fn resolve_length_percentage_or_auto_keeps_the_sizing_keywords() {
+    for (specified, computed) in [
+        (
+            LengthOrAuto::MinContent,
+            ComputedLengthPercentageOrAuto::MinContent,
+        ),
+        (
+            LengthOrAuto::MaxContent,
+            ComputedLengthPercentageOrAuto::MaxContent,
+        ),
+        (
+            LengthOrAuto::FitContent,
+            ComputedLengthPercentageOrAuto::FitContent,
+        ),
+    ] {
+        assert_eq!(
+            resolve_length_percentage_or_auto(specified, ComputedLength(16.0), None, &CTX),
+            computed,
+        );
+        assert!(computed.is_content_keyword());
+    }
+}
+
+/// A margin never holds a sizing keyword, but a stray one must compute to the
+/// margin's initial zero, not to a keyword the layout would read as `auto`.
+#[test]
+fn resolve_margin_length_or_auto_drops_the_sizing_keywords() {
+    for specified in [
+        LengthOrAuto::MinContent,
+        LengthOrAuto::MaxContent,
+        LengthOrAuto::FitContent,
+    ] {
+        assert_eq!(
+            resolve_margin_length_or_auto(specified, ComputedLength(16.0), None, &CTX),
+            ComputedLengthPercentageOrAuto::Px(0.0),
+        );
+    }
+}
+
+/// A `flex-basis` length is never a sizing keyword of `width`; a stray one
+/// computes to `auto`.
+#[test]
+fn computed_flex_basis_reads_a_stray_sizing_keyword_as_auto() {
+    for specified in [
+        LengthOrAuto::MinContent,
+        LengthOrAuto::MaxContent,
+        LengthOrAuto::FitContent,
+    ] {
+        assert_eq!(
+            computed_flex_basis(specified, ComputedLength(16.0), None, &CTX),
+            ComputedFlexBasis::Auto,
+        );
+    }
+}
+
 /// `margin: auto` itself must still pass through as `Auto` —
 /// `resolve_margin_length_or_auto` only changes the `Lh`/`Rlh`
 /// unresolvable fallback, not the literal `auto` keyword's own meaning.
@@ -2464,5 +2522,24 @@ fn used_line_height_length_or_takes_normal_from_the_caller() {
     assert_eq!(
         used_line_height_length_or(ComputedLineHeight::Number(2.0), size, normal),
         Some(ComputedLength(20.0))
+    );
+}
+
+#[test]
+fn a_resolved_calc_that_is_no_length_folds_to_zero() {
+    for resolved in [
+        ComputedLengthPercentageOrAuto::Auto,
+        ComputedLengthPercentageOrAuto::MinContent,
+        ComputedLengthPercentageOrAuto::MaxContent,
+        ComputedLengthPercentageOrAuto::FitContent,
+    ] {
+        assert_eq!(
+            fold_resolved_calc(resolved),
+            ComputedLengthPercentageOrCalc::Px(0.0)
+        );
+    }
+    assert_eq!(
+        fold_resolved_calc(ComputedLengthPercentageOrAuto::Px(3.0)),
+        ComputedLengthPercentageOrCalc::Px(3.0)
     );
 }
