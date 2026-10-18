@@ -16771,3 +16771,165 @@ fn a_paragraph_break_is_repaired_by_moving_lines_or_the_block() {
         LineBreakFix::MoveLines([None, Some((12, 10.0, 2))])
     );
 }
+
+#[test]
+fn a_moved_float_records_its_shift_and_its_margin_box_edge() {
+    let (doc, cascade, float, root) = crate::layout::test_support::ahem_paragraph_with_float(
+        "a",
+        "float:left;width:20px;height:10px",
+        "b",
+        "",
+    );
+    let body = doc.parent_of(root).unwrap();
+    let context = float_context_root(&doc, &cascade, float, body);
+    let moved = |side, forced_transition| MovedFloat {
+        node_id: float,
+        side,
+        delta: 30.0,
+        flow_page: 2,
+        flow_target_y: 100.0,
+        height: 10.0,
+        margin_top: 4.0,
+        forced_transition,
+    };
+
+    // An unforced break truncates the block-start margin, and a later
+    // float follows the margin box that moved further than the border box.
+    let mut shifts = FloatShifts::default();
+    shifts.record_moved_float(&doc, &cascade, body, &moved(Some(0), false));
+    assert_eq!(shifts.pending, Some((float, 30.0, 2)));
+    assert_eq!(shifts.later, 34.0);
+    let edge = &shifts.edges[&context][0];
+    assert_eq!((edge.node, edge.side), (float, 0));
+    assert_eq!((edge.top, edge.bottom), (100.0, 110.0));
+
+    // A forced break keeps the margin above the border box and needs no
+    // extra shift for later floats.
+    let mut shifts = FloatShifts::default();
+    shifts.record_moved_float(&doc, &cascade, body, &moved(Some(1), true));
+    assert_eq!(shifts.pending, Some((float, 30.0, 2)));
+    assert_eq!(shifts.later, 0.0);
+    let edge = &shifts.edges[&context][0];
+    assert_eq!((edge.side, edge.top, edge.bottom), (1, 96.0, 110.0));
+
+    // A float on neither side only shifts.
+    let mut shifts = FloatShifts::default();
+    shifts.record_moved_float(&doc, &cascade, body, &moved(None, false));
+    assert_eq!(shifts.pending, Some((float, 30.0, 2)));
+    assert_eq!(shifts.later, 0.0);
+    assert!(shifts.edges.is_empty());
+}
+
+#[test]
+fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
+    // `body > wrapper > first, second`, all auto-height blocks. Returns the
+    // document, its cascade and the three nodes.
+    let build = |wrapper_css: &str| {
+        let mut doc = Document::new();
+        let block = |doc: &mut Document, parent| {
+            doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;height:10px"),
+            )
+        };
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Style::default(), Some(wrapper_css));
+        let first = block(&mut doc, wrapper);
+        let second = block(&mut doc, wrapper);
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        (doc, cascade, body, wrapper, first, second)
+    };
+    let candidate = |node_id| PageCandidate {
+        node_id,
+        raw_y: 0.0,
+        height: 10.0,
+        context: candidates::BoxContext::default(),
+        page_name: None,
+        named_flex_context: None,
+        ifc_root: None,
+    };
+    let mv = |page_overflow, forced_transition| TransitionMove {
+        node_delta: 30.0,
+        shift_delta: 40.0,
+        page_overflow,
+        forced_transition,
+    };
+
+    // A forced break moves the box by its own delta and the boxes after it
+    // in block flow by the larger of the two deltas.
+    let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let bounded = move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(false, true),
+        &mut shifts,
+        0,
+    );
+    assert!(!bounded);
+    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 50.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+
+    // A box that moves because it would cross a page edge it avoids
+    // lengthens the ancestor that holds it, and the boxes after it follow
+    // by its own delta.
+    let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let bounded = move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(true, false),
+        &mut shifts,
+        0,
+    );
+    assert!(!bounded);
+    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 40.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 50.0);
+
+    // Any other break moves the box alone.
+    let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(false, false),
+        &mut shifts,
+        0,
+    );
+    assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 10.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+
+    // An ancestor with a fixed height cannot hold the moved box.
+    let (mut doc, cascade, body, wrapper, first, _) = build("display:block;height:20px");
+    let mut shifts = SubtreeShifts::default();
+    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let bounded = move_box_for_transition(
+        &mut session,
+        &cascade,
+        body,
+        &candidate(first),
+        &mv(true, false),
+        &mut shifts,
+        0,
+    );
+    assert!(bounded);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
+}
