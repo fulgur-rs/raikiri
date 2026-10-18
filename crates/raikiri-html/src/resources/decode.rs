@@ -2,6 +2,7 @@
 
 use std::io::Cursor;
 
+use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use raikiri_svg::SvgDocument;
 use raikiri_traits::image::png_with_repaired_crcs;
@@ -37,7 +38,7 @@ pub(super) fn decode_background_raster(
     let bytes = png_with_repaired_crcs(bytes);
     let mut reader = ImageReader::new(Cursor::new(&*bytes));
     reader.limits(limits);
-    let decoder = reader
+    let mut decoder = reader
         .with_guessed_format()
         .map_err(|_| BackgroundImageDecodeError::Decode)?
         .into_decoder()
@@ -46,6 +47,11 @@ pub(super) fn decode_background_raster(
     if width == 0 || height == 0 {
         return Err(BackgroundImageDecodeError::Decode);
     }
+    // `image-orientation` is `from-image` unless the author says otherwise
+    // (<https://drafts.csswg.org/css-images-3/#propdef-image-orientation>),
+    // so a tag in the file's EXIF data turns the image before anything sizes
+    // or paints it. A tag the decoder cannot read leaves the image as stored.
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let expected_bytes = u64::from(width)
         .checked_mul(u64::from(height))
         .and_then(|pixels| pixels.checked_mul(4))
@@ -57,10 +63,12 @@ pub(super) fn decode_background_raster(
         });
     }
 
-    let rgba = DynamicImage::from_decoder(decoder)
-        .map_err(|_| BackgroundImageDecodeError::Decode)?
-        .into_rgba8();
-    let pixels = rgba.into_raw();
+    let mut image =
+        DynamicImage::from_decoder(decoder).map_err(|_| BackgroundImageDecodeError::Decode)?;
+    image.apply_orientation(orientation);
+    // A quarter turn swaps the sides.
+    let (width, height) = (image.width(), image.height());
+    let pixels = image.into_rgba8().into_raw();
     let actual_bytes = u64::try_from(pixels.len()).unwrap_or(u64::MAX);
     if actual_bytes != expected_bytes {
         return Err(BackgroundImageDecodeError::Decode);
