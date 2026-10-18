@@ -9,7 +9,7 @@ use crate::Document;
 use crate::fragment::FragmentationContext;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext, BoxProbe};
-use crate::taffy_impl::resolve_calc;
+use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
 use shodo::style::TextGroupAlign;
@@ -2871,10 +2871,16 @@ impl BoxIntrinsics {
 
 /// Min- and max-content inline extents of the root's boxes, for the
 /// paragraph's intrinsic sizes. Each box is measured without changing layout.
+///
+/// `percent_height` is the root's definite content-box height, the basis a
+/// box's percentage height resolves against while its width is measured: it
+/// sizes a replaced box through its aspect ratio. A vertical paragraph
+/// measures along the block axis of its boxes and passes none.
 pub(crate) fn intrinsics_of_boxes(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     basis: f32,
+    percent_height: Option<f32>,
 ) -> BoxIntrinsics {
     let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
         matches!(
@@ -2936,8 +2942,13 @@ pub(crate) fn intrinsics_of_boxes(
         match b.kind {
             IfcBoxKind::Float => {
                 let margin = resolved_margins(tree, b.node, basis);
-                let (min_content, max_content) =
-                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                let (min_content, max_content) = content_widths(
+                    tree,
+                    b.node,
+                    basis,
+                    percent_height,
+                    margin.left + margin.right,
+                );
                 let style = &tree.layout_node_with_style(b.node).unwrap().style;
                 let side = match style.float.float_direction() {
                     Some(FloatDirection::Right) => FloatSide::Right,
@@ -2966,15 +2977,26 @@ pub(crate) fn intrinsics_of_boxes(
                 let (min_content, max_content) = if vertical {
                     content_heights(tree, b.node, basis, margin.top + margin.bottom)
                 } else {
-                    content_widths(tree, b.node, basis, margin.left + margin.right)
+                    content_widths(
+                        tree,
+                        b.node,
+                        basis,
+                        percent_height,
+                        margin.left + margin.right,
+                    )
                 };
                 intrinsics.blocks.0 = intrinsics.blocks.0.max(min_content);
                 intrinsics.blocks.1 = intrinsics.blocks.1.max(max_content);
             }
             IfcBoxKind::Atomic => {
                 let margin = resolved_margins(tree, b.node, basis);
-                let (min_content, max_content) =
-                    content_widths(tree, b.node, basis, margin.left + margin.right);
+                let (min_content, max_content) = content_widths(
+                    tree,
+                    b.node,
+                    basis,
+                    percent_height,
+                    margin.left + margin.right,
+                );
                 intrinsics.engine.insert_atomic(
                     shodo::node::NodeId(b.node as u64),
                     AtomicIntrinsic {
@@ -2994,9 +3016,20 @@ fn content_widths(
     tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
+    percent_height: Option<f32>,
     margins_x: f32,
 ) -> (f32, f32) {
-    content_sizes_on_axis(tree, node, basis, margins_x, RequestedAxis::Horizontal)
+    let parent_size = Size {
+        width: Some(basis),
+        height: percent_height,
+    };
+    content_sizes_on_axis(
+        tree,
+        node,
+        parent_size,
+        margins_x,
+        RequestedAxis::Horizontal,
+    )
 }
 
 fn content_heights(
@@ -3005,13 +3038,19 @@ fn content_heights(
     basis: f32,
     margins_y: f32,
 ) -> (f32, f32) {
-    content_sizes_on_axis(tree, node, basis, margins_y, RequestedAxis::Vertical)
+    let parent_size = Size {
+        width: None,
+        height: Some(basis),
+    };
+    content_sizes_on_axis(tree, node, parent_size, margins_y, RequestedAxis::Vertical)
 }
 
+/// Min- and max-content extents of `node` along `axis`, against the
+/// `parent_size` its percentages resolve against.
 fn content_sizes_on_axis(
     tree: &mut LayoutSession<'_>,
     node: usize,
-    basis: f32,
+    parent_size: Size<Option<f32>>,
     margins: f32,
     axis: RequestedAxis,
 ) -> (f32, f32) {
@@ -3028,17 +3067,7 @@ fn content_sizes_on_axis(
                     width: true,
                     height: true,
                 },
-                parent_size: if vertical {
-                    Size {
-                        width: None,
-                        height: Some(basis),
-                    }
-                } else {
-                    Size {
-                        width: Some(basis),
-                        height: None,
-                    }
-                },
+                parent_size,
                 available_space: if vertical {
                     Size {
                         width: AvailableSpace::MaxContent,
@@ -3059,10 +3088,13 @@ fn content_sizes_on_axis(
             output.size.width + margins
         }
     };
-    (
-        measure(tree, AvailableSpace::MinContent),
-        measure(tree, AvailableSpace::MaxContent),
-    )
+    let parent_height = parent_size.height.filter(|_| !vertical);
+    measure_against_parent_height(tree, node, parent_height, |tree| {
+        (
+            measure(tree, AvailableSpace::MinContent),
+            measure(tree, AvailableSpace::MaxContent),
+        )
+    })
 }
 
 #[cfg(test)]

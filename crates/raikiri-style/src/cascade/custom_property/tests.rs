@@ -37,6 +37,22 @@ fn inset_with_an_angle_calc_among_several_values_is_dropped_at_parse_time() {
 }
 
 #[test]
+fn inset_with_an_angle_sum_of_mixed_units_is_dropped_at_parse_time() {
+    // The units of the sum differ, yet it is still an angle: the shorthand is
+    // invalid as a whole and the earlier `top` survives.
+    for value in [
+        "calc(1deg + 1rad) 1px",
+        "1px calc(1turn - 90deg)",
+        "calc(1s + 100ms) 1px",
+        "calc(1dppx + 96dpi) 1px",
+    ] {
+        let declarations = format!("position: relative; top: 5px; inset: {value}");
+        let cv = cascade_doc("", "div", Some(&declarations));
+        assert_eq!(cv.top, ComputedLengthPercentageOrAuto::Px(5.0), "{value}");
+    }
+}
+
+#[test]
 fn var_in_margin_shorthand_preserves_later_longhand_cascade() {
     let cv = cascade_doc(
         "",
@@ -754,6 +770,43 @@ fn math_helpers_cover_nested_and_rejected_forms() {
         Some("3".to_owned())
     );
     assert_eq!(evaluate_math_function("calc", "1 + 2px"), None);
+    // Units of one type fold into its canonical unit (CSS Values 4 §6).
+    assert_eq!(
+        evaluate_math_function("calc", "1turn - 90deg"),
+        Some("270deg".to_owned())
+    );
+    assert_eq!(
+        evaluate_math_function("calc", "1khz + 500hz"),
+        Some("1500hz".to_owned())
+    );
+    assert_eq!(
+        evaluate_math_function("calc", "1dppx + 1x"),
+        Some("2dppx".to_owned())
+    );
+    assert_eq!(
+        evaluate_math_function("min", "1turn, 90deg"),
+        Some("90deg".to_owned())
+    );
+    assert_eq!(
+        evaluate_math_function("clamp", "1deg, 0.5turn, 90deg"),
+        Some("90deg".to_owned())
+    );
+    let seconds = evaluate_calc("1s + 500ms").unwrap();
+    assert_eq!(seconds.unit.as_deref(), Some("s"));
+    assert!((seconds.number - 1.5).abs() < 1e-6);
+    let degrees = evaluate_calc("1deg + 1rad + 1grad").unwrap();
+    assert_eq!(degrees.unit.as_deref(), Some("deg"));
+    assert!((degrees.number - 59.19578).abs() < 1e-3);
+    let resolution = evaluate_calc("1dpi + 1dpcm").unwrap();
+    assert_eq!(resolution.unit.as_deref(), Some("dppx"));
+    assert!((resolution.number - (1.0 + 2.54) / 96.0).abs() < 1e-6);
+    // Units of different types, and of none, have no common unit.
+    assert_eq!(evaluate_math_function("calc", "1deg + 1s"), None);
+    assert_eq!(evaluate_math_function("calc", "1deg + 1px"), None);
+    assert_eq!(evaluate_math_function("calc", "1deg + 1"), None);
+    assert_eq!(evaluate_math_function("min", "1deg, 1s"), None);
+    assert_eq!(evaluate_math_function("min", "1, 1deg"), None);
+    assert_eq!(evaluate_math_function("min", "1em, 1deg"), None);
     // Additive zero vanishes across units (CSS Values 4 §10.7).
     assert_eq!(
         evaluate_math_function("calc", "50% + 0px"),

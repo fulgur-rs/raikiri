@@ -138,6 +138,16 @@ pub(crate) fn missing_glyph_origins(
     origins
 }
 
+/// The glyph transform of a synthetic italic slanted `degrees` to the right.
+/// The scene applies it in the layout space (y down) about the glyph's origin
+/// on the baseline, where the top of a glyph has a negative y, so the shear
+/// along x runs against the sign of the angle.
+pub(crate) fn synthetic_slant(degrees: Option<f32>) -> Affine {
+    degrees.map_or(Affine::IDENTITY, |degrees| {
+        Affine::skew(-f64::from(degrees).to_radians().tan(), 0.0)
+    })
+}
+
 pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     if enabled {
         let size = font_size as f64;

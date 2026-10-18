@@ -10,7 +10,7 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
+    AvailableSpace, BoxGenerationMode, Cache, CacheTree, CollapsibleMarginSet, CoreStyle,
     DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
     LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
     Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
@@ -82,6 +82,43 @@ pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
     // The retained style owner keeps this handle valid, as in `resolve_calc`.
     let calc = unsafe { &*(val as *const ArenaCalc) };
     calc.value.percent != 0.0
+}
+
+/// Whether the `height` or `min-height` of `node` is a percentage, or a
+/// `calc()` with one, of the height of its containing block. A box with an
+/// aspect ratio carries each of them over to its width.
+pub(crate) fn height_follows_containing_block(tree: &LayoutSession<'_>, node: usize) -> bool {
+    tree.layout_node_with_style(node).is_some_and(|node| {
+        let style = &node.style;
+        [style.size.height, style.min_size.height.into()]
+            .into_iter()
+            .any(|height| match height.expand() {
+                ExpandedDimension::Percent(_) => true,
+                ExpandedDimension::Calc(calc) => calc_has_percentage(calc),
+                _ => false,
+            })
+    })
+}
+
+/// Runs `measure` for `node` against a containing block of `parent_height`.
+///
+/// Taffy's cache does not key on the parent size, so a size measured against
+/// one containing height would answer a measurement against another. A box
+/// whose height follows the containing height is measured on an empty cache,
+/// which then gives way to the entries it had before.
+pub(crate) fn measure_against_parent_height<T>(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    parent_height: Option<f32>,
+    measure: impl FnOnce(&mut LayoutSession<'_>) -> T,
+) -> T {
+    let afresh = parent_height.is_some() && height_follows_containing_block(tree, node);
+    let saved = afresh.then(|| std::mem::replace(&mut tree.nodes[node].cache, Cache::new()));
+    let measured = measure(tree);
+    if let Some(saved) = saved {
+        tree.nodes[node].cache = saved;
+    }
+    measured
 }
 
 /// Resolve a padding or border length of an ifc root against the containing
@@ -1303,7 +1340,8 @@ fn measure_ifc_root(
             AvailableSpace::Definite(size) => size,
             _ => 0.0,
         };
-        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis)
+        let percent_height = measure.definite_height.filter(|_| !vertical);
+        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis, percent_height)
     } else {
         crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };
