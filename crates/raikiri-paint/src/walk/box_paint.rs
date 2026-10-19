@@ -5,12 +5,11 @@ use super::element_box::ElementBox;
 use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
-    BackgroundEnv, border_hides_background_edge, color_only_background_layer,
+    BackgroundEnv, InlineSvg, border_hides_background_edge, color_only_background_layer,
     fixed_background_viewport, img_src_url, infer_url_color, paint_canvas,
     paint_element_background, paint_element_border_image, paint_element_border_rounded,
     paint_element_border_with_top, paint_element_box_shadows, paint_element_outline,
-    paint_generated_pseudo, paint_image, paint_inline_svg, paint_list_marker_with_snapshots,
-    push_overflow_clip,
+    paint_generated_pseudo, paint_image, paint_list_marker_with_snapshots, push_overflow_clip,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Rect};
@@ -506,19 +505,16 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let scene = &mut *self.scene;
         let warnings = &mut *self.warnings;
         if node.is_inline_svg_root() {
-            paint_inline_svg(
-                scene,
+            InlineSvg::new(
                 document,
                 cascade,
                 cv,
                 node_id,
-                layout.size.width,
-                layout.size.height,
-                paint_x,
-                paint_y,
+                (layout.size.width, layout.size.height),
+                (paint_x, paint_y),
                 &paint_padding,
-                warnings,
             )
+            .paint(scene, warnings)
         } else if document.is_canvas_element(node_id) {
             let fallback_bitmap;
             let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
