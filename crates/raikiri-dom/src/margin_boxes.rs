@@ -717,10 +717,13 @@ impl MarginBoxSpec {
     }
 
     /// The outer size along `axis`: the specified size plus the frame, or
-    /// all of `available` when the size is `auto`.
+    /// all of `available` when the size is `auto`. Negative margins can take a
+    /// specified size below zero. That is kept, so that the edge gives the box
+    /// back the border-box size it asked for and places its margin box where
+    /// the margins put it.
     fn outer_size(&self, axis: Axis, available: f32) -> f32 {
         match self.size(axis) {
-            Some(size) => self.frame(axis).outer(size).max(0.0),
+            Some(size) => self.frame(axis).outer(size),
             None => available.max(0.0),
         }
     }
