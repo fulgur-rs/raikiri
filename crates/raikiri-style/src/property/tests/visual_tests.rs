@@ -2300,10 +2300,8 @@ fn object_fit_is_case_insensitive() {
 }
 
 #[test]
-fn object_fit_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "object-fit"), None, "{keyword}");
-    }
+fn object_fit_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("object-fit");
 }
 
 #[test]
@@ -2649,10 +2647,8 @@ fn isolation_rejects_trailing_garbage() {
 }
 
 #[test]
-fn isolation_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "isolation"), None, "{keyword}");
-    }
+fn isolation_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("isolation");
 }
 
 #[test]
@@ -2812,10 +2808,8 @@ fn mix_blend_mode_rejects_trailing_garbage() {
 }
 
 #[test]
-fn mix_blend_mode_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "mix-blend-mode"), None, "{keyword}");
-    }
+fn mix_blend_mode_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("mix-blend-mode");
 }
 
 #[test]
@@ -2876,10 +2870,8 @@ fn mask_image_is_case_insensitive() {
 }
 
 #[test]
-fn mask_image_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "mask-image"), None, "{keyword}");
-    }
+fn mask_image_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("mask-image");
 }
 
 #[test]
@@ -3084,10 +3076,8 @@ fn clip_path_is_case_insensitive() {
 }
 
 #[test]
-fn clip_path_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "clip-path"), None, "{keyword}");
-    }
+fn clip_path_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("clip-path");
 }
 
 #[test]
@@ -3785,10 +3775,8 @@ fn filter_rejects_unknown_function() {
 }
 
 #[test]
-fn filter_rejects_css_wide_keyword() {
-    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "filter"), None, "{keyword}");
-    }
+fn filter_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("filter");
 }
 
 #[test]

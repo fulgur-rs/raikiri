@@ -2731,6 +2731,11 @@ pub(crate) fn resolve_defaulting_value(
     if let PropertyValue::Deferred(marker) = &value
         && let Some(keyword) = marker.css_wide_keyword()
     {
+        if let Some(resolved) =
+            super::keyword_defaults::defaulting_value(marker.key, keyword, inherited)
+        {
+            return resolved;
+        }
         let radius = if keyword == CssWideKeyword::Inherit {
             inherited_border_radius_value(inherited)
         } else {

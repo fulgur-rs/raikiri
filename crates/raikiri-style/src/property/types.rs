@@ -2615,9 +2615,9 @@ css_keywords!(FontStyle {
 ///   at all — so `"font-variant"` has no [`parse_value`] dispatch arm, the
 ///   same reasoning [`WordBreak`]'s doc applies to the cross-property
 ///   `word-break: break-word` case.
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped (see the canonical "CSS-wide keyword" section in the
-///   [`PropertyValue`] docs for the five-keyword list and reasons).
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade, which
+///   resolves them (see the canonical "CSS-wide keyword" section in the
+///   [`PropertyValue`] docs).
 /// - **(a) Spec-invalid**: Idents other than the seven keywords above are silently dropped as `None`.
 ///
 /// This crate's scope carries no length, so computed value = specified
@@ -4609,9 +4609,9 @@ pub(crate) fn initial_grid_auto_track_list() -> Arc<Vec<GridTrackSize>> {
 ///
 /// # Scope carving
 ///
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped. The [`PropertyValue`] docs under "CSS-wide keywords"
-///   list all five and explain why.
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade, which
+///   resolves them (see the canonical "CSS-wide keyword" section in the
+///   [`PropertyValue`] docs).
 /// - **(a) Invalid under the spec**: unknown keywords such as `padding-box`
 ///   (in a CSS UI 3 draft but removed from CSS Sizing 3) and `margin-box`
 ///   are silently dropped (`None`).
@@ -6212,10 +6212,9 @@ pub enum ZIndexValue {
 ///   [`OverflowWrap::BreakWord`] — the non-deprecated
 ///   `overflow-wrap: break-word` value — that this crate represents
 ///   instead.
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped. See the "CSS-wide keywords" section in the
-///   [`PropertyValue`] documentation for the canonical list of five keywords
-///   and the reason.
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade, which
+///   resolves them (see the canonical "CSS-wide keyword" section in the
+///   [`PropertyValue`] docs).
 /// - **(a) Invalid under the spec**: Any ident other than the three keywords
 ///   above (`normal` / `keep-all` / `break-all`; see the non-goal section above
 ///   for `break-word`) is silently dropped as `None`.
@@ -6302,10 +6301,9 @@ css_keywords!(WordBreak {
 ///   value, which [`WordBreak`]'s doc explains is not represented at all)
 ///   so the distinction survives for a future layout consumer even though
 ///   nothing reads it yet.
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped. See the "CSS-wide keywords" section in the
-///   [`PropertyValue`] documentation for the canonical list of five keywords
-///   and the reason.
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade, which
+///   resolves them (see the canonical "CSS-wide keyword" section in the
+///   [`PropertyValue`] docs).
 /// - **(a) Invalid under the spec**: Any ident other than the three keywords
 ///   above is silently dropped as `None`.
 ///
@@ -6988,9 +6986,9 @@ css_keywords!(WhiteSpaceCollapse {
 ///   in the "Scope carving" section of the [`OverflowWrap`] docs: preserve the
 ///   variants for a future layout/hyphenation consumer even though their
 ///   difference cannot be observed at this crate's layer.
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet (future
-///   work), and are silently dropped. The "CSS-wide keywords" section of the
-///   [`PropertyValue`] docs is authoritative for the five keywords and rationale.
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade, which
+///   resolves them (see the canonical "CSS-wide keyword" section in the
+///   [`PropertyValue`] docs).
 /// - **(a) Spec-invalid**: Any identifier other than the three keywords above
 ///   is silently dropped as `None`.
 ///
@@ -7857,9 +7855,13 @@ impl PropertyKey {
     /// Whether `self` is a margin, padding, offset, size (physical or
     /// flow-relative), `text-align` or flow (`writing-mode`,
     /// `text-orientation`, `direction`) property, or a shorthand of the first
-    /// three, whose CSS-wide keywords the cascade resolves from the parent's
-    /// computed value or the initial value.
+    /// three, or a property of the `keyword_defaults` table, whose CSS-wide
+    /// keywords the cascade resolves from the parent's computed value or the
+    /// initial value.
     pub(crate) const fn takes_cascade_css_wide_keyword(self) -> bool {
+        if crate::cascade::keyword_defaults::covers(self) {
+            return true;
+        }
         matches!(
             self,
             PropertyKey::Margin
@@ -9881,6 +9883,11 @@ pub enum FilterFunction {
 /// `block-size`, `min-block-size`), `text-align`, `text-align-last`,
 /// `writing-mode`, `text-orientation` and `direction` accept them
 /// too; the shorthands expand to per-side markers during the cascade.
+/// Most other longhands whose computed value is a field of the computed
+/// style do too: `cascade::keyword_defaults` lists them, one row per
+/// property, and the cascade resolves their markers from that table. The
+/// shorthands over such longhands (`flex`, `flex-flow`, `text-wrap`,
+/// `place-content` and the like) do not accept them yet.
 /// `text-align-all`, which has no computed field of its own, does not
 /// yet. The `all` shorthand additionally accepts literal `revert-layer`
 /// through [`PropertyValue::AllRevertLayer`]; its other CSS-wide values and
@@ -9888,17 +9895,20 @@ pub enum FilterFunction {
 /// properties interpret literal `revert` and `revert-layer` during cascading;
 /// their other CSS-wide defaults are not supported.
 ///
-/// Unlike unsupported units, this missing support has no single code arm: each
-/// `parse_*` function simply does not recognize these idents and rejects them
-/// through the same "unknown keyword" path as other spec-invalid keywords
-/// (for example, its own `_ => None` arm). This is a **coincidence caused by an
-/// absence of implementation**. Neither this section nor individual property
-/// docs repeat the list of five keywords: repeated lists drift when properties
-/// are added. Indeed, `property.rs` once repeated the list at 16 separate sites,
-/// and three of those (`border-width`, `border-style`, and `box-sizing`) had no
-/// pinning tests. The canonical sources are this paragraph and the representative
-/// tests named `rejects_css_wide_keyword` (grep the crate to find all of them,
-/// including `text_transform_rejects_css_wide_keyword`).
+/// For a property outside those lists, the missing support has no single code
+/// arm: its `parse_*` function simply does not recognize these idents and
+/// rejects them through the same "unknown keyword" path as other spec-invalid
+/// keywords (for example, its own `_ => None` arm). This is a **coincidence
+/// caused by an absence of implementation**, and the whole declaration is
+/// dropped. Neither this section nor individual property docs repeat the list
+/// of five keywords: repeated lists drift when properties are added. Indeed,
+/// `property.rs` once repeated the list at 16 separate sites, and three of
+/// those (`border-width`, `border-style`, and `box-sizing`) had no pinning
+/// tests. The canonical sources are this paragraph and the tests named
+/// `rejects_css_wide_keyword` (grep the crate to find them, including
+/// `white_space_rejects_css_wide_keyword`), which pin the properties that
+/// still drop the keywords; `assert_css_wide_keywords_deferred` pins the
+/// ones that keep them.
 ///
 /// Grammars based on `<custom-ident>` (names in `counter-name` / `string-set` and
 /// arguments to `position: running()`) instead have **explicit** reject lists

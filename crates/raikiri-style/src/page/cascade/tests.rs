@@ -1382,6 +1382,47 @@ fn margin_box_inherits_the_monospace_keyword_page_font_size() {
 }
 
 #[test]
+fn css_wide_keywords_resolve_for_the_defaulting_table_in_the_page_and_its_margin_boxes() {
+    // `text-transform` is inherited and `box-sizing` is not, so `unset` and
+    // `inherit` part ways on the second.
+    let mut root = ComputedValues::initial();
+    root.text_transform = TextTransform::Uppercase;
+    root.box_sizing = BoxSizing::BorderBox;
+    let page = page(
+        "@page { text-transform: inherit; box-sizing: inherit; \
+         @top-left { content: 'x'; text-transform: inherit; box-sizing: inherit } \
+         @top-center { content: 'x'; text-transform: initial; box-sizing: unset } \
+         @top-right { content: 'x'; text-transform: unset; box-sizing: inherit } }",
+        &root,
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::TextTransform),
+        Some(&PropertyValue::TextTransform(TextTransform::Uppercase))
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::BoxSizing),
+        Some(&PropertyValue::BoxSizing(BoxSizing::BorderBox))
+    );
+    let style = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        let style = page.margin_box_style(&rule, None);
+        (style.text_transform, style.box_sizing)
+    };
+    assert_eq!(
+        style(PageMarginBoxSlot::TopLeft),
+        (TextTransform::Uppercase, BoxSizing::BorderBox)
+    );
+    assert_eq!(
+        style(PageMarginBoxSlot::TopCenter),
+        (TextTransform::None, BoxSizing::ContentBox)
+    );
+    assert_eq!(
+        style(PageMarginBoxSlot::TopRight),
+        (TextTransform::Uppercase, BoxSizing::BorderBox)
+    );
+}
+
+#[test]
 fn a_margin_box_keeps_the_block_size_keywords() {
     // A margin box fills its page margin for `height: auto`, so it has to see
     // the keywords that size it to its content, which an element computes to
