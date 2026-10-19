@@ -1,0 +1,480 @@
+//! Intrinsic sizing keywords on `min-width`, `max-width`, `min-height` and
+//! `max-height` (CSS Sizing 3 §4 and §5).
+//!
+//! Taffy's `min_size` and `max_size` hold lengths, percentages and `calc()`,
+//! not the keywords. The bridge therefore leaves them `auto` and records each
+//! keyword in [`ContentLimits`]; [`with_content_limits`] measures the box it
+//! names when the box is laid out and puts the resulting lengths in the style
+//! for the duration of that layout. Every algorithm that clamps the box to its
+//! `min_size` and `max_size` then reads the sizes the keywords stand for.
+
+use crate::layout::context::LayoutSession;
+use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
+use crate::node::FormattingContext;
+use crate::taffy_impl::{fit_content_room, resolve_calc};
+use taffy::{
+    AvailableSpace, Cache, Dimension, ExpandedDimension, LayoutInput, LayoutOutput,
+    LengthPercentageAuto, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode, Style,
+};
+
+/// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
+/// (`min-content`, `max-content`, `fit-content`, `fit-content(<length-percentage>)`),
+/// as the keyword [`Dimension`]s the `width` bridge produces. A size that is no
+/// such keyword is `auto` here; Taffy's style carries every other size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ContentLimits {
+    pub min: Size<Dimension>,
+    pub max: Size<Dimension>,
+}
+
+impl ContentLimits {
+    pub(crate) const NONE: Self = Self {
+        min: Size::auto(),
+        max: Size::auto(),
+    };
+
+    fn has_width(&self) -> bool {
+        !self.min.width.is_auto() || !self.max.width.is_auto()
+    }
+
+    fn has_height(&self) -> bool {
+        !self.min.height.is_auto() || !self.max.height.is_auto()
+    }
+}
+
+/// The sizes of `style` that a box's content measure must not read.
+#[derive(Clone, Copy)]
+struct SavedSizes {
+    size: Size<Dimension>,
+    min_size: Size<LengthPercentageAuto>,
+    max_size: Size<LengthPercentageAuto>,
+}
+
+impl SavedSizes {
+    fn of(style: &Style) -> Self {
+        Self {
+            size: style.size,
+            min_size: style.min_size,
+            max_size: style.max_size,
+        }
+    }
+
+    fn restore(self, style: &mut Style) {
+        style.size = self.size;
+        style.min_size = self.min_size;
+        style.max_size = self.max_size;
+    }
+}
+
+/// Whether node `idx`, whose keyword sizes are `limits`, is laid out with
+/// them resolved. The measures below lay the box out again; they see the style
+/// without the limits.
+fn applies(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool {
+    let context = tree.nodes[idx].formatting_context;
+    *limits != ContentLimits::NONE
+        && !tree.context.content_limit_probes.contains(&idx)
+        && matches!(
+            context,
+            FormattingContext::Block | FormattingContext::Inline
+        )
+}
+
+/// Run `f`, a layout that resolves keyword sizes, with the measures of the
+/// boxes inside it remembered for as long as the outermost such layout runs.
+///
+/// A box measured for its keyword sizes lays its contents out again for each
+/// measure, and the boxes inside it do the same, so without the memory the
+/// work doubles with every level of boxes that carry keyword sizes.
+fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>) -> R) -> R {
+    if tree.context.content_limit_depth == 0 {
+        tree.context.content_limit_measures.clear();
+    }
+    tree.context.content_limit_depth += 1;
+    let result = f(tree);
+    tree.context.content_limit_depth -= 1;
+    result
+}
+
+/// Lay out node `node_id` with `dispatch` after resolving its keyword `min-*`
+/// and `max-*` sizes to lengths for the room `inputs` offers it.
+///
+/// The widths the keywords stand for are the min-content and max-content
+/// widths of the box, measured without its `width`, `min-width` and
+/// `max-width`; the heights are its automatic height at the width the limits
+/// leave it. Both are border-box sizes and become the box-sizing box the
+/// style names.
+pub(super) fn with_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    dispatch: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let limits = tree.nodes[idx].content_limits;
+    if !applies(tree, idx, &limits) {
+        return dispatch(tree, node_id, inputs);
+    }
+    scoped(tree, |tree| {
+        let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
+        // A parent hands its child a size already within the child's limits;
+        // the keywords are the limits it could not read.
+        let mut inputs = inputs;
+        let mut width = Bounds::default();
+        if limits.has_width() {
+            width = width_bounds(tree, node_id, &limits, &inputs);
+            let adjustment =
+                box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+            width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+            if let Some(known) = inputs.known_dimensions.width {
+                let known = width.apply(known);
+                inputs.known_dimensions.width = Some(known);
+                // The room a parent offers a box it sizes is that size.
+                inputs.available_space.width = AvailableSpace::Definite(known);
+            }
+        }
+        if limits.has_height() {
+            let height = height_bounds(tree, node_id, &limits, &inputs, width);
+            let adjustment =
+                box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+            height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+            inputs.known_dimensions.height = inputs
+                .known_dimensions
+                .height
+                .map(|known| height.apply(known));
+        }
+        let output = dispatch(tree, node_id, inputs);
+        saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+        output
+    })
+}
+
+/// Give `style`, a copy of the style of the block-flow child `child`, the
+/// lengths the keyword `min-width` and `max-width` of the child stand for when
+/// its parent offers it the room `inputs` describe.
+///
+/// The parent sizes the child, and prepares the block context the child's
+/// lines are laid out in, before the child is laid out; it must see the width
+/// the limits leave the child.
+pub(super) fn resolve_width_in_style(
+    tree: &mut LayoutSession<'_>,
+    child: NodeId,
+    style: &mut Style,
+    inputs: &LayoutInput,
+) {
+    let idx = usize::from(child);
+    let limits = tree.nodes[idx].content_limits;
+    if !limits.has_width() || !applies(tree, idx, &limits) {
+        return;
+    }
+    let bounds = scoped(tree, |tree| width_bounds(tree, child, &limits, inputs));
+    let adjustment = box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+    bounds.install_width(style, adjustment);
+}
+
+/// Run `f` with the lengths the keyword `min-width` and `max-width` of the
+/// block child `node` stand for in its style, when its parent, whose content
+/// box `parent_size` describes, offers it `room` for an `auto` width.
+///
+/// A paragraph root sizes its block children itself, from the child's style
+/// and before the child is laid out.
+pub(crate) fn with_width_limits<R>(
+    tree: &mut LayoutSession<'_>,
+    node: usize,
+    parent_size: Size<Option<f32>>,
+    room: f32,
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let limits = tree.nodes[node].content_limits;
+    if !limits.has_width() || !applies(tree, node, &limits) {
+        return f(tree);
+    }
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size,
+        available_space: Size {
+            width: AvailableSpace::Definite(room),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let bounds = scoped(tree, |tree| {
+        width_bounds(tree, NodeId::from(node), &limits, &inputs)
+    });
+    let adjustment = box_sizing_adjustment(tree, node, parent_size.width.unwrap_or(0.0));
+    let style = tree.layout_style_for_key_mut(node).unwrap();
+    let saved = SavedSizes::of(style);
+    bounds.install_width(style, adjustment);
+    let result = f(tree);
+    saved.restore(tree.layout_style_for_key_mut(node).unwrap());
+    result
+}
+
+/// The border-box bounds a keyword `min-*` and `max-*` size resolved to along
+/// one axis.
+#[derive(Clone, Copy, Default)]
+struct Bounds {
+    min: Option<f32>,
+    max: Option<f32>,
+}
+
+impl Bounds {
+    /// `size` within the bounds, the minimum winning over the maximum.
+    fn apply(self, size: f32) -> f32 {
+        let size = self.max.map_or(size, |max| size.min(max));
+        self.min.map_or(size, |min| size.max(min))
+    }
+
+    /// The box-sizing box a style names for a border-box size, given what
+    /// `box-sizing` leaves out of it.
+    fn length(border_box: f32, adjustment: f32) -> LengthPercentageAuto {
+        LengthPercentageAuto::length((border_box - adjustment).max(0.0))
+    }
+
+    fn install_width(self, style: &mut Style, adjustment: f32) {
+        if let Some(min) = self.min {
+            style.min_size.width = Self::length(min, adjustment);
+        }
+        if let Some(max) = self.max {
+            style.max_size.width = Self::length(max, adjustment);
+        }
+    }
+
+    fn install_height(self, style: &mut Style, adjustment: f32) {
+        if let Some(min) = self.min {
+            style.min_size.height = Self::length(min, adjustment);
+        }
+        if let Some(max) = self.max {
+            style.max_size.height = Self::length(max, adjustment);
+        }
+    }
+}
+
+/// What a measure of a box is keyed by: the box, the axis measured, and
+/// everything the layout it runs reads besides the box's contents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct MeasureKey {
+    node: usize,
+    width: bool,
+    /// The basis a flex item's percentage edges were resolved against.
+    edge_basis: Option<u32>,
+    /// The minimum and maximum width the height is measured under.
+    bounds: [Option<u32>; 2],
+    known: [Option<u32>; 2],
+    available: [(u8, u32); 2],
+    parent: [Option<u32>; 2],
+    /// The sizing mode is the content size, and the known sizes are definite.
+    flags: [bool; 3],
+}
+
+impl MeasureKey {
+    fn new(
+        tree: &LayoutSession<'_>,
+        node: usize,
+        width: bool,
+        inputs: &LayoutInput,
+        bounds: Bounds,
+    ) -> Self {
+        let bits = |size: Option<f32>| size.map(f32::to_bits);
+        let space = |space: AvailableSpace| match space {
+            AvailableSpace::Definite(size) => (0, size.to_bits()),
+            AvailableSpace::MinContent => (1, 0),
+            AvailableSpace::MaxContent => (2, 0),
+        };
+        Self {
+            node,
+            width,
+            edge_basis: bits(tree.nodes[node].flex_edge_basis),
+            bounds: [bits(bounds.min), bits(bounds.max)],
+            known: [
+                bits(inputs.known_dimensions.width),
+                bits(inputs.known_dimensions.height),
+            ],
+            available: [
+                space(inputs.available_space.width),
+                space(inputs.available_space.height),
+            ],
+            parent: [
+                bits(inputs.parent_size.width),
+                bits(inputs.parent_size.height),
+            ],
+            flags: [
+                inputs.sizing_mode == SizingMode::ContentSize,
+                inputs.known_dimensions_are_definite.width,
+                inputs.known_dimensions_are_definite.height,
+            ],
+        }
+    }
+}
+
+/// Measure `node_id` as the layout the probe `inputs` describe, on an empty
+/// cache that gives way to the entries the box had before, with the style
+/// `neutral` leaves it. The measure is the width of the box when `key` is a
+/// width measure, its height otherwise.
+fn probe(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    key: MeasureKey,
+    inputs: LayoutInput,
+    neutral: impl FnOnce(&mut Style),
+) -> f32 {
+    if let Some(&size) = tree.context.content_limit_measures.get(&key) {
+        return size;
+    }
+    let idx = usize::from(node_id);
+    let saved = {
+        let style = tree.layout_style_for_key_mut(idx).unwrap();
+        let saved = SavedSizes::of(style);
+        neutral(style);
+        saved
+    };
+    tree.context.content_limit_probes.push(idx);
+    let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
+    let output = tree.compute_child_layout_with_block_ctx(node_id, inputs, None);
+    tree.nodes[idx].cache = cache;
+    tree.context.content_limit_probes.pop();
+    saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+    let size = if key.width {
+        output.size.width
+    } else {
+        output.size.height
+    };
+    tree.context.content_limit_measures.insert(key, size);
+    size
+}
+
+/// The border-box widths the keyword `min-width` and `max-width` of `node_id`
+/// stand for in the room `inputs` offers it.
+fn width_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    let mut measures: Option<(f32, f32)> = None;
+    let mut measure_contents = |tree: &mut LayoutSession<'_>| {
+        *measures.get_or_insert_with(|| {
+            let mut measure = |space| {
+                let along = LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: RequestedAxis::Both,
+                    known_dimensions: Size::NONE,
+                    known_dimensions_are_definite: Size {
+                        width: false,
+                        height: false,
+                    },
+                    parent_size: inputs.parent_size,
+                    available_space: Size {
+                        width: space,
+                        height: AvailableSpace::MaxContent,
+                    },
+                    vertical_margins_are_collapsible: Line::FALSE,
+                };
+                let key = MeasureKey::new(tree, idx, true, &along, Bounds::default());
+                probe(tree, node_id, key, along, |style| {
+                    style.size.width = Dimension::auto();
+                    style.min_size.width = LengthPercentageAuto::auto();
+                    style.max_size.width = LengthPercentageAuto::auto();
+                })
+            };
+            (
+                measure(AvailableSpace::MinContent),
+                measure(AvailableSpace::MaxContent),
+            )
+        })
+    };
+    let mut resolved = [None, None];
+    for (slot, keyword) in resolved
+        .iter_mut()
+        .zip([limits.min.width, limits.max.width])
+    {
+        let expanded = keyword.expand();
+        if !matches!(
+            expanded,
+            ExpandedDimension::MinContent
+                | ExpandedDimension::MaxContent
+                | ExpandedDimension::FitContent
+                | ExpandedDimension::FitContentPx(_)
+                | ExpandedDimension::FitContentPercent(_)
+                | ExpandedDimension::FitContentCalc(_)
+        ) {
+            continue;
+        }
+        let (min_content, max_content) = measure_contents(tree);
+        let fit = |room: f32| max_content.min(room).max(min_content);
+        // The limit of `fit-content(<length-percentage>)` stands in for the
+        // room the parent offers; one that cannot resolve leaves the box
+        // sized by the room, as `fit-content` is.
+        let limit = fit_content_room(tree, idx, expanded, inputs.parent_size.width, true);
+        *slot = Some(match (expanded, limit) {
+            (ExpandedDimension::MinContent, _) => min_content,
+            (ExpandedDimension::MaxContent, _) => max_content,
+            (_, Some(limit)) => fit(limit),
+            (_, None) => match inputs.available_space.width {
+                AvailableSpace::MinContent => min_content,
+                AvailableSpace::MaxContent => max_content,
+                AvailableSpace::Definite(room) => fit(stretch_fit_width(tree, idx, inputs, room)),
+            },
+        });
+    }
+    Bounds {
+        min: resolved[0],
+        max: resolved[1],
+    }
+}
+
+/// The border-box heights the keyword `min-height` and `max-height` of
+/// `node_id` stand for: along the block axis every keyword is the automatic
+/// height of the box at the width `inputs` give it, within the `width` bounds
+/// already installed in its style (CSS Sizing 3 §5.1).
+fn height_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+    width: Bounds,
+) -> Bounds {
+    let mut along = *inputs;
+    along.run_mode = RunMode::ComputeSize;
+    along.axis = RequestedAxis::Both;
+    along.known_dimensions.height = None;
+    along.known_dimensions_are_definite.height = false;
+    along.vertical_margins_are_collapsible = Line::FALSE;
+    let key = MeasureKey::new(tree, usize::from(node_id), false, &along, width);
+    let height = probe(tree, node_id, key, along, |style| {
+        style.size.height = Dimension::auto();
+        style.min_size.height = LengthPercentageAuto::auto();
+        style.max_size.height = LengthPercentageAuto::auto();
+    });
+    Bounds {
+        min: (!limits.min.height.is_auto()).then_some(height),
+        max: (!limits.max.height.is_auto()).then_some(height),
+    }
+}
+
+/// The border-box width the box `idx` would stretch to in the room `inputs`
+/// offers it: the width of its containing block less its margins, an `auto`
+/// margin counting for nothing, and no more than the `room` the parent leaves
+/// it (CSS Sizing 3 §3.1.1). Without a containing block width, that room.
+fn stretch_fit_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput, room: f32) -> f32 {
+    let Some(basis) = inputs.parent_size.width else {
+        return room.max(0.0);
+    };
+    let margin = &tree.layout_node_with_style(idx).unwrap().style.margin;
+    let side =
+        |side: LengthPercentageAuto| side.resolve_to_option(basis, resolve_calc).unwrap_or(0.0);
+    (basis - side(margin.left) - side(margin.right))
+        .min(room)
+        .max(0.0)
+}
+
+#[cfg(test)]
+mod tests;

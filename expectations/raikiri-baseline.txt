@@ -4948,3 +4948,9 @@ css/css-page/margin-boxes/dimensions-006-print.html
 css/css-page/margin-boxes/dimensions-009-print.html
 css/css-page/margin-boxes/dimensions-011-print.html
 css/css-page/margin-boxes/dimensions-012-print.html
+
+# --- min and max sizes by size keywords (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# Pass once min-width, max-width, min-height and max-height of an in-flow block take min-content, max-content, fit-content and fit-content() as bounds along the inline axis; block-size-with-min-or-max-content-2 and -3 also pass now but audit as unstyled (a block-axis keyword is the automatic size) and were not recorded; KEEP in two audit-vacuous-passes runs.
+css/css-sizing/fit-content-max-inline-size.tentative.html
+css/css-sizing/fit-content-min-inline-size.html
+css/css-sizing/min-content-min-width-000.html

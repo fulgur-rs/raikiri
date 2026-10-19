@@ -165,7 +165,7 @@ pub(super) fn layout(
         ctx.commit_strut();
     }
     for (order, child) in children.into_iter().enumerate() {
-        let style = child_style(tree, child);
+        let mut style = child_style(tree, child);
         if style.box_generation_mode() == BoxGenerationMode::None {
             if inputs.run_mode == RunMode::PerformLayout {
                 tree.compute_child_layout_with_block_ctx(child, LayoutInput::HIDDEN, None);
@@ -185,6 +185,13 @@ pub(super) fn layout(
             continue;
         }
         let mut child_input = child_inputs(parent, None, inputs.run_mode);
+        // A keyword `min-width` or `max-width` of the child limits the width
+        // this container gives it; the child's lines are laid out in a
+        // context prepared for that width.
+        let mut room = child_input;
+        room.available_space.width =
+            AvailableSpace::Definite((content_width - margin.horizontal_axis_sum()).max(0.0));
+        crate::taffy_impl::content_limits::resolve_width_in_style(tree, child, &mut style, &room);
         let child_metrics = Metrics::resolve(&style, child_input);
         child_input.known_dimensions.height = child_metrics.preferred.height;
         if style.float != Float::None {

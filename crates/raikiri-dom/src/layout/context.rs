@@ -21,6 +21,14 @@ pub(crate) struct LayoutContext {
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
+    /// The boxes being measured without their intrinsic `min-*` and `max-*`
+    /// sizes (see `taffy_impl::content_limits`).
+    pub(crate) content_limit_probes: Vec<usize>,
+    /// The width or height each box measured for its keyword sizes, while the
+    /// outermost box laying out with them runs, and how many such layouts are
+    /// running (see `taffy_impl::content_limits`).
+    pub(crate) content_limit_measures: HashMap<crate::taffy_impl::content_limits::MeasureKey, f32>,
+    pub(crate) content_limit_depth: usize,
     pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<String>>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,
