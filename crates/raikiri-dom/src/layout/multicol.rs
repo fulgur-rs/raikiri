@@ -958,7 +958,7 @@ fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
 }
 
 /// The paragraph at the end of the chain that starts at the wrapper `start`,
-/// as `plain_paragraph_chain_leaf` finds it, when the wrapper fills its box
+/// as [`plain_paragraph_chain_leaf`] finds it, when the wrapper fills its box
 /// with a color and the paragraph is all it holds. Generated content of a box
 /// of the chain is no arena child, so it would lie beside the paragraph in a
 /// box that is cut at the columns of the paragraph.
