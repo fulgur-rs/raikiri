@@ -24,6 +24,10 @@ pub(crate) struct LayoutContext {
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
     /// sizes (see `taffy_impl::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,
+    /// The flex container whose intrinsic widths are being measured, whose
+    /// items are bounded by their flex base sizes meanwhile (see
+    /// `taffy_impl::with_flex_intrinsic_probe`).
+    pub(crate) flex_intrinsic_probe: Option<usize>,
     /// The width or height each box measured for its keyword sizes, while the
     /// outermost box laying out with them runs, and how many such layouts are
     /// running (see `taffy_impl::content_limits`).

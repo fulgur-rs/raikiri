@@ -192,9 +192,10 @@ fn a_floated_column_flex_container_is_not_widened_by_the_flex_basis_of_its_items
     );
 }
 
-/// The border box width of a floated wrapping flex container with `count`
-/// items 30px wide plus a 1px border, styled by `container_css`.
-fn wrapping_container_width(container_css: &str, count: usize) -> f32 {
+/// The border box width of a floated container with `count` items 30px wide
+/// plus a 1px border, styled by `container_css` after a 1px border and a 12px
+/// height.
+fn floated_width(container_css: &str, count: usize) -> f32 {
     let mut container = 0;
     let fixture = block_fixture("line-height:10px", |doc, root| {
         container = doc.append_element(
@@ -202,7 +203,7 @@ fn wrapping_container_width(container_css: &str, count: usize) -> f32 {
             "div",
             taffy::Style::default(),
             Some(&format!(
-                "display:flex;flex-wrap:wrap;float:left;border:1px solid;height:12px;{container_css}"
+                "float:left;border:1px solid;height:12px;{container_css}"
             )),
         );
         for _ in 0..count {
@@ -219,21 +220,54 @@ fn wrapping_container_width(container_css: &str, count: usize) -> f32 {
     hundredths(absolute_rect(&doc, container).2)
 }
 
+/// [`floated_width`] of a wrapping flex container.
+fn wrapping_width(container_css: &str, count: usize) -> f32 {
+    floated_width(
+        &format!("display:flex;flex-wrap:wrap;{container_css}"),
+        count,
+    )
+}
+
 #[test]
 fn a_floated_wrapping_flex_container_is_measured_as_a_single_line() {
     // Five 32px items on one line, plus the container's 2px of border.
-    assert_eq!(wrapping_container_width("", 5), 162.0);
+    assert_eq!(wrapping_width("", 5), 162.0);
     // The maximum width clamps the single line, it does not wrap it first.
-    assert_eq!(wrapping_container_width("max-width:120px", 5), 122.0);
-    assert_eq!(
-        wrapping_container_width("max-width:120px;min-width:100px", 5),
-        122.0
-    );
+    assert_eq!(wrapping_width("max-width:120px", 5), 122.0);
+    assert_eq!(wrapping_width("max-width:120px;min-width:100px", 5), 122.0);
     // The minimum width wins over the maximum width.
+    assert_eq!(wrapping_width("min-width:150px;max-width:120px", 5), 152.0);
+    assert_eq!(wrapping_width("min-width:100px", 0), 102.0);
+    assert_eq!(wrapping_width("min-width:100px", 1), 102.0);
+}
+
+#[test]
+fn a_floated_empty_grid_container_is_as_wide_as_its_explicit_tracks() {
     assert_eq!(
-        wrapping_container_width("min-width:150px;max-width:120px", 5),
+        floated_width("display:grid;grid-template-columns:100px", 0),
+        102.0
+    );
+    assert_eq!(
+        floated_width("display:grid;grid-template-columns:100px 50px", 0),
         152.0
     );
-    assert_eq!(wrapping_container_width("min-width:100px", 0), 102.0);
-    assert_eq!(wrapping_container_width("min-width:100px", 1), 102.0);
+}
+
+#[test]
+fn a_floated_flex_container_keeps_the_flex_basis_floor_under_a_keyword_minimum() {
+    // The minimum width is the 30px of text, below the 100px an item that
+    // cannot shrink keeps.
+    assert_eq!(
+        container_width("", FLEX, "flex:1 0 100px;min-width:max-content"),
+        120.0
+    );
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:1 0 100px;min-width:max-content"),
+        120.0
+    );
+    // A minimum above the basis wins.
+    assert_eq!(
+        container_width("", FLEX, "flex:1 0 20px;min-width:max-content"),
+        50.0
+    );
 }

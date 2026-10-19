@@ -1914,30 +1914,54 @@ struct FlexItemBounds {
 }
 
 /// Run `probe`, which measures the intrinsic widths of the flex container
-/// `node_id`, with the bounds Taffy leaves out of the measure put in place.
+/// `node_id`, with what Taffy leaves out of the measure put in place.
 ///
-/// - Taffy breaks the lines of a wrapping container at its own `max-width`
-///   even while it measures the container's max-content width, which is the
-///   width of a single line (CSS Flexbox §9.9.1). The container's `max-width`
-///   is dropped for the probe; the caller clamps the result by it.
-/// - A row item whose flex base size is a length contributes at least that
-///   size when it cannot shrink and at most that size when it cannot grow.
-///   Taffy clamps a measured contribution by the item's `min-width` and
-///   `max-width` only, so an empty `flex: 1 0 100px` item would contribute
-///   nothing. Each such bound is installed as the item's own bound.
+/// Taffy breaks the lines of a wrapping container at its own `max-width` even
+/// while it measures the container's max-content width, which is the width of
+/// a single line (CSS Flexbox §9.9.1). The container's `max-width` is dropped
+/// for the probe; the caller clamps the result by it. The items are bounded by
+/// their flex base sizes while the container lays them out
+/// ([`with_flex_item_basis_bounds`]).
 ///
-/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
-fn with_flex_intrinsic_bounds<R>(
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-sizes>
+fn with_flex_intrinsic_probe<R>(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     probe: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
     let idx = usize::from(node_id);
-    let container = tree.layout_style_for_key_mut(idx).unwrap();
-    let container_max = container.max_size.width;
-    container.max_size.width = taffy::LengthPercentageAuto::auto();
+    let style = tree.layout_style_for_key_mut(idx).unwrap();
+    let container_max = style.max_size.width;
+    style.max_size.width = taffy::LengthPercentageAuto::auto();
+    let outer = tree.context.flex_intrinsic_probe.replace(idx);
+    let result = probe(tree);
+    tree.context.flex_intrinsic_probe = outer;
+    tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
+    result
+}
+
+/// Run `layout`, a layout of the row flex container `node_id`, with each item
+/// whose flex base size is a length bounded by it.
+///
+/// An item contributes at least its flex base size to the intrinsic widths of
+/// the container when it cannot shrink and at most that size when it cannot
+/// grow. Taffy clamps a measured contribution by the item's `min-width` and
+/// `max-width` only, so an empty `flex: 1 0 100px` item would contribute
+/// nothing. Each such bound is installed as the item's own bound, together
+/// with the bound the item already has, which is what a keyword `min-width`
+/// or `max-width` came to when the container began laying out its items.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
+fn with_flex_item_basis_bounds<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
     let is_row = matches!(
-        container.flex_direction,
+        tree.layout_node_with_style(usize::from(node_id))
+            .unwrap()
+            .style
+            .flex_direction,
         taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
     );
     let children: Vec<NodeId> = if is_row {
@@ -1986,14 +2010,13 @@ fn with_flex_intrinsic_bounds<R>(
             cache,
         });
     }
-    let result = probe(tree);
+    let result = layout(tree);
     for item in saved {
         let style = tree.layout_style_for_key_mut(item.idx).unwrap();
         style.min_size.width = item.min;
         style.max_size.width = item.max;
         tree.nodes[item.idx].cache = item.cache;
     }
-    tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
     result
 }
 
@@ -2054,7 +2077,16 @@ fn compute_inline_block_shrink_wrap(
     // engine measures and lays out its content in the same steps below.
     let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty;
     let display = tree.nodes[idx].display();
-    let is_leaf = tree.nodes[idx].children.is_empty();
+    // An empty flex or grid container still runs its layout algorithm:
+    // explicit grid tracks contribute even when there are no items.
+    let is_leaf = tree.nodes[idx].children.is_empty()
+        && !matches!(
+            display,
+            DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+        );
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = tree.layout_node_with_style(idx).unwrap().style.clone();
     if empty {
@@ -2159,7 +2191,7 @@ fn compute_inline_block_shrink_wrap(
     };
     let (min_w, max_w) = if matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex) {
         let (_, max_width) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
-        let (min_w, max_w) = with_flex_intrinsic_bounds(tree, node_id, measure);
+        let (min_w, max_w) = with_flex_intrinsic_probe(tree, node_id, measure);
         (min_w.min(max_width), max_w.min(max_width))
     } else {
         measure(tree)
@@ -2513,7 +2545,15 @@ fn flex_layout_sized(
         node_id,
         inputs,
         basis,
-        |tree, node_id, inputs| compute_flexbox_layout(tree, node_id, inputs),
+        |tree, node_id, inputs| {
+            if tree.context.flex_intrinsic_probe == Some(idx) {
+                with_flex_item_basis_bounds(tree, node_id, |tree| {
+                    compute_flexbox_layout(tree, node_id, inputs)
+                })
+            } else {
+                compute_flexbox_layout(tree, node_id, inputs)
+            }
+        },
     );
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);
