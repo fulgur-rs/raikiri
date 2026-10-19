@@ -20,8 +20,8 @@ use peniko::color::{
 };
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient};
 use raikiri_dom::image_geometry::{
-    DeviceGrid, VisibleArea, background_image_dimensions, background_tiles,
-    border_image_geometry_within, position_offset, rounded_background_tile_size,
+    DeviceGrid, VisibleArea, background_image_dimensions, background_tiles, position_offset,
+    rounded_background_tile_size,
 };
 use raikiri_dom::{CounterSnapshots, Document, StandaloneAlign};
 use raikiri_style::property::{
@@ -43,6 +43,7 @@ use raikiri_traits::{
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
+mod border_image;
 mod box_layers;
 mod box_paint;
 mod child_frames;
@@ -62,6 +63,7 @@ mod visit_text;
 pub(crate) use image_brush::ImageBrushCache;
 pub(crate) use inline_box::paint_inline_box;
 
+use border_image::BorderImage;
 use element_background::ElementBackgroundLayer;
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
 use margin_box::paint_margin_box;
@@ -3104,232 +3106,16 @@ pub(crate) fn paint_element_border_image(
     warnings: &mut Vec<RenderWarning>,
     transform: Affine,
 ) -> bool {
-    paint_border_image_within(
+    BorderImage::new(
         image_cache,
-        scene,
         (width, height),
         (abs_x, abs_y),
         cv,
         image,
         border,
-        pixel_source,
-        warnings,
         transform,
-        VisibleArea::UNBOUNDED,
     )
-}
-
-/// [`paint_element_border_image`] that emits only the parts and tiles
-/// crossing the horizontal and vertical ranges `visible`, for a caller that
-/// clips the image to that area anyway.
-#[allow(clippy::too_many_arguments)]
-fn paint_border_image_within(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    (width, height): (f32, f32),
-    (abs_x, abs_y): (f32, f32),
-    cv: &ComputedValues,
-    image: &ComputedBorderImage,
-    border: &Sides<raikiri_style::resolve::ComputedBorder>,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-    transform: Affine,
-    visible: VisibleArea,
-) -> bool {
-    let crosses = |x: f64, width: f64| x <= visible.x.1 && x + width >= visible.x.0;
-    let crosses_y = |y: f64, height: f64| y <= visible.y.1 && y + height >= visible.y.0;
-    let border_box = (
-        f64::from(abs_x),
-        f64::from(abs_y),
-        f64::from(width),
-        f64::from(height),
-    );
-    let widths = Sides {
-        top: f64::from(border.top.width().px()),
-        right: f64::from(border.right.width().px()),
-        bottom: f64::from(border.bottom.width().px()),
-        left: f64::from(border.left.width().px()),
-    };
-    let grid = image_cache.device_grid(transform);
-    let geometry =
-        |natural| border_image_geometry_within(border_box, widths, image, natural, grid, visible);
-    match &image.source {
-        BackgroundImage::Url(raw_url) => {
-            let Some((url, pixel_source)) = image_cache.image_url(raw_url).zip(pixel_source) else {
-                return false;
-            };
-            let Some(natural) = pixel_source.intrinsic_size(&url) else {
-                return false;
-            };
-            let Some(geometry) = geometry(Some(natural)) else {
-                // A displayable image that draws nothing still replaces the
-                // border styles.
-                return true;
-            };
-            let (image_w, image_h) = geometry.image_size;
-            // Rasterize a vector image at the scale its parts are drawn at,
-            // as backgrounds rasterize at their used size. Each part counts
-            // with its smaller axis scale, the one across a stretched edge,
-            // so stretching a thin slice along a long edge does not ask for
-            // a raster of the whole page. A raster image keeps its natural
-            // pixels whatever size is asked for.
-            let scale = geometry
-                .parts
-                .iter()
-                .map(|part| {
-                    let (_, _, src_w, src_h) = part.source;
-                    (part.tile_width / src_w).min(part.tile_height / src_h)
-                })
-                .filter(|scale| scale.is_finite() && *scale > 0.0)
-                .fold(None, |max: Option<f64>, scale| {
-                    Some(max.map_or(scale, |max| max.max(scale)))
-                })
-                .unwrap_or(1.0);
-            let size = ImageRasterSize {
-                width: (image_w * scale) as f32,
-                height: (image_h * scale) as f32,
-            };
-            // A buffer shorter than its size says draws nothing, so it
-            // falls back like an image that could not be rasterized.
-            let decoded = pixel_source
-                .get_decoded_at_size(&url, size, None)
-                .filter(|decoded| {
-                    decoded.width > 0
-                        && decoded.height > 0
-                        && (decoded.width as usize)
-                            .checked_mul(decoded.height as usize)
-                            .and_then(|pixels| pixels.checked_mul(4))
-                            .is_some_and(|len| decoded.rgba.len() >= len)
-                });
-            let Some(decoded) = decoded else {
-                warnings.push(RenderWarning {
-                    kind: WarningKind::ResourceFallback {
-                        kind: raikiri_traits::ResourceKind::Image,
-                        url: Some(redacted_image_url(&url)),
-                    },
-                    node_id: None,
-                    details:
-                        "CSS border image could not be rasterized; the border styles were painted instead"
-                            .into(),
-                });
-                return false;
-            };
-            // Decoded pixels per image unit.
-            let scale_x = f64::from(decoded.width) / image_w;
-            let scale_y = f64::from(decoded.height) / image_h;
-            let crops: Vec<_> = geometry
-                .parts
-                .iter()
-                .map(|part| {
-                    let (src_x, src_y, src_w, src_h) = part.source;
-                    pixel_crop(
-                        &decoded,
-                        (src_x * scale_x, src_y * scale_y),
-                        ((src_x + src_w) * scale_x, (src_y + src_h) * scale_y),
-                    )
-                })
-                .collect();
-            let mut unique: Vec<PixelCrop> = crops.iter().flatten().copied().collect();
-            unique.sort_unstable();
-            unique.dedup();
-            let cropped_pixels: u64 = unique.iter().map(|crop| crop.pixels()).sum();
-            // Each part normally samples its own pixels, so filtering at the
-            // slice lines does not bleed in the neighbouring slice. When the
-            // slices overlap, the copies would hold more pixels than the
-            // image, so every part samples one shared copy instead.
-            let shared = (cropped_pixels > u64::from(decoded.width) * u64::from(decoded.height))
-                .then(|| image_cache.whole(&decoded));
-            for (part, crop) in geometry.parts.iter().zip(crops) {
-                let (src_x, src_y, src_w, src_h) = part.source;
-                let (area_x, area_y, area_w, area_h) = part.area;
-                let Some(crop) = crop else {
-                    continue;
-                };
-                if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
-                    continue;
-                }
-                let (brush, pixels) = if let Some(averaged) =
-                    averaged_part_brush(image_cache, &decoded, part, crop, (scale_x, scale_y), grid)
-                {
-                    averaged
-                } else if let Some(brush) = &shared {
-                    // Whole decoded pixels to image coordinates.
-                    let pixels = Affine::scale_non_uniform(1.0 / scale_x, 1.0 / scale_y);
-                    (brush.clone(), pixels)
-                } else {
-                    let Some(brush) = image_cache.crop(&decoded, crop) else {
-                        continue;
-                    };
-                    // Cropped pixels to image coordinates.
-                    let pixels = Affine::translate((src_x, src_y))
-                        * Affine::scale_non_uniform(
-                            src_w / f64::from(crop.width()),
-                            src_h / f64::from(crop.height()),
-                        );
-                    (brush, pixels)
-                };
-                let source = Rect::new(src_x, src_y, src_x + src_w, src_y + src_h);
-                scene.push_clip_layer(
-                    Affine::IDENTITY,
-                    &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
-                );
-                let scale =
-                    Affine::scale_non_uniform(part.tile_width / src_w, part.tile_height / src_h)
-                        * Affine::translate((-src_x, -src_y));
-                for tile_y in &part.y {
-                    for tile_x in &part.x {
-                        scene.fill(
-                            Fill::NonZero,
-                            Affine::translate((*tile_x, *tile_y)) * scale,
-                            brush.as_ref(),
-                            Some(pixels),
-                            &source,
-                        );
-                    }
-                }
-                scene.pop_layer();
-            }
-            true
-        }
-        BackgroundImage::Gradient(gradient) => {
-            let Some(geometry) = geometry(None) else {
-                return true;
-            };
-            let Some(color) = gradient_first_color(gradient, cv.color) else {
-                return true;
-            };
-            // Fill each tile, so `space` keeps its gaps transparent.
-            for part in &geometry.parts {
-                let (area_x, area_y, area_w, area_h) = part.area;
-                if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
-                    continue;
-                }
-                scene.push_clip_layer(
-                    Affine::IDENTITY,
-                    &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
-                );
-                for tile_y in &part.y {
-                    for tile_x in &part.x {
-                        scene.fill(
-                            Fill::NonZero,
-                            Affine::IDENTITY,
-                            css_color(color),
-                            None,
-                            &Rect::new(
-                                *tile_x,
-                                *tile_y,
-                                tile_x + part.tile_width,
-                                tile_y + part.tile_height,
-                            ),
-                        );
-                    }
-                }
-                scene.pop_layer();
-            }
-            true
-        }
-        _ => false,
-    }
+    .paint(scene, pixel_source, warnings)
 }
 
 /// A rectangle of whole decoded pixels, as `[x0, x1) × [y0, y1)`.
