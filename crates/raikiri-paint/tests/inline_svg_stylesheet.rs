@@ -451,3 +451,75 @@ fn revert_layer_on_a_dasharray_rolls_back_to_the_earlier_layer() {
         "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='2 6' /></svg>",
     );
 }
+
+#[test]
+fn a_fill_attribute_may_name_a_variable_of_the_page() {
+    assert_paints_like(
+        "<div style='--paint:blue'><svg width=20 height=20><rect width=20 height=20 fill='var(--paint)' /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_fill_attribute_may_name_a_variable_of_the_svg() {
+    assert_paints_like(
+        "<svg width=20 height=20 style='--paint:blue'><rect width=20 height=20 fill='var(--paint)' /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stroke_attribute_variable_falls_back_when_nothing_defines_it() {
+    assert_paints_like(
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none stroke='var(--missing, blue)' stroke-width=4 /></svg>",
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none stroke=blue stroke-width=4 /></svg>",
+    );
+}
+
+#[test]
+fn a_dasharray_attribute_may_name_a_variable() {
+    assert_paints_like(
+        "<div style='--dash:4 4'><svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='var(--dash)' /></svg></div>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='4 4' /></svg>",
+    );
+}
+
+#[test]
+fn a_fill_attribute_variable_that_nothing_defines_inherits_the_parents_fill() {
+    assert_paints_like(
+        "<svg width=20 height=20><g fill=blue><rect width=20 height=20 fill='var(--missing)' /></g></svg>",
+        "<svg width=20 height=20><g fill=blue><rect width=20 height=20 /></g></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_dasharray_keeps_the_font_relative_lengths_of_the_parent() {
+    assert_paints_like(
+        "<style>g{font-size:20px;stroke:black;stroke-width:4px;stroke-dasharray:1em 1em}path{font-size:10px;stroke-dasharray:inherit}</style><svg width=50 height=20><g><path d='M0 10h50' fill=none /></g></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=4 stroke-dasharray='20 20' /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_keeps_the_font_relative_length_of_the_parent() {
+    assert_paints_like(
+        "<style>g{font-size:20px;stroke:black;stroke-width:.25em}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=20><g><path d='M0 10h50' fill=none /></g></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
+    );
+}
+
+#[test]
+fn a_used_definition_resolves_a_font_relative_stroke_width_for_each_instance() {
+    assert_paints_like(
+        "<style>path{stroke:black;stroke-width:.25em}use{font-size:20px}</style><svg width=50 height=20><defs><path id=p d='M0 10h50' fill=none /></defs><use href='#p' /></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_comes_from_the_nearest_ancestor_that_sets_it_by_attribute() {
+    assert_paints_like(
+        "<style>svg{font-size:30px;stroke:black;stroke-width:1em}g{font-size:4px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=20><g stroke-width='2em'><path d='M0 10h50' fill=none /></g></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=8 /></svg>",
+    );
+}
