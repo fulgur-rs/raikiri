@@ -400,40 +400,21 @@ fn static_position_alignment(
         width: layout.size.width - insets.width,
         height: layout.size.height - insets.height,
     };
-    let (main_space, main_size, cross_space, cross_size) = if is_row {
-        (
-            space.width,
-            margin_box.width,
-            space.height,
-            margin_box.height,
-        )
+    let (cross_space, cross_size) = if is_row {
+        (space.height, margin_box.height)
     } else {
-        (
-            space.height,
-            margin_box.height,
-            space.width,
-            margin_box.width,
-        )
+        (space.width, margin_box.width)
     };
-    // CSS Box Alignment 3 §4.4: safe alignment that would overflow the
-    // container aligns as start, and so do the distributed values, whose
-    // fallback is safe, for an overflowing box.
-    // spec: https://www.w3.org/TR/css-align-3/#overflow-values
-    // spec: https://www.w3.org/TR/css-align-3/#distribution-values
+    // The box is the sole flex item, so `space-around` and `space-evenly`
+    // center it (CSS Flexbox 1 §8.2). On the main axis it keeps that
+    // alignment when it overflows the container, as Taffy's own static
+    // position does; only the cross axis falls back to start for an
+    // overflowing `safe` alignment.
+    // spec: https://www.w3.org/TR/css-flexbox-1/#justify-content-property
     let justify = parent_style.justify_content;
     // `start` and `end` follow the writing mode; `flex-start`, `flex-end`
     // and the fallbacks of the distributed values follow the flex direction.
-    let main_overflows = main_size > main_space;
-    let main_keyword = match justify.keyword() {
-        AlignContentKeyword::SpaceAround | AlignContentKeyword::SpaceEvenly if main_overflows => {
-            AlignContentKeyword::Start
-        }
-        _ if justify.safety == AlignmentSafety::Safe && main_overflows => {
-            AlignContentKeyword::Start
-        }
-        keyword => keyword,
-    };
-    let main = match main_keyword {
+    let main = match justify.keyword() {
         AlignContentKeyword::Start => flex(false, main_is_rtl),
         AlignContentKeyword::End => flex(true, main_is_rtl),
         AlignContentKeyword::Center

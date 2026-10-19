@@ -376,6 +376,13 @@ fn layout_frame(document: &Document, key: usize) -> Option<usize> {
         // and an anonymous table relative to its parent.
         return Some(document.ifc_source_owner(key));
     }
+    if let Some(coordinate) = document.oof_coordinates.get(&key) {
+        // An out-of-flow box is placed relative to its containing-block
+        // owner. The initial containing block is no layout key of the
+        // transposed document, and its frame is the page area.
+        return (document.nodes.initial_containing_block_key() != Some(coordinate.owner))
+            .then_some(coordinate.owner);
+    }
     document
         .parent_of(key)
         .and_then(|_| document.layout_parent_of(key))

@@ -8921,24 +8921,27 @@ fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
 /// "bb" is the 20px from x 50 to x 70. Returns the child's border-box
 /// location from the root's border box.
 fn child_of_relative_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
+    child_of_inline_location(
+        &format!("display:inline;position:relative;{outer_css}"),
+        &format!("position:absolute;{child_css}"),
+    )
+}
+
+/// [`child_of_relative_inline_location`] with the whole style of the inline
+/// element and of its child given, so the inline element need not be
+/// positioned and the child may be fixed.
+fn child_of_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
     let mut child = 0;
     let (mut doc, cascade, root) =
         ahem_paragraph_with("width:200px;position:relative", |doc, root| {
             doc.append_text(root, "aaaa ");
-            let outer = doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some(&format!("display:inline;position:relative;{outer_css}")),
-            );
+            let outer = doc.append_element(Some(root), "span", Style::default(), Some(outer_css));
             doc.append_text(outer, "bb");
             child = doc.append_element(
                 Some(outer),
                 "span",
                 Style::default(),
-                Some(&format!(
-                    "position:absolute;width:10px;height:10px;{child_css}"
-                )),
+                Some(&format!("width:10px;height:10px;{child_css}")),
             );
         });
     lay_out(&mut doc, &cascade);
@@ -8973,6 +8976,39 @@ fn the_containing_block_of_a_relative_inline_is_its_padding_box() {
     assert_eq!(
         child_of_relative_inline_location("padding:0 4px;border:2px solid", "left:50%;top:50%"),
         (66.0, 5.0)
+    );
+}
+
+#[test]
+fn a_filtered_inline_is_the_containing_block_of_absolute_and_fixed_boxes() {
+    // Hand-computed (Filter Effects 1): the inline needs no `position` to
+    // contain both kinds of boxes, so 50% is half of the 20px "bb".
+    for outer_css in [
+        "display:inline;filter:blur(1px)",
+        "display:inline;will-change:filter",
+    ] {
+        for position in ["absolute", "fixed"] {
+            assert_eq!(
+                child_of_inline_location(
+                    outer_css,
+                    &format!("position:{position};left:50%;top:50%")
+                ),
+                (60.0, 5.0),
+                "{outer_css} {position}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_relative_inline_is_not_the_containing_block_of_fixed_boxes() {
+    // The fixed box is placed against the page area, not the "bb" at x 50.
+    assert_eq!(
+        child_of_inline_location(
+            "display:inline;position:relative",
+            "position:fixed;left:5px;top:7px"
+        ),
+        (5.0, 7.0)
     );
 }
 

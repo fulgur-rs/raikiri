@@ -10,6 +10,7 @@ use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 mod anonymous_table_tests;
 mod cell_index_tests;
+mod part_containing_block_tests;
 mod rowspan_tests;
 mod visibility_collapse_column_tests;
 mod visibility_collapse_tests;

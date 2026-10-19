@@ -819,20 +819,32 @@ fn static_positions_keep_the_flex_alignment_of_the_parent() {
         "position:fixed;width:50%;height:10px",
     );
     assert_eq!(absolute_rect(&doc, fixed), (-100.0, 50.0, 400.0, 10.0));
-    // A distributed alignment falls back to start once the box overflows.
+    // A distributed alignment still centers the overflowing box on the main
+    // axis, where the box is treated as the sole flex item.
     let (doc, fixed) = laid_out(
         "margin-left:100px;width:200px",
         "display:flex;justify-content:space-around",
         "position:fixed;width:50%;height:10px",
     );
-    assert_eq!(absolute_rect(&doc, fixed), (100.0, 50.0, 400.0, 10.0));
-    // So does a safe alignment.
-    let (doc, fixed) = laid_out(
-        "margin-left:100px;width:200px",
-        "display:flex;justify-content:safe center",
-        "position:fixed;width:50%;height:10px",
-    );
-    assert_eq!(absolute_rect(&doc, fixed), (100.0, 50.0, 400.0, 10.0));
+    assert_eq!(absolute_rect(&doc, fixed), (0.0, 50.0, 400.0, 10.0));
+    // So does `space-evenly`, while `space-between` and `stretch` stay at
+    // the start.
+    for (justify, x) in [
+        ("space-evenly", 0.0),
+        ("space-between", 100.0),
+        ("stretch", 100.0),
+    ] {
+        let (doc, fixed) = laid_out(
+            "margin-left:100px;width:200px",
+            &format!("display:flex;justify-content:{justify}"),
+            "position:fixed;width:50%;height:10px",
+        );
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (x, 50.0, 400.0, 10.0),
+            "{justify}"
+        );
+    }
     // The default start alignment keeps the left edge.
     let (doc, fixed) = laid_out(
         "margin-left:100px;width:200px",
@@ -1255,4 +1267,43 @@ fn auto_margins_of_absolute_boxes_in_paragraphs_follow_the_axes_of_the_root() {
         "left:50%;right:50%;width:100px;top:0;height:10px;margin:auto",
     );
     assert_eq!(absolute_rect(&doc, abs).0, 0.0);
+}
+
+#[test]
+fn overflowing_absolute_boxes_keep_the_main_axis_alignment_of_a_flex_container() {
+    // The 8x6 box overflows the 4x2 content box at (3, 52), as a sole flex
+    // item centered by `space-around` and `space-evenly`, and at the start
+    // for `space-between` and `stretch`.
+    for (justify, x) in [
+        ("space-between", 3.0),
+        ("space-around", 1.0),
+        ("space-evenly", 1.0),
+        ("stretch", 3.0),
+    ] {
+        let (doc, abspos) = laid_out(
+            "",
+            &format!(
+                "display:flex;width:4px;height:2px;padding:1px 2px;border:1px solid;\
+                 justify-content:{justify}"
+            ),
+            "position:absolute;width:8px;height:6px",
+        );
+        assert_eq!(
+            absolute_rect(&doc, abspos),
+            (x, 52.0, 8.0, 6.0),
+            "{justify}"
+        );
+    }
+    // In a column the main axis is vertical.
+    for (justify, y) in [("space-around", 50.0), ("space-between", 52.0)] {
+        let (doc, abspos) = laid_out(
+            "",
+            &format!(
+                "display:flex;flex-direction:column;width:4px;height:2px;padding:1px 2px;\
+                 border:1px solid;justify-content:{justify}"
+            ),
+            "position:absolute;width:8px;height:6px",
+        );
+        assert_eq!(absolute_rect(&doc, abspos), (3.0, y, 8.0, 6.0), "{justify}");
+    }
 }
