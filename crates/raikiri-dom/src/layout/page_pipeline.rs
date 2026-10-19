@@ -3935,13 +3935,7 @@ impl AvoidedBreaks {
 // materialized relative to an already-shifted ancestor instead of being
 // shifted twice.
 fn current_abs_y(document: &Document, node_id: usize) -> f32 {
-    if let Some(node) = document.get_node(node_id)
-        && (document.layout_coordinate_parent_of(node_id) != document.layout_parent_of(node_id)
-            || document
-                .layout_offset_of(node_id)
-                .is_some_and(|offset| offset.y != node.unrounded_layout.location.y))
-        && let Some(origin) = document.layout_origin_of(node_id)
-    {
+    if let Some(origin) = document.layout_origin_of(node_id) {
         return origin.y;
     }
     let mut id = document.ifc_source_owner(node_id);
