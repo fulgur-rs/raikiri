@@ -906,10 +906,11 @@ fn only_element_child(tree: &Document, parent: usize) -> Option<usize> {
 
 /// The paragraph at the end of the chain that starts at `start`, when every
 /// box of the chain, the paragraph included, is a plain block in the flow:
-/// no margin, padding, border, float or authored size, and each box but the
-/// last holds nothing but the next one and clips nothing, as the pieces of
-/// the paragraph in the later columns lie outside its box. The paragraph
-/// breaks between its lines and holds no box but atomic inlines.
+/// no margin, padding, border, float, authored size or size containment, so
+/// its height follows its content, and each box but the last holds nothing
+/// but the next one and clips nothing, as the pieces of the paragraph in the
+/// later columns lie outside its box. The paragraph breaks between its lines
+/// and holds no box but atomic inlines.
 fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
     let mut current = start;
     loop {
@@ -933,6 +934,7 @@ fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
             || !node.style.size.height.is_auto()
             || !node.style.min_size.height.is_auto()
             || !node.style.max_size.height.is_auto()
+            || node.size_containment.height
             || node.break_inside != raikiri_style::property::BreakInside::Auto
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
