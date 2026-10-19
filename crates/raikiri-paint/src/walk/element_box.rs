@@ -1,6 +1,6 @@
 //! Where the box of an element is painted on the page.
 
-use super::frames::PaintFrame;
+use super::frames::{PaintFrame, VisitFrame};
 use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
@@ -34,6 +34,27 @@ pub(super) struct BoxInputs {
     pub(super) is_fragment_visit: bool,
     pub(super) inside_fixed: bool,
     pub(super) inside_fixed_containing_block: bool,
+}
+
+impl BoxInputs {
+    /// What the visit `visit` hands to the search for the box of its element.
+    pub(super) fn of(visit: &VisitFrame) -> Self {
+        Self {
+            node_id: visit.node_id,
+            parent_abs_x: visit.parent_abs_x,
+            parent_abs_y: visit.parent_abs_y,
+            parent_font_size: visit.parent_font_size,
+            shift_y: visit.shift_y,
+            transform_x: visit.transform_x,
+            transform_y: visit.transform_y,
+            fragment_clip_height: visit.fragment_clip_height,
+            fragment_id: visit.fragment_id,
+            fragment_clip: visit.fragment_clip,
+            is_fragment_visit: visit.is_fragment_visit,
+            inside_fixed: visit.inside_fixed,
+            inside_fixed_containing_block: visit.inside_fixed_containing_block,
+        }
+    }
 }
 
 /// Where the box of an element lies and which of its parts paint on this page.
