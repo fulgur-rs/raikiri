@@ -3,7 +3,7 @@
 
 use super::frames::{
     DeferralLayer, LayerClose, PaintFrame, VisitFrame, finish_lines_leaving_groups, leave_groups,
-    leaves_groups, positioned_frame,
+    leaves_groups, positioned_frame, set_aside,
 };
 use super::page_geometry::PageGeometry;
 use super::{
@@ -19,6 +19,27 @@ use raikiri_dom::{CounterSnapshots, Document};
 use raikiri_style::CascadeResult;
 use raikiri_traits::{ImagePixelSource, PageBox, PaintClip, RenderWarning};
 use std::collections::{HashMap, HashSet};
+
+/// The fragments of each node under each parent fragment, in layout order.
+type FragmentsByParentAndNode = HashMap<(Option<usize>, usize), Vec<usize>>;
+
+/// Index the `fragments` of the layout: for each parent fragment and node,
+/// the fragments of the node under it in layout order, and the set of nodes
+/// that have a fragment.
+pub(super) fn index_fragments(
+    fragments: &[raikiri_dom::LayoutFragment],
+) -> (FragmentsByParentAndNode, HashSet<usize>) {
+    let mut by_parent_and_node = FragmentsByParentAndNode::new();
+    let mut fragmented_nodes = HashSet::new();
+    for (fragment_id, fragment) in fragments.iter().enumerate() {
+        fragmented_nodes.insert(fragment.node_id);
+        by_parent_and_node
+            .entry((fragment.parent, fragment.node_id))
+            .or_default()
+            .push(fragment_id);
+    }
+    (by_parent_and_node, fragmented_nodes)
+}
 
 /// The walk of one page: what it paints into and the work that waits for
 /// frames further down the stack.
@@ -38,8 +59,7 @@ pub(super) struct PaintWalk<'w, S> {
     /// The element whose background the canvas takes, if any.
     pub(super) canvas_owner: Option<usize>,
     pub(super) layout_fragments: &'w [raikiri_dom::LayoutFragment],
-    /// The fragments of each node under each parent fragment, in layout order.
-    pub(super) fragments_by_parent_and_node: HashMap<(Option<usize>, usize), Vec<usize>>,
+    pub(super) fragments_by_parent_and_node: FragmentsByParentAndNode,
     pub(super) fragmented_nodes: HashSet<usize>,
     /// The height of the content generated for a node, found once.
     pub(super) generated_flow_heights: HashMap<usize, f32>,
@@ -122,6 +142,27 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             }
         }
         None
+    }
+
+    /// Carry out the frames on the stack until none is left, visiting the
+    /// nodes among them.
+    pub(super) fn run(&mut self) {
+        while let Some(frame) = self.stack.pop() {
+            let Some(frame) = set_aside(
+                frame,
+                self.document,
+                self.cascade,
+                &self.paragraphs,
+                &mut self.deferral_scopes,
+                &mut self.stack,
+            ) else {
+                continue;
+            };
+            let Some(visit) = self.step(frame) else {
+                continue;
+            };
+            self.visit(visit);
+        }
     }
 
     /// Close the innermost layer of deferred content: paint what it deferred,

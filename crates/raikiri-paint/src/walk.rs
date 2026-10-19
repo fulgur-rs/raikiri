@@ -70,11 +70,11 @@ use background_image::ImageLayer;
 use border_image::BorderImage;
 use element_background::ElementBackgroundLayer;
 use element_border::ElementBorder;
-use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
+use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame};
 use inline_svg::InlineSvg;
 use margin_box::paint_margin_box;
 use page_geometry::PageGeometry;
-use paint_walk::PaintWalk;
+use paint_walk::{PaintWalk, index_fragments};
 
 use crate::text;
 
@@ -2009,20 +2009,8 @@ pub(crate) fn paint_document_impl(
 
     let root_font_size = cascade.computed[root_id].font_size.px();
     let canvas_owner = canvas_background_owner(document, cascade);
-    // The walk visits the root itself, so originating decorations enter the
-    // context exactly once through the ordinary element path.
-    let root_decorations = text::DecorationContext::default();
     let layout_fragments = document.layout_fragments();
-    let mut fragments_by_parent_and_node =
-        std::collections::HashMap::<(Option<usize>, usize), Vec<usize>>::new();
-    let mut fragmented_nodes = std::collections::HashSet::new();
-    for (fragment_id, fragment) in layout_fragments.iter().enumerate() {
-        fragmented_nodes.insert(fragment.node_id);
-        fragments_by_parent_and_node
-            .entry((fragment.parent, fragment.node_id))
-            .or_default()
-            .push(fragment_id);
-    }
+    let (fragments_by_parent_and_node, fragmented_nodes) = index_fragments(layout_fragments);
 
     let geometry = PageGeometry::new(
         document,
@@ -2039,28 +2027,7 @@ pub(crate) fn paint_document_impl(
     };
     let stack = vec![
         PaintFrame::EndDeferral,
-        PaintFrame::Visit(VisitFrame {
-            node_id: root_id,
-            parent_abs_x: 0.0,
-            parent_abs_y: 0.0,
-            parent_font_size: root_font_size,
-            shift_y: 0.0,
-            transform_x: 0.0,
-            transform_y: 0.0,
-            paint_offset_y: 0.0,
-            fragment_clip_height: None,
-            column_clip_height: None,
-            fragment_id: None,
-            fragment_origin_x: 0.0,
-            fragment_origin_y: 0.0,
-            fragmentainer: None,
-            fragment_rect: None,
-            fragment_clip: None,
-            is_fragment_visit: false,
-            inside_fixed: false,
-            inside_fixed_containing_block: false,
-            decorations: root_decorations,
-        }),
+        PaintFrame::Visit(VisitFrame::root(root_id, root_font_size)),
     ];
     let mut walk = PaintWalk {
         image_cache,
@@ -2094,22 +2061,7 @@ pub(crate) fn paint_document_impl(
         deferral_scopes: vec![DeferralLayer::new(true, LayerClose::Paint)],
         stack,
     };
-    while let Some(frame) = walk.stack.pop() {
-        let Some(frame) = set_aside(
-            frame,
-            document,
-            cascade,
-            &walk.paragraphs,
-            &mut walk.deferral_scopes,
-            &mut walk.stack,
-        ) else {
-            continue;
-        };
-        let Some(visit) = walk.step(frame) else {
-            continue;
-        };
-        walk.visit(visit);
-    }
+    walk.run();
 }
 
 /// Whether paragraph `root` has visible text for which `admits` holds,

@@ -110,6 +110,38 @@ pub(super) struct VisitFrame {
     pub(super) decorations: text::DecorationContext,
 }
 
+impl VisitFrame {
+    /// The visit of the root element, where the walk of a page starts: at the
+    /// origin of the page, with nothing shifted, clipped or inherited.
+    pub(super) fn root(node_id: usize, parent_font_size: f32) -> Self {
+        Self {
+            node_id,
+            parent_abs_x: 0.0,
+            parent_abs_y: 0.0,
+            parent_font_size,
+            shift_y: 0.0,
+            transform_x: 0.0,
+            transform_y: 0.0,
+            paint_offset_y: 0.0,
+            fragment_clip_height: None,
+            column_clip_height: None,
+            fragment_id: None,
+            fragment_origin_x: 0.0,
+            fragment_origin_y: 0.0,
+            fragmentainer: None,
+            fragment_rect: None,
+            fragment_clip: None,
+            is_fragment_visit: false,
+            inside_fixed: false,
+            inside_fixed_containing_block: false,
+            // The walk visits the root itself, so originating decorations
+            // enter the context exactly once through the ordinary element
+            // path.
+            decorations: text::DecorationContext::default(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct AnonymousParagraphFrame<'a> {
     pub(super) key: usize,
