@@ -830,6 +830,28 @@ fn a_deferred_placeholder_that_ends_the_text_with_a_line_feed_keeps_its_range() 
     };
     assert_eq!(head.content, "p\n");
     assert_eq!(head.deferred[0].range, 1..2);
+
+    // The text is one line, not two, when the box is sized to it: the left
+    // column is shared in the same way as with a plain 'p'.
+    let rects_of = |top: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@counter-style feed {{ system: cyclic; symbols: '\\A' }} \
+             @page {{ margin: 40px; font-family: Ahem; font-size: 10px; \
+               @left-top {{ content: {top}; white-space: pre }} \
+               @left-bottom {{ content: 'c' }} }}"
+        ));
+        page_margin_boxes(
+            &doc,
+            &cascade,
+            &cascade.page,
+            small_page(),
+            MarginBoxPageContext::new(0, 9, false).with_deferred_page_count(),
+        )
+        .iter()
+        .map(|margin_box| (margin_box.slot, margin_box.rect))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(rects_of("'p' counter(pages, feed)"), rects_of("'p'"));
 }
 
 #[test]

@@ -1532,7 +1532,15 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
                 (column_width > 0.0).then_some(column_width),
                 StandaloneAlign::Start,
             )
-            .map_or(explicit_lines, |text| text.lines().len().max(1) as f32);
+            .map_or(explicit_lines, |text| {
+                // The shaper counts a line feed that ends the text as the
+                // start of one more line, with no height. Only text that
+                // `margin_box_content` kept the feed of reaches this far
+                // with one: a lone line feed, or a deferred placeholder
+                // that ends the text.
+                let ends_in_feed = spec.content.ends_with('\n') && text.lines().len() > 1;
+                (text.lines().len() - usize::from(ends_in_feed)).max(1) as f32
+            });
         let font_size = spec.text_style.font_size.max(0.0);
         // Unitless numbers were already resolved against the box's own font
         // size when the spec was built.
