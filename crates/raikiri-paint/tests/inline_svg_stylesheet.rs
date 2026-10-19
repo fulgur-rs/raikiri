@@ -408,4 +408,3 @@ fn an_inherited_stroke_width_keeps_the_font_relative_length_of_the_parent() {
         "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
     );
 }
-

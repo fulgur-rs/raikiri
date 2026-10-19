@@ -214,6 +214,9 @@ fn a_painting_attribute_with_a_variable_is_listed_resolved() {
     // `stroke` has no variable and stays in the SVG source.
     assert_eq!(
         listed,
-        [(1, "fill:rgba(0,0,255,1)!important;stroke-width:3!important;")]
+        [(
+            1,
+            "fill:rgba(0,0,255,1)!important;stroke-width:3!important;"
+        )]
     );
 }

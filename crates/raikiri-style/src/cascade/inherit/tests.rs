@@ -12021,6 +12021,37 @@ fn font_relative_stroke_lengths_follow_the_inherited_font_size() {
 }
 
 #[test]
+fn a_variable_that_resolves_to_a_font_relative_length_is_exported_in_px() {
+    let properties = svg_rect_properties(
+        "rect { font-size: 20px; --w: 2em; --d: 1ex 3 }",
+        &[
+            ("stroke-width", "var(--w)"),
+            ("stroke-dasharray", "var(--d)"),
+        ],
+        None,
+    );
+    let text = |key| exported(&properties, key).and_then(|(_, text)| text);
+    assert_eq!(text(PropertyKey::StrokeWidth), Some("40px".into()));
+    assert_eq!(text(PropertyKey::StrokeDasharray), Some("10px 3".into()));
+}
+
+#[test]
+fn svg_lengths_in_px_leaves_what_it_cannot_convert_as_written() {
+    assert_eq!(svg_lengths_in_px("4px 3 50%", 10.0), None);
+    assert_eq!(svg_lengths_in_px("none", 10.0), None);
+    assert_eq!(
+        svg_lengths_in_px("1em 2ex 0.5em", 10.0).as_deref(),
+        Some("10px 10px 5px")
+    );
+    // An item whose product overflows, or that is no number, is kept.
+    assert_eq!(
+        svg_lengths_in_px("1e308em 1em", 10.0).as_deref(),
+        Some("1e308em 10px")
+    );
+    assert_eq!(svg_lengths_in_px("xem", 10.0).as_deref(), Some("xem"));
+}
+
+#[test]
 fn stroke_lengths_without_font_relative_units_are_exported_as_written() {
     let properties = svg_rect_properties(
         "rect { font-size: 20px; stroke-width: 3; stroke-dasharray: 4px 25%; \

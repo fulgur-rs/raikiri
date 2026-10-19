@@ -915,8 +915,9 @@ pub(crate) fn walk_from<D: StyleDom>(
                             | crate::property::PropertyKey::StrokeDasharray
                             | crate::property::PropertyKey::StrokeDashoffset
                     )
+                    && let Some(converted) = svg_lengths_in_px(text, computed.font_size.0)
                 {
-                    *text = svg_lengths_in_px(text, computed.font_size.0);
+                    *text = converted;
                 }
             }
             // Every element owns a copy of the text of its painting
@@ -1411,12 +1412,6 @@ pub(crate) fn apply_winners(
                     inherited_border_width |= width_is_computed;
                     Some(value)
                 };
-            // A `var()` in a painting attribute is not text the SVG renderer
-            // can read, so the attribute's resolved value is exported.
-            let value_has_variable = matches!(
-                value,
-                PropertyValue::Deferred(deferred) if deferred.css_wide_keyword().is_none()
-            );
             let value = match value {
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(Box::new(
                     inherited_border_radius_value(inherited),
@@ -1523,11 +1518,16 @@ pub(crate) fn apply_winners(
             }
             // A painting attribute that wins is already in the SVG source; only a
             // stylesheet declaration, a rollback to the attribute, or an
-            // attribute written with `var()` is exported.
+            // attribute written with `var()` is exported. The SVG renderer
+            // cannot substitute a variable, so that attribute is exported
+            // with its resolved value.
             let winning_paint_hint = winner.rank
                 == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false)
                 && winner_key.is_svg_presentation()
-                && !value_has_variable;
+                && !matches!(
+                    candidates.value(winner.idx),
+                    PropertyValue::Deferred(deferred) if references_variable(&deferred.value)
+                );
             if let Some(properties) = svg_properties.as_deref_mut()
                 && svg_property_is_exported(winner_key)
                 && !winning_paint_hint
@@ -1592,6 +1592,13 @@ pub(crate) fn apply_winners(
     }
 }
 
+/// Whether the value text `raw` substitutes a custom property.
+fn references_variable(raw: &str) -> bool {
+    let mut references = Vec::new();
+    super::custom_property::collect_var_references(raw, &mut references).is_ok()
+        && !references.is_empty()
+}
+
 fn svg_color_is_current_color(source: &str) -> bool {
     let mut input = cssparser::ParserInput::new(source);
     let mut parser = cssparser::Parser::new(&mut input);
@@ -1617,31 +1624,35 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
 }
 
 /// `text`, a validated list of SVG lengths, with its `em` and `ex` terms
-/// converted to px against the element's computed `font-size`.
+/// converted to px against the element's computed `font-size`; `None` when
+/// it has no such term.
 ///
 /// A descendant that takes the value with `inherit` receives it as written,
 /// and an SVG renderer would resolve an `em` against the descendant's own
 /// font size. The computed value of a font-relative length is absolute
-/// (CSS Values 4 §6), so it is converted where it is declared. A percentage
-/// refers to the SVG viewport and an absolute unit needs no conversion.
-fn svg_lengths_in_px(text: &str, font_size_px: f32) -> String {
-    text.split(' ')
-        .map(|item| {
-            let (number, scale) = match (item.strip_suffix("em"), item.strip_suffix("ex")) {
-                (Some(number), _) => (number, 1.0),
-                (_, Some(number)) => (number, 0.5),
-                _ => return item.to_owned(),
-            };
-            match number.parse::<f32>() {
-                Ok(number) => {
-                    let px = (number * scale * font_size_px * 10_000.0).round() / 10_000.0;
-                    format!("{px}px")
-                }
-                Err(_) => item.to_owned(),
+/// (CSS Values 4 §6), so it is converted where it is declared. `ex` is half
+/// an `em`, as for [`Length::Ex`]. A percentage refers to the SVG viewport
+/// and an absolute unit needs no conversion.
+fn svg_lengths_in_px(text: &str, font_size_px: f32) -> Option<String> {
+    if !text.contains("em") && !text.contains("ex") {
+        return None;
+    }
+    let font_size = f64::from(font_size_px);
+    let items = text.split(' ').map(|item| {
+        let (number, scale) = match (item.strip_suffix("em"), item.strip_suffix("ex")) {
+            (Some(number), _) => (number, 1.0),
+            (_, Some(number)) => (number, 0.5),
+            _ => return item.to_owned(),
+        };
+        match number.parse::<f64>() {
+            Ok(number) if (number * scale * font_size).is_finite() => {
+                let px = (number * scale * font_size * 1e6).round() / 1e6;
+                format!("{px}px")
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+            _ => item.to_owned(),
+        }
+    });
+    Some(items.collect::<Vec<_>>().join(" "))
 }
 
 fn svg_property_expression(value: &PropertyValue) -> Option<String> {
