@@ -3536,45 +3536,50 @@ fn a_text_shadow_covers_the_emphasis_marks() {
 
 #[test]
 fn a_blurred_shadow_layer_covers_marks_pushed_out_by_a_ruby_annotation() {
-    let (mut doc, cascade, root) = paragraph(
-        "line-height:0;font-size:10px;color:black;text-emphasis:dot;\
-         text-shadow:2px 3px 1px rgb(0,0,255)",
-        |doc, root| {
-            let ruby =
-                doc.append_element(Some(root), "ruby", Style::default(), Some("display:ruby"));
-            let base = doc.append_element(
-                Some(ruby),
-                "rb",
-                Style::default(),
-                Some("display:ruby-base"),
-            );
-            doc.append_text(base, "a");
-            let annotation = doc.append_element(
-                Some(ruby),
-                "rt",
-                Style::default(),
-                Some("display:ruby-text;font-size:50px"),
-            );
-            doc.append_text(annotation, "x");
-        },
-    );
-    lay_out(&mut doc, &cascade);
-    let scene = draw_root(&doc, &cascade, root);
-    let blue = solid(0, 0, 255);
-    let shadow: Vec<_> = glyphs(&scene).into_iter().filter(|g| g.3 == blue).collect();
-    // The base and its annotation, each with its mark.
-    assert_eq!(shadow.len(), 4, "{shadow:?}");
-    let down = shadow.iter().map(|g| g.2).fold(f64::NEG_INFINITY, f64::max)
-        - shadow.iter().map(|g| g.2).fold(f64::INFINITY, f64::min);
-    assert!(
-        down > 30.0,
-        "the annotation pushes the mark out: {shadow:?}"
-    );
-    // Every glyph, the mark pushed out above the base included, is inside
-    // the layer it is blurred in.
-    let (outside, inside) = shadow_glyphs_outside_their_layer(&scene);
-    assert_eq!(inside + outside.len(), 4);
-    assert!(outside.is_empty(), "{outside:?}");
+    for side in ["over", "under"] {
+        let (mut doc, cascade, root) = paragraph(
+            &format!(
+                "line-height:0;font-size:10px;color:black;text-emphasis:dot;\
+                 text-emphasis-position:{side} right;ruby-position:{side};\
+                 text-shadow:2px 3px 1px rgb(0,0,255)"
+            ),
+            |doc, root| {
+                let ruby =
+                    doc.append_element(Some(root), "ruby", Style::default(), Some("display:ruby"));
+                let base = doc.append_element(
+                    Some(ruby),
+                    "rb",
+                    Style::default(),
+                    Some("display:ruby-base"),
+                );
+                doc.append_text(base, "a");
+                let annotation = doc.append_element(
+                    Some(ruby),
+                    "rt",
+                    Style::default(),
+                    Some("display:ruby-text;font-size:50px"),
+                );
+                doc.append_text(annotation, "x");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let scene = draw_root(&doc, &cascade, root);
+        let blue = solid(0, 0, 255);
+        let shadow: Vec<_> = glyphs(&scene).into_iter().filter(|g| g.3 == blue).collect();
+        // The base and its annotation, each with its mark.
+        assert_eq!(shadow.len(), 4, "{side}: {shadow:?}");
+        let down = shadow.iter().map(|g| g.2).fold(f64::NEG_INFINITY, f64::max)
+            - shadow.iter().map(|g| g.2).fold(f64::INFINITY, f64::min);
+        assert!(
+            down > 30.0,
+            "{side}: the annotation pushes the mark out: {shadow:?}"
+        );
+        // Every glyph, the mark pushed out past the base included, is inside
+        // the layer it is blurred in.
+        let (outside, inside) = shadow_glyphs_outside_their_layer(&scene);
+        assert_eq!(inside + outside.len(), 4, "{side}");
+        assert!(outside.is_empty(), "{side}: {outside:?}");
+    }
 }
 
 /// `(brush, glyph transform)` of every recorded glyph run, in command order.
