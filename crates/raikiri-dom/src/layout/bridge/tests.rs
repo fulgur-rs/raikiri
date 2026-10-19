@@ -2757,7 +2757,7 @@ fn a_size_that_is_no_keyword_is_no_content_limit() {
 }
 
 #[test]
-fn a_box_a_content_limit_does_not_apply_to_records_none() {
+fn unsupported_box_content_limits_record_none() {
     use crate::taffy_impl::content_limits::ContentLimits;
 
     let keyword = "min-width:min-content;max-height:max-content";
@@ -2767,30 +2767,6 @@ fn a_box_a_content_limit_does_not_apply_to_records_none() {
         ("display:block", "div", format!("display:table;{keyword}")),
         // An inline-level box.
         ("display:block", "span", format!("display:inline;{keyword}")),
-        (
-            "display:block",
-            "div",
-            format!("display:inline-block;{keyword}"),
-        ),
-        // An out-of-flow box.
-        ("display:block", "div", format!("{block};position:absolute")),
-        ("display:block", "div", format!("{block};position:fixed")),
-        ("display:block", "div", format!("{block};float:left")),
-        (
-            "display:block",
-            "div",
-            format!("display:flex;{keyword};position:absolute"),
-        ),
-        (
-            "display:block",
-            "div",
-            format!("display:grid;{keyword};position:fixed"),
-        ),
-        (
-            "display:block",
-            "div",
-            format!("display:flex;{keyword};float:left"),
-        ),
         (
             "display:block",
             "div",

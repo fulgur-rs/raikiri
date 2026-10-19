@@ -3,7 +3,10 @@
 //! and §5). The text of the fixtures is `AAAA BBBB` in Ahem at 10px: 40px wide
 //! at its longest word, 90px wide on one line.
 
-use super::{applies, stretch_fit_width, with_grid_item_content_limits};
+use super::{
+    applies, content_percentage_height_basis, stretch_fit_width, with_grid_item_content_limits,
+    with_oof_content_limits,
+};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::test_support::{block_fixture, block_fixture_with_ahem};
 use crate::layout::layout_single_page;
@@ -525,6 +528,49 @@ fn a_keyword_height_limit_adds_the_padding_and_border() {
 }
 
 #[test]
+fn border_box_percentage_height_basis_subtracts_edges_once() {
+    let mut child = 0;
+    let fixture = block_fixture("width:200px;height:200px", |doc, root| {
+        child = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(
+                "box-sizing:border-box;height:100px;min-height:120px;\
+                 padding:5px 0;border:2px solid",
+            ),
+        );
+    });
+    let mut doc = fixture.doc;
+    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).expect("bridge");
+    let tree = LayoutSession::new(&mut doc);
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(200.0),
+            height: Some(600.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+
+    assert_eq!(
+        content_percentage_height_basis(&tree, child, &inputs),
+        Some(106.0)
+    );
+}
+
+#[test]
 fn a_keyword_height_limit_applies_to_a_block_in_the_roots_formatting_context() {
     // The block follows text, so it shares the paragraph root's context
     // instead of being laid out on its own.
@@ -546,6 +592,645 @@ fn a_keyword_height_limit_applies_to_a_block_in_the_roots_formatting_context() {
         ),
         (200.0, 30.0)
     );
+}
+
+#[test]
+fn floats_and_inline_blocks_honor_intrinsic_min_max_width_and_height() {
+    for display in ["float:left", "display:inline-block"] {
+        for (property, expected) in [
+            ("min-width:min-content", (40.0, 20.0)),
+            ("min-width:max-content", (90.0, 10.0)),
+            ("min-width:fit-content", (90.0, 10.0)),
+            ("min-width:fit-content(60px)", (60.0, 20.0)),
+            ("max-width:min-content", (40.0, 20.0)),
+            ("max-width:max-content", (90.0, 10.0)),
+            ("max-width:fit-content", (90.0, 10.0)),
+            ("max-width:fit-content(60px)", (60.0, 20.0)),
+        ] {
+            let width = if property.starts_with("min-width") {
+                "width:10px"
+            } else {
+                "width:300px"
+            };
+            assert_eq!(
+                child_size(
+                    "width:400px",
+                    "",
+                    &format!("{display};{width};{property}"),
+                    Body::Text,
+                ),
+                expected,
+                "{display};{property}"
+            );
+        }
+
+        for (property, height) in [
+            ("min-height:min-content", 20.0),
+            ("min-height:max-content", 20.0),
+            ("min-height:fit-content", 20.0),
+            ("min-height:fit-content(5px)", 20.0),
+            ("max-height:min-content", 20.0),
+            ("max-height:max-content", 20.0),
+            ("max-height:fit-content", 20.0),
+            ("max-height:fit-content(5px)", 20.0),
+        ] {
+            let specified_height = if property.starts_with("min-height") {
+                "height:0"
+            } else {
+                "height:100px"
+            };
+            assert_eq!(
+                child_size(
+                    "width:200px",
+                    "",
+                    &format!("{display};width:40px;{specified_height};{property}"),
+                    Body::Text,
+                ),
+                (40.0, height),
+                "{display};{property}"
+            );
+        }
+    }
+}
+
+#[test]
+fn absolute_boxes_apply_keyword_limits_to_inset_derived_sizes() {
+    assert_eq!(
+        child_size(
+            "position:relative;width:50px;height:10px",
+            "",
+            "position:absolute;left:10px;right:20px;top:0;min-width:max-content",
+            Body::Text,
+        ),
+        (90.0, 10.0)
+    );
+    assert_eq!(
+        child_size(
+            "position:relative;width:200px;height:50px",
+            "",
+            "position:absolute;left:10px;right:20px;top:0;max-width:min-content",
+            Body::Text,
+        ),
+        (40.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            "position:relative;width:50px;height:15px",
+            "",
+            "position:absolute;left:0;right:0;top:0;bottom:5px;width:40px;min-height:max-content",
+            Body::Text,
+        ),
+        (40.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            "position:relative;width:50px;height:200px",
+            "",
+            "position:absolute;left:0;right:0;top:0;bottom:0;width:40px;height:100px;max-height:min-content",
+            Body::Text,
+        ),
+        (40.0, 20.0)
+    );
+}
+
+#[test]
+fn absolute_min_content_width_zeros_a_cyclic_percentage_on_a_replaced_child() {
+    let mut child = 0;
+    let fixture = block_fixture("position:relative;width:100px;height:100px", |doc, root| {
+        child = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(
+                "position:absolute;left:0;right:0;top:0;width:0;min-width:min-content;\
+                 border:3px solid;padding:2px",
+            ),
+        );
+        let canvas = doc.append_element(
+            Some(child),
+            "canvas",
+            taffy::Style::default(),
+            Some("display:block;width:100%"),
+        );
+        doc.set_element_attribute(canvas, "width", "20")
+            .expect("set canvas width");
+        doc.set_element_attribute(canvas, "height", "10")
+            .expect("set canvas height");
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, child).2, 10.0);
+}
+
+#[test]
+fn positioned_intrinsic_height_limits_keep_the_authored_percentage_basis_for_children() {
+    let mut children = Vec::new();
+    let fixture = block_fixture("position:relative;width:100px;height:600px", |doc, root| {
+        for (height_limit, preferred_height, expected) in [
+            ("min-height:min-content", "height:0", 10.0),
+            ("max-height:min-content", "height:500px", 510.0),
+        ] {
+            let child = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some(&format!(
+                    "position:absolute;left:0;top:0;width:10px;{preferred_height};\
+                     {height_limit};border:3px solid;padding:2px"
+                )),
+            );
+            let canvas = doc.append_element(
+                Some(child),
+                "canvas",
+                taffy::Style::default(),
+                Some("display:block;height:100%"),
+            );
+            doc.set_element_attribute(canvas, "width", "10")
+                .expect("set canvas width");
+            doc.set_element_attribute(canvas, "height", "20")
+                .expect("set canvas height");
+            children.push((child, expected));
+        }
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    for (child, expected) in children {
+        assert_eq!(absolute_rect(&doc, child).3, expected);
+    }
+}
+
+#[test]
+fn positioned_height_keywords_measure_at_the_width_after_width_limits() {
+    for (position, root_css, insets, shrink_root_css, shrink_insets) in [
+        (
+            "absolute",
+            "position:relative;width:50px;height:100px",
+            "left:0;right:0",
+            "position:relative;width:200px;height:100px",
+            "left:0;right:0",
+        ),
+        (
+            "fixed",
+            "width:50px;height:100px",
+            "left:0;right:750px",
+            "width:200px;height:100px",
+            "left:0;right:600px",
+        ),
+    ] {
+        assert_eq!(
+            child_size(
+                root_css,
+                "",
+                &format!(
+                    "position:{position};{insets};top:0;width:auto;height:0;\
+                     min-width:max-content;min-height:max-content"
+                ),
+                Body::Text,
+            ),
+            (90.0, 10.0),
+            "position:{position}; width grows before height measurement"
+        );
+        assert_eq!(
+            child_size(
+                shrink_root_css,
+                "",
+                &format!(
+                    "position:{position};{shrink_insets};top:0;width:auto;height:100px;\
+                     max-width:min-content;max-height:min-content"
+                ),
+                Body::Text,
+            ),
+            (40.0, 20.0),
+            "position:{position}; width shrinks before height measurement"
+        );
+        assert_eq!(
+            child_size(
+                shrink_root_css,
+                "",
+                &format!(
+                    "position:{position};{shrink_insets};top:0;width:auto;height:100px;\
+                     min-width:100px;max-width:min-content;max-height:min-content"
+                ),
+                Body::Text,
+            ),
+            (100.0, 10.0),
+            "position:{position}; numeric minimum wins while measuring height"
+        );
+    }
+}
+
+#[test]
+fn normal_block_min_height_keywords_treat_cyclic_percentage_children_as_auto() {
+    let mut article = 0;
+    let fixture = block_fixture("width:300px", |doc, root| {
+        article = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:100px;min-height:min-content"),
+        );
+        let aside = doc.append_element(
+            Some(article),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:50%"),
+        );
+        doc.append_element(
+            Some(aside),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:150px"),
+        );
+        doc.append_element(
+            Some(article),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;height:30px"),
+        );
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, article).3, 180.0);
+}
+
+#[test]
+fn fixed_boxes_apply_keyword_limits_to_inset_derived_sizes() {
+    assert_eq!(
+        child_size(
+            "width:50px;height:10px",
+            "",
+            "position:fixed;left:10px;right:780px;top:0;min-width:max-content",
+            Body::Text,
+        ),
+        (90.0, 10.0)
+    );
+    assert_eq!(
+        child_size(
+            "width:200px;height:50px",
+            "",
+            "position:fixed;left:10px;right:20px;top:0;max-width:min-content",
+            Body::Text,
+        ),
+        (40.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            "width:50px;height:15px",
+            "",
+            "position:fixed;left:0;right:0;top:0;bottom:590px;width:40px;min-height:max-content",
+            Body::Text,
+        ),
+        (40.0, 20.0)
+    );
+    assert_eq!(
+        child_size(
+            "width:50px;height:200px",
+            "",
+            "position:fixed;left:0;right:0;top:0;bottom:0;width:40px;height:100px;max-height:min-content",
+            Body::Text,
+        ),
+        (40.0, 20.0)
+    );
+}
+
+#[test]
+fn positioned_width_keywords_use_inset_room_and_containing_block_basis() {
+    for (position, min_root, min_insets, max_root, max_insets) in [
+        (
+            "absolute",
+            "position:relative;width:50px;height:20px",
+            "left:10px;right:20px",
+            "position:relative;width:400px;height:20px",
+            "left:10px;right:20px",
+        ),
+        (
+            "fixed",
+            "width:50px;height:20px",
+            "left:10px;right:780px",
+            "width:400px;height:20px",
+            "left:10px;right:20px",
+        ),
+    ] {
+        for (property, expected) in [
+            ("min-width:min-content", (40.0, 20.0)),
+            ("min-width:max-content", (90.0, 10.0)),
+            ("min-width:fit-content", (40.0, 20.0)),
+            ("min-width:fit-content(60px)", (60.0, 20.0)),
+        ] {
+            assert_eq!(
+                child_size(
+                    min_root,
+                    "",
+                    &format!("position:{position};{min_insets};top:0;width:auto;{property}"),
+                    Body::Text,
+                ),
+                expected,
+                "position:{position};{property}"
+            );
+        }
+        for (property, expected) in [
+            ("max-width:min-content", (40.0, 20.0)),
+            ("max-width:max-content", (90.0, 10.0)),
+            ("max-width:fit-content", (90.0, 10.0)),
+            ("max-width:fit-content(60px)", (60.0, 20.0)),
+        ] {
+            assert_eq!(
+                child_size(
+                    max_root,
+                    "",
+                    &format!("position:{position};{max_insets};top:0;width:auto;{property}"),
+                    Body::Text,
+                ),
+                expected,
+                "position:{position};{property}"
+            );
+        }
+    }
+
+    // Percentage fit-content limits use the containing block width even when
+    // opposing insets leave a much narrower inset-modified containing block.
+    assert_eq!(
+        child_size(
+            "position:relative;width:200px;height:20px",
+            "",
+            "position:absolute;left:90px;right:90px;top:0;min-width:fit-content(50%)",
+            Body::Text,
+        ),
+        (90.0, 10.0)
+    );
+    assert_eq!(
+        child_size(
+            "width:50px;height:20px",
+            "",
+            "position:fixed;left:390px;right:390px;top:0;min-width:fit-content(50%)",
+            Body::Text,
+        ),
+        (90.0, 10.0)
+    );
+}
+
+#[test]
+fn positioned_height_keywords_measure_automatic_content_height() {
+    for (position, min_root, max_root, min_insets, max_insets) in [
+        (
+            "absolute",
+            "position:relative;width:50px;height:15px",
+            "position:relative;width:50px;height:200px",
+            "top:0;bottom:5px",
+            "top:0;bottom:0",
+        ),
+        (
+            "fixed",
+            "width:50px;height:15px",
+            "width:50px;height:200px",
+            "top:0;bottom:590px",
+            "top:0;bottom:0",
+        ),
+    ] {
+        for property in [
+            "min-height:min-content",
+            "min-height:max-content",
+            "min-height:fit-content",
+            "min-height:fit-content(5px)",
+        ] {
+            assert_eq!(
+                child_size(
+                    min_root,
+                    "",
+                    &format!(
+                        "position:{position};left:0;right:0;{min_insets};width:40px;height:0;{property}"
+                    ),
+                    Body::Text,
+                ),
+                (40.0, 20.0),
+                "position:{position};{property}"
+            );
+        }
+        for property in [
+            "max-height:min-content",
+            "max-height:max-content",
+            "max-height:fit-content",
+            "max-height:fit-content(5px)",
+        ] {
+            assert_eq!(
+                child_size(
+                    max_root,
+                    "",
+                    &format!(
+                        "position:{position};left:0;right:0;{max_insets};width:40px;height:100px;{property}"
+                    ),
+                    Body::Text,
+                ),
+                (40.0, 20.0),
+                "position:{position};{property}"
+            );
+        }
+    }
+}
+
+#[test]
+fn positioned_keyword_limits_keep_the_minimum_stronger_than_the_maximum() {
+    for position in ["absolute", "fixed"] {
+        assert_eq!(
+            child_size(
+                "position:relative;width:200px;height:100px",
+                "",
+                &format!(
+                    "position:{position};left:10px;right:20px;top:0;\
+                     min-width:100px;max-width:min-content"
+                ),
+                Body::Text,
+            )
+            .0,
+            100.0,
+            "position:{position};length minimum beats keyword maximum"
+        );
+        assert_eq!(
+            child_size(
+                "position:relative;width:200px;height:100px",
+                "",
+                &format!(
+                    "position:{position};left:10px;right:20px;top:0;\
+                     min-width:max-content;max-width:50px"
+                ),
+                Body::Text,
+            )
+            .0,
+            90.0,
+            "position:{position};keyword minimum beats length maximum"
+        );
+    }
+}
+
+#[test]
+fn positioned_keyword_limits_restore_the_bridged_style_after_layout() {
+    let mut child = 0;
+    let fixture =
+        block_fixture_with_ahem("position:relative;width:50px;height:15px", |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some(
+                    "position:absolute;left:10px;right:20px;top:0;\
+                     min-width:max-content;max-height:min-content",
+                ),
+            );
+            doc.append_text(child, "AAAA BBBB");
+        });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let style = doc.layout_node_with_style(child).unwrap().style;
+    assert!(style.min_size.width.is_auto());
+    assert!(style.max_size.height.is_auto());
+}
+
+#[test]
+fn absolute_keyword_limits_apply_inside_inline_containing_blocks() {
+    let mut children = Vec::new();
+    let fixture = block_fixture_with_ahem("width:200px;line-height:10px", |doc, root| {
+        let inline = doc.append_element(
+            Some(root),
+            "span",
+            taffy::Style::default(),
+            Some("display:inline;position:relative"),
+        );
+        doc.append_text(inline, "X");
+        for style in [
+            "left:0;right:0;top:0;min-width:max-content",
+            "left:0;right:0;top:0;width:100px;max-width:min-content",
+            "left:0;right:0;top:0;width:90px;height:0;min-height:max-content",
+            "left:0;right:0;top:0;width:40px;height:100px;max-height:min-content",
+            "left:0;right:0;top:0;width:100px;min-width:max-content;max-width:50px",
+            "left:0;right:0;top:0;width:40px;min-width:100px;max-width:min-content",
+            "left:0;right:0;top:0;width:90px;height:100px;min-height:max-content;max-height:5px",
+            "left:0;right:0;top:0;width:40px;height:40px;min-height:100px;max-height:min-content",
+            "left:0;right:0;top:0;width:40px;min-width:100px;height:100px;max-height:min-content",
+        ] {
+            let child = doc.append_element(
+                Some(inline),
+                "span",
+                taffy::Style::default(),
+                Some(&format!("display:inline;position:absolute;{style}")),
+            );
+            doc.append_text(child, "AAAA BBBB");
+            children.push(child);
+        }
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let rect = |index| absolute_rect(&doc, children[index]);
+    assert_eq!(rect(0).2, 90.0, "min-width:max-content");
+    assert_eq!(rect(1).2, 40.0, "max-width:min-content");
+    assert_eq!(rect(2).3, 10.0, "min-height:max-content");
+    assert_eq!(rect(3).3, 20.0, "max-height:min-content");
+    assert_eq!(
+        rect(4).2,
+        90.0,
+        "intrinsic min-width beats numeric max-width"
+    );
+    assert_eq!(
+        rect(5).2,
+        100.0,
+        "numeric min-width beats intrinsic max-width"
+    );
+    assert_eq!(
+        rect(6).3,
+        10.0,
+        "intrinsic min-height beats numeric max-height"
+    );
+    assert_eq!(
+        rect(7).3,
+        100.0,
+        "numeric min-height beats intrinsic max-height"
+    );
+    assert_eq!(
+        (rect(8).2, rect(8).3),
+        (100.0, 10.0),
+        "numeric min-width clamps the known width before measuring intrinsic height"
+    );
+}
+
+#[test]
+fn nested_oof_content_limits_do_not_grow_exponentially_by_depth() {
+    let depth = 12;
+    let mut candidates = Vec::new();
+    let fixture = block_fixture_with_ahem("width:200px;height:200px", |doc, root| {
+        let mut parent = root;
+        for _ in 0..depth {
+            parent = doc.append_element(
+                Some(parent),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;position:absolute;min-width:max-content"),
+            );
+            candidates.push(NodeId::from(parent));
+        }
+        doc.append_text(parent, "AAAA BBBB");
+    });
+    let mut doc = fixture.doc;
+    let mut session = LayoutSession::new(&mut doc);
+    let mut dispatches = 0;
+
+    fn dispatch_nested(
+        tree: &mut LayoutSession<'_>,
+        candidates: &[NodeId],
+        dispatches: &mut usize,
+    ) {
+        *dispatches += 1;
+        let Some((&candidate, rest)) = candidates.split_first() else {
+            return;
+        };
+        with_oof_content_limits(tree, Some(&[candidate]), &[], |tree| {
+            dispatch_nested(tree, rest, dispatches);
+        });
+    }
+
+    with_oof_content_limits(&mut session, None, &[], |tree| {
+        dispatch_nested(tree, &candidates, &mut dispatches);
+    });
+
+    // The nested wrapper may still visit each descendant during each level's
+    // sizing pass, but it must not repeat the full sizing protocol recursively.
+    assert!(
+        dispatches <= 4 * depth * depth,
+        "nested OOF layout dispatched {dispatches} times at depth {depth}"
+    );
+}
+
+#[test]
+fn nested_oof_prepasses_do_not_reuse_an_unconstrained_descendant_cache() {
+    let mut descendant = 0;
+    let fixture =
+        block_fixture_with_ahem("position:relative;width:200px;height:200px", |doc, root| {
+            let parent = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some(
+                    "display:block;position:absolute;left:0;top:0;width:100px;height:100px;\
+                 min-width:max-content",
+                ),
+            );
+            doc.append_text(parent, "AAAAAAAAAA");
+            let intermediate = doc.append_element(
+                Some(parent),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;position:absolute;left:0;top:0;width:50px;height:50px"),
+            );
+            descendant = doc.append_element(
+                Some(intermediate),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;position:absolute;left:0;top:0;width:0;min-width:max-content"),
+            );
+            doc.append_text(descendant, "AAAA BBBB");
+        });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+
+    assert_eq!(absolute_rect(&doc, descendant).2, 90.0);
 }
 
 #[test]
