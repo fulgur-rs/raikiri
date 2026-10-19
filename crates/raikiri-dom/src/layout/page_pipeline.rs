@@ -1860,27 +1860,28 @@ struct ForcedLineBreak {
 /// the paragraph `root` ask for between its lines, in line order. A
 /// `break-*: always` counts only where it breaks pages.
 fn forced_line_breaks(document: &Document, root: usize) -> Vec<ForcedLineBreak> {
-    let Some(lines) = document
+    let lines = document
         .ifc_layout_node(root)
         .and_then(|node| node.ifc.as_ref())
-        .and_then(|ifc| ifc.lines.as_ref())
-    else {
-        return Vec::new();
-    };
+        .and_then(|ifc| ifc.lines.as_ref());
     let mut breaks: Vec<_> = lines
-        .forced_breaks
-        .iter()
-        .filter(|forced| page_break_is_forced(document, root, forced.value))
-        .filter_map(|forced| {
-            let lead = match forced.box_top {
-                Some(top) => lines.lines.get(forced.line)?.block_offset() - top,
-                None => 0.0,
-            };
-            Some(ForcedLineBreak {
-                line: forced.line,
-                lead: lead.max(0.0),
-                gap: forced.gap,
-            })
+        .into_iter()
+        .flat_map(|lines| {
+            lines
+                .forced_breaks
+                .iter()
+                .filter(|forced| page_break_is_forced(document, root, forced.value))
+                .filter_map(move |forced| {
+                    let lead = match forced.box_top {
+                        Some(top) => lines.lines.get(forced.line)?.block_offset() - top,
+                        None => 0.0,
+                    };
+                    Some(ForcedLineBreak {
+                        line: forced.line,
+                        lead: lead.max(0.0),
+                        gap: forced.gap,
+                    })
+                })
         })
         .collect();
     merge_forced_line_breaks(&mut breaks);
