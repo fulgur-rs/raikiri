@@ -887,7 +887,6 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// measures. The others keep sizing themselves as if the size were `auto`:
 /// - a replaced element takes its natural size, and an `auto` size is what
 ///   transfers its aspect ratio;
-/// - a multicol container has no intrinsic inline size yet;
 /// - a vertical flex or grid item takes its inline size from the height, which
 ///   the container's algorithm sizes along its physical axes;
 /// - a flex or grid item with a `min-width` or `max-width` is measured by Taffy
@@ -899,9 +898,7 @@ fn sized_by_content_keyword(
     idx: usize,
     cv: &ComputedValues,
 ) -> bool {
-    if crate::paint_rules::is_replaced_element(doc, idx)
-        || multicol_style_from_computed(cv).is_some_and(|_| !lays_out_without_columns(cv.display))
-    {
+    if crate::paint_rules::is_replaced_element(doc, idx) {
         return false;
     }
     if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {

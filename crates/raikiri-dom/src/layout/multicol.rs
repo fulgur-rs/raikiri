@@ -12,6 +12,59 @@ use taffy::MaybeResolve;
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
+/// Give a multicol container whose `width` is `min-content`, `max-content` or
+/// `fit-content` the border-box width the keyword makes, which its columns
+/// are sized from; without it they would be sized from the room the container
+/// is offered. The block algorithm measures the container the same way when
+/// it gets no width.
+fn with_keyword_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: TaffyNodeId,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    use taffy::ExpandedDimension as Keyword;
+    if inputs.known_dimensions.width.is_some() {
+        return inputs;
+    }
+    let space = match tree
+        .layout_node_with_style(usize::from(node_id))
+        .unwrap()
+        .style
+        .size
+        .width
+        .expand()
+    {
+        Keyword::MinContent => AvailableSpace::MinContent,
+        Keyword::MaxContent => AvailableSpace::MaxContent,
+        Keyword::FitContent
+        | Keyword::FitContentPx(_)
+        | Keyword::FitContentPercent(_)
+        | Keyword::FitContentCalc(_) => inputs.available_space.width,
+        _ => return inputs,
+    };
+    let mut measure = |space: AvailableSpace| {
+        let mut probe = inputs;
+        probe.run_mode = RunMode::ComputeSize;
+        probe.axis = RequestedAxis::Horizontal;
+        probe.available_space.width = space;
+        crate::taffy_impl::block_layout(tree, node_id, probe, None)
+            .size
+            .width
+    };
+    let width = match space {
+        AvailableSpace::Definite(room) => {
+            let max_content = measure(AvailableSpace::MaxContent);
+            max_content
+                .min(room)
+                .max(measure(AvailableSpace::MinContent))
+        }
+        keyword => measure(keyword),
+    };
+    inputs.known_dimensions.width = Some(width);
+    inputs.known_dimensions_are_definite.width = true;
+    inputs
+}
+
 /// Dispatch a multicolumn container through the nested fragmentation seam.
 ///
 /// Taffy still resolves the ordinary box and intrinsic sizes, while this
@@ -32,6 +85,7 @@ pub(crate) fn compute_multicol_layout(
     let Some(style) = tree.nodes[index].multicol else {
         return crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     };
+    let inputs = with_keyword_width(tree, node_id, inputs);
 
     // Taffy supplies the used border-box width to a block child. Do not fall
     // back to the page width when a nested box is measured: that would make a

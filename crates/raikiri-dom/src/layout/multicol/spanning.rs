@@ -4,7 +4,7 @@ use super::*;
 use crate::layout::context::LayoutSession;
 use taffy::util::MaybeResolve;
 
-pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
+pub(crate) fn is_spanner(tree: &Document, child: usize) -> bool {
     let node = &tree.layout_node_with_style(child).unwrap();
     node.column_span_all
         && node.is_in_document()

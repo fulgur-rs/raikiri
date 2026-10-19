@@ -36,6 +36,42 @@ pub(crate) struct MulticolStyle {
     pub(crate) widows: usize,
 }
 
+impl MulticolStyle {
+    /// The min-content and max-content inline sizes of the content box of a
+    /// multicol container, as `(min, max)`.
+    ///
+    /// `columns` are the min-content and max-content widths of what flows in
+    /// the columns, which is the largest contribution of one of its boxes, and
+    /// `spanners` the same widths for what spans all the columns. A spanner
+    /// is as wide as the container whatever the number of its columns, so it
+    /// raises the sizes but is not repeated for each column.
+    ///
+    /// - With `column-width` the columns are `column-width` wide: the
+    ///   max-content size is that width for each of the `column-count`
+    ///   columns, and one column when the count is `auto`; the min-content
+    ///   size is the smaller of that width and the contribution of the
+    ///   content, as the container can narrow to a single column.
+    /// - Without it the columns are as wide as their content, for each of
+    ///   the `column-count` columns.
+    ///
+    /// The gaps between the columns add to each size that holds several
+    /// columns. A percentage share of the gap resolves against a size the
+    /// container does not have yet, so it adds nothing here.
+    pub(crate) fn intrinsic_inline_sizes(
+        &self,
+        columns: (f32, f32),
+        spanners: (f32, f32),
+    ) -> (f32, f32) {
+        let count = self.count.map_or(1.0, |count| count as f32);
+        let gaps = self.gap * (count - 1.0);
+        let (min, max) = match self.width {
+            Some(width) => (width.min(columns.0), count * width + gaps),
+            None => (count * columns.0 + gaps, count * columns.1 + gaps),
+        };
+        (min.max(spanners.0), max.max(spanners.1))
+    }
+}
+
 /// A local fragmentainer context passed down the nested layout stack.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FragmentationContext {

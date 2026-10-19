@@ -1568,6 +1568,14 @@ fn measure_ifc_root(
         min_content.max(box_intrinsics.blocks.0),
         max_content.max(box_intrinsics.blocks.1),
     );
+    // The lines of a multicol container are laid out in its columns, so the
+    // widths of the container repeat the widths of its lines.
+    let (min_content, max_content) = tree.nodes[idx]
+        .multicol
+        .filter(|style| style.horizontal && !vertical)
+        .map_or((min_content, max_content), |style| {
+            style.intrinsic_inline_sizes((min_content, max_content), (0.0, 0.0))
+        });
     let width = match inline_available {
         AvailableSpace::Definite(width) if inline_stretched => width,
         AvailableSpace::Definite(width) => width.max(min_content).min(max_content),

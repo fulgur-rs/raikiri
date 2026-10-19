@@ -311,3 +311,71 @@ fn a_new_layout_of_a_container_retires_its_earlier_root_subtree() {
             .all(|fragment| fragment.fragment_count == 1)
     );
 }
+
+fn intrinsic_style(count: Option<usize>, width: Option<f32>) -> MulticolStyle {
+    MulticolStyle {
+        count,
+        width,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
+        gap: 10.0,
+        gap_percent: Some(10.0),
+        height_definite: false,
+        horizontal: true,
+        rtl: false,
+        orphans: 1,
+        widows: 1,
+    }
+}
+
+#[test]
+fn a_column_width_sets_the_widths_of_a_container_whose_count_is_auto() {
+    // Blocks 100px wide in the columns and a 50px or 150px spanner, with a
+    // column width of 80px or 120px. The max-content width is the column
+    // width, the min-content width is the smaller of it and the content.
+    let style = |width| intrinsic_style(None, Some(width));
+    assert_eq!(
+        style(80.0).intrinsic_inline_sizes((100.0, 100.0), (50.0, 50.0)),
+        (80.0, 80.0)
+    );
+    assert_eq!(
+        style(80.0).intrinsic_inline_sizes((100.0, 100.0), (150.0, 150.0)),
+        (150.0, 150.0)
+    );
+    assert_eq!(
+        style(120.0).intrinsic_inline_sizes((100.0, 100.0), (50.0, 50.0)),
+        (100.0, 120.0)
+    );
+    assert_eq!(
+        style(120.0).intrinsic_inline_sizes((100.0, 100.0), (150.0, 150.0)),
+        (150.0, 150.0)
+    );
+}
+
+#[test]
+fn a_column_count_repeats_the_content_width_and_adds_the_gaps() {
+    let style = intrinsic_style(Some(2), None);
+    // The percentage share of the gap resolves against a width that is not
+    // known yet and adds nothing.
+    assert_eq!(
+        style.intrinsic_inline_sizes((100.0, 100.0), (0.0, 0.0)),
+        (210.0, 210.0)
+    );
+    assert_eq!(
+        style.intrinsic_inline_sizes((20.0, 100.0), (0.0, 0.0)),
+        (50.0, 210.0)
+    );
+    // A spanner is as wide as the container, not repeated in its columns.
+    assert_eq!(
+        style.intrinsic_inline_sizes((100.0, 100.0), (250.0, 250.0)),
+        (250.0, 250.0)
+    );
+}
+
+#[test]
+fn a_column_width_with_a_count_makes_a_container_of_that_many_columns() {
+    let style = intrinsic_style(Some(2), Some(110.0));
+    assert_eq!(
+        style.intrinsic_inline_sizes((100.0, 100.0), (0.0, 0.0)),
+        (100.0, 230.0)
+    );
+}
