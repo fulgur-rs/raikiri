@@ -165,6 +165,21 @@ fn a_keyword_width_sizes_a_grid_item_instead_of_stretching_it() {
 }
 
 #[test]
+fn a_minimum_width_of_zero_does_not_stop_a_keyword_width() {
+    for minimum in ["0", "0px", "0%", "calc(0% + 0px)"] {
+        assert_eq!(
+            size(
+                COLUMN,
+                &format!("width:max-content;min-width:{minimum}"),
+                Body::Text
+            ),
+            (90.0, 10.0),
+            "{minimum}"
+        );
+    }
+}
+
+#[test]
 fn a_flex_container_item_with_a_keyword_width_is_sized_like_a_block() {
     let flex = "display:flex";
     assert_eq!(

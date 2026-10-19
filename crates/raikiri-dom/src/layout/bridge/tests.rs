@@ -2912,6 +2912,16 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
                 "display:block;width:max-content;min-width:auto"
             ),
             (
+                "display:flex",
+                "div",
+                "display:block;width:max-content;min-width:0%"
+            ),
+            (
+                "display:grid",
+                "div",
+                "display:block;width:max-content;min-width:calc(0% + 0px)"
+            ),
+            (
                 "display:block",
                 "div",
                 "display:block;column-width:10px;width:max-content;"
@@ -2930,9 +2940,37 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
             keyword,
             keyword,
             keyword,
+            keyword,
+            keyword,
             Dimension::auto()
         ],
     );
+}
+
+#[test]
+fn a_size_that_is_zero_whatever_it_refers_to_is_a_zero_length() {
+    use raikiri_style::property::CalcLengthPercentage;
+
+    let calc =
+        |percent, px| ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage { percent, px });
+    for zero in [
+        ComputedLengthPercentageOrAuto::Px(0.0),
+        ComputedLengthPercentageOrAuto::Px(-0.0),
+        ComputedLengthPercentageOrAuto::Percent(0.0),
+        calc(0.0, 0.0),
+    ] {
+        assert!(is_zero_length(zero), "{zero:?}");
+    }
+    for other in [
+        ComputedLengthPercentageOrAuto::Px(1.0),
+        ComputedLengthPercentageOrAuto::Percent(5.0),
+        calc(10.0, 0.0),
+        calc(0.0, 4.0),
+        ComputedLengthPercentageOrAuto::Auto,
+        ComputedLengthPercentageOrAuto::MinContent,
+    ] {
+        assert!(!is_zero_length(other), "{other:?}");
+    }
 }
 
 #[test]

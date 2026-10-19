@@ -832,11 +832,22 @@ fn sized_by_content_keyword(
     }
     // Only a `min-width` that is not `auto` or zero clamps the keyword.
     let unclamped = matches!(cv.max_width, ComputedLengthPercentageOrAuto::Auto)
-        && matches!(
-            cv.min_width,
-            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
-        );
+        && (matches!(cv.min_width, ComputedLengthPercentageOrAuto::Auto)
+            || is_zero_length(cv.min_width));
     !is_flex_or_grid_item(doc, cascade, idx) || (unclamped && !lays_out_vertically(cascade, idx))
+}
+
+/// Whether `size` is zero whatever it refers to: a zero length, a zero
+/// percentage, or a `calc()` whose terms are both zero.
+fn is_zero_length(size: ComputedLengthPercentageOrAuto) -> bool {
+    match size {
+        ComputedLengthPercentageOrAuto::Px(px) => matches!(px, 0.0),
+        ComputedLengthPercentageOrAuto::Percent(percent) => matches!(percent, 0.0),
+        ComputedLengthPercentageOrAuto::Calc(calc) => {
+            matches!((calc.percent, calc.px), (0.0, 0.0))
+        }
+        _ => false,
+    }
 }
 
 /// Whether the box of element `idx` is an item of a flex or grid container:
