@@ -336,6 +336,11 @@ pub struct SpecifiedValues {
     /// **Specified** `block-size`; mapped onto the axis perpendicular to
     /// [`Self::inline_size`] in phase 3.
     pub block_size: Option<LengthOrAuto>,
+    /// Whether `height` and `block-size` keep the sizing keywords `min-content`,
+    /// `max-content` and `fit-content`. An element sizes itself to its content along the block
+    /// axis for all of them (CSS Sizing 3 §5.1), so they compute to `auto` unless the box is one
+    /// that fills the space it is given for `auto`, as a page-margin box does.
+    pub(crate) keeps_block_size_keywords: bool,
     /// Cascade precedence of the winning `width` / `height` / `inline-size` /
     /// `block-size` declarations. Phase 3 lets the logical and physical
     /// declaration that map onto the same axis compete in cascade order.
@@ -764,6 +769,18 @@ pub(crate) struct PreferredSizePrecedence {
     pub(crate) block_size: Option<CascadePrecedence>,
 }
 
+/// `size` as `auto` when it is one of the sizing keywords, which stand for the size of the
+/// content.
+fn without_sizing_keyword(size: LengthOrAuto) -> LengthOrAuto {
+    match size {
+        LengthOrAuto::MinContent
+        | LengthOrAuto::MaxContent
+        | LengthOrAuto::FitContent
+        | LengthOrAuto::FitContentOf(_) => LengthOrAuto::Auto,
+        other => other,
+    }
+}
+
 impl SpecifiedValues {
     /// Inherit marker text with the UA defaults required by CSS Lists 3 §3.1.1.
     pub(crate) fn inherit_marker_from(parent: &ComputedValues) -> Self {
@@ -872,6 +889,7 @@ impl SpecifiedValues {
             inline_size: None,
             preferred_size_precedence: PreferredSizePrecedence::default(),
             block_size: None,
+            keeps_block_size_keywords: false,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1344,6 +1362,7 @@ impl SpecifiedValues {
             inline_size: None,
             preferred_size_precedence: PreferredSizePrecedence::default(),
             block_size: None,
+            keeps_block_size_keywords: false,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1911,6 +1930,10 @@ impl SpecifiedValues {
     /// inline size is the physical height. A declared logical size replaces
     /// the physical size on the same axis, matching `min-block-size` below.
     fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
+        if !self.keeps_block_size_keywords {
+            self.height = without_sizing_keyword(self.height);
+            self.block_size = self.block_size.map(without_sizing_keyword);
+        }
         let inline_size = self.inline_size.take();
         let block_size = self.block_size.take();
         let precedence = self.preferred_size_precedence;
