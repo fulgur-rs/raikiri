@@ -76,7 +76,7 @@ impl SavedSizes {
 fn applies(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool {
     let context = tree.nodes[idx].formatting_context;
     *limits != ContentLimits::NONE
-        && !uses_specialized_content_limits(tree, idx)
+        && !is_table_content_limits(tree, idx)
         && !tree.context.content_limit_probes.contains(&idx)
         && !is_oof_box(tree, idx)
         && matches!(
@@ -96,16 +96,19 @@ fn is_oof_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
         )
 }
 
-fn uses_specialized_content_limits(tree: &LayoutSession<'_>, idx: usize) -> bool {
+fn is_table_content_limits(tree: &LayoutSession<'_>, idx: usize) -> bool {
     crate::taffy_impl::is_table_box(tree.nodes[idx].display())
-        || crate::paint_rules::is_replaced_element(tree.document, idx)
+}
+
+fn is_replaced_content(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    crate::paint_rules::is_replaced_element(tree.document, idx)
 }
 
 /// Whether `idx` has intrinsic min/max sizes that its flex/grid parent must
 /// resolve before the parent algorithm reads the child's style.
 fn applies_to_parent_item(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool {
     *limits != ContentLimits::NONE
-        && !uses_specialized_content_limits(tree, idx)
+        && !is_table_content_limits(tree, idx)
         && !tree.context.content_limit_probes.contains(&idx)
 }
 
@@ -172,8 +175,8 @@ pub(super) fn with_content_limits(
         // the keywords are the limits it could not read.
         let mut inputs = inputs;
         let mut width = Bounds::default();
-        if limits.has_width() {
-            width = width_bounds(tree, node_id, &limits, &inputs);
+        if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
+            width = resolved_width_bounds(tree, node_id, &limits, &inputs);
             let adjustment =
                 box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
@@ -185,7 +188,7 @@ pub(super) fn with_content_limits(
             }
         }
         if limits.has_height() {
-            let height = height_bounds(tree, node_id, &limits, &inputs, width);
+            let height = resolved_height_bounds(tree, node_id, &limits, &inputs, width);
             let adjustment =
                 box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
@@ -213,7 +216,7 @@ pub(crate) fn with_oof_child_content_limits(
     let limits = tree.nodes[idx].content_limits;
     if limits == ContentLimits::NONE
         || !is_oof_box(tree, idx)
-        || uses_specialized_content_limits(tree, idx)
+        || is_table_content_limits(tree, idx)
         || tree.context.content_limit_probes.contains(&idx)
     {
         return dispatch(tree, node_id, inputs);
@@ -223,8 +226,8 @@ pub(crate) fn with_oof_child_content_limits(
         let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
         let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
         let mut width = Bounds::default();
-        if limits.has_width() {
-            width = width_bounds(tree, node_id, &limits, &inputs);
+        if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
+            width = resolved_width_bounds(tree, node_id, &limits, &inputs);
             let adjustment =
                 box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
@@ -236,7 +239,7 @@ pub(crate) fn with_oof_child_content_limits(
             inputs.available_space.width = AvailableSpace::Definite(known);
         }
         if limits.has_height() {
-            let height = height_bounds(tree, node_id, &limits, &inputs, width);
+            let height = resolved_height_bounds(tree, node_id, &limits, &inputs, width);
             let adjustment =
                 box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
@@ -287,7 +290,7 @@ pub(crate) fn with_oof_content_limits<R>(
         .filter(|&idx| {
             tree.nodes[idx].content_limits != ContentLimits::NONE
                 && is_oof_box(tree, idx)
-                && !uses_specialized_content_limits(tree, idx)
+                && !is_table_content_limits(tree, idx)
         })
         .collect::<Vec<_>>();
     if targets.is_empty() {
@@ -355,15 +358,16 @@ pub(crate) fn with_oof_content_limits<R>(
             };
             let limits = tree.nodes[idx].content_limits;
             let node_id = NodeId::from(idx);
-            let width = if limits.has_width() {
-                let inputs = raw_inputs
-                    .as_ref()
-                    .and_then(|inputs| inputs.get(&idx))
-                    .unwrap_or(positioned_inputs);
-                width_bounds(tree, node_id, &limits, inputs)
-            } else {
-                Bounds::default()
-            };
+            let width =
+                if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
+                    let inputs = raw_inputs
+                        .as_ref()
+                        .and_then(|inputs| inputs.get(&idx))
+                        .unwrap_or(positioned_inputs);
+                    resolved_width_bounds(tree, node_id, &limits, inputs)
+                } else {
+                    Bounds::default()
+                };
             let width_adjustment = box_sizing_adjustment(
                 tree,
                 idx,
@@ -390,7 +394,7 @@ pub(crate) fn with_oof_content_limits<R>(
                     height_inputs.known_dimensions.width = Some(known);
                     height_inputs.available_space.width = AvailableSpace::Definite(known);
                 }
-                let height = height_bounds(tree, node_id, &limits, &height_inputs, width);
+                let height = resolved_height_bounds(tree, node_id, &limits, &height_inputs, width);
                 let height_adjustment = box_sizing_height_adjustment(
                     tree,
                     idx,
@@ -523,7 +527,9 @@ pub(super) fn resolve_width_in_style(
     if !limits.has_width() || !applies(tree, idx, &limits) {
         return;
     }
-    let bounds = scoped(tree, |tree| width_bounds(tree, child, &limits, inputs));
+    let bounds = scoped(tree, |tree| {
+        resolved_width_bounds(tree, child, &limits, inputs)
+    });
     let adjustment = box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
     bounds.install_width(style, adjustment);
 }
@@ -562,7 +568,7 @@ pub(crate) fn with_width_limits<R>(
         vertical_margins_are_collapsible: Line::FALSE,
     };
     let bounds = scoped(tree, |tree| {
-        width_bounds(tree, NodeId::from(node), &limits, &inputs)
+        resolved_width_bounds(tree, NodeId::from(node), &limits, &inputs)
     });
     let adjustment = box_sizing_adjustment(tree, node, parent_size.width.unwrap_or(0.0));
     let style = tree.layout_style_for_key_mut(node).unwrap();
@@ -694,11 +700,12 @@ fn with_item_content_limits_for_parent_sizes(
             };
 
             let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
-            let width = if limits.has_width() {
-                width_bounds(tree, child, &limits, &item_inputs)
-            } else {
-                Bounds::default()
-            };
+            let width =
+                if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
+                    resolved_width_bounds(tree, child, &limits, &item_inputs)
+                } else {
+                    Bounds::default()
+                };
             let width_adjustment =
                 box_sizing_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
             width.install_width(
@@ -707,7 +714,7 @@ fn with_item_content_limits_for_parent_sizes(
             );
 
             if limits.has_height() {
-                let height = height_bounds(tree, child, &limits, &item_inputs, width);
+                let height = resolved_height_bounds(tree, child, &limits, &item_inputs, width);
                 let height_adjustment =
                     box_sizing_height_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
                 height.install_height(
@@ -916,6 +923,70 @@ fn probe(
 
 /// The border-box widths the keyword `min-width` and `max-width` of `node_id`
 /// stand for in the room `inputs` offers it.
+fn replaced_keyword_bounds(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> (Bounds, Bounds) {
+    if !is_replaced_content(tree, idx) {
+        return (Bounds::default(), Bounds::default());
+    }
+    let Some(natural) = super::leaf_intrinsic_size(&tree.nodes[idx]) else {
+        return (Bounds::default(), Bounds::default());
+    };
+    let Some(mut style) = tree
+        .layout_node_with_style(idx)
+        .map(|node| node.style.clone())
+    else {
+        return (Bounds::default(), Bounds::default());
+    };
+    if style.aspect_ratio.is_none() {
+        style.aspect_ratio = super::leaf_intrinsic_ratio(&tree.nodes[idx]);
+    }
+    let Some(bounds) = super::replaced_size::keyword_bounds(&style, inputs, natural, *limits)
+    else {
+        return (Bounds::default(), Bounds::default());
+    };
+    (
+        Bounds {
+            min: bounds.width.min,
+            max: bounds.width.max,
+        },
+        Bounds {
+            min: bounds.height.min,
+            max: bounds.height.max,
+        },
+    )
+}
+
+fn resolved_width_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    if is_replaced_content(tree, idx) {
+        return replaced_keyword_bounds(tree, idx, limits, inputs).0;
+    }
+    width_bounds(tree, node_id, limits, inputs)
+}
+
+fn resolved_height_bounds(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    limits: &ContentLimits,
+    inputs: &LayoutInput,
+    width: Bounds,
+) -> Bounds {
+    let idx = usize::from(node_id);
+    if is_replaced_content(tree, idx) {
+        return replaced_keyword_bounds(tree, idx, limits, inputs).1;
+    }
+    height_bounds(tree, node_id, limits, inputs, width)
+}
+
 fn width_bounds(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,

@@ -1381,6 +1381,79 @@ fn flex_item_size(direction: &str, root_css: &str, item_css: &str) -> (f32, f32)
     )
 }
 
+fn canvas_intrinsic_contribution_size(container_display: &str, canvas_css: &str) -> (f32, f32) {
+    let (mut outer, mut canvas) = (0, 0);
+    let fixture = block_fixture("width:200px", |doc, root| {
+        outer = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(&format!(
+                "display:{container_display};width:max-content;border:5px solid;margin:5px"
+            )),
+        );
+        canvas = doc.append_element(
+            Some(outer),
+            "canvas",
+            taffy::Style::default(),
+            Some(&format!("display:block;width:max-content;{canvas_css}")),
+        );
+        doc.set_element_attribute(canvas, "width", "50")
+            .expect("set canvas width");
+        doc.set_element_attribute(canvas, "height", "50")
+            .expect("set canvas height");
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let rect = absolute_rect(&doc, outer);
+    (rect.2, rect.3)
+}
+
+#[test]
+fn replaced_min_and_max_height_keywords_contribute_to_intrinsic_inline_size() {
+    for display in [
+        "block",
+        "flex;flex-direction:row",
+        "flex;flex-direction:column",
+        "grid",
+    ] {
+        for canvas_css in [
+            "height:0;min-height:max-content",
+            "height:100px;max-height:max-content",
+        ] {
+            assert_eq!(
+                canvas_intrinsic_contribution_size(display, canvas_css),
+                (60.0, 60.0),
+                "display:{display};{canvas_css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_out_of_flow_replaced_min_height_keyword_uses_its_inset_width() {
+    let mut canvas = 0;
+    let fixture = block_fixture("position:relative;width:60px;height:60px", |doc, root| {
+        canvas = doc.append_element(
+            Some(root),
+            "canvas",
+            taffy::Style::default(),
+            Some(
+                "position:absolute;left:5px;right:5px;top:0;width:auto;height:0;\
+                 min-height:max-content",
+            ),
+        );
+        doc.set_element_attribute(canvas, "width", "50")
+            .expect("set canvas width");
+        doc.set_element_attribute(canvas, "height", "50")
+            .expect("set canvas height");
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let rect = absolute_rect(&doc, canvas);
+    assert_eq!((rect.2, rect.3), (50.0, 50.0));
+}
+
 #[test]
 fn flex_items_honor_intrinsic_min_width_values() {
     for (keyword, width, height) in [
