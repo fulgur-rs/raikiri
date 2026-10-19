@@ -273,6 +273,66 @@ fn overflow_clips_follow_each_column_group_and_leave_the_spanner_fullwidth() {
 }
 
 #[test]
+fn a_fragment_clip_stays_open_where_its_paragraph_begins_and_ends() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div><p>F<br>G<br>H<br>I</p></div>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let mut clips = Vec::new();
+    let mut actual = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip.rect),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(line) => {
+                let run = runs.iter().find(|run| run.line == line).unwrap();
+                // Whether the clip leaves room past its group's top and bottom
+                // edge, and where the group's edges lie.
+                let edges = clips.last().map(|clip| {
+                    (
+                        clip.y < -1000.0,
+                        clip.y + clip.height > 1000.0,
+                        if clip.y < -1000.0 { None } else { Some(clip.y) },
+                        if clip.y + clip.height > 1000.0 {
+                            None
+                        } else {
+                            Some(clip.y + clip.height)
+                        },
+                    )
+                });
+                actual.push((run.text, edges));
+            }
+            _ => {}
+        }
+    }
+    // The first fragment of a paragraph has nothing of it above it and the
+    // last has nothing below it; the edges between its fragments stay cut so
+    // that the lines of the neighbour do not show.
+    let first = Some((true, false, None, Some(40.0)));
+    let last = Some((false, true, Some(0.0), None));
+    let later_first = Some((true, false, None, Some(100.0)));
+    let later_last = Some((false, true, Some(60.0), None));
+    assert_eq!(
+        actual,
+        [
+            ("A", first),
+            ("B", first),
+            ("C", last),
+            ("D", last),
+            ("E", None),
+            ("F", later_first),
+            ("G", later_first),
+            ("H", later_last),
+            ("I", later_last),
+        ]
+    );
+}
+
+#[test]
 fn padding_and_decorated_spanner_preserve_one_owner_background_and_group_insets() {
     let document = lay_out(
         "<div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div><p>F<br>G<br>H<br>I</p></div><p>J</p>",

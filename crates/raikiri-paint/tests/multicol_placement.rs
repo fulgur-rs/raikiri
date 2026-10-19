@@ -477,6 +477,17 @@ fn a_spanner_leaves_the_shadows_of_a_line_visible_past_its_column() {
 }
 
 #[test]
+fn a_spanner_leaves_the_outline_of_a_paragraph_visible_past_its_column_group() {
+    // The outline reaches 10px past the first line above and past the last
+    // line below, where its column group ends.
+    compare(
+        "<div class=mc><p>A</p><div style='column-span:all'>x</div><p style='outline:10px solid red'>B</p></div>",
+        ".mc{width:80px;column-count:auto;column-width:80px}",
+        "<div style='position:absolute;left:0;top:0;width:80px'>A</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px;width:80px;outline:10px solid red'>B</div>",
+    );
+}
+
+#[test]
 fn a_constrained_wrapper_background_includes_its_last_child_margin() {
     compare(
         "<div class=mc><div style='width:80px;overflow:hidden;background:lime'><p style='margin-bottom:20px'>A</p></div></div><p>B</p>",
