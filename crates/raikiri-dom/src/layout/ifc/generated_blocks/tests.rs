@@ -1181,3 +1181,18 @@ fn a_formatting_root_block_of_auto_height_and_width_settles_on_the_room_its_line
         rect(20.0, 0.0, 80.0, 10.0)
     );
 }
+
+#[test]
+fn a_formatting_root_block_of_very_many_lines_is_measured_in_full() {
+    // 30,000 lines of forced breaks, 300,000px in all: far past the gap
+    // beside the first float, so the box clears it.
+    let breaks = "\\A".repeat(30_000);
+    assert_eq!(
+        block_with_text_after_floats(
+            &breaks,
+            "width: 20px; white-space: pre",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 20.0, 300_000.0)
+    );
+}
