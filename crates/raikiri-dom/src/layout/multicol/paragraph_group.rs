@@ -631,21 +631,33 @@ pub(super) fn paginate(
                     })?;
                 let x = context.origin_x + context.column_offset_x(column);
                 occupied.insert(column);
+                let rect = crate::fragment::FragmentRect {
+                    x: x + entries[index].2.margin.left,
+                    y: group_y + y,
+                    width: entries[index].2.size.width,
+                    height: box_height,
+                };
+                // The clip cuts a fragment at the block edges of its column.
+                // Inline overflow stays visible, so it spans what the box and
+                // its lines cover beyond the column.
+                let (left, right) = inline_extent(
+                    tree,
+                    entries[index].0,
+                    range.line_start..range.line_end,
+                    &entries[index].2,
+                    rect,
+                    (x, x + context.column_width),
+                );
                 result.fragments.push(PagedFragment {
                     child: entries[index].0,
                     line_start: range.line_start,
                     line_end: range.line_end,
                     fragmentainer,
-                    rect: crate::fragment::FragmentRect {
-                        x: x + entries[index].2.margin.left,
-                        y: group_y + y,
-                        width: entries[index].2.size.width,
-                        height: box_height,
-                    },
+                    rect,
                     clip: crate::fragment::FragmentRect {
-                        x,
+                        x: left,
                         y: group_y,
-                        width: context.column_width,
+                        width: right - left,
                         height,
                     },
                 });
@@ -672,6 +684,60 @@ pub(super) fn paginate(
         absolute_y = page_origin + page_height;
     }
     Ok(Some(result))
+}
+
+/// The horizontal extent, as a left and a right edge, of `column` widened to
+/// hold the box `rect` of a paragraph and the glyph runs and inline boxes of
+/// its `lines`, which reach past the box when they cannot wrap. Positions are
+/// in the coordinates of `rect`; `layout` gives the border and padding that
+/// put the lines inside the box.
+fn inline_extent(
+    tree: &Document,
+    child: usize,
+    lines: std::ops::Range<usize>,
+    layout: &TaffyLayout,
+    rect: crate::fragment::FragmentRect,
+    column: (f32, f32),
+) -> (f32, f32) {
+    use shodo::geometry::{LogicalRect, PhysicalConverter, PhysicalSize, WritingMode};
+
+    let (mut left, mut right) = (column.0.min(rect.x), column.1.max(rect.x + rect.width));
+    let inset = layout.border.left + layout.padding.left;
+    let content_width = rect.width - inset - layout.border.right - layout.padding.right;
+    let shaped = tree.nodes[child]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .map_or(&[][..], |ifc| &ifc.lines[lines]);
+    for line in shaped {
+        // Offsets along a line run from its inline start, which is the right
+        // edge of a right-to-left line.
+        let converter = PhysicalConverter::new(
+            WritingMode::HorizontalTb,
+            line.used_direction(),
+            PhysicalSize {
+                width: content_width,
+                height: 0.0,
+            },
+        );
+        for fragment in line.fragments() {
+            let (inline_start, inline_size) = match fragment {
+                shodo::Fragment::GlyphRun(run) => (run.inline_start(), run.inline_size()),
+                shodo::Fragment::InlineBox(box_) => (box_.rect.inline_start, box_.rect.inline_size),
+                // A ruby annotation stays within the extent of its base, which
+                // shodo widens to hold it.
+                _ => continue,
+            };
+            let physical = converter.rect(LogicalRect {
+                inline_start,
+                inline_size,
+                ..LogicalRect::default()
+            });
+            left = left.min(rect.x + inset + physical.x);
+            right = right.max(rect.x + inset + physical.x + physical.width);
+        }
+    }
+    (left, right)
 }
 
 /// Paragraphs a fill from `resume` visited. A failed fill stops anywhere up

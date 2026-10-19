@@ -4992,3 +4992,8 @@ css/css-sizing/replaced-max-width-with-height-fit-content.html
 # Both pass with `width: fit-content` and the auto-width shrink-to-fit cases sized from the columns of the container; KEEP in audit-vacuous-passes.
 css/css-multicol/intrinsic-size-001.html
 css/css-multicol/change-intrinsic-width.html
+
+# --- spanner column groups leave inline overflow visible (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# Both pass once content wider than a column is no longer cut at the column edge in a container with a `column-span: all` child; KEEP in audit-vacuous-passes.
+css/css-multicol/multicol-width-004.html
+css/css-multicol/multicol-width-005.html
