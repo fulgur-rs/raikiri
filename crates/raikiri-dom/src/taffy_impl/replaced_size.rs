@@ -156,3 +156,6 @@ fn content_side(style: &Style, side: f32, edges: f32) -> f32 {
         BoxSizing::BorderBox => (side - edges).max(0.0),
     }
 }
+
+#[cfg(test)]
+mod tests;

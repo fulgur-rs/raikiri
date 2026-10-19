@@ -3,7 +3,10 @@
 //! and §5). The text of the fixtures is `AAAA BBBB` in Ahem at 10px: 40px wide
 //! at its longest word, 90px wide on one line.
 
-use super::{applies, stretch_fit_width, with_grid_item_content_limits, with_oof_content_limits};
+use super::{
+    applies, content_percentage_height_basis, stretch_fit_width, with_grid_item_content_limits,
+    with_oof_content_limits,
+};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::test_support::{block_fixture, block_fixture_with_ahem};
 use crate::layout::layout_single_page;
@@ -522,6 +525,49 @@ fn a_keyword_height_limit_adds_the_padding_and_border() {
             "{box_sizing}"
         );
     }
+}
+
+#[test]
+fn border_box_percentage_height_basis_subtracts_edges_once() {
+    let mut child = 0;
+    let fixture = block_fixture("width:200px;height:200px", |doc, root| {
+        child = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(
+                "box-sizing:border-box;height:100px;min-height:120px;\
+                 padding:5px 0;border:2px solid",
+            ),
+        );
+    });
+    let mut doc = fixture.doc;
+    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).expect("bridge");
+    let tree = LayoutSession::new(&mut doc);
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(200.0),
+            height: Some(600.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+
+    assert_eq!(
+        content_percentage_height_basis(&tree, child, &inputs),
+        Some(106.0)
+    );
 }
 
 #[test]
