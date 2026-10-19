@@ -408,3 +408,11 @@ fn an_inherited_stroke_width_keeps_the_font_relative_length_of_the_parent() {
         "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
     );
 }
+
+#[test]
+fn a_used_definition_resolves_a_font_relative_stroke_width_for_each_instance() {
+    assert_paints_like(
+        "<style>path{stroke:black;stroke-width:.25em}use{font-size:20px}</style><svg width=50 height=20><defs><path id=p d='M0 10h50' fill=none /></defs><use href='#p' /></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
+    );
+}

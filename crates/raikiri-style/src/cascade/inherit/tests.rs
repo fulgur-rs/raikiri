@@ -11991,7 +11991,8 @@ fn every_painting_attribute_written_with_a_variable_is_exported_resolved() {
 }
 
 #[test]
-fn font_relative_stroke_lengths_are_exported_in_px_at_the_declaring_element() {
+fn a_declaration_keeps_its_font_relative_stroke_lengths_as_written() {
+    // A `<use>` instance resolves them against its own font size.
     let properties = svg_rect_properties(
         "rect { font-size: 20px; stroke-width: 2em; stroke-dasharray: 1em 4px 50% 2ex 3; \
          stroke-dashoffset: -0.5em }",
@@ -11999,56 +12000,96 @@ fn font_relative_stroke_lengths_are_exported_in_px_at_the_declaring_element() {
         None,
     );
     let text = |key| exported(&properties, key).and_then(|(_, text)| text);
-    assert_eq!(text(PropertyKey::StrokeWidth), Some("40px".into()));
+    assert_eq!(text(PropertyKey::StrokeWidth), Some("2em".into()));
     assert_eq!(
         text(PropertyKey::StrokeDasharray),
-        Some("20px 4px 50% 20px 3".into())
+        Some("1em 4px 50% 2ex 3".into())
     );
-    assert_eq!(text(PropertyKey::StrokeDashoffset), Some("-10px".into()));
+    assert_eq!(text(PropertyKey::StrokeDashoffset), Some("-0.5em".into()));
+}
+
+/// The exported properties of the `rect` of `css` applied to
+/// `<svg><g><rect/></g></svg>`.
+fn nested_rect_properties(css: &str) -> Vec<SvgStyleProperty> {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, css);
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let group = doc.push_element_with_namespace(svg, "g", "http://www.w3.org/2000/svg", &[]);
+    let rect = doc.push_element_with_namespace(group, "rect", "http://www.w3.org/2000/svg", &[]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    result
+        .svg_style_properties(StyleNodeId(rect as u64))
+        .to_vec()
 }
 
 #[test]
-fn font_relative_stroke_lengths_follow_the_inherited_font_size() {
-    let properties = svg_rect_properties(
-        "svg { font-size: 8px } rect { stroke-width: 1.5em }",
-        &[],
-        None,
+fn a_descendant_that_inherits_with_another_font_size_takes_the_ancestors_px() {
+    let properties = nested_rect_properties(
+        "g { font-size: 20px; stroke-width: 2em; stroke-dasharray: 1em 4px 50% 2ex 3; \
+         stroke-dashoffset: -0.5em } \
+         rect { font-size: 10px; stroke-width: inherit; stroke-dasharray: unset; \
+         stroke-dashoffset: inherit }",
+    );
+    let text = |key| exported(&properties, key);
+    assert_eq!(
+        text(PropertyKey::StrokeWidth),
+        Some((false, Some("40px".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeDasharray),
+        Some((false, Some("20px 4px 50% 20px 3".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeDashoffset),
+        Some((false, Some("-10px".into())))
+    );
+}
+
+#[test]
+fn a_descendant_that_inherits_with_the_same_font_size_keeps_inherit() {
+    let properties = nested_rect_properties(
+        "g { font-size: 20px; stroke-width: 2em; stroke-dasharray: 4px 2px } \
+         rect { stroke-width: inherit; stroke-dasharray: inherit }",
+    );
+    // The same font size resolves the same text; a length without a
+    // font-relative term is the same in any case.
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((true, Some("inherit".into())))
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeDasharray),
+        Some((true, Some("inherit".into())))
+    );
+}
+
+#[test]
+fn an_inheriting_descendant_looks_past_an_ancestor_that_inherits() {
+    let properties = nested_rect_properties(
+        "svg { font-size: 30px; stroke-width: 1em } \
+         g { stroke-width: inherit } \
+         rect { font-size: 10px; stroke-width: inherit }",
     );
     assert_eq!(
         exported(&properties, PropertyKey::StrokeWidth),
-        Some((false, Some("12px".into())))
+        Some((false, Some("30px".into())))
     );
 }
 
 #[test]
-fn a_variable_that_resolves_to_a_font_relative_length_is_exported_in_px() {
-    let properties = svg_rect_properties(
-        "rect { font-size: 20px; --w: 2em; --d: 1ex 3 }",
-        &[
-            ("stroke-width", "var(--w)"),
-            ("stroke-dasharray", "var(--d)"),
-        ],
-        None,
+fn an_ancestor_that_took_px_hands_them_on_with_inherit() {
+    let properties = nested_rect_properties(
+        "svg { font-size: 30px; stroke-width: 1em } \
+         g { font-size: 20px; stroke-width: inherit } \
+         rect { font-size: 10px; stroke-width: inherit }",
     );
-    let text = |key| exported(&properties, key).and_then(|(_, text)| text);
-    assert_eq!(text(PropertyKey::StrokeWidth), Some("40px".into()));
-    assert_eq!(text(PropertyKey::StrokeDasharray), Some("10px 3".into()));
-}
-
-#[test]
-fn svg_lengths_in_px_leaves_what_it_cannot_convert_as_written() {
-    assert_eq!(svg_lengths_in_px("4px 3 50%", 10.0), None);
-    assert_eq!(svg_lengths_in_px("none", 10.0), None);
+    // `g` already carries `30px`, and a renderer copies that text.
     assert_eq!(
-        svg_lengths_in_px("1em 2ex 0.5em", 10.0).as_deref(),
-        Some("10px 10px 5px")
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((true, Some("inherit".into())))
     );
-    // An item whose product overflows, or that is no number, is kept.
-    assert_eq!(
-        svg_lengths_in_px("1e308em 1em", 10.0).as_deref(),
-        Some("1e308em 10px")
-    );
-    assert_eq!(svg_lengths_in_px("xem", 10.0).as_deref(), Some("xem"));
 }
 
 #[test]
@@ -12151,7 +12192,7 @@ fn svg_painting_properties_take_the_css_wide_keywords() {
 #[test]
 fn svg_stroke_and_rule_properties_export_their_validated_text() {
     let properties = svg_rect_properties(
-        "rect { font-size: 10px; fill-rule: EVENODD; clip-rule: evenodd; stroke-linecap: Round; \
+        "rect { fill-rule: EVENODD; clip-rule: evenodd; stroke-linecap: Round; \
          stroke-linejoin: arcs; stroke-miterlimit: 2.50; stroke-dasharray: 4px,2 50%; \
          stroke-dashoffset: -1EM }",
         &[],
@@ -12164,8 +12205,7 @@ fn svg_stroke_and_rule_properties_export_their_validated_text() {
         (PropertyKey::StrokeLinejoin, "miter"),
         (PropertyKey::StrokeMiterlimit, "2.5"),
         (PropertyKey::StrokeDasharray, "4px 2 50%"),
-        // A font-relative length is exported in px at the declaring element.
-        (PropertyKey::StrokeDashoffset, "-10px"),
+        (PropertyKey::StrokeDashoffset, "-1em"),
     ] {
         assert_eq!(
             exported(&properties, key),

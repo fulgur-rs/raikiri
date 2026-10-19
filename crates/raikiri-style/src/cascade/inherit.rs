@@ -906,20 +906,18 @@ pub(crate) fn walk_from<D: StyleDom>(
             _ => store.give_back(input),
         }
 
+        if is_svg && share_source.is_none() {
+            // The last ancestor is this element.
+            let ancestors = &ancestor_path[..ancestor_path.len().saturating_sub(1)];
+            absolutize_inherited_lengths(
+                &mut node_svg_properties,
+                ancestors,
+                &out.svg_properties,
+                &out.computed,
+                computed.font_size.0,
+            );
+        }
         if !node_svg_properties.is_empty() {
-            for property in &mut node_svg_properties {
-                if let Some(text) = property.expression.as_mut()
-                    && matches!(
-                        property.property,
-                        crate::property::PropertyKey::StrokeWidth
-                            | crate::property::PropertyKey::StrokeDasharray
-                            | crate::property::PropertyKey::StrokeDashoffset
-                    )
-                    && let Some(converted) = svg_lengths_in_px(text, computed.font_size.0)
-                {
-                    *text = converted;
-                }
-            }
             // Every element owns a copy of the text of its painting
             // declarations, so a long `url(#...)` paint counts once per element
             // it reaches.
@@ -1623,16 +1621,53 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
         )
 }
 
-/// `text`, a validated list of SVG lengths, with its `em` and `ex` terms
-/// converted to px against the element's computed `font-size`; `None` when
-/// it has no such term.
+/// Gives a stroke length that an element takes with `inherit` the computed
+/// value of the ancestor that declares it, when the two font sizes differ.
 ///
-/// A descendant that takes the value with `inherit` receives it as written,
-/// and an SVG renderer would resolve an `em` against the descendant's own
-/// font size. The computed value of a font-relative length is absolute
-/// (CSS Values 4 §6), so it is converted where it is declared. `ex` is half
-/// an `em`, as for [`Length::Ex`]. A percentage refers to the SVG viewport
-/// and an absolute unit needs no conversion.
+/// An SVG renderer copies the ancestor's text to the element and resolves a
+/// font-relative length against the element's own font size, while the
+/// computed value of the ancestor is absolute (CSS Values 4 §6). A
+/// declaration itself is exported as written: the elements a `<use>` instances
+/// resolve it against the font size of the instance.
+fn absolutize_inherited_lengths(
+    properties: &mut [SvgStyleProperty],
+    ancestors: &[StyleNodeId],
+    exported: &HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    computed: &[ComputedValues],
+    font_size_px: f32,
+) {
+    use crate::property::PropertyKey::{StrokeDasharray, StrokeDashoffset, StrokeWidth};
+    for property in properties.iter_mut().filter(|property| {
+        property.inherited
+            && matches!(
+                property.property,
+                StrokeWidth | StrokeDasharray | StrokeDashoffset
+            )
+    }) {
+        // The nearest ancestor that declares the property; one that inherits
+        // it hands the question to its own parent.
+        let declared = ancestors.iter().rev().find_map(|ancestor| {
+            let entry = exported
+                .get(ancestor)?
+                .iter()
+                .find(|entry| entry.property == property.property && !entry.inherited)?;
+            Some((computed.get(ancestor.0 as usize)?.font_size.0, entry))
+        });
+        if let Some((declared_font_size, entry)) = declared
+            && declared_font_size != font_size_px
+            && let Some(text) = entry.expression.as_deref()
+            && let Some(text) = svg_lengths_in_px(text, declared_font_size)
+        {
+            property.inherited = false;
+            property.expression = Some(text);
+        }
+    }
+}
+
+/// `text`, a validated list of SVG lengths, with its `em` and `ex` terms
+/// converted to px against `font_size_px`; `None` when it has no such term.
+/// `ex` is half an `em`, as for [`Length::Ex`]. A percentage refers to the
+/// SVG viewport and an absolute unit needs no conversion.
 fn svg_lengths_in_px(text: &str, font_size_px: f32) -> Option<String> {
     if !text.contains("em") && !text.contains("ex") {
         return None;
