@@ -2,6 +2,146 @@ use super::*;
 use crate::layout::context::LayoutSession;
 
 #[test]
+fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
+    use crate::layout::ifc::test_support::block_fixture_with_ahem;
+
+    let mut fixed = None;
+    let fixture = block_fixture_with_ahem("width:100px;height:40px", |doc, root| {
+        doc.append_text(root, "a");
+        let atomic = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+        fixed = Some(doc.append_element(
+            Some(atomic),
+            "div",
+            Style::default(),
+            Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
+        ));
+    });
+    let mut doc = fixture.doc;
+    let input = LayoutInput {
+        run_mode: taffy::RunMode::PerformLayout,
+        sizing_mode: taffy::SizingMode::InherentSize,
+        axis: taffy::RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(100.0),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: true,
+        },
+        parent_size: Size {
+            width: Some(100.0),
+            height: Some(100.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: taffy::Line::FALSE,
+    };
+
+    let output = compute_ifc_root(
+        &mut LayoutSession::new(&mut doc),
+        NodeId::from(fixture.root),
+        input,
+        None,
+    );
+    let fixed = NodeId::from(fixed.expect("fixed child"));
+    let candidate = output
+        .oof_candidates
+        .as_slice()
+        .iter()
+        .find(|candidate| candidate.node == fixed)
+        .expect("uncontained fixed descendant bubbles out of the IFC root");
+    assert_eq!(candidate.static_position.x.area.start, 10.0);
+}
+
+#[test]
+fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
+    use crate::layout::ifc::test_support::block_fixture_with_ahem;
+
+    for (case, child_style, leading_text) in [
+        ("block", "display:block;width:10px;height:10px", Some("a")),
+        (
+            "float",
+            "display:block;float:left;width:10px;height:10px",
+            Some("a"),
+        ),
+    ] {
+        let mut fixed = None;
+        let fixture = block_fixture_with_ahem("width:100px;height:40px", |doc, root| {
+            if let Some(text) = leading_text {
+                doc.append_text(root, text);
+            }
+            let child = doc.append_element(Some(root), "div", Style::default(), Some(child_style));
+            fixed = Some(doc.append_element(
+                Some(child),
+                "div",
+                Style::default(),
+                Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
+            ));
+        });
+        let mut doc = fixture.doc;
+        let input = LayoutInput {
+            run_mode: taffy::RunMode::PerformLayout,
+            sizing_mode: taffy::SizingMode::InherentSize,
+            axis: taffy::RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(100.0),
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            parent_size: Size {
+                width: Some(100.0),
+                height: Some(100.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: taffy::Line::FALSE,
+        };
+
+        let output = compute_ifc_root(
+            &mut LayoutSession::new(&mut doc),
+            NodeId::from(fixture.root),
+            input,
+            None,
+        );
+        let fixed = NodeId::from(fixed.expect("fixed child"));
+        let stored_candidates = doc.nodes[fixture.root]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .map(|lines| lines.oof_candidates.as_slice());
+        let candidate = output
+            .oof_candidates
+            .as_slice()
+            .iter()
+            .find(|candidate| candidate.node == fixed)
+            .unwrap_or_else(|| {
+                panic!(
+                    "uncontained fixed descendant bubbles from {case} child; output candidates: {:?}; stored: {:?}",
+                    output.oof_candidates.as_slice(),
+                    stored_candidates
+                )
+            });
+        assert_eq!(
+            candidate.static_position.x.area.start, 0.0,
+            "candidate is translated by the final {case} child location"
+        );
+    }
+}
+
+#[test]
 fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
     use raikiri_style::property::WritingMode;
     for (mode, expected) in [

@@ -23,8 +23,8 @@ use std::collections::{HashMap, HashSet};
 use taffy::util::ResolveOrZero;
 use taffy::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Clear, CollapsibleMarginSet,
-    FloatDirection, LayoutInput, LayoutPartialTree, Line, OofCandidate, OofPositioningArea, Point,
-    Position, RequestedAxis, RunMode, Size, SizingMode,
+    FloatDirection, LayoutInput, LayoutPartialTree, Line, OofCandidate, OofCandidates,
+    OofPositioningArea, Point, Position, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -93,6 +93,7 @@ struct FragmentedFloatOutput<'a> {
     adjoins_top_margin: bool,
     fragmentainer: Option<usize>,
     placements: &'a mut Vec<IfcBoxFragment>,
+    oof_candidates: &'a mut OofCandidates,
 }
 
 /// Resolve what the root's percentages refer to before its lines are laid
@@ -154,6 +155,7 @@ pub(crate) fn layout_with_boxes_in(
         return IfcLines {
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
+            oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -356,6 +358,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         return IfcLines {
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
+            oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -378,6 +381,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut fragmentainer_line_ranges = Vec::new();
     let mut unfragmented_tail_column = None;
     let mut atomic_outputs = Vec::new();
+    let mut oof_candidates = OofCandidates::new();
     let mut max_height = 0.0_f32;
     let mut beside_floats = false;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
@@ -451,7 +455,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
                 height,
             );
         }
-        let outcome = run_boxes_segment(
+        let mut outcome = run_boxes_segment(
             tree,
             &root,
             column_geometry,
@@ -510,6 +514,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         }
         fragment_box_placements.extend(carried_placements);
         fragment_box_placements.extend(outcome.lines.fragment_box_placements);
+        oof_candidates.append(&mut outcome.lines.oof_candidates);
         atomic_outputs.extend(outcome.atomic_outputs);
         let column_lines = std::sync::Arc::try_unwrap(outcome.lines.lines)
             .unwrap_or_else(|_| unreachable!("column lines have a single owner"));
@@ -526,9 +531,10 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     if perform {
         truncate_for_text_overflow(tree, &root, &mut lines, geometry.width);
     }
-    let result = IfcLines {
+    let mut result = IfcLines {
         width: geometry.width,
         lines: lines.clone(),
+        oof_candidates,
         height: max_height,
         beside_floats,
         escaping_margin,
@@ -541,7 +547,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         placed_blocks: Vec::new(),
     };
     if perform {
-        place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
+        let mut atomic_candidates =
+            place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
+        result.oof_candidates.append(&mut atomic_candidates);
         hide_truncated_atomics(tree, &lines, &atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, &root);
         super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry);
@@ -670,13 +678,14 @@ fn run_boxes(
     );
     if perform {
         truncate_for_text_overflow(tree, root, &mut outcome.lines.lines, geometry.width);
-        place_atomics(
+        let mut atomic_candidates = place_atomics(
             tree,
             &outcome.lines.lines,
             &outcome.atomic_outputs,
             geometry,
             root.rtl,
         );
+        outcome.lines.oof_candidates.append(&mut atomic_candidates);
         hide_truncated_atomics(tree, &outcome.lines.lines, &outcome.atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, root);
         super::records::record_inline_boxes(tree, idx, root, &outcome.lines.lines, &geometry);
@@ -749,6 +758,7 @@ fn run_boxes_segment(
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
     let mut fragment_box_placements = Vec::new();
+    let mut oof_candidates = OofCandidates::new();
     let mut continuation = None;
     // `open_block` is the block-level `::before` or `::after` whose lines
     // are being laid out: its start token was met and its end token was not.
@@ -963,6 +973,7 @@ fn run_boxes_segment(
                                 adjoins_top_margin: false,
                                 fragmentainer,
                                 placements: &mut fragment_box_placements,
+                                oof_candidates: &mut oof_candidates,
                             },
                         ));
                     }
@@ -991,6 +1002,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            oof_candidates: &mut oof_candidates,
                         },
                     ));
                 }
@@ -1030,6 +1042,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            oof_candidates: &mut oof_candidates,
                         },
                     ));
                 }
@@ -1050,6 +1063,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: top_margin_escapes && leading_margin_open,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            oof_candidates: &mut oof_candidates,
                         },
                     ));
                 }
@@ -1109,7 +1123,7 @@ fn run_boxes_segment(
                     && y == 0.0
                     && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
-                let block = layout_block_child(
+                let mut block = layout_block_child(
                     tree,
                     ctx,
                     node.0 as usize,
@@ -1119,6 +1133,7 @@ fn run_boxes_segment(
                     perform,
                     top_margin_escapes && starts_paragraph,
                 );
+                oof_candidates.append(&mut block.oof_candidates);
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
                         leading_block_margin = Some(margin);
@@ -1192,6 +1207,7 @@ fn run_boxes_segment(
                     adjoins_top_margin: false,
                     fragmentainer,
                     placements: &mut fragment_box_placements,
+                    oof_candidates: &mut oof_candidates,
                 },
             );
         }
@@ -1223,6 +1239,7 @@ fn run_boxes_segment(
             width,
             height,
             lines: std::sync::Arc::new(lines),
+            oof_candidates,
             beside_floats: beside,
             escaping_margin,
             leading_block_margin,
@@ -1253,9 +1270,12 @@ fn commit_fragmented_float(
         adjoins_top_margin,
         fragmentainer,
         placements,
+        oof_candidates,
     } = output;
     let node = float.node;
-    let top = commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
+    let (top, mut child_candidates) =
+        commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
+    oof_candidates.append(&mut child_candidates);
     if perform && let Some(fragmentainer) = fragmentainer {
         let layout = tree.nodes[node].unrounded_layout;
         placements.push(IfcBoxFragment {
@@ -1630,6 +1650,8 @@ pub(crate) fn measure_atomics(
 
 /// What laying out a block child gives the line loop.
 struct BlockChild {
+    /// Out-of-flow candidates from this child's subtree, translated into the root's coordinates.
+    oof_candidates: OofCandidates,
     /// Top of the block's border box, from the content-box top.
     top: f32,
     /// Where the content after the block starts, before `pending`: the
@@ -1650,6 +1672,15 @@ struct BlockChild {
     top_margin: Option<CollapsibleMarginSet>,
     /// No content or formatting boundary separates the margins through it.
     collapses_through: bool,
+}
+
+fn translated_child_oof_candidates(
+    output: &taffy::LayoutOutput,
+    location: taffy::Point<f32>,
+) -> OofCandidates {
+    let mut candidates = output.oof_candidates.clone();
+    candidates.translate(location);
+    candidates
 }
 
 /// Lay a block child out below the offset `y`, as wide as the content box
@@ -1821,6 +1852,7 @@ fn layout_block_child(
         break (output, floats_bottom, top, after, has_clearance, top_set);
     };
     ctx.add_child_floated_content_height_contribution(geometry.top_edge + guess + floats_bottom);
+    let mut child_candidates = OofCandidates::new();
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.
@@ -1835,9 +1867,11 @@ fn layout_block_child(
             x: geometry.edges.0 + margin.left + dx,
             y: geometry.top_edge + top + dy,
         };
+        child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
     BlockChild {
+        oof_candidates: child_candidates,
         top,
         next_y: after.0,
         pending: after.1,
@@ -1950,15 +1984,18 @@ fn layout_vertical_block_child(
             block_size: output.size.width,
         },
     );
+    let mut child_candidates = OofCandidates::new();
     if perform {
         let (dx, dy) = relative_inset(tree, node, basis, relative_height(&geometry), geometry.axes);
         let location = taffy::Point {
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
         };
+        child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, inline_basis);
     }
     BlockChild {
+        oof_candidates: child_candidates,
         top: block_start,
         next_y: block_start + output.size.width,
         pending: CollapsibleMarginSet::from_margin(block_end_margin),
@@ -2113,6 +2150,7 @@ fn layout_formatting_context_child(
     } else {
         position.y - geometry.top_edge
     };
+    let mut child_candidates = OofCandidates::new();
     if perform {
         let (dx, dy) = relative_inset(
             tree,
@@ -2125,9 +2163,11 @@ fn layout_formatting_context_child(
             x: position.x + extra_left + dx,
             y: geometry.top_edge + top + dy,
         };
+        child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
     BlockChild {
+        oof_candidates: child_candidates,
         top,
         next_y: top + output.size.height,
         pending: CollapsibleMarginSet::from_margin(margin.bottom),
@@ -2450,9 +2490,10 @@ fn place_atomics(
     outputs: &[(usize, taffy::LayoutOutput)],
     geometry: FlowGeometry,
     rtl: bool,
-) {
+) -> OofCandidates {
+    let mut candidates = OofCandidates::new();
     if outputs.is_empty() {
-        return;
+        return candidates;
     }
     let mut outputs_by_node = HashMap::with_capacity(outputs.len());
     for (node, output) in outputs {
@@ -2495,9 +2536,12 @@ fn place_atomics(
                 x: geometry.edges.0 + physical.x + dx,
                 y: geometry.top_edge + physical.y + dy,
             };
+            let mut child_candidates = translated_child_oof_candidates(output, location);
+            candidates.append(&mut child_candidates);
             commit_child_layout(tree, node, output, location, geometry.width);
         }
     });
+    candidates
 }
 
 /// Move the atomic inlines of lines that were split into columns to the
@@ -2633,7 +2677,8 @@ pub(crate) fn commit_float(
     geometry: FlowGeometry,
     perform: bool,
     adjoins_top_margin: bool,
-) -> f32 {
+) -> (f32, OofCandidates) {
+    let mut oof_candidates = OofCandidates::new();
     // The context measures block offsets from the border-box top.
     let position = ctx.place_floated_box(
         float.margin_box,
@@ -2647,9 +2692,11 @@ pub(crate) fn commit_float(
             x: position.x + float.margin.left,
             y: position.y + float.margin.top,
         };
+        let mut child_candidates = translated_child_oof_candidates(&float.output, location);
+        oof_candidates.append(&mut child_candidates);
         commit_child_layout(tree, float.node, &float.output, location, geometry.width);
     }
-    position.y - geometry.top_edge
+    (position.y - geometry.top_edge, oof_candidates)
 }
 
 /// Store the final layout of a child that the ifc root laid out itself.
@@ -2723,7 +2770,7 @@ pub(crate) fn place_out_of_flow(
         .filter(|b| b.kind == IfcBoxKind::OutOfFlow)
         .map(|b| b.node)
         .collect();
-    if positioned.is_empty() {
+    if positioned.is_empty() && output.oof_candidates.is_empty() {
         return;
     }
     let rtl = root.rtl;
@@ -2747,6 +2794,19 @@ pub(crate) fn place_out_of_flow(
         width: (border_box.width - border.left - border.right).max(0.0),
         height: (border_box.height - border.top - border.bottom).max(0.0),
     };
+    if positioned.is_empty() {
+        output.oof_positioning_area = Some(OofPositioningArea {
+            size: Size {
+                width: root_cb.width,
+                height: root_cb.height,
+            },
+            offset: Point {
+                x: root_cb.x,
+                y: root_cb.y,
+            },
+        });
+        return;
+    }
     let content_left = border.left + padding.left;
     let content_top = border.top + padding.top;
     let owner = tree.ifc_source_owner(idx);
@@ -2928,6 +2988,8 @@ pub(crate) fn place_out_of_flow(
     }
     if !candidates.is_empty() {
         output.oof_candidates.append(&mut candidates);
+    }
+    if !output.oof_candidates.is_empty() {
         output.oof_positioning_area = Some(OofPositioningArea {
             size: Size {
                 width: root_cb.width,

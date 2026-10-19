@@ -155,6 +155,8 @@ pub(crate) struct IfcLines {
     pub(crate) width: f32,
     /// Shared, so cloning a root or a document does not copy them.
     pub(crate) lines: Arc<Vec<Line>>,
+    /// Out-of-flow candidates bubbled from in-flow child layouts.
+    pub(crate) oof_candidates: taffy::OofCandidates,
     /// Sum of the line advances.
     pub(crate) height: f32,
     /// True when some line was laid out beside a float (its space was

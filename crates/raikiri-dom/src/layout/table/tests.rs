@@ -2730,6 +2730,61 @@ fn table_oof_candidates_use_the_rtl_border_and_scrollbar_area() {
 }
 
 #[test]
+fn in_flow_caption_bubbles_uncontained_fixed_candidates() {
+    let mut doc = Document::new();
+    let table = doc.append_element(
+        Some(0),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px;height:50px"),
+    );
+    let caption = doc.append_element(
+        Some(table),
+        "caption",
+        Style::default(),
+        Some("display:table-caption;width:20px;height:10px;margin-left:17px"),
+    );
+    let fixed = doc.append_element(
+        Some(caption),
+        "div",
+        Style::default(),
+        Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+
+    let mut inputs = column_probe_input();
+    inputs.known_dimensions = Size {
+        width: Some(100.0),
+        height: Some(50.0),
+    };
+    inputs.known_dimensions_are_definite = taffy::geometry::Size {
+        width: true,
+        height: true,
+    };
+    inputs.parent_size = Size {
+        width: Some(100.0),
+        height: Some(100.0),
+    };
+    inputs.available_space = Size {
+        width: AvailableSpace::Definite(100.0),
+        height: AvailableSpace::Definite(100.0),
+    };
+    let output = with_layout_session(&mut doc, |session| {
+        compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+    });
+
+    let candidate = output
+        .oof_candidates
+        .as_slice()
+        .iter()
+        .find(|candidate| candidate.node == taffy::NodeId::from(fixed))
+        .expect("fixed descendant bubbles out of the in-flow caption");
+    assert_eq!(candidate.static_position.x.area.start, 17.0);
+}
+
+#[test]
 fn resolve_fixed_column_widths_first_row_percent_resolves_against_avail() {
     let grid = super::TableGrid {
         n_cols: 2,

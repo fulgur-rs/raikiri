@@ -1038,6 +1038,7 @@ fn compute_ifc_root(
     let mut content_baseline = None;
     let mut leading_margin = CollapsibleMarginSet::ZERO;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
+    let mut nested_oof_candidates = taffy::OofCandidates::new();
     let mut measure = measure;
     let auto_vertical_block_size = tree.nodes[idx]
         .ifc
@@ -1141,6 +1142,7 @@ fn compute_ifc_root(
             content_baseline = measured.first_baseline;
             leading_margin = measured.top_margin;
             escaping_margin = measured.bottom_margin;
+            nested_oof_candidates = measured.oof_candidates;
             measured.size
         });
     if auto_vertical_block_size && let Some(measured_size) = measured_size {
@@ -1151,6 +1153,7 @@ fn compute_ifc_root(
     }
     output.top_margin = leading_margin;
     output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
+    output.oof_candidates.append(&mut nested_oof_candidates);
     if inputs.run_mode == RunMode::PerformLayout {
         crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size, &mut output);
     }
@@ -1319,6 +1322,7 @@ struct IfcMeasurement {
     first_baseline: Option<f32>,
     top_margin: CollapsibleMarginSet,
     bottom_margin: CollapsibleMarginSet,
+    oof_candidates: taffy::OofCandidates,
 }
 
 impl IfcMeasurement {
@@ -1327,6 +1331,7 @@ impl IfcMeasurement {
         first_baseline: None,
         top_margin: CollapsibleMarginSet::ZERO,
         bottom_margin: CollapsibleMarginSet::ZERO,
+        oof_candidates: taffy::OofCandidates::new(),
     };
 }
 
@@ -1698,6 +1703,11 @@ fn measure_ifc_root(
     } else {
         CollapsibleMarginSet::ZERO
     };
+    let oof_candidates = if measure.run_mode == RunMode::PerformLayout {
+        lines.oof_candidates.clone()
+    } else {
+        taffy::OofCandidates::new()
+    };
     if measure.run_mode == RunMode::PerformLayout
         && let Some(mut root) = tree.nodes[idx].ifc.take()
     {
@@ -1713,6 +1723,7 @@ fn measure_ifc_root(
         first_baseline: baseline,
         top_margin: leading_margin,
         bottom_margin: escaping_margin,
+        oof_candidates,
     }
 }
 

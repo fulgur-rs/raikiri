@@ -195,7 +195,7 @@ fn layout_table_caption(
     table_idx: usize,
     parent_width: f32,
     parent_height: Option<f32>,
-) -> Option<Size<f32>> {
+) -> Option<(Size<f32>, OofCandidates)> {
     let caption_id = doc.nodes[table_idx]
         .children
         .iter()
@@ -319,10 +319,31 @@ fn layout_table_caption(
         },
     };
     doc.store_unrounded_layout(caption_id, &layout);
-    Some(Size {
-        width: output.size.width + margin_left + margin_right,
-        height: output.size.height + margin_top + margin_bottom,
-    })
+    Some((
+        Size {
+            width: output.size.width + margin_left + margin_right,
+            height: output.size.height + margin_top + margin_bottom,
+        },
+        output.oof_candidates,
+    ))
+}
+
+fn translate_table_caption_candidates(
+    doc: &Document,
+    table_idx: usize,
+    candidates: &mut OofCandidates,
+) {
+    if candidates.is_empty() {
+        return;
+    }
+    if let Some(caption) = doc.nodes[table_idx]
+        .children
+        .iter()
+        .copied()
+        .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption)
+    {
+        candidates.translate(doc.nodes[caption].unrounded_layout.location);
+    }
 }
 
 fn position_table_caption(
@@ -657,7 +678,7 @@ fn compute_table_layout_checked(
         if vertical_writing {
             height = height.max(caption_inline_minimum);
         }
-        let caption_size = layout_table_caption(
+        let (caption_size, mut caption_candidates) = layout_table_caption(
             doc,
             table_idx,
             if specified_w.is_some() || effective_known.width.is_some() {
@@ -670,7 +691,9 @@ fn compute_table_layout_checked(
             } else {
                 inputs.parent_size.height
             },
-        );
+        )
+        .map(|(size, candidates)| (Some(size), candidates))
+        .unwrap_or_else(|| (None, OofCandidates::new()));
         if !vertical_writing && let Some(size) = caption_size {
             width = width.max(size.width);
         }
@@ -681,11 +704,12 @@ fn compute_table_layout_checked(
             caption_size,
             inputs.run_mode,
         );
+        translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
         return Ok(table_layout_output(
             doc,
             table_idx,
             wrapper_size,
-            OofCandidates::new(),
+            caption_candidates,
             inputs.run_mode,
         ));
     }
@@ -1007,7 +1031,7 @@ fn compute_table_layout_checked(
         },
     };
 
-    let caption_size = layout_table_caption(
+    let (caption_size, mut caption_candidates) = layout_table_caption(
         doc,
         table_idx,
         final_size.width,
@@ -1016,9 +1040,13 @@ fn compute_table_layout_checked(
         } else {
             inputs.parent_size.height
         },
-    );
+    )
+    .map(|(size, candidates)| (Some(size), candidates))
+    .unwrap_or_else(|| (None, OofCandidates::new()));
     let (wrapper_size, grid_origin) =
         position_table_caption(doc, table_idx, final_size, caption_size, inputs.run_mode);
+    translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
+    oof_candidates.append(&mut caption_candidates);
     if inputs.run_mode == RunMode::ComputeSize {
         return Ok(LayoutOutput::from_outer_size(wrapper_size));
     }
