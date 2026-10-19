@@ -18,7 +18,7 @@ use kurbo::{Affine, Arc, BezPath, Point, Rect, Vec2};
 use peniko::color::{
     AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Lab, Lch, LinearSrgb, Oklab, Oklch, Srgb,
 };
-use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
+use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient};
 use raikiri_dom::image_geometry::{
     DeviceGrid, VisibleArea, background_image_dimensions, background_tiles,
     border_image_geometry_within, position_offset, rounded_background_tile_size,
@@ -46,6 +46,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 mod box_layers;
 mod box_paint;
 mod child_frames;
+mod element_background;
 mod element_box;
 mod frames;
 mod gradient;
@@ -60,6 +61,7 @@ mod visit_text;
 pub(crate) use image_brush::ImageBrushCache;
 pub(crate) use inline_box::paint_inline_box;
 
+use element_background::ElementBackgroundLayer;
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
 use page_geometry::PageGeometry;
 use paint_walk::PaintWalk;
@@ -2888,9 +2890,8 @@ fn paint_element_background_layers(
                  image: &BackgroundImage,
                  image_color_fallback: bool,
                  warnings: &mut Vec<RenderWarning>| {
-        paint_element_background_slice(
+        ElementBackgroundLayer {
             image_cache,
-            scene,
             width,
             height,
             abs_x,
@@ -2898,25 +2899,25 @@ fn paint_element_background_layers(
             bg,
             image,
             current_color,
-            layer.clip,
-            layer.origin,
+            clip: layer.clip,
+            origin: layer.origin,
             border_radius,
             border,
             padding,
-            BackgroundEnv {
+            env: BackgroundEnv {
                 fixed_viewport: env.fixed_viewport.filter(|_| {
                     layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed
                 }),
                 ..env
             },
-            &layer.size,
-            &layer.position,
-            &layer.repeat,
+            size: &layer.size,
+            position: &layer.position,
+            repeat: &layer.repeat,
             pixel_source,
-            warnings,
             image_slice,
             image_color_fallback,
-        );
+        }
+        .paint(scene, warnings);
     };
     if let [layer] = layers {
         paint(scene, bg, layer, &layer.image, true, warnings);
@@ -2942,390 +2943,6 @@ fn paint_element_background_layers(
                 warnings,
             );
         }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn paint_element_background_slice(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    width: f32,
-    height: f32,
-    abs_x: f32,
-    abs_y: f32,
-    bg: CssColor,
-    bg_image: &BackgroundImage,
-    current_color: CssColor,
-    clip: VisualBox,
-    origin: VisualBox,
-    border_radius: &ComputedBorderRadius,
-    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &taffy::Rect<f32>,
-    env: BackgroundEnv,
-    background_size: &ComputedBackgroundSize,
-    background_position: &ComputedCssPosition,
-    background_repeat: &raikiri_style::property::BackgroundRepeat,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-    image_slice: Option<Rect>,
-    image_color_fallback: bool,
-) {
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-    let background_url = match bg_image {
-        BackgroundImage::Url(raw_url) => image_cache.resolve_url(raw_url),
-        _ => None,
-    };
-    // Without the image-derived fallback, the color is painted as declared.
-    let effective = if image_color_fallback {
-        background_color_with_image_source(bg, bg_image, current_color, pixel_source)
-    } else {
-        (bg.a != 0).then_some(bg)
-    };
-    // A gradient paints even when its first stop is transparent.
-    let has_gradient = matches!(bg_image, BackgroundImage::Gradient(_));
-    if effective.is_none() && background_url.is_none() && !has_gradient {
-        return;
-    }
-    let effective = effective.unwrap_or(CssColor {
-        r: 0,
-        g: 0,
-        b: 0,
-        a: 0,
-    });
-    if effective.a == 0 && background_url.is_none() && !has_gradient {
-        return;
-    }
-    // background-clip: text trims to glyph shapes (CSS Backgrounds 4 section 2.6).
-    // Glyph-path clipping is not implemented; warn and skip so the gap is
-    // visible instead of silently mispainting an opaque rect. `border-area
-    // text` clips to the union of the border area and the glyphs and needs
-    // the same glyph clipping.
-    if matches!(clip, VisualBox::Text | VisualBox::BorderAreaText) {
-        if effective.a != 0 || background_url.is_some() || has_gradient {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: background_url
-                        .as_ref()
-                        .map(redacted_image_url),
-                },
-                node_id: None,
-                details:
-                    "background-clip: text for CSS backgrounds is not yet implemented; the background was skipped"
-                        .into(),
-            });
-        }
-        return;
-    }
-    // Border-box geometry from taffy layout. `border-radius` percentages
-    // resolve against this box before any origin/clip inset is applied.
-    let (bx0, by0, bx1, by1) = (
-        (abs_x as f64).round(),
-        (abs_y as f64).round(),
-        ((abs_x + width) as f64).round(),
-        ((abs_y + height) as f64).round(),
-    );
-    let radius_reference = (bx1 - bx0, by1 - by0);
-    let bl = border.left.width().px() as f64;
-    let bt = border.top.width().px() as f64;
-    let br = border.right.width().px() as f64;
-    let bb = border.bottom.width().px() as f64;
-    let pl = padding.left as f64;
-    let pt = padding.top as f64;
-    let pr = padding.right as f64;
-    let pb = padding.bottom as f64;
-    let color = Color::from_rgba8(effective.r, effective.g, effective.b, effective.a);
-    // When an opaque background and all border sides use the same color, the
-    // visible union is the border-box curve. Painting that union once avoids
-    // a one-pixel seam where an inner clipped fill meets its border ring. A
-    // gradient is not one color, so it keeps its own clip.
-    let border_box_union = matches!(clip, VisualBox::PaddingBox | VisualBox::ContentBox)
-        && effective.a != 0
-        && !has_gradient
-        && [&border.top, &border.right, &border.bottom, &border.left]
-            .iter()
-            .all(|side| {
-                side.style() == BorderStyle::Solid
-                    && side.width().px() > 0.0
-                    && matches!(side.color, BorderColor::Resolved(c) if c == effective)
-            });
-    // A rounded border-box background is pulled in from the border edge when
-    // the border hides that edge, so the anti-aliased corner pixels do not
-    // blend the background into the border's fringe. The inset is half the
-    // border width, or a sixth when a double border has a gap to keep covered
-    // (the shrink Chrome applies to avoid background bleed). Positioning is
-    // unaffected: only the painted area shrinks.
-    let bleed_inset = (env.border_hides_edge
-        && matches!(clip, VisualBox::BorderBox)
-        && used_border_radii(border_radius, radius_reference.0, radius_reference.1)
-            .iter()
-            .flatten()
-            .any(|value| *value > 0.0))
-    .then(|| {
-        let double = [&border.top, &border.right, &border.bottom, &border.left]
-            .iter()
-            .any(|side| side.style() == BorderStyle::Double);
-        if double { 1.0 / 6.0 } else { 0.5 }
-    });
-    let clip = if border_box_union {
-        VisualBox::BorderBox
-    } else {
-        clip
-    };
-    // Positioning area from `background-origin` (CSS Backgrounds 3 section 2.8).
-    // It follows the layout box rather than the snapped painting box, so a
-    // centered or sized image lands where the unsnapped geometry puts it;
-    // the tile is snapped to device pixels when it is drawn.
-    // `border-area`/`text` are not valid origins; warn and fall back to the
-    // spec initial `padding-box` instead of silently mispositioning.
-    let (ux0, uy0, ux1, uy1) = (
-        abs_x as f64,
-        abs_y as f64,
-        (abs_x + width) as f64,
-        (abs_y + height) as f64,
-    );
-    let (px0, py0, px1, py1) = match origin {
-        VisualBox::BorderBox => (ux0, uy0, ux1, uy1),
-        VisualBox::PaddingBox => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
-        VisualBox::ContentBox => (ux0 + bl + pl, uy0 + bt + pt, ux1 - br - pr, uy1 - bb - pb),
-        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: background_url.as_ref().map(redacted_image_url),
-                },
-                node_id: None,
-                details:
-                    "background-origin has an unsupported visual box; using padding-box positioning"
-                        .into(),
-            });
-            (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb)
-        }
-        // cov:ignore: defensive fallback for future `VisualBox` variants
-        _ => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
-    };
-    // A `fixed` layer is positioned in the page area whatever its origin
-    // (CSS Backgrounds 3 section 2.5) and still painted in its clip box.
-    let positioning = env
-        .fixed_viewport
-        .unwrap_or_else(|| Rect::new(px0, py0, px1, py1));
-    // Painting area from `background-clip` (CSS Backgrounds 3 section 2.7).
-    // Width/height is border-box size from taffy layout.
-    let mut radius_inset = (0.0, 0.0, 0.0, 0.0);
-    let painting = match clip {
-        VisualBox::BorderArea => {
-            // Border area is the border box minus the padding box (outer ring).
-            // Paint color as 4 strips so inner padding/content stays transparent.
-            // URL images in the ring need per-strip tiling that is not yet
-            // implemented; warn and skip the image instead of silently omitting it.
-            let inner_x0 = bx0 + bl;
-            let inner_y0 = by0 + bt;
-            let inner_x1 = bx1 - br;
-            let inner_y1 = by1 - bb;
-            if inner_x1 <= inner_x0
-                || inner_y1 <= inner_y0
-                || (bl == 0.0 && bt == 0.0 && br == 0.0 && bb == 0.0)
-            {
-                // Zero borders make the ring equivalent to the border box.
-                // Fall through to the standard border-box path below so URL
-                // images paint normally instead of being skipped.
-                radius_inset = (0.0, 0.0, 0.0, 0.0);
-                Rect::new(bx0, by0, bx1, by1)
-            } else {
-                // The border area is where the borders draw, with their
-                // styles and radii (CSS Backgrounds 4 §2.6). Draw the borders
-                // opaque as a mask, then composite the background, painted
-                // over the whole border box, into it.
-                let border_box = Rect::new(bx0, by0, bx1, by1);
-                scene.push_layer(Mix::Normal, 1.0, Affine::IDENTITY, &border_box, None, None);
-                let mut mask = *border;
-                for side in [
-                    &mut mask.top,
-                    &mut mask.right,
-                    &mut mask.bottom,
-                    &mut mask.left,
-                ] {
-                    side.color = BorderColor::Resolved(CssColor::BLACK);
-                }
-                paint_element_border_rounded(
-                    scene,
-                    width,
-                    height,
-                    abs_x,
-                    abs_y,
-                    &mask,
-                    current_color,
-                    border_radius,
-                );
-                scene.push_layer(
-                    peniko::BlendMode::new(Mix::Normal, peniko::Compose::SrcIn),
-                    1.0,
-                    Affine::IDENTITY,
-                    &border_box,
-                    None,
-                    None,
-                );
-                paint_element_background_slice(
-                    image_cache,
-                    scene,
-                    width,
-                    height,
-                    abs_x,
-                    abs_y,
-                    bg,
-                    bg_image,
-                    current_color,
-                    VisualBox::BorderBox,
-                    origin,
-                    // The mask already carries the corners; clipping the
-                    // background to them again would square their coverage.
-                    &ComputedBorderRadius::all(ComputedLength(0.0)),
-                    border,
-                    padding,
-                    // The mask already limits the background to the border
-                    // ring, so there is no edge to keep clear of the image.
-                    BackgroundEnv {
-                        border_hides_edge: false,
-                        ..env
-                    },
-                    background_size,
-                    background_position,
-                    background_repeat,
-                    pixel_source,
-                    warnings,
-                    image_slice,
-                    image_color_fallback,
-                );
-                scene.pop_layer();
-                scene.pop_layer();
-                return;
-            }
-        }
-        VisualBox::PaddingBox => {
-            radius_inset = (bl, bt, br, bb);
-            Rect::new(
-                (bx0 + bl).round(),
-                (by0 + bt).round(),
-                (bx1 - br).round(),
-                (by1 - bb).round(),
-            )
-        }
-        VisualBox::ContentBox => {
-            radius_inset = (bl + pl, bt + pt, br + pr, bb + pb);
-            Rect::new(
-                (bx0 + bl + pl).round(),
-                (by0 + bt + pt).round(),
-                (bx1 - br - pr).round(),
-                (by1 - bb - pb).round(),
-            )
-        }
-        VisualBox::BorderBox => match bleed_inset {
-            Some(fraction) => {
-                radius_inset = (bl * fraction, bt * fraction, br * fraction, bb * fraction);
-                Rect::new(
-                    bx0 + radius_inset.0,
-                    by0 + radius_inset.1,
-                    bx1 - radius_inset.2,
-                    by1 - radius_inset.3,
-                )
-            }
-            None => Rect::new(bx0, by0, bx1, by1),
-        },
-        // `text` returns above; this arm is unreachable but keeps the match
-        // exhaustive for future `VisualBox` variants.
-        // cov:ignore: unreachable text arm; early return above handles text
-        VisualBox::Text | VisualBox::BorderAreaText => Rect::new(bx0, by0, bx1, by1),
-        // cov:ignore: defensive fallback for future `VisualBox` variants
-        _ => Rect::new(bx0, by0, bx1, by1),
-    };
-    // Guard against negative or inverted rect after inset (e.g. border larger than box)
-    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
-        return;
-    }
-    let rounded = rounded_background_path(
-        painting.x0,
-        painting.y0,
-        painting.x1,
-        painting.y1,
-        border_radius,
-        radius_inset,
-        radius_reference,
-    );
-    // A rounded box clips its color and its image or gradient to the curve
-    // together (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
-    // Clipped one by one, the antialiased edge would cover the color twice,
-    // once for the color and once more for the image over it, and show more of
-    // it past the curve. Square painting areas and color-only boxes skip the
-    // layer.
-    if let BackgroundImage::Gradient(gradient) = bg_image {
-        if let Some(curve) = rounded.as_ref() {
-            scene.push_clip_layer(Affine::IDENTITY, curve);
-        }
-        if bg.a != 0 {
-            let base = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
-            scene.fill(Fill::NonZero, Affine::IDENTITY, base, None, &painting);
-        }
-        if let Gradient::Conic(conic) = &**gradient {
-            paint_conic_gradient(scene, conic, positioning, painting, current_color);
-        } else {
-            gradient::paint_gradient_layer(
-                scene,
-                gradient,
-                positioning,
-                image_slice.map_or(painting, |slice| painting.intersect(slice)),
-                background_size,
-                background_position,
-                background_repeat,
-                current_color,
-            );
-        }
-        if rounded.is_some() {
-            scene.pop_layer();
-        }
-        return;
-    }
-    let image = background_url.as_ref().zip(pixel_source);
-    let grouped = rounded.as_ref().filter(|_| image.is_some());
-    if let Some(curve) = grouped {
-        scene.push_clip_layer(Affine::IDENTITY, curve);
-    }
-    if effective.a != 0 {
-        if grouped.is_some() {
-            // The layer clips this fill to the curve.
-            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
-        } else {
-            fill_rounded_background(
-                scene,
-                color,
-                painting.x0,
-                painting.y0,
-                painting.x1,
-                painting.y1,
-                border_radius,
-                radius_inset,
-                radius_reference,
-            );
-        }
-    }
-    if let Some((url, source)) = image {
-        paint_background_from_source(
-            image_cache,
-            scene,
-            url,
-            positioning,
-            image_slice.map_or(painting, |slice| painting.intersect(slice)),
-            background_size,
-            background_position,
-            background_repeat,
-            env.device_grid,
-            source,
-            warnings,
-        );
-    }
-    if grouped.is_some() {
-        scene.pop_layer();
     }
 }
 
