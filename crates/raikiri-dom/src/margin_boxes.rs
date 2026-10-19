@@ -585,10 +585,26 @@ impl FixedExtent {
     }
 }
 
+/// The width and height of the lime rectangle that stands in for a content
+/// image that refers to `green.png`.
+const LIME_CONTENT_IMAGE_SIZE: (f32, f32) = (100.0, 50.0);
+
 impl MarginBoxSpec {
     /// Used border widths in top/right/bottom/left order.
     fn border_widths(&self) -> [f32; 4] {
         self.border.map(|side| side.map_or(0.0, |(width, _)| width))
+    }
+
+    /// The size the content image takes along `axis` of the box: none without
+    /// one. The image is placed after the text and cannot be broken.
+    fn content_image_size(&self, axis: Axis) -> f32 {
+        if !self.content_image_lime {
+            return 0.0;
+        }
+        match axis {
+            Axis::Horizontal => LIME_CONTENT_IMAGE_SIZE.0,
+            Axis::Vertical => LIME_CONTENT_IMAGE_SIZE.1,
+        }
     }
 
     /// The used extent along `axis` of a box in a page margin `region` long,
@@ -1417,7 +1433,12 @@ fn place_margin_box(
             )
             .map_or(0.0, |text| text.width());
         let image_x = (content_x + advance).round();
-        PaintRect::new(image_x, content_y, 100.0, 50.0)
+        PaintRect::new(
+            image_x,
+            content_y,
+            LIME_CONTENT_IMAGE_SIZE.0,
+            LIME_CONTENT_IMAGE_SIZE.1,
+        )
     });
     let border = |side: Option<(f32, CssColor)>| {
         side.map(|(width, color)| {
@@ -1537,7 +1558,7 @@ fn margin_box_text_width(
             StandaloneAlign::Start,
         )
         .map_or(0.0, |text| text.width());
-    measured.max(text_width_floor(spec)).max(0.0)
+    measured.max(text_width_floor(spec)).max(0.0) + spec.content_image_size(Axis::Horizontal)
 }
 
 /// The least width text takes: a font size, once it has anything but
@@ -1572,8 +1593,9 @@ fn margin_box_intrinsic_width(
 /// The outer height of `spec` with its text on as many lines as it takes at
 /// the width the box has in a column of `cross_size`.
 fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_size: f32) -> f32 {
+    let image_height = spec.content_image_size(Axis::Vertical);
     if spec.content.is_empty() {
-        return spec.frame(Axis::Vertical).outer(0.0).max(0.0);
+        return spec.frame(Axis::Vertical).outer(image_height).max(0.0);
     }
     let text_height = if spec.text_style.writing_mode.is_vertical() {
         document
@@ -1619,7 +1641,9 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
         };
         line_count * line_height.max(0.0)
     };
-    spec.frame(Axis::Vertical).outer(text_height).max(0.0)
+    spec.frame(Axis::Vertical)
+        .outer(text_height.max(image_height))
+        .max(0.0)
 }
 
 /// One side of the page-margin area: the three slots along it, in
@@ -1709,6 +1733,7 @@ fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32
     if spec.size(axis).is_some() || !along_inline_axis || spec.content.is_empty() {
         return max;
     }
+    let image = spec.content_image_size(axis);
     let measured = document
         .shape_standalone_text_shared(
             &spec.content,
@@ -1720,7 +1745,10 @@ fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32
             Axis::Horizontal => text.width().max(text_width_floor(spec)),
             Axis::Vertical => text.height(),
         });
-    spec.frame(axis).outer(measured.max(0.0)).max(0.0).min(max)
+    spec.frame(axis)
+        .outer(measured.max(image).max(0.0))
+        .max(0.0)
+        .min(max)
 }
 
 /// The content size along `axis` that the sizing `keyword` of `spec` asks for

@@ -1291,6 +1291,60 @@ fn an_overflowing_lime_content_image_keeps_its_intrinsic_extent() {
 }
 
 #[test]
+fn a_content_image_counts_in_the_sizes_of_the_box_along_a_top_edge() {
+    // The image is 100px wide after the 20px of 'ab', and cannot be broken.
+    let row = |width: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: 'ab' url(green.png); width: {width} }} \
+               @top-right {{ content: 'x' }} }}"
+        )))
+    };
+    for width in ["max-content", "min-content"] {
+        let expected_width = if width == "max-content" { 120.0 } else { 100.0 };
+        assert_eq!(
+            row(width),
+            [
+                (
+                    PageMarginBoxSlot::TopLeft,
+                    [40.0, 0.0, expected_width, 40.0]
+                ),
+                (
+                    PageMarginBoxSlot::TopRight,
+                    [40.0 + expected_width, 0.0, 320.0 - expected_width, 40.0]
+                ),
+            ],
+            "{width}"
+        );
+    }
+    // A box with nothing but the image is as wide as the image.
+    assert_eq!(
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: url(green.png); width: max-content }} }}"
+        ))),
+        [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 100.0, 40.0])]
+    );
+}
+
+#[test]
+fn a_content_image_counts_in_the_height_of_a_left_box() {
+    // The 50px of the image is taller than the 10px line of text next to it.
+    for content in ["url(green.png)", "'a' url(green.png)"] {
+        for height in ["max-content", "min-content"] {
+            assert_eq!(
+                rects(&boxes_for(&format!(
+                    "@page {{ margin: 40px; {AHEM} \
+                       @left-top {{ content: {content}; height: {height} }} }}"
+                ))),
+                [(PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 50.0])],
+                "{content} {height}"
+            );
+        }
+    }
+}
+
+#[test]
 fn named_values_follow_document_order_after_the_tree_changes() {
     // Moving the first heading after the second, and detaching a third,
     // leaves the arena order unlike the document order.
