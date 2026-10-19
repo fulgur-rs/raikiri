@@ -4229,6 +4229,7 @@ css/css-writing-modes/orthogonal-dynamic-size-001.html
 css/css-writing-modes/table-cell-001.html
 css/css-writing-modes/tcy-white-space-processing-002.html
 css/css-writing-modes/text-combine-upright-break-inside-001.html
+css/css-writing-modes/text-combine-upright-compression-001.html
 css/css-writing-modes/text-combine-upright-compression-002.html
 css/css-writing-modes/text-combine-upright-compression-003.html
 css/css-writing-modes/text-combine-upright-compression-004.html
