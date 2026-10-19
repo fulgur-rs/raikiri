@@ -169,7 +169,11 @@ impl LayoutSession<'_> {
         }
         self.context.transposed_blocks.push(block);
         let reverse_extent = output.size.width;
-        Some(transpose_output(output, right_to_left, reverse_extent))
+        Some(transpose_child_output_to_vertical(
+            output,
+            right_to_left,
+            reverse_extent,
+        ))
     }
 }
 
@@ -349,7 +353,7 @@ pub(super) fn compute_vertical_block(
     let output = compute_block_flow(tree, node_id, inputs, None);
     let mut block = tree.context.transposed_blocks.pop().expect("pushed above");
     let reverse_extent = output.size.height;
-    let output = transpose_output(output, right_to_left, reverse_extent);
+    let output = transpose_output_to_physical(output, right_to_left, reverse_extent);
     // Taffy may store a child's layout more than once; the last one stands.
     block.placed.sort_unstable();
     block.placed.dedup();
@@ -499,10 +503,10 @@ fn transpose_inputs(inputs: LayoutInput) -> LayoutInput {
     }
 }
 
-/// `output` with the axes swapped. Its margins are left to the parent,
-/// which reads them from the box's style: they do not collapse with the
-/// box's children.
-fn transpose_output(
+/// Convert an output produced on the vertical block's transposed axes back
+/// to physical axes. Its margins are left to the parent, which reads them
+/// from the box's style: they do not collapse with the box's children.
+fn transpose_output_to_physical(
     mut output: LayoutOutput,
     right_to_left: bool,
     reverse_extent: f32,
@@ -530,6 +534,51 @@ fn transpose_output(
                 block_axis
             },
             y: inline_axis,
+        };
+    }
+    LayoutOutput {
+        size: swap(output.size),
+        scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
+        baselines: Baselines::NONE,
+        top_margin: CollapsibleMarginSet::ZERO,
+        bottom_margin: CollapsibleMarginSet::ZERO,
+        margins_can_collapse_through: false,
+        oof_positioning_area,
+        ..output
+    }
+}
+
+/// Convert a child's physical-axis output to the transposed axes used by its
+/// vertical block parent. In `vertical-rl`, the physical block axis is
+/// reversed, while the physical inline axis is not.
+fn transpose_child_output_to_vertical(
+    mut output: LayoutOutput,
+    right_to_left: bool,
+    reverse_extent: f32,
+) -> LayoutOutput {
+    let oof_positioning_area = output
+        .oof_positioning_area
+        .map(|area| taffy::OofPositioningArea {
+            size: swap(area.size),
+            offset: Point {
+                x: area.offset.y,
+                y: if right_to_left {
+                    reverse_extent - area.offset.x - area.size.width
+                } else {
+                    area.offset.x
+                },
+            },
+        });
+    for candidate in output.oof_candidates.as_mut_slice() {
+        let physical_inline_axis = candidate.static_position.y;
+        let physical_block_axis = candidate.static_position.x;
+        candidate.static_position = Point {
+            x: physical_inline_axis,
+            y: if right_to_left {
+                reverse_static_position(physical_block_axis, reverse_extent)
+            } else {
+                physical_block_axis
+            },
         };
     }
     LayoutOutput {
