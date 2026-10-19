@@ -106,3 +106,149 @@ fn a_hidden_root_whose_descendants_stay_hidden_paints_nothing() {
         0
     );
 }
+
+#[test]
+fn a_stylesheet_fill_beats_the_fill_attribute() {
+    assert_paints_like(
+        "<style>rect{fill:blue}</style><svg width=20 height=20><rect width=20 height=20 fill=red /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_on_a_group_is_inherited_by_its_shapes() {
+    assert_paints_like(
+        "<style>g{fill:blue}</style><svg width=20 height=20><g><rect width=20 height=20 /></g></svg>",
+        "<svg width=20 height=20><g fill=blue><rect width=20 height=20 /></g></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_none_removes_the_fill() {
+    assert_paints_like(
+        "<style>.bare{fill:none}</style><svg width=20 height=20><rect class=bare width=10 height=20 fill=red /><rect x=10 width=10 height=20 fill=blue /></svg>",
+        "<svg width=20 height=20><rect x=10 width=10 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_may_reference_a_gradient() {
+    let defs = "<defs><linearGradient id=g><stop offset=0 stop-color=blue /><stop offset=1 stop-color=lime /></linearGradient></defs>";
+    assert_paints_like(
+        &format!(
+            "<style>rect{{fill:url(#g)}}</style><svg width=20 height=20>{defs}<rect width=20 height=20 fill=red /></svg>"
+        ),
+        &format!("<svg width=20 height=20>{defs}<rect width=20 height=20 fill='url(#g)' /></svg>"),
+    );
+}
+
+#[test]
+fn a_stylesheet_stroke_and_stroke_width_draw_an_outline() {
+    assert_paints_like(
+        "<style>rect{stroke:blue;stroke-width:4px}</style><svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=none /></svg>",
+        "<svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=none stroke=blue stroke-width=4 /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_stroke_width_in_ems_follows_the_svg_font_size() {
+    assert_paints_like(
+        "<style>rect{stroke:blue;stroke-width:.5em}</style><svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=none /></svg>",
+        "<svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=none stroke=blue stroke-width=5 /></svg>",
+    );
+}
+
+#[test]
+fn stylesheet_fill_and_stroke_opacities_apply_separately() {
+    assert_paints_like(
+        "<style>rect{fill-opacity:.25;stroke-opacity:50%}</style><svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=blue stroke=red stroke-width=4 /></svg>",
+        "<svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=blue stroke=red stroke-width=4 fill-opacity=.25 stroke-opacity=.5 /></svg>",
+    );
+}
+
+#[test]
+fn an_important_stylesheet_fill_beats_the_style_attribute() {
+    assert_paints_like(
+        "<style>rect{fill:blue !important}</style><svg width=20 height=20><rect width=20 height=20 style='fill:red' /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_style_attribute_fill_beats_the_stylesheet() {
+    assert_paints_like(
+        "<style>rect{fill:red}</style><svg width=20 height=20><rect width=20 height=20 style='fill:blue' /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_style_element_inside_the_svg_sets_a_fill() {
+    assert_paints_like(
+        "<svg width=20 height=20><style>rect{fill:blue}</style><rect width=20 height=20 fill=red /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn the_later_of_a_page_rule_and_an_svg_style_rule_wins_a_fill() {
+    assert_paints_like(
+        "<style>rect{fill:red}</style><svg width=20 height=20><style>rect{fill:blue}</style><rect width=20 height=20 /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+    assert_paints_like(
+        "<svg width=20 height=20><style>rect{fill:red}</style><rect width=20 height=20 /></svg><style>rect{fill:blue}</style>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_on_the_root_reaches_the_descendants_that_set_none() {
+    assert_paints_like(
+        "<style>svg{fill:blue}</style><svg width=20 height=20><rect width=10 height=20 /><rect x=10 width=10 height=20 fill=red /></svg>",
+        "<svg width=20 height=20><rect width=10 height=20 fill=blue /><rect x=10 width=10 height=20 fill=red /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_on_the_root_beats_the_fill_attribute_of_the_root() {
+    assert_paints_like(
+        "<style>svg{fill:blue}</style><svg width=20 height=20 fill=red><rect width=20 height=20 /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_current_color_fill_on_the_root_paints_an_icon_in_its_color() {
+    assert_paints_like(
+        "<style>svg{fill:currentColor;color:blue}</style><svg width=20 height=20><path d='M0 0h20v20H0z' /></svg>",
+        "<svg width=20 height=20><path d='M0 0h20v20H0z' fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_stroke_on_the_root_reaches_the_descendants() {
+    assert_paints_like(
+        "<style>svg{stroke:blue;stroke-width:4px}</style><svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none /></svg>",
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none stroke=blue stroke-width=4 /></svg>",
+    );
+}
+
+#[test]
+fn revert_layer_on_a_fill_rolls_back_to_the_fill_attribute() {
+    assert_paints_like(
+        "<style>@layer a, b; @layer b {rect{fill:revert-layer}}</style><svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn an_overridden_fill_attribute_still_matches_the_svgs_attribute_selectors() {
+    // `stroke-dasharray` is not a property the page cascade carries, so only
+    // the SVG's own stylesheet can apply it, and only while the rule's
+    // `[fill=red]` still matches the element whose `fill` the page overrides.
+    assert_paints_like(
+        "<style>rect{fill:blue;stroke:green;stroke-width:4px}</style><svg width=20 height=20><style>rect[fill=red]{stroke-dasharray:3 3}</style><rect x=4 y=4 width=12 height=12 fill=red /></svg>",
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=blue stroke=green stroke-width=4 stroke-dasharray='3 3' /></svg>",
+    );
+}

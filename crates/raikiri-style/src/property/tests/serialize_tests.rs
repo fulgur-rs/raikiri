@@ -968,3 +968,19 @@ fn border_image_math_functions_keep_their_specified_text() {
         );
     }
 }
+
+#[test]
+fn svg_presentation_values_serialize_to_their_validated_text() {
+    for (property, source, expected) in [
+        ("fill", "RED", "rgba(255,0,0,1)"),
+        ("stroke", "url(#g) none", "url(\"#g\") none"),
+        ("fill-opacity", "50%", "0.5"),
+        ("stroke-opacity", "2", "1"),
+        ("stroke-width", "3PX", "3px"),
+    ] {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let value = parse_value(property, &mut parser).expect(source);
+        assert_eq!(serialize_value(&value).as_deref(), Some(expected));
+    }
+}

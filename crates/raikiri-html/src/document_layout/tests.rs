@@ -223,6 +223,60 @@ fn inline_svg_hidden_root_keeps_explicitly_visible_descendants() {
 }
 
 #[test]
+fn inline_svg_export_carries_the_stylesheet_fill_of_the_root() {
+    let result = laid_out(
+        "<style>@page{size:100px 100px;margin:0}svg{display:block;fill:blue}</style><svg width='20' height='20'><rect x='4' y='4' width='12' height='12'/><rect x='16' width='4' height='4' fill='red'/></svg>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 20.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &image.rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(10, 10), &[0, 0, 255, 255], "inherited from the root");
+    assert_eq!(pixel(18, 2), &[255, 0, 0, 255], "its own attribute wins");
+}
+
+#[test]
+fn inline_svg_export_carries_stylesheet_fill_and_stroke() {
+    let result = laid_out(
+        "<style>@page{size:100px 100px;margin:0}svg{display:block}rect{fill:blue;stroke:lime;stroke-width:4px}</style><svg width='20' height='20'><rect x='4' y='4' width='12' height='12' fill='red' stroke='red'/></svg>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 20.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &image.rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(10, 10), &[0, 0, 255, 255], "the fill");
+    assert_eq!(pixel(3, 10), &[0, 255, 0, 255], "the stroke");
+}
+
+#[test]
 fn inline_svg_presentation_dimensions_yield_to_layered_author_css() {
     let document = dom(
         "<style>@page{size:200px 100px;margin:0}body{margin:0}svg{display:block}@layer x{svg{width:30px;height:15px}}</style><svg width='10' height='10'><rect width='10' height='10'/></svg>",
