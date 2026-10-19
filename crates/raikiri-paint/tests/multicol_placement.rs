@@ -2230,4 +2230,8 @@ fn a_spanner_in_plain_blocks_spans_the_columns_of_a_fit_content_container() {
     // so is the spanner in it: it is repeated in the two columns.
     let body = format!("<div class=f><div style='display:flow-root'>{spanner}</div></div>");
     assert_eq!(yellow_width(&body, css), 120);
+    // So does a nested multicol container: the spanner spans its columns
+    // only, and the outer container repeats the inner one in its own.
+    let body = format!("<div class=f><div style='columns:2;column-gap:0'>{spanner}</div></div>");
+    assert_eq!(yellow_width(&body, css), 120);
 }
