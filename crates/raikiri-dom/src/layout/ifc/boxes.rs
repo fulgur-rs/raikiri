@@ -2997,14 +2997,37 @@ pub(crate) fn place_out_of_flow(
             } else {
                 Position::Absolute
             };
+            // A box that was block-level sits below the line of its anchor
+            // and is aligned in the static-position rectangle of the content
+            // box like the children of a block without lines. Boxes that were
+            // inline-level, and those of a vertical root, keep to the start
+            // corner.
+            let static_position = if inline_level || vertical_root {
+                Point {
+                    x: AxisStaticPosition::from_edge(static_x, AxisStaticEdge::Start),
+                    y: AxisStaticPosition::from_edge(static_y, AxisStaticEdge::Start),
+                }
+            } else {
+                crate::taffy_impl::block_flow::aligned_static_position(
+                    tree.layout_node_with_style(idx).unwrap().style,
+                    tree.layout_node_with_style(node).unwrap().style,
+                    if rtl {
+                        taffy::Direction::Rtl
+                    } else {
+                        taffy::Direction::Ltr
+                    },
+                    taffy::Line {
+                        start: content_left,
+                        end: content_left + lines.width,
+                    },
+                    static_y,
+                )
+            };
             candidates.push(OofCandidate {
                 node: taffy::NodeId::from(node),
                 order: tree.nodes[node].unrounded_layout.order,
                 position,
-                static_position: Point {
-                    x: AxisStaticPosition::from_edge(static_x, AxisStaticEdge::Start),
-                    y: AxisStaticPosition::from_edge(static_y, AxisStaticEdge::Start),
-                },
+                static_position,
             });
             continue;
         };
