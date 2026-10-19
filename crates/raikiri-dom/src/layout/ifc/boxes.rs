@@ -3,6 +3,7 @@
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
 use super::generated_blocks;
+use super::geometry::IfcAxes;
 use super::inline_boxes::{for_each_atomic, placed};
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
@@ -2473,16 +2474,20 @@ fn place_atomics(
             );
             // An atomic in a ruby annotation is placed with its annotation.
             let rect = placed(atomic.border_rect, line_top, placement);
-            // A right-to-left line runs from the right edge: its inline axis
-            // is mirrored inside the content box.
-            let start = if rtl {
-                geometry.width - (rect.inline_start + rect.inline_size)
-            } else {
-                rect.inline_start
-            };
+            // The rectangle is logical: its inline axis runs along the line
+            // and its block axis across the lines, which a vertical paragraph
+            // draws down and from the right (or left) edge. A right-to-left
+            // line runs from the far edge, so its inline axis is mirrored
+            // inside the content box.
+            let mut size = geometry.content_size;
+            if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+                size.width = geometry.width;
+            }
+            let direction = if rtl { Direction::Rtl } else { Direction::Ltr };
+            let physical = IfcAxes::new(geometry.axes.writing_mode(), direction).rect(size, rect);
             let location = taffy::Point {
-                x: geometry.edges.0 + start + dx,
-                y: geometry.top_edge + rect.block_start + dy,
+                x: geometry.edges.0 + physical.x + dx,
+                y: geometry.top_edge + physical.y + dy,
             };
             commit_child_layout(tree, node, output, location, geometry.width);
         }
@@ -2560,7 +2565,7 @@ fn relative_inset(
     node: usize,
     basis: f32,
     height: Option<f32>,
-    axes: super::geometry::IfcAxes,
+    axes: IfcAxes,
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.layout_node_with_style(node).unwrap().style;

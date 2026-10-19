@@ -622,12 +622,7 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
                     .any(|part| holds_atomic(doc, cascade, &part.children))
         })
     });
-    // `place_atomics` puts the boxes of a vertical paragraph at logical
-    // coordinates as if they were physical ones, which would leave the boxes
-    // of an annotation off their base.
-    let vertical_atomic = cascade.computed[ruby].cssom_writing_mode.is_vertical()
-        && holds_atomic(doc, cascade, &doc.nodes[ruby].children);
-    if turned_atomic || vertical_atomic || has_objects_alone(doc, cascade, &segments) {
+    if turned_atomic || has_objects_alone(doc, cascade, &segments) {
         return None;
     }
     Some(Plan {
