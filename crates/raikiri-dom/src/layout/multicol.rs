@@ -2185,10 +2185,8 @@ fn record_nested_ifc_box_fragments(
             // so lines in a later column would be drawn that far below the
             // column top. Draw each range from its own fragment instead.
             // That leaves the first column as it was only when its range
-            // starts at the paragraph's top; a nested column container's
-            // ranges are its own columns, which it places itself.
+            // starts at the paragraph's top.
             if root_owns_fragments
-                && tree.nodes[node_id].multicol.is_none()
                 && let (Some(ranges), Some(lines)) = (&line_ranges, &lines)
                 && ranges
                     .iter()
