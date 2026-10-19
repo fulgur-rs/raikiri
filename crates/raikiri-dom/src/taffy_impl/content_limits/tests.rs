@@ -436,6 +436,32 @@ fn a_keyword_minimum_height_is_the_height_of_the_content() {
 }
 
 #[test]
+fn a_minimum_height_keyword_sizes_an_orthogonal_block_in_a_vertical_container() {
+    assert_eq!(
+        child_size(
+            "writing-mode:vertical-rl;width:300px;height:200px",
+            "",
+            "writing-mode:horizontal-tb;width:40px;height:2px;min-height:max-content",
+            Body::Block(0.0, 10.0)
+        ),
+        (40.0, 10.0)
+    );
+}
+
+#[test]
+fn a_maximum_height_keyword_sizes_an_orthogonal_block_in_a_vertical_container() {
+    assert_eq!(
+        child_size(
+            "writing-mode:vertical-rl;width:300px;height:200px",
+            "",
+            "writing-mode:horizontal-tb;width:40px;height:40px;max-height:min-content",
+            Body::Block(0.0, 10.0)
+        ),
+        (40.0, 10.0)
+    );
+}
+
+#[test]
 fn a_keyword_maximum_height_is_the_height_of_the_content() {
     // WPT `block-size-with-min-or-max-content-3`.
     for keyword in ["min-content", "max-content", "fit-content"] {

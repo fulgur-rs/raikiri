@@ -2724,17 +2724,11 @@ fn a_box_a_content_limit_does_not_apply_to_records_none() {
         ("display:block", "img", block.clone()),
         ("display:block", "div", format!("{block};column-count:2")),
         ("display:block;column-count:2", "div", block.clone()),
-        // Vertical writing swaps the axes the keywords refer to, in the box
-        // and in its container.
+        // A vertical box writes on physical axes different from its parent.
         (
             "display:block",
             "div",
             format!("{block};writing-mode:vertical-rl"),
-        ),
-        (
-            "display:block;writing-mode:vertical-rl",
-            "div",
-            format!("{block};writing-mode:horizontal-tb"),
         ),
     ];
     let borrowed: Vec<(&str, &str, &str)> = cases
