@@ -156,6 +156,29 @@ fn a_floated_flex_container_is_no_wider_than_the_flex_basis_of_items_that_cannot
     );
 }
 
+#[test]
+fn a_floated_flex_container_ignores_a_percentage_bound_of_its_items() {
+    // The percentage refers to the container's width, which the container is
+    // still deriving from its items, so the item's width is not bounded by it.
+    assert_eq!(
+        container_width("", FLEX, "flex:1 0 100px;min-width:10%"),
+        120.0
+    );
+    assert_eq!(
+        container_width("", FLEX, "flex:0 1 20px;max-width:10%;margin:0"),
+        30.0
+    );
+}
+
+#[test]
+fn a_floated_column_flex_container_is_not_widened_by_the_flex_basis_of_its_items() {
+    // The flex basis is a height there.
+    assert_eq!(
+        container_width("", "display:flex;flex-direction:column", "flex:1 0 100px"),
+        50.0
+    );
+}
+
 /// The border box width of a floated wrapping flex container with `count`
 /// items 30px wide plus a 1px border, styled by `container_css`.
 fn wrapping_container_width(container_css: &str, count: usize) -> f32 {

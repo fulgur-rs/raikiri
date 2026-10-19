@@ -1948,10 +1948,7 @@ fn with_flex_intrinsic_bounds<R>(
     let mut saved = Vec::new();
     for child in children {
         let child_idx = usize::from(child);
-        let Some(node) = tree.layout_node_with_style(child_idx) else {
-            continue;
-        };
-        let style = &node.style;
+        let style = &tree.layout_node_with_style(child_idx).unwrap().style;
         if style.box_generation_mode() == BoxGenerationMode::None
             || style.position == TaffyPosition::Absolute
             || !style.size.width.is_auto()
@@ -1964,16 +1961,10 @@ fn with_flex_intrinsic_bounds<R>(
             continue;
         };
         let (min, max) = (style.min_size.width, style.max_size.width);
-        let bound = |value: taffy::LengthPercentageAuto| {
-            if value.is_auto() {
-                Some(None)
-            } else {
-                crate::layout::resolve_length_percentage_auto(value, None).map(Some)
-            }
-        };
-        let (Some(min_length), Some(max_length)) = (bound(min), bound(max)) else {
-            continue;
-        };
+        // A percentage of the container's width, which the probe has not got,
+        // bounds nothing.
+        let min_length = crate::layout::resolve_length_percentage_auto(min, None);
+        let max_length = crate::layout::resolve_length_percentage_auto(max, None);
         let new_min = (style.flex_shrink == 0.0).then(|| {
             taffy::LengthPercentageAuto::length(min_length.map_or(basis, |m| m.max(basis)))
         });
@@ -2013,10 +2004,7 @@ fn border_box_width_bounds(
     idx: usize,
     parent_width: Option<f32>,
 ) -> (f32, f32) {
-    let Some(node) = tree.layout_node_with_style(idx) else {
-        return (0.0, f32::INFINITY);
-    };
-    let style = &node.style;
+    let style = &tree.layout_node_with_style(idx).unwrap().style;
     let adjustment =
         crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
     let resolve = |value, auto: f32| {
