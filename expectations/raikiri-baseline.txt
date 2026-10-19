@@ -4963,3 +4963,12 @@ css/css-sizing/min-content-min-width-000.html
 # Pass once a flex or grid item with a min-content, max-content or fit-content width is sized by the keyword instead of the room its container offers, and its height is measured at that width; KEEP in two audit-vacuous-passes runs.
 css/css-flexbox/percentage-heights-022.html
 css/css-grid/grid-model/grid-max-content-size-with-max-content-item.html
+
+# --- intrinsic min/max constraints on flex/grid items and grid containers (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# These cases cover flex item constraints on both axes, grid item intrinsic maximums, and grid container min/max heights including fixed tracks with no items; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/flex-item-min-height-min-content.html
+css/css-flexbox/flex-item-max-height-min-content.html
+css/css-flexbox/flex-item-max-width-min-content-002.html
+css/css-grid/grid-items/grid-intrinsic-maximums.html
+css/css-sizing/block-size-with-min-or-max-content-4.html
+css/css-sizing/block-size-with-min-or-max-content-5.html

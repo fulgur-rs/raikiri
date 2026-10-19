@@ -745,21 +745,20 @@ fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
     )
 }
 
-/// Whether the layout of element `idx`, whose computed values are `cv`, sizes
-/// it by an intrinsic sizing keyword in its `min-width`, `max-width`,
-/// `min-height` or `max-height` (CSS Sizing 3 §4 and §5).
+/// Whether element `idx`, whose computed values are `cv`, uses an intrinsic
+/// sizing keyword in `min-width`, `max-width`, `min-height` or `max-height`
+/// (CSS Sizing 3 §4 and §5).
 ///
-/// Only a block-level box that lays its content out in normal flow and writes
-/// horizontally is; a horizontal box inside a vertical container still uses
-/// its physical axes for these constraints. The box must also satisfy
-/// [`sized_by_content_keyword`] for its width. The other boxes size themselves
-/// as if there were no such minimum or maximum:
+/// A normal-flow block uses these constraints when it is sized by its content
+/// keyword. A flex/grid item also uses them: its parent algorithm reads the
+/// item's min/max constraints before laying out the item. Other boxes size
+/// themselves as if there were no such minimum or maximum:
 /// - an absolutely positioned box takes its size from its insets, and a float
 ///   is placed by its container before it is laid out;
 /// - a box in a multicol flow is fragmented across the columns, so its
 ///   automatic height is not the height of one fragment;
-/// - flex, grid and table containers, their items and inline-level boxes
-///   measure themselves by algorithms of their own;
+/// - table containers and items, replaced items, and inline-level boxes
+///   outside flex/grid measure themselves by algorithms of their own;
 /// - a vertical box swaps the axes a keyword refers to.
 fn honors_content_limits(
     doc: &Document,
@@ -767,6 +766,12 @@ fn honors_content_limits(
     idx: usize,
     cv: &ComputedValues,
 ) -> bool {
+    if is_supported_flex_grid_item(doc, cascade, idx, cv) {
+        return true;
+    }
+    if is_supported_flex_grid_container(doc, idx, cv) {
+        return true;
+    }
     if !matches!(
         cv.display,
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
@@ -779,6 +784,51 @@ fn honors_content_limits(
         return false;
     }
     !is_flex_or_grid_item(doc, cascade, idx)
+}
+
+/// Whether `idx` is an in-flow flex/grid container whose own intrinsic min/max
+/// constraints this bridge can preserve.
+fn is_supported_flex_grid_container(doc: &Document, idx: usize, cv: &ComputedValues) -> bool {
+    cv.display.is_flex_or_grid_container()
+        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        && cv.float == FloatValue::None
+        && !cv.multicol_flow
+        && !uses_vertical_writing_mode(cv)
+        && !cv.min_block_size.is_some_and(is_sizing_keyword)
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+}
+
+/// Whether `idx` participates as a flex/grid item whose intrinsic min/max
+/// constraints this bridge can preserve. Other item types remain on their
+/// existing size paths.
+fn is_supported_flex_grid_item(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    cv: &ComputedValues,
+) -> bool {
+    !matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+        && !matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable)
+        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        && !cv.multicol_flow
+        && !uses_vertical_writing_mode(cv)
+        && !cv.min_block_size.is_some_and(is_sizing_keyword)
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+        && layout_container(doc, cascade, idx).is_some_and(|container| {
+            cascade.computed[container]
+                .display
+                .is_flex_or_grid_container()
+        })
+}
+
+fn uses_vertical_writing_mode(cv: &ComputedValues) -> bool {
+    matches!(
+        cv.cssom_writing_mode,
+        WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr
+    )
 }
 
 /// Whether the width of element `idx` is a sizing keyword its layout sizes the
