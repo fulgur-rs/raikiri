@@ -11,6 +11,7 @@ mod color;
 mod common;
 mod content;
 mod layout;
+mod svg;
 mod text;
 mod visual;
 
@@ -125,6 +126,11 @@ fn parse_value_with_black_currentcolor(
                 | PropertyKey::BorderImageRepeat
                 | PropertyKey::BoxDecorationBreak
                 | PropertyKey::TextShadow
+                | PropertyKey::Fill
+                | PropertyKey::Stroke
+                | PropertyKey::FillOpacity
+                | PropertyKey::StrokeOpacity
+                | PropertyKey::StrokeWidth
         )
     ) || key.is_some_and(PropertyKey::takes_cascade_css_wide_keyword);
     if takes_css_wide_keyword
@@ -1354,6 +1360,11 @@ pub(crate) fn parse_property_grammar(
         // `PropertyValue::Opacity` doc's "specified preserves, computed
         // clamps" note and `parse_opacity_value` doc.
         "opacity" => parse_opacity_value(input).map(PropertyValue::Opacity),
+        // SVG 2 §13 painting properties, resolved for the descendants of an
+        // inline SVG only: see `PropertyValue::SvgPresentation`.
+        "fill" | "stroke" | "fill-opacity" | "stroke-opacity" | "stroke-width" => {
+            svg::parse_svg_presentation(property_key_for_name(normalized_name)?, input)
+        }
         // CSS Compositing and Blending Level 1 §3.4.2
         // <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
         // `auto | isolate`.

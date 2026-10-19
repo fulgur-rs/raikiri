@@ -643,6 +643,26 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                     "background-color",
                     crate::property::PropertyKey::BackgroundColor,
                 ),
+                // The paint attributes stay in the SVG source, so a hint that
+                // wins is not exported. They are candidates so that
+                // `revert-layer` can roll back to them.
+                ("fill", "fill", crate::property::PropertyKey::Fill),
+                ("stroke", "stroke", crate::property::PropertyKey::Stroke),
+                (
+                    "fill-opacity",
+                    "fill-opacity",
+                    crate::property::PropertyKey::FillOpacity,
+                ),
+                (
+                    "stroke-opacity",
+                    "stroke-opacity",
+                    crate::property::PropertyKey::StrokeOpacity,
+                ),
+                (
+                    "stroke-width",
+                    "stroke-width",
+                    crate::property::PropertyKey::StrokeWidth,
+                ),
             ] {
                 let Some(raw_value) = elem.attr(attribute) else {
                     continue;

@@ -186,6 +186,9 @@ pub(crate) struct IfcLines {
     /// The block-level `::before` and `::after` boxes the lines were laid
     /// out in, in document order. A fragmenting layout records none.
     pub(crate) placed_blocks: Vec<super::generated_blocks::PlacedBlock>,
+    /// The forced page breaks the generated blocks ask for, in the order their
+    /// end tokens were met. A fragmenting layout records none.
+    pub(crate) forced_breaks: Vec<super::generated_blocks::ForcedBreak>,
 }
 
 /// Placement of an IFC-owned box accepted in one fragmentainer.

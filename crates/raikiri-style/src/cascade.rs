@@ -54,7 +54,9 @@ pub struct SvgStyleProperty {
     /// Keep literal inheritance instead of freezing a definition's value.
     /// This preserves inheritance when a definition is instantiated by `use`.
     pub inherited: bool,
-    /// A relative font expression that must resolve in the SVG instance.
+    /// A relative font expression that must resolve in the SVG instance, or the
+    /// validated value of a painting property (`fill`, `stroke`, `fill-opacity`,
+    /// `stroke-opacity`, `stroke-width`), which has no computed field.
     /// Other values use the node's computed value.
     pub expression: Option<String>,
 }

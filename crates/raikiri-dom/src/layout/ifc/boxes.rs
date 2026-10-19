@@ -166,6 +166,7 @@ pub(crate) fn layout_with_boxes_in(
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
             unfragmented_tail_column: None,
             placed_blocks: Vec::new(),
+            forced_breaks: Vec::new(),
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -369,6 +370,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             fragmentainer_line_ranges: Some(Vec::new()),
             unfragmented_tail_column: None,
             placed_blocks: Vec::new(),
+            forced_breaks: Vec::new(),
         };
     };
 
@@ -545,6 +547,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         fragmentainer_line_ranges: Some(fragmentainer_line_ranges),
         unfragmented_tail_column,
         placed_blocks: Vec::new(),
+        forced_breaks: Vec::new(),
     };
     if perform {
         let mut atomic_candidates =
@@ -764,8 +767,10 @@ fn run_boxes_segment(
     // are being laid out: its start token was met and its end token was not.
     // The tokens come in document order; the cursor is the block of the next.
     let mut block_cursor = 0;
-    // The boxes of the generated blocks closed so far.
+    // The boxes of the generated blocks closed so far, and the forced page
+    // breaks they ask for.
     let mut placed_blocks = Vec::new();
+    let mut forced_breaks = Vec::new();
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
     // The next line follows a forced break or a block: the engine treats it
     // as such for `text-indent: each-line`.
@@ -1099,12 +1104,18 @@ fn run_boxes_segment(
                             }
                             generated_blocks::Token::End(block) => {
                                 block_cursor += 1;
-                                if let Some(open) = open_block.take()
-                                    && let Some(placed) = generated_blocks::close(block, open, flow)
-                                {
-                                    leading_margin_open = false;
-                                    ctx.commit_strut();
-                                    placed_blocks.push(placed);
+                                if let Some(open) = open_block.take() {
+                                    let placed = generated_blocks::close(block, open, flow);
+                                    forced_breaks.extend(block.forced_breaks(
+                                        &open,
+                                        placed.as_ref(),
+                                        lines.len(),
+                                    ));
+                                    if let Some(placed) = placed {
+                                        leading_margin_open = false;
+                                        ctx.commit_strut();
+                                        placed_blocks.push(placed);
+                                    }
                                 }
                             }
                         }
@@ -1249,6 +1260,7 @@ fn run_boxes_segment(
             fragmentainer_line_ranges: None,
             unfragmented_tail_column: None,
             placed_blocks,
+            forced_breaks,
         },
         continuation,
         atomic_outputs: atomics.outputs,

@@ -557,6 +557,87 @@ fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() 
     assert!(!first(&open.after(1).continued(40.0), 0));
 }
 
+/// The forced breaks of `css`'s box after `lines_before` lines, given
+/// `lines` lines laid out at its end and the border-box top of its placement.
+fn forced_breaks_of(
+    css: &str,
+    lines_before: usize,
+    lines: usize,
+    placed_at: Option<f32>,
+) -> Vec<ForcedBreak> {
+    let block = block(css);
+    let mut bfc = crate::taffy_impl::block_flow::context::BlockFormattingContext::new();
+    let ctx = bfc.root_block_context();
+    let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
+    let open = OpenBlock {
+        lines_before,
+        ..open(&block, flow(&mut y, &mut pending, &mut leading, &ctx))
+    };
+    let rect = |y| BoxRect {
+        x: 0.0,
+        y,
+        width: 100.0,
+        height: 20.0,
+    };
+    let placed = placed_at.map(|top| PlacedBlock {
+        node: 1,
+        border_box: rect(top),
+        content_box: rect(top),
+        first_line: lines_before,
+        end_line: lines,
+    });
+    block.forced_breaks(&open, placed.as_ref(), lines).collect()
+}
+
+#[test]
+fn a_box_asks_for_the_forced_breaks_before_and_after_it() {
+    assert_eq!(
+        forced_breaks_of(
+            "break-before:page;break-after:always;margin-top:7px",
+            3,
+            5,
+            Some(61.0)
+        ),
+        [
+            ForcedBreak {
+                line: 3,
+                value: BreakBetween::Page,
+                box_top: Some(61.0),
+                gap: 7.0,
+            },
+            ForcedBreak {
+                line: 5,
+                value: BreakBetween::Always,
+                box_top: None,
+                gap: 0.0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_box_at_the_start_of_its_paragraph_has_no_line_to_break_before() {
+    let breaks = forced_breaks_of("break-before:page;break-after:page", 0, 2, None);
+    assert_eq!(breaks.len(), 1);
+    assert_eq!((breaks[0].line, breaks[0].value), (2, BreakBetween::Page));
+}
+
+#[test]
+fn only_page_and_always_breaks_are_forced() {
+    for value in ["auto", "avoid", "avoid-page", "column", "left"] {
+        assert!(
+            forced_breaks_of(
+                &format!("break-before:{value};break-after:{value}"),
+                1,
+                2,
+                None
+            )
+            .is_empty(),
+            "{value}"
+        );
+    }
+}
+
 #[test]
 fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
     let mut fixture = crate::layout::ifc::test_support::sheet_fixture(

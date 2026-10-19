@@ -11,7 +11,8 @@
 use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
 use crate::taffy_impl::block_flow::context::{BlockContext, BoxProbe, BoxSlot};
 use raikiri_style::property::{
-    BoxSizing, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue, Sides,
+    BoxSizing, BreakBetween, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue,
+    Sides,
 };
 use raikiri_style::{
     ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
@@ -91,6 +92,8 @@ pub(crate) struct GeneratedBlock {
     /// The box's own line options and raw `text-indent`, from its computed
     /// style.
     own_lines: (LineOptions, ComputedTextIndent),
+    break_before: BreakBetween,
+    break_after: BreakBetween,
 }
 
 impl GeneratedBlock {
@@ -133,7 +136,36 @@ impl GeneratedBlock {
             },
             formatting_root: orthogonal || establishes_formatting_context(cv),
             own_lines: lines,
+            break_before: cv.break_before,
+            break_after: cv.break_after,
         }
+    }
+
+    /// The forced page breaks the box asks for among the lines of its
+    /// paragraph, once its end token was met: one before the box when lines
+    /// come before it, one after it. `open` is the state its start token
+    /// left, `placed` the box if it has one, and `lines` the number of lines
+    /// laid out so far.
+    pub(crate) fn forced_breaks(
+        &self,
+        open: &OpenBlock,
+        placed: Option<&PlacedBlock>,
+        lines: usize,
+    ) -> impl Iterator<Item = ForcedBreak> {
+        let forced = |value| matches!(value, BreakBetween::Page | BreakBetween::Always);
+        let before = (forced(self.break_before) && open.lines_before > 0).then(|| ForcedBreak {
+            line: open.lines_before,
+            value: self.break_before,
+            box_top: placed.map(|placed| placed.border_box.y),
+            gap: open.top_set.resolve().max(0.0),
+        });
+        let after = forced(self.break_after).then_some(ForcedBreak {
+            line: lines,
+            value: self.break_after,
+            box_top: None,
+            gap: 0.0,
+        });
+        before.into_iter().chain(after)
     }
 
     /// Margins in px against the containing block width `basis`; `auto` is
@@ -409,6 +441,25 @@ struct Beside {
     width: f32,
     /// Top from the paragraph's content-box top.
     top: f32,
+}
+
+/// A forced page break that a block-level `::before` or `::after` asks for
+/// with `break-before` or `break-after`, between the lines of its paragraph.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ForcedBreak {
+    /// The first line after the break. A break after the box is recorded
+    /// whether or not a line follows it.
+    pub(crate) line: usize,
+    /// The `break-before` or `break-after` value that asks for the break.
+    pub(crate) value: BreakBetween,
+    /// The block offset of the border-box top of the box that a break before
+    /// it moves, when the box was placed; the break is then before the box,
+    /// not before its first line. From the paragraph's content-box top.
+    pub(crate) box_top: Option<f32>,
+    /// The margin that stays above the content after the break, at the top of
+    /// the next page: the collapsed top margin of a box that the break is
+    /// before. Lines after a box start at the top of the page.
+    pub(crate) gap: f32,
 }
 
 /// The box of a block-level `::before` or `::after` as the line loop placed

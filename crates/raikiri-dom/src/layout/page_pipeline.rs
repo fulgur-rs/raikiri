@@ -1848,6 +1848,113 @@ fn widows_break_on_last_page(
         .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0)
 }
 
+/// A forced page break between two lines of a paragraph, and where the
+/// content that follows it starts the next page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ForcedLineBreak {
+    /// The first line after the break.
+    line: usize,
+    /// How far above that line the content that starts the next page begins:
+    /// the border-box top of a box that the break is before.
+    lead: f32,
+    /// The margin that stays above that content, at the top of the next page.
+    gap: f32,
+}
+
+/// The forced page breaks that the block-level `::before` and `::after` of
+/// the paragraph `root` ask for between its lines, in line order. A
+/// `break-*: always` counts only where it breaks pages.
+fn forced_line_breaks(document: &Document, root: usize) -> Vec<ForcedLineBreak> {
+    let lines = document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref());
+    let mut breaks: Vec<_> = lines
+        .into_iter()
+        .flat_map(|lines| {
+            lines
+                .forced_breaks
+                .iter()
+                .filter(|forced| page_break_is_forced(document, root, forced.value))
+                .filter_map(move |forced| {
+                    let lead = match forced.box_top {
+                        Some(top) => lines.lines.get(forced.line)?.block_offset() - top,
+                        None => 0.0,
+                    };
+                    Some(ForcedLineBreak {
+                        line: forced.line,
+                        lead: lead.max(0.0),
+                        gap: forced.gap,
+                    })
+                })
+        })
+        .collect();
+    merge_forced_line_breaks(&mut breaks);
+    breaks
+}
+
+/// Puts `breaks` in line order, and the breaks before the same line into one
+/// that keeps the larger lead and gap.
+fn merge_forced_line_breaks(breaks: &mut Vec<ForcedLineBreak>) {
+    breaks.sort_by_key(|forced| forced.line);
+    breaks.dedup_by(|later, earlier| {
+        let same_line = later.line == earlier.line;
+        if same_line {
+            earlier.lead = earlier.lead.max(later.lead);
+            earlier.gap = earlier.gap.max(later.gap);
+        }
+        same_line
+    });
+}
+
+/// The moves that forced page breaks between the lines of a paragraph ask
+/// for, in line order: each moves the line after its break, and the lines
+/// after that, down so that what the break is before starts the next page,
+/// below the margin `gap` it keeps there. `breaks` are as for
+/// [`forced_line_breaks`], and `line_metrics` and `effective_y` as for
+/// [`widows_break_on_next_page`]. A break that has no line on either side
+/// stays at the edge of the paragraph, and a page edge that already falls
+/// before what the break is before is the break.
+fn forced_line_moves(
+    breaks: &[ForcedLineBreak],
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    page_origins: &PageOrigins,
+) -> Vec<LineBreakMove> {
+    let mut moved = 0.0;
+    let mut moves = Vec::new();
+    for &ForcedLineBreak { line, lead, gap } in breaks {
+        if line == 0 || line >= line_metrics.len() {
+            continue;
+        }
+        let top = |line: usize| effective_y + line_metrics[line].0 + moved;
+        let bottom = |line: usize| effective_y + line_metrics[line].1 + moved;
+        // Each line belongs to the page that holds its center (see
+        // `line_center_on_page`).
+        let page_of =
+            |line: usize| page_origins.page_index_for_y((top(line) + bottom(line)) * 0.5 + 0.001);
+        // What starts the next page is a box above the line when there is
+        // one, even if the line itself is already on the next page.
+        let starts = top(line) - lead;
+        let previous = page_of(line - 1);
+        let starts_page = if lead > 0.0 {
+            page_origins.page_index_for_y(starts + 0.001)
+        } else {
+            page_of(line)
+        };
+        if starts_page > previous {
+            continue;
+        }
+        let page = previous.saturating_add(1);
+        let shift = page_origins.origin(page) + gap - starts;
+        if shift.is_finite() && shift > 0.0 {
+            moves.push((line, shift, page));
+            moved += shift;
+        }
+    }
+    moves
+}
+
 /// Moves line `line` of the paragraph `root` and every line after it down by
 /// `shift`, and grows the root's box to hold them.
 fn shift_ifc_lines_from(document: &mut Document, root: usize, line: usize, shift: f32) {

@@ -267,6 +267,7 @@ pub(crate) fn place_lines(
         fragmentainer_line_ranges: None,
         unfragmented_tail_column: None,
         placed_blocks: Vec::new(),
+        forced_breaks: Vec::new(),
     }
 }
 
