@@ -252,3 +252,62 @@ fn the_room_beside_stacked_floats_is_the_same_from_the_right() {
     );
     assert_eq!((placed.slot.stretch_width, placed.width), (60.0, 60.0));
 }
+
+/// Three left floats in a 200px container, each too wide to sit beside the
+/// one above it, so they leave three segments to their right: 140px wide at
+/// y = 0, 40px wide from y = 5, and 10px wide from y = 40.
+fn three_segments(owner: &mut BlockFormattingContext) -> super::BlockContext<'_> {
+    let mut flow = owner.root_block_context();
+    flow.set_width(200.0);
+    for (width, height) in [(60.0, 5.0), (160.0, 35.0), (190.0, 10.0)] {
+        flow.place_floated_box(
+            Size { width, height },
+            0.0,
+            FloatDirection::Left,
+            Clear::None,
+            false,
+        );
+    }
+    flow
+}
+
+#[test]
+fn a_box_whose_height_follows_its_width_settles_in_the_widest_room_it_fits() {
+    let mut owner = BlockFormattingContext::new();
+    let flow = three_segments(&mut owner);
+    // A square that stretches over its room. At 140px it is tall enough to
+    // reach the 10px segment, which narrows it to 10px. At that width it is
+    // only 10px tall and reaches no further than the 40px segment, whose
+    // room it then takes: 40px square, ending where the lowest segment
+    // starts.
+    let square = |probe: BoxProbe| match probe {
+        BoxProbe::Width { stretch } => stretch,
+        BoxProbe::Height { width } => width,
+    };
+    let placed = flow.find_box_slot(0.0, [0.0; 2], Direction::Ltr, Clear::None, square);
+    assert_eq!(
+        (placed.slot.x, placed.slot.y, placed.slot.border_width),
+        (160.0, 0.0, 40.0)
+    );
+    assert_eq!(placed.width, 40.0);
+}
+
+#[test]
+fn a_box_whose_width_and_height_chase_each_other_still_settles_clear_of_the_floats() {
+    let mut owner = BlockFormattingContext::new();
+    let flow = three_segments(&mut owner);
+    // Wide, the box is tall enough for every segment; at the width that
+    // leaves, it is short enough for the first only. The two never agree, so
+    // the taller of the two heights decides.
+    let chasing = |probe: BoxProbe| match probe {
+        BoxProbe::Width { stretch } => stretch,
+        BoxProbe::Height { width } if width > 100.0 => 100.0,
+        BoxProbe::Height { .. } => 1.0,
+    };
+    let placed = flow.find_box_slot(0.0, [0.0; 2], Direction::Ltr, Clear::None, chasing);
+    assert_eq!(
+        (placed.slot.x, placed.slot.y, placed.slot.border_width),
+        (190.0, 0.0, 10.0)
+    );
+    assert_eq!(placed.width, 10.0);
+}

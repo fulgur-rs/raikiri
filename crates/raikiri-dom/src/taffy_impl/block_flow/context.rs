@@ -331,13 +331,32 @@ impl BlockContext<'_> {
         let mut slot = first;
         let mut width = width;
         let mut shifts = [0.0; 4];
-        let mut bottom = f32::NEG_INFINITY;
+        // The room is cut by the segments the box reaches at the width it
+        // has, so a box whose height follows its width can win room back when
+        // a narrower room makes it shorter. Rooms that come round again mean
+        // width and height chase each other; the farthest bottom measured
+        // then decides, and the room only narrows from there.
+        let mut tried = vec![shifts];
+        let mut tallest = f32::NEG_INFINITY;
+        let mut cycled = false;
         loop {
-            bottom = bottom.max(first.y + probe(BoxProbe::Height { width }));
-            let narrowed = self.narrowed_across(first, margins, direction, clear, bottom);
+            let measured = first.y + probe(BoxProbe::Height { width });
+            tallest = tallest.max(measured);
+            let mut narrowed = self.narrowed_across(
+                first,
+                margins,
+                direction,
+                clear,
+                if cycled { tallest } else { measured },
+            );
+            if !cycled && narrowed != shifts && tried.contains(&narrowed) {
+                cycled = true;
+                narrowed = self.narrowed_across(first, margins, direction, clear, tallest);
+            }
             if narrowed == shifts {
                 return Some(BoxSlot { slot, width });
             }
+            tried.push(narrowed);
             shifts = narrowed;
             slot = BfcSlot {
                 x: first.x + shifts[0],

@@ -1138,3 +1138,40 @@ fn an_auto_width_formatting_context_narrows_to_the_narrowest_of_several_bands() 
         (180.0, 0.0, 20.0)
     );
 }
+
+#[test]
+fn a_square_formatting_context_settles_in_the_widest_room_it_fits_beside_the_floats() {
+    let mut tree = Document::new();
+    let root = flow_root_container(&mut tree);
+    // Three bands to the right of the floats: 140px from y = 0, 40px from
+    // y = 5 and 10px from y = 40.
+    for (width, height) in [(60.0, 5.0), (160.0, 35.0), (190.0, 10.0)] {
+        float_box(
+            &mut tree,
+            root,
+            Float::Left,
+            taffy::Clear::Left,
+            width,
+            height,
+        );
+    }
+    let square = formatting_context_box(&mut tree, root, None, 0.0);
+    let style = &mut tree.layout_node_with_style_mut(square).unwrap().style;
+    style.size.height = Dimension::auto();
+    style.aspect_ratio = Some(1.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    // 140px wide it would be 140px tall and reach the 10px band, which
+    // narrows it to 10px. Only 10px tall, it no longer reaches that band, and
+    // the room left is the 40px the first two bands share, where it is a
+    // 40px square that ends as the last band starts.
+    let layout = tree.nodes[square].unrounded_layout;
+    assert_eq!(
+        (
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height
+        ),
+        (160.0, 0.0, 40.0, 40.0)
+    );
+}
