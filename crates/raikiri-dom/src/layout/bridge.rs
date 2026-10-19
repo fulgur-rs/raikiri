@@ -707,9 +707,12 @@ fn layout_values<'a>(
     let limited = [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
         .into_iter()
         .any(is_sizing_keyword);
+    let ignore_logical_min_block = cv.min_block_size.is_some_and(is_sizing_keyword)
+        && (is_supported_flex_grid_item(doc, cascade, idx, cv)
+            || is_supported_flex_grid_container(doc, idx, cv));
     let plain_sizes = (width || height) && !sized_by_content_keyword(doc, cascade, idx, cv);
     let plain_limits = limited && !honors_content_limits(doc, cascade, idx, cv);
-    if !(plain_sizes || plain_limits) {
+    if !(plain_sizes || plain_limits || ignore_logical_min_block) {
         return std::borrow::Cow::Borrowed(cv);
     }
     let mut plain = cv.clone();
@@ -730,6 +733,12 @@ fn layout_values<'a>(
                 *size = ComputedLengthPercentageOrAuto::Auto;
             }
         }
+    }
+    if ignore_logical_min_block {
+        // Supported flex/grid boxes use horizontal writing modes, so the
+        // computed logical block minimum occupies the physical min-height.
+        // Ignore it without dropping unrelated physical width constraints.
+        plain.min_height = ComputedLengthPercentageOrAuto::Auto;
     }
     std::borrow::Cow::Owned(plain)
 }
@@ -794,7 +803,6 @@ fn is_supported_flex_grid_container(doc: &Document, idx: usize, cv: &ComputedVal
         && cv.float == FloatValue::None
         && !cv.multicol_flow
         && !uses_vertical_writing_mode(cv)
-        && !cv.min_block_size.is_some_and(is_sizing_keyword)
         && !crate::paint_rules::is_replaced_element(doc, idx)
 }
 
@@ -812,7 +820,6 @@ fn is_supported_flex_grid_item(
         && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
         && !cv.multicol_flow
         && !uses_vertical_writing_mode(cv)
-        && !cv.min_block_size.is_some_and(is_sizing_keyword)
         && !crate::paint_rules::is_replaced_element(doc, idx)
         && layout_container(doc, cascade, idx).is_some_and(|container| {
             cascade.computed[container]

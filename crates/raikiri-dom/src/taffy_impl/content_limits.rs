@@ -688,7 +688,9 @@ fn height_bounds(
     let key = MeasureKey::new(tree, usize::from(node_id), false, &along, width);
     let height = probe(tree, node_id, key, along, |style| {
         if flex_grid_container {
+            let preferred_width = style.size.width;
             neutralize_all_sizes(style);
+            style.size.width = preferred_width;
             width.install_width(style, width_adjustment);
         } else {
             style.size.height = Dimension::auto();
