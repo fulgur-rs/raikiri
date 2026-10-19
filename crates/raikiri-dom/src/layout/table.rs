@@ -506,7 +506,13 @@ fn compute_table_layout_checked(
             .as_ref()
             .zip(borders_in_place)
             .map(|(shown, (border_width, in_place))| {
-                ColumnsInPlace::new(doc, &grid, shown, border_width, in_place)
+                ColumnsInPlace::new(doc, &grid, shown, border_width, in_place).with_row_overlaps(
+                    doc,
+                    &grid,
+                    &collapsed_rows,
+                    &table_border,
+                    inputs.parent_size.width,
+                )
             });
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
@@ -548,6 +554,9 @@ fn compute_table_layout_checked(
     // "Visibility-collapse rendering"). Their lines come from the rows that
     // remain: the rows around a collapsed run meet at their resolved line,
     // and a run at either end of the table leaves no line behind.
+    let kept_rows: Vec<usize> = (0..collapsed_rows.len())
+        .filter(|&row| !collapsed_rows[row])
+        .collect();
     let collapsed = match (cell_index.as_ref(), shown.as_ref(), shown_index.as_ref()) {
         (None, ..) => CollapsedLines::separate(&table_border),
         (Some(index), None, _) => {
@@ -561,15 +570,15 @@ fn compute_table_layout_checked(
                 &table_border,
                 inputs.parent_size.width,
             );
-            let kept_rows: Vec<usize> = (0..collapsed_rows.len())
-                .filter(|&row| !collapsed_rows[row])
-                .collect();
             let kept_cols: Vec<usize> = (0..collapsed_cols.len())
                 .filter(|&column| !collapsed_cols[column])
                 .collect();
             let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
             for (line, rows) in lines.row_overlaps.iter().zip(kept_rows.windows(2)) {
                 row_overlaps[rows[0]] = *line;
+            }
+            if let Some(columns) = columns_in_place.as_ref() {
+                columns.raise_row_overlaps(&kept_rows, &mut row_overlaps);
             }
             let mut col_overlaps = vec![0.0; usize::from(grid.n_cols) - 1];
             for (line, columns) in lines.col_overlaps.iter().zip(kept_cols.windows(2)) {
@@ -582,14 +591,20 @@ fn compute_table_layout_checked(
             }
         }
         // Nothing shows, so no cell border meets the table's own.
-        (Some(_), Some(_), None) => CollapsedLines {
-            col_overlaps: vec![0.0; usize::from(grid.n_cols) - 1],
-            row_overlaps: vec![0.0; grid.rows.len() - 1],
-            outer_left: table_border.left,
-            outer_right: table_border.right,
-            outer_top: table_border.top,
-            outer_bottom: table_border.bottom,
-        },
+        (Some(_), Some(_), None) => {
+            let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
+            if let Some(columns) = columns_in_place.as_ref() {
+                columns.raise_row_overlaps(&kept_rows, &mut row_overlaps);
+            }
+            CollapsedLines {
+                col_overlaps: vec![0.0; usize::from(grid.n_cols) - 1],
+                row_overlaps,
+                outer_left: table_border.left,
+                outer_right: table_border.right,
+                outer_top: table_border.top,
+                outer_bottom: table_border.bottom,
+            }
+        }
     };
     let border_spacing = if collapse {
         (0.0, 0.0)
@@ -3757,11 +3772,16 @@ struct BorderState {
 struct ColumnsInPlace {
     /// [`CollapsedLines::inline_border_width`] with every column in place.
     border_width: f32,
+    /// [`CollapsedLines::row_overlaps`] of the cells with the borders `in_place`
+    /// gives them, between each pair of consecutive rows that are not
+    /// collapsed. The rows keep the heights the cells of a collapsed column
+    /// gave them, and those cells share their row lines, which the grid that
+    /// remains does not overlap.
+    row_overlaps: Vec<f32>,
     /// The borders the cells are measured with: the inline sides they have
-    /// with every column in place, and the block sides the rest of the layout
-    /// counts, which are those of the grid that remains. A row line is shared
-    /// by two rows only as far as that grid overlaps them, so a border that
-    /// only a collapsed column gave the rows would count twice.
+    /// with every column in place, and for the cells that remain the block
+    /// sides the rest of the layout counts, which are those of the grid that
+    /// remains.
     in_place: BorderState,
     /// The borders with the collapsed columns left out.
     remaining: BorderState,
@@ -3788,24 +3808,60 @@ impl ColumnsInPlace {
             .zip(&remaining.cells)
             .map(|((cell, mut border, painted), kept)| {
                 // The cells of the collapsed columns are not part of the grid
-                // that remains, which resolves nothing for them.
-                let block = if remains.contains(&cell) {
-                    kept.1
-                } else {
-                    authored_border(doc, cell)
-                };
-                border.top = block.top;
-                border.bottom = block.bottom;
+                // that remains, which resolves nothing for them: they keep the
+                // block sides they resolved to, and the row lines they share
+                // are in `row_overlaps`.
+                if remains.contains(&cell) {
+                    border.top = kept.1.top;
+                    border.bottom = kept.1.bottom;
+                }
                 (cell, border, painted)
             })
             .collect();
         Self {
             border_width,
+            row_overlaps: Vec::new(),
             in_place: BorderState {
                 cells,
                 rows: in_place.rows,
             },
             remaining,
+        }
+    }
+
+    /// Set the overlaps between the rows that are not in `collapsed_rows`
+    /// from the borders the cells are measured with: a cell that remains
+    /// keeps the block borders of the grid that remains, so it shares with the
+    /// cells of a collapsed column only the line it has itself. Overlapping by
+    /// the line the cells would share with every column in place would take
+    /// more from a row than the cell was measured with.
+    fn with_row_overlaps(
+        mut self,
+        doc: &mut Document,
+        grid: &TableGrid,
+        collapsed_rows: &[bool],
+        table_border: &Rect<f32>,
+        basis: Option<f32>,
+    ) -> Self {
+        let rows_shown = without_collapsed_rows(grid, collapsed_rows);
+        if rows_shown.rows.is_empty() {
+            return self;
+        }
+        apply_borders(doc, &self.in_place);
+        let index = CellIndex::new(&rows_shown);
+        self.row_overlaps =
+            compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis).row_overlaps;
+        apply_borders(doc, &self.remaining);
+        self
+    }
+
+    /// Raise the overlap after each row of `row_overlaps` to the line the cells
+    /// of the collapsed columns share there, between the rows in `kept_rows`.
+    /// The rows keep the heights those cells gave them, so they keep the lines
+    /// the cells share as well.
+    fn raise_row_overlaps(&self, kept_rows: &[usize], row_overlaps: &mut [f32]) {
+        for (line, rows) in self.row_overlaps.iter().zip(kept_rows.windows(2)) {
+            row_overlaps[rows[0]] = row_overlaps[rows[0]].max(*line);
         }
     }
 
@@ -3923,11 +3979,10 @@ fn border_width_with_columns_in_place(
     let index = CellIndex::new(&rows_shown);
     reset_collapsed_borders(doc, grid);
     resolve_collapsed_borders(doc, &rows_shown, &index, table_idx);
-    let width = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis)
-        .inline_border_width();
+    let lines = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis);
     let in_place = snapshot_borders(doc, grid);
     reset_collapsed_borders(doc, shown);
-    (width, in_place)
+    (lines.inline_border_width(), in_place)
 }
 
 fn compute_collapsed_lines(
