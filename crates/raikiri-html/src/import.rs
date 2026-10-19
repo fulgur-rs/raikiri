@@ -228,8 +228,8 @@ impl ImportExpander<'_> {
         expanded
     }
 
-    fn record_import_fetch_error(&mut self, url: Url, error: NetworkError) {
-        let safe_url = redacted_url(&url);
+    fn record_import_fetch_error(&mut self, url: &Url, error: NetworkError) {
+        let safe_url = redacted_url(url);
         let summary = network_error_summary(&error);
         let (kind, details) = match error {
             NetworkError::PolicyViolation(violation) => {
@@ -255,10 +255,10 @@ impl ImportExpander<'_> {
         });
     }
 
-    fn record_import_fallback(&mut self, url: Url, details: String) {
+    fn record_import_fallback(&mut self, url: &Url, details: String) {
         self.warnings.push(RenderWarning {
             kind: WarningKind::NetworkFallback {
-                url: redacted_url(&url),
+                url: redacted_url(url),
             },
             node_id: None,
             details,
@@ -271,6 +271,20 @@ impl ImportExpander<'_> {
         base_url: Option<&Url>,
         depth: u32,
     ) -> Option<Vec<StylesheetPart>> {
+        let requested_url = self.requested_import_url(import, base_url)?;
+        let (fetched_url, css) = self.fetch_import(&requested_url)?;
+        let child = self.expand_within_chain(requested_url, fetched_url, &css, depth);
+        self.charge_expansion(import, child)
+    }
+
+    /// The URL `import` asks for, or `None` when it must stay an opaque
+    /// at-rule: the URL is too long, does not resolve, carries credentials, is
+    /// a `javascript:` URL, closes a cycle, or an import budget is spent.
+    fn requested_import_url(
+        &self,
+        import: &ImportStatement,
+        base_url: Option<&Url>,
+    ) -> Option<Url> {
         if import.url.len() > MAX_IMPORT_URL_LENGTH {
             return None;
         }
@@ -290,7 +304,13 @@ impl ImportExpander<'_> {
         {
             return None;
         }
+        Some(requested_url)
+    }
 
+    /// Fetch `requested_url` and return the final URL of the response with
+    /// its text, or `None` (recording a warning when the failure is worth
+    /// one) when the response cannot be expanded.
+    fn fetch_import(&mut self, requested_url: &Url) -> Option<(Url, String)> {
         self.budget.fetches += 1;
         let fetched = match self.network.fetch(get_request(
             requested_url.clone(),
@@ -348,7 +368,7 @@ impl ImportExpander<'_> {
         let fetched_url = url_without_fragment(&fetched.final_url);
         if has_credentials(&fetched_url) {
             self.record_import_fallback(
-                fetched_url,
+                &fetched_url,
                 "stylesheet @import response redirected to a credential-bearing URL".to_owned(),
             );
             return None;
@@ -356,18 +376,41 @@ impl ImportExpander<'_> {
         if self.chain.iter().any(|ancestor| ancestor == &fetched_url) {
             return None;
         }
+        Some((
+            fetched_url,
+            String::from_utf8_lossy(&fetched.bytes).into_owned(),
+        ))
+    }
 
-        let css = String::from_utf8_lossy(&fetched.bytes).into_owned();
+    /// Expand the imports of the fetched stylesheet `css` while the URLs it
+    /// was requested and fetched from are on the import chain.
+    fn expand_within_chain(
+        &mut self,
+        requested_url: Url,
+        fetched_url: Url,
+        css: &str,
+        depth: u32,
+    ) -> Vec<StylesheetPart> {
         let chain_entries = if requested_url == fetched_url { 1 } else { 2 };
         self.chain.push(requested_url);
         if chain_entries == 2 {
             self.chain.push(fetched_url.clone());
         }
-        let child = self.expand(&css, Some(&fetched_url), depth + 1);
+        let child = self.expand(css, Some(&fetched_url), depth + 1);
         for _ in 0..chain_entries {
             let _ = self.chain.pop();
         }
+        child
+    }
 
+    /// Give `child`, the expansion of `import`, the media condition of the
+    /// import and charge its size to the expansion budget. `None` when the
+    /// budget cannot take it, so the import stays an opaque at-rule.
+    fn charge_expansion(
+        &mut self,
+        import: &ImportStatement,
+        mut child: Vec<StylesheetPart>,
+    ) -> Option<Vec<StylesheetPart>> {
         let replacement_bytes = child.iter().try_fold(0usize, |total, part| {
             let total = total.checked_add(part.source.len())?;
             part.media
@@ -385,7 +428,6 @@ impl ImportExpander<'_> {
         }
 
         // Check the full cost before copying the parent condition into parts.
-        let mut child = child;
         if let Some(media) = &import.media {
             for part in &mut child {
                 part.media.push(media.clone());
