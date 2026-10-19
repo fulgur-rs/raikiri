@@ -84,32 +84,17 @@ impl GeneratedAtomic {
             margin(self.margin.bottom),
             margin(self.margin.left),
         );
-        // The physical sides at the line-left and block-start ends, as for the
-        // edges of an inline box (CSS Writing Modes 4 §6.4). Sideways-lr runs
-        // its lines from bottom to top.
-        let (inline_size, block_size, line_left, block) = match writing_mode {
-            WritingMode::HorizontalTb => (width, height, (left, right), (top, bottom)),
-            WritingMode::VerticalLr => (height, width, (top, bottom), (left, right)),
-            WritingMode::SidewaysLr => (height, width, (bottom, top), (left, right)),
-            WritingMode::VerticalRl | WritingMode::SidewaysRl => {
-                (height, width, (top, bottom), (right, left))
-            }
-        };
-        let (inline_start, inline_end) = if rtl {
-            (line_left.1, line_left.0)
-        } else {
-            line_left
-        };
+        let (inline_size, block_size, margins) = logical_box(
+            (width, height),
+            (top, right, bottom, left),
+            writing_mode,
+            rtl,
+        );
         shodo::AtomicSize {
             inline_size,
             block_size,
             baseline: None,
-            margins: shodo::node::Sides {
-                inline_start,
-                inline_end,
-                block_start: block.0,
-                block_end: block.1,
-            },
+            margins,
         }
     }
 
@@ -139,6 +124,41 @@ impl GeneratedAtomic {
         }
         used.max(0.0) + edges
     }
+}
+
+/// The inline size, block size and logical margins of a box whose physical
+/// border box measures `(width, height)` and whose physical margins are
+/// `(top, right, bottom, left)`, in a paragraph of `writing_mode` whose lines
+/// run right to left when `rtl`.
+pub(crate) fn logical_box(
+    (width, height): (f32, f32),
+    (top, right, bottom, left): (f32, f32, f32, f32),
+    writing_mode: WritingMode,
+    rtl: bool,
+) -> (f32, f32, shodo::node::Sides) {
+    // The physical sides at the line-left and block-start ends, as for the
+    // edges of an inline box (CSS Writing Modes 4 §6.4). Sideways-lr runs
+    // its lines from bottom to top.
+    let (inline_size, block_size, line_left, block) = match writing_mode {
+        WritingMode::HorizontalTb => (width, height, (left, right), (top, bottom)),
+        WritingMode::VerticalLr => (height, width, (top, bottom), (left, right)),
+        WritingMode::SidewaysLr => (height, width, (bottom, top), (left, right)),
+        WritingMode::VerticalRl | WritingMode::SidewaysRl => {
+            (height, width, (top, bottom), (right, left))
+        }
+    };
+    let (inline_start, inline_end) = if rtl {
+        (line_left.1, line_left.0)
+    } else {
+        line_left
+    };
+    let margins = shodo::node::Sides {
+        inline_start,
+        inline_end,
+        block_start: block.0,
+        block_end: block.1,
+    };
+    (inline_size, block_size, margins)
 }
 
 #[cfg(test)]

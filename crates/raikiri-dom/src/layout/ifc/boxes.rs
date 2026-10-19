@@ -2,6 +2,7 @@
 
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
+use super::generated_atomics::logical_box;
 use super::generated_blocks;
 use super::geometry::IfcAxes;
 use super::inline_boxes::{for_each_atomic, placed};
@@ -1601,20 +1602,24 @@ pub(crate) fn measure_atomics(
         // no longer fitting it). Round the margin box as a whole and give the
         // border box what is left after the rounded margins.
         let snap = |value: f32| (value * 64.0).round() / 64.0;
-        let outer = snap(output.size.width + margin.left + margin.right);
-        let inline_size = (outer - snap(margin.left) - snap(margin.right)).max(0.0);
+        // The lines of a vertical paragraph run along the box's height. A
+        // horizontal paragraph takes the line-left margin as the inline-start
+        // one whatever its direction.
+        let (inline_size, block_size, margins) = logical_box(
+            (output.size.width, output.size.height),
+            (margin.top, margin.right, margin.bottom, margin.left),
+            root.writing_mode,
+            root.rtl && root.writing_mode != WritingMode::HorizontalTb,
+        );
+        let outer = snap(inline_size + margins.inline_start + margins.inline_end);
+        let inline_size = (outer - snap(margins.inline_start) - snap(margins.inline_end)).max(0.0);
         sizes.insert(
             id,
             AtomicSize {
                 inline_size,
-                block_size: output.size.height,
+                block_size,
                 baseline,
-                margins: shodo::node::Sides {
-                    inline_start: margin.left,
-                    inline_end: margin.right,
-                    block_start: margin.top,
-                    block_end: margin.bottom,
-                },
+                margins,
             },
         );
         outputs.push((node, output));
