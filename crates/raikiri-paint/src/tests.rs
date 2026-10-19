@@ -294,6 +294,72 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
     assert!(highlight_index < glyph_index);
 }
 
+#[test]
+fn custom_highlight_paints_only_on_the_line_holding_its_text() {
+    use anyrender::types::Paint;
+    use peniko::Color;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "::highlight(sample) { background-color: rgb(0, 255, 255); }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    // The paragraph is narrower than a word, so each word has a line of its own.
+    let paragraph = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;width:1px"),
+    );
+    let text = doc.append_text(paragraph, "aa bb");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &[TextHighlightRange {
+            name: "sample".to_owned(),
+            node: text,
+            start_byte: 3,
+            end_byte: 5,
+        }],
+    )
+    .expect("paint succeeds");
+
+    let glyph_runs = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        .count();
+    assert_eq!(glyph_runs, 2, "each word is on its own line");
+    let highlight_fills = scene
+        .commands
+        .iter()
+        .filter(|command| {
+            matches!(command, RenderCommand::Fill(fill) if fill.brush == Paint::Solid(Color::from_rgba8(0, 255, 255, 255)))
+        })
+        .count();
+    assert_eq!(
+        highlight_fills, 1,
+        "only the second line holds the selected text"
+    );
+}
+
 /// Paint a ruby `<ruby>a<rt>xyz</rt></ruby>` with `ruby_style` in a
 /// paragraph with `paragraph_style`, the text of its annotation highlighted, and return the highlight's rectangles and the
 /// origins of the annotation's glyphs.
