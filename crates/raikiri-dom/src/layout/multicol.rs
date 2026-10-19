@@ -906,11 +906,12 @@ fn only_element_child(tree: &Document, parent: usize) -> Option<usize> {
 
 /// The paragraph at the end of the chain that starts at `start`, when every
 /// box of the chain, the paragraph included, is a plain block in the flow:
-/// no margin, padding, border, float, authored size or size containment, so
-/// its height follows its content, and each box but the last holds nothing
-/// but the next one and clips nothing, as the pieces of the paragraph in the
-/// later columns lie outside its box. The paragraph breaks between its lines
-/// and holds no box but atomic inlines.
+/// no margin, padding, border, float, authored size, size containment or
+/// column span, so its height follows its content, and each box but the last
+/// holds nothing but the next one, clips nothing and paints no effect sized
+/// from its whole box, as the pieces of the paragraph in the later columns
+/// lie outside its box. The paragraph breaks between its lines and holds no
+/// box but atomic inlines.
 fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
     let mut current = start;
     loop {
@@ -919,7 +920,11 @@ fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
         let clips = node.ifc.is_none()
             && (node.style.overflow.x != taffy::Overflow::Visible
                 || node.style.overflow.y != taffy::Overflow::Visible);
+        // A slice of a wrapper cannot reproduce an effect sized from its
+        // whole box.
+        let painted = node.ifc.is_none() && node.paints_whole_box_effects;
         if clips
+            || painted
             || node.display() != DisplayValue::Block
             || node.style.float.is_floated()
             || node.style.margin.top != zero_margin
@@ -935,6 +940,7 @@ fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
             || !node.style.min_size.height.is_auto()
             || !node.style.max_size.height.is_auto()
             || node.size_containment.height
+            || node.column_span_all
             || node.break_inside != raikiri_style::property::BreakInside::Auto
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
@@ -1139,14 +1145,13 @@ fn layout_column_group(
         }
         // A paragraph below plain wrappers is balanced like one of the
         // container's own. The wrapper that is the container's child has one
-        // box, in the first column, so one that paints its own box would
-        // leave the lines of the later columns without it. The wrappers
+        // box, in the first column, so one that fills its box with a color
+        // would leave the lines of the later columns without it. The wrappers
         // below it, and the paragraph, have a box in each column.
         let leaf = if tree.nodes[*child].ifc.is_some() {
             *child
         } else {
-            let wrapper = &tree.nodes[*child];
-            if wrapper.paints_background_color || wrapper.paints_whole_box_effects {
+            if tree.nodes[*child].paints_background_color {
                 return None;
             }
             plain_paragraph_chain_leaf(tree, *child)?

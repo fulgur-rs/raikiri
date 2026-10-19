@@ -1819,6 +1819,48 @@ fn a_size_contained_wrapper_keeps_the_height_of_an_empty_box() {
     );
 }
 
+#[test]
+fn a_column_spanning_paragraph_below_a_wrapper_keeps_its_full_width() {
+    // A box that spans every column is not split over them.
+    compare(
+        "<div class=mc><div><p style='column-span:all'>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:100px'>A<br>B<br>C<br>D</div><div style='position:absolute;left:0;top:80px'>E</div>",
+    );
+}
+
+#[test]
+fn a_relative_wrapper_moves_each_column_of_its_paragraph_once() {
+    compare(
+        "<div class=mc><div style='position:relative;top:3px'><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        "",
+        "<div style='position:absolute;left:0;top:3px'>A<br>B</div><div style='position:absolute;left:60px;top:3px'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn the_shadow_of_a_wrapper_is_not_cut_at_the_column_of_its_paragraph() {
+    // A slice of a wrapper cannot draw the shadow of its whole box. The
+    // columns are 40 pixels wide and the shadow reaches 44.
+    let shadowed = "<div style='box-shadow:4px 4px 0 red'><p>A<br>B<br>C<br>D</p></div>";
+    for wrappers in 1..=2 {
+        let pixels = raster(
+            &format!(
+                "<div class=mc>{}</div>",
+                in_wrappers(shadowed, wrappers - 1)
+            ),
+            "",
+        );
+        let beyond_the_column = (0..160).any(|y| {
+            (41..44).any(|x| {
+                let start = (y * 180 + x) * 4;
+                pixels[start..start + 3] == [255, 0, 0]
+            })
+        });
+        assert!(beyond_the_column, "{wrappers} wrappers");
+    }
+}
+
 /// Every page of `body` laid out in pages of 180x160 pixels.
 fn pages(body: &str) -> Vec<Vec<u8>> {
     let fonts = FontCollectionBuilder::new()
