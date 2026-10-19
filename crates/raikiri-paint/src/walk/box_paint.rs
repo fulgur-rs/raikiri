@@ -30,6 +30,33 @@ struct OwnBox {
     background_height: f32,
 }
 
+/// The clip that the content of the replaced element `element` paints inside.
+fn replaced_content_clip(element: &ElementBox<'_>) -> Option<raikiri_traits::PaintClip> {
+    let ElementBox {
+        cv,
+        layout,
+        paint_x,
+        paint_y,
+        ..
+    } = *element;
+    raikiri_dom::paint_rules::replaced_content_clip(
+        cv,
+        PaintRect::new(paint_x, paint_y, layout.size.width, layout.size.height),
+        PaintInsets::new(
+            layout.border.top,
+            layout.border.right,
+            layout.border.bottom,
+            layout.border.left,
+        ),
+        PaintInsets::new(
+            layout.padding.top,
+            layout.padding.right,
+            layout.padding.bottom,
+            layout.padding.left,
+        ),
+    )
+}
+
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Paint the parts of the box of `element` in their order, and return
     /// the advance of its generated `::before` content.
@@ -422,77 +449,63 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
 
     /// Paint the content of the replaced element `element`: an inline SVG, a canvas or an image, inside its overflow clip, with the stand-in for an image that did not paint.
     pub(super) fn paint_replaced_content(&mut self, element: &ElementBox<'w>) {
-        let ElementBox {
-            node,
-            node_id,
-            cv,
-            layout,
-            inside_fixed,
-            generates_box,
-            paint_padding,
-            paint_border_radius,
-            fixed_in_viewport,
-            paint_x,
-            paint_y,
-            ..
-        } = *element;
-        let (document, cascade, page_box, image_cache, pixel_source) = (
-            self.document,
-            self.cascade,
-            self.page_box,
-            self.image_cache,
-            self.pixel_source,
-        );
-        let PageGeometry {
-            page_clip_transform,
-            page_content_clip,
-            ..
-        } = self.geometry;
-        let scene = &mut *self.scene;
-        let trace = &mut self.trace;
-        let warnings = &mut *self.warnings;
-        let paints_own_box = generates_box && !raikiri_dom::paint_rules::hides_own_box(cv);
+        let ElementBox { node, node_id, .. } = *element;
         // Resolve the source's natural dimensions first. SVG
         // sources use the resulting concrete object dimensions
         // for a bounded, size-specific raster request.
         let is_replaced = node.is_inline_svg_root()
-            || document.is_canvas_element(node_id)
+            || self.document.is_canvas_element(node_id)
             || node.tag_name() == Some("img");
         // The replaced content paints inside its overflow clip,
         // the same clip the page paint order puts around it.
         let content_clip = is_replaced
-            .then(|| {
-                raikiri_dom::paint_rules::replaced_content_clip(
-                    cv,
-                    PaintRect::new(paint_x, paint_y, layout.size.width, layout.size.height),
-                    PaintInsets::new(
-                        layout.border.top,
-                        layout.border.right,
-                        layout.border.bottom,
-                        layout.border.left,
-                    ),
-                    PaintInsets::new(
-                        layout.padding.top,
-                        layout.padding.right,
-                        layout.padding.bottom,
-                        layout.padding.left,
-                    ),
-                )
-            })
+            .then(|| replaced_content_clip(element))
             .flatten();
         if let Some(clip) = content_clip {
-            let rect = push_overflow_clip(scene, clip, &page_box);
-            if let Some(t) = trace.as_deref_mut() {
+            let rect = push_overflow_clip(&mut *self.scene, clip, &self.page_box);
+            if let Some(t) = self.trace.as_deref_mut() {
                 t.push(crate::PaintTraceEvent::PushOverflowClip(
                     node_id,
                     [rect.x0, rect.y0, rect.x1, rect.y1],
                 ));
             }
         }
-        if is_replaced && let Some(t) = trace.as_deref_mut() {
+        if is_replaced && let Some(t) = self.trace.as_deref_mut() {
             t.push(crate::PaintTraceEvent::Replaced(node_id));
         }
-        let painted_image = if node.is_inline_svg_root() {
+        let painted_image = self.paint_replaced_source(element);
+        self.paint_image_stand_in(element, painted_image);
+        // The fallback stands in for the image content, so it
+        // stays inside the same clip.
+        if content_clip.is_some() {
+            if let Some(t) = self.trace.as_deref_mut() {
+                t.push(crate::PaintTraceEvent::PopClip);
+            }
+            self.scene.pop_layer();
+        }
+    }
+
+    /// Paint the source of the replaced element `element`: an inline SVG, a canvas or an image. Returns whether an image painted.
+    fn paint_replaced_source(&mut self, element: &ElementBox<'w>) -> bool {
+        let ElementBox {
+            node,
+            node_id,
+            cv,
+            layout,
+            paint_padding,
+            paint_x,
+            paint_y,
+            ..
+        } = *element;
+        let (document, cascade, image_cache, pixel_source) = (
+            self.document,
+            self.cascade,
+            self.image_cache,
+            self.pixel_source,
+        );
+        let scene = &mut *self.scene;
+        let warnings = &mut *self.warnings;
+        if node.is_inline_svg_root() {
             paint_inline_svg(
                 scene,
                 document,
@@ -554,7 +567,33 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             )
         } else {
             false
-        };
+        }
+    }
+
+    /// Paint the stand-in for the image of `element` when it did not paint (`painted_image` is false): the color that its URL suggests.
+    fn paint_image_stand_in(&mut self, element: &ElementBox<'w>, painted_image: bool) {
+        let ElementBox {
+            node,
+            cv,
+            layout,
+            inside_fixed,
+            generates_box,
+            paint_padding,
+            paint_border_radius,
+            fixed_in_viewport,
+            paint_x,
+            paint_y,
+            ..
+        } = *element;
+        let (image_cache, pixel_source) = (self.image_cache, self.pixel_source);
+        let PageGeometry {
+            page_clip_transform,
+            page_content_clip,
+            ..
+        } = self.geometry;
+        let scene = &mut *self.scene;
+        let warnings = &mut *self.warnings;
+        let paints_own_box = generates_box && !raikiri_dom::paint_rules::hides_own_box(cv);
         if !painted_image
             && paints_own_box
             && pixel_source.is_none()
@@ -598,14 +637,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             if clip_background.is_some() {
                 scene.pop_layer();
             }
-        }
-        // The fallback stands in for the image content, so it
-        // stays inside the same clip.
-        if content_clip.is_some() {
-            if let Some(t) = trace.as_deref_mut() {
-                t.push(crate::PaintTraceEvent::PopClip);
-            }
-            scene.pop_layer();
         }
     }
 
