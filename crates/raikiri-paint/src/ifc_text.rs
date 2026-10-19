@@ -768,7 +768,18 @@ fn draw_shadow(
         // not exceed.
         let pad = f64::from(font_size);
         let ink = if run.vertical {
-            vertical_ink_bounds(&run.draw.glyphs, pad)
+            // The marks of the run lie beside it, as far from its baseline as
+            // their offset (which a ruby annotation on the same side pushes
+            // out) and their own size.
+            let marks = match run.marks {
+                ShadowMarks::Vertical(_) => run
+                    .draw
+                    .run
+                    .emphasis_mark()
+                    .map_or(0.0, |mark| f64::from(mark.offset.abs() + mark.font_size)),
+                _ => 0.0,
+            };
+            vertical_ink_bounds(&run.draw.glyphs, pad + marks)
         } else {
             let (left, right) =
                 run.draw

@@ -3619,6 +3619,61 @@ fn a_vertical_text_shadow_covers_the_emphasis_marks() {
 }
 
 #[test]
+fn a_blurred_vertical_shadow_layer_covers_marks_pushed_out_by_a_ruby_annotation() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;font-size:10px;\
+         color:black;text-emphasis:dot;text-shadow:2px 3px 4px rgb(0,0,255)",
+        |doc, root| {
+            let ruby =
+                doc.append_element(Some(root), "ruby", Style::default(), Some("display:ruby"));
+            let base = doc.append_element(
+                Some(ruby),
+                "rb",
+                Style::default(),
+                Some("display:ruby-base"),
+            );
+            doc.append_text(base, "a");
+            let annotation = doc.append_element(
+                Some(ruby),
+                "rt",
+                Style::default(),
+                Some("display:ruby-text;font-size:50px"),
+            );
+            doc.append_text(annotation, "x");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = draw_root(&doc, &cascade, root);
+    let layers: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => Some(layer),
+            _ => None,
+        })
+        .collect();
+    assert!(!layers.is_empty(), "the shadow is blurred");
+    let blue = solid(0, 0, 255);
+    let shadow: Vec<_> = glyphs(&scene).into_iter().filter(|g| g.3 == blue).collect();
+    // The base and its annotation, and the mark of the base.
+    assert_eq!(shadow.len(), 3, "{shadow:?}");
+    let across = shadow.iter().map(|g| g.1).fold(f64::NEG_INFINITY, f64::max)
+        - shadow.iter().map(|g| g.1).fold(f64::INFINITY, f64::min);
+    assert!(
+        across > 30.0,
+        "the annotation pushes the mark out: {shadow:?}"
+    );
+    // Every layer that holds the base also holds the mark pushed out beside it.
+    let clip = kurbo::Shape::bounding_box(&layers[0].clip);
+    for glyph in &shadow {
+        assert!(
+            clip.x0 <= glyph.1 && glyph.1 <= clip.x1 && clip.y0 <= glyph.2 && glyph.2 <= clip.y1,
+            "{clip:?} around {glyph:?}"
+        );
+    }
+}
+
+#[test]
 fn a_vertical_text_shadow_follows_a_combined_square() {
     let (mut doc, cascade, root) = paragraph(
         "writing-mode:vertical-rl;line-height:40px;color:black;text-shadow:2px 3px rgb(0,0,255)",
