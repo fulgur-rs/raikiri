@@ -289,3 +289,68 @@ fn a_multicol_block_width_from_the_ratio_grows_to_the_widths_of_its_columns() {
         (200.0, 50.0)
     );
 }
+
+/// Lay out a 200px wide `<body>` holding an inline `<svg>` with a 2:1
+/// `viewBox` and no `width` or `height` attribute, and return its size.
+fn ratio_only_svg_size(css: &str) -> (f32, f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:200px"),
+    );
+    let svg = doc.append_element(
+        Some(body),
+        "svg",
+        Style::default(),
+        Some(format!("display:block;{css}").as_str()),
+    );
+    doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+    doc.set_element_attributes(svg, vec![("viewBox".into(), "0 0 2 1".into())]);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 200.0;
+    page.height = 400.0;
+    crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).unwrap();
+    let size = doc.nodes[svg].unrounded_layout.size;
+    (size.width, size.height)
+}
+
+#[test]
+fn the_viewbox_ratio_sizes_a_ratio_only_svg_without_a_css_ratio() {
+    assert_eq!(ratio_only_svg_size("width:100px"), (100.0, 50.0));
+}
+
+#[test]
+fn an_authored_ratio_replaces_the_viewbox_ratio_of_an_svg_with_a_width() {
+    assert_eq!(
+        ratio_only_svg_size("width:100px;aspect-ratio:1/1"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn an_authored_ratio_replaces_the_viewbox_ratio_of_an_svg_with_a_height() {
+    assert_eq!(
+        ratio_only_svg_size("height:100px;aspect-ratio:1/1"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn an_authored_ratio_replaces_the_viewbox_ratio_of_an_svg_with_neither_size() {
+    assert_eq!(ratio_only_svg_size("aspect-ratio:1/1"), (200.0, 200.0));
+}
+
+#[test]
+fn an_auto_ratio_keeps_the_viewbox_ratio_of_an_svg() {
+    assert_eq!(
+        ratio_only_svg_size("width:100px;aspect-ratio:auto 1/1"),
+        (100.0, 50.0)
+    );
+}

@@ -865,6 +865,9 @@ impl LayoutSession<'_> {
             {
                 // CSS Sizing 3, intrinsic sizes: ratio-only replaced content
                 // uses the definite available inline size, not a 300px default.
+                // An authored `aspect-ratio` replaces the ratio of the viewBox;
+                // `auto` keeps it.
+                let ratio = tree.nodes[idx].preferred_aspect_ratio.unwrap_or(ratio);
                 let mut resolver_style = tree.layout_node_with_style(idx).unwrap().style.clone();
                 resolver_style.aspect_ratio = Some(ratio);
                 let mut style = resolver_style.clone();

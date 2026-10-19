@@ -292,10 +292,12 @@ fn apply_computed_to_style_in_session_inner(
         let natural_ratio = doc.nodes[idx]
             .image_intrinsic_box()
             .and_then(|intrinsic| intrinsic.aspect_ratio);
+        let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio);
+        doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
         doc.layout_node_with_style_mut(idx)
             .unwrap()
             .style
-            .aspect_ratio = preferred_aspect_ratio(cv, natural_ratio);
+            .aspect_ratio = preferred_ratio;
         // SVG 2 geometry: auto dimensions on svg are treated as 100%.
         // With only a viewBox ratio and no definite height, width establishes
         // the viewport and the ratio determines its auto height.
