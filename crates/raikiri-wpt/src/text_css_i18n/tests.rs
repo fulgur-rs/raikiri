@@ -5,6 +5,8 @@ use raikiri_js::runtime::DomRuntime;
 
 use super::*;
 
+mod nonblock_size_keyword_tests;
+
 const TWO_BY_THREE_PNG: &[u8] = &[
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 3, 8, 6, 0,
     0, 0, 185, 234, 222, 129, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31,

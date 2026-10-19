@@ -136,6 +136,19 @@ pub(crate) fn layout_container_candidates(
     layout_candidates(tree, node, &candidates, area, direction, claims)
 }
 
+/// Compute the root layout while resolving intrinsic constraints on the
+/// fixed and otherwise unclaimed out-of-flow boxes against the initial
+/// containing block.
+pub(crate) fn compute_root_layout_with_content_limits(
+    tree: &mut LayoutSession<'_>,
+    root: NodeId,
+    available_space: taffy::Size<taffy::AvailableSpace>,
+) {
+    super::content_limits::with_oof_content_limits(tree, None, &[root], |tree| {
+        taffy::compute_root_layout(tree, root, available_space);
+    });
+}
+
 pub(super) fn layout_candidates(
     tree: &mut LayoutSession<'_>,
     owner: NodeId,
@@ -144,9 +157,17 @@ pub(super) fn layout_candidates(
     direction: taffy::Direction,
     claims: taffy::ContainingBlockClaims,
 ) -> OofLayoutResult {
-    let result = taffy::compute::compute_oof_layout_for_area(
-        tree, owner, candidates, area, direction, claims,
-    );
+    let candidate_ids = candidates
+        .iter()
+        .filter(|candidate| claims.for_position(candidate.position))
+        .map(|candidate| candidate.node)
+        .collect::<Vec<_>>();
+    let result =
+        super::content_limits::with_oof_content_limits(tree, Some(&candidate_ids), &[], |tree| {
+            taffy::compute::compute_oof_layout_for_area(
+                tree, owner, candidates, area, direction, claims,
+            )
+        });
     tree.clear_hoisted_children(owner);
     tree.add_hoisted_children(owner, &result.hoisted);
     result

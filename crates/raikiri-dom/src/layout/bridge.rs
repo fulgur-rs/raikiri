@@ -758,16 +758,16 @@ fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
 /// sizing keyword in `min-width`, `max-width`, `min-height` or `max-height`
 /// (CSS Sizing 3 §4 and §5).
 ///
-/// A normal-flow block uses these constraints when it is sized by its content
-/// keyword. A flex/grid item also uses them: its parent algorithm reads the
-/// item's min/max constraints before laying out the item. Other boxes size
+/// A normal-flow block, float, and inline-block use these constraints when
+/// their sizing algorithms clamp their used sizes. An absolutely positioned
+/// box also uses them; its constraints are resolved before Taffy reads its
+/// insets and sizes. A flex/grid item uses them because its parent algorithm
+/// reads the item's min/max constraints before laying it out. Other boxes size
 /// themselves as if there were no such minimum or maximum:
-/// - an absolutely positioned box takes its size from its insets, and a float
-///   is placed by its container before it is laid out;
 /// - a box in a multicol flow is fragmented across the columns, so its
 ///   automatic height is not the height of one fragment;
 /// - table containers and items, replaced items, and inline-level boxes
-///   outside flex/grid measure themselves by algorithms of their own;
+///   other than inline-blocks measure themselves by algorithms of their own;
 /// - a vertical box swaps the axes a keyword refers to.
 fn honors_content_limits(
     doc: &Document,
@@ -781,18 +781,22 @@ fn honors_content_limits(
     if is_supported_flex_grid_container(doc, idx, cv) {
         return true;
     }
-    if !matches!(
+    let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+    let block_sized = matches!(
         cv.display,
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-    ) || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-        || cv.float != FloatValue::None
+    );
+    let non_block_sized = cv.display == DisplayValue::InlineBlock || cv.float != FloatValue::None;
+    let table = matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable);
+    if table
+        || (!block_sized && !non_block_sized && !out_of_flow)
         || cv.multicol_flow
         || lays_out_vertically(cascade, idx)
         || !sized_by_content_keyword(doc, cascade, idx, cv)
     {
         return false;
     }
-    !is_flex_or_grid_item(doc, cascade, idx)
+    out_of_flow || !is_flex_or_grid_item(doc, cascade, idx)
 }
 
 /// Whether `idx` is an in-flow flex/grid container whose own intrinsic min/max

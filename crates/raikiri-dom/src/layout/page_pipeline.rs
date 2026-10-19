@@ -1165,7 +1165,11 @@ fn layout_single_page_with_table_projection(
         height: AvailableSpace::Definite(content_height),
     };
     document.begin_oof_layout();
-    taffy::compute_root_layout(document, TaffyNodeId::from(icb), available_space);
+    crate::taffy_impl::compute_root_layout_with_content_limits(
+        document,
+        TaffyNodeId::from(icb),
+        available_space,
+    );
     take_layout_failure(document)?;
     super::fixed::correct_root_oof_auto_margins(
         document,

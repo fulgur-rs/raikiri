@@ -1,8 +1,11 @@
 //! The size of a replaced leaf with an intrinsic ratio and an `auto` side.
 
-use super::resolve_calc;
+use super::{calc_has_percentage, resolve_calc};
 use crate::image_geometry::constrain_with_ratio;
-use taffy::{BoxSizing, LayoutInput, MaybeResolve, ResolveOrZero, Size, SizingMode, Style};
+use taffy::{
+    BoxSizing, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto, LayoutInput,
+    LengthPercentageAuto, MaybeResolve, ResolveOrZero, Size, SizingMode, Style,
+};
 
 /// The content-box size a replaced leaf takes when `width`, `height` or both
 /// are `auto` and the caller fixes at most the width, or `None` when Taffy's
@@ -52,9 +55,34 @@ pub(super) fn auto_sides_size(
             .height
             .map(|side| content_side(style, side, edges.height)),
     };
-    let authored = content(style.size.maybe_resolve(basis, resolve_calc));
-    let min = content(style.min_size.maybe_resolve(basis, resolve_calc));
-    let max = content(style.max_size.maybe_resolve(basis, resolve_calc));
+    let min = content(Size {
+        width: resolve_bound(style.min_size.width, basis.width, true),
+        height: resolve_bound(style.min_size.height, basis.height, true),
+    });
+    let max = content(Size {
+        width: resolve_bound(
+            style.max_size.width,
+            basis.width,
+            inputs.available_space.width == taffy::AvailableSpace::MinContent,
+        ),
+        height: resolve_bound(
+            style.max_size.height,
+            basis.height,
+            inputs.available_space.height == taffy::AvailableSpace::MinContent,
+        ),
+    });
+    let authored = content(Size {
+        width: resolve_cyclic_size(
+            style.size.width,
+            basis.width,
+            inputs.available_space.width == taffy::AvailableSpace::MinContent,
+        ),
+        height: resolve_cyclic_size(
+            style.size.height,
+            basis.height,
+            inputs.available_space.height == taffy::AvailableSpace::MinContent,
+        ),
+    });
     let (min_width, min_height) = (min.width.unwrap_or(0.0), min.height.unwrap_or(0.0));
     // A max below its min is raised to it.
     let max_width = max.width.unwrap_or(f32::INFINITY).max(min_width);
@@ -85,6 +113,39 @@ pub(super) fn auto_sides_size(
         ),
     };
     Some(Size { width, height })
+}
+
+/// Resolve cyclic percentages in intrinsic sizing inputs for a replaced box.
+fn resolve_cyclic_size(value: Dimension, basis: Option<f32>, min_content: bool) -> Option<f32> {
+    if min_content && basis.is_none() {
+        return match value.expand() {
+            ExpandedDimension::Percent(_) => Some(0.0),
+            ExpandedDimension::Calc(handle) if calc_has_percentage(handle) => {
+                Some(resolve_calc(handle, 0.0))
+            }
+            _ => value.maybe_resolve(basis, resolve_calc),
+        };
+    }
+    value.maybe_resolve(basis, resolve_calc)
+}
+
+/// A cyclic percentage in a replaced box's minimum size resolves against zero
+/// for both min-content and max-content contributions.
+fn resolve_bound(
+    value: LengthPercentageAuto,
+    basis: Option<f32>,
+    min_content: bool,
+) -> Option<f32> {
+    if min_content && basis.is_none() {
+        return match value.expand() {
+            ExpandedLengthPercentageAuto::Percent(_) => Some(0.0),
+            ExpandedLengthPercentageAuto::Calc(handle) if calc_has_percentage(handle) => {
+                Some(resolve_calc(handle, 0.0))
+            }
+            _ => value.maybe_resolve(basis, resolve_calc),
+        };
+    }
+    value.maybe_resolve(basis, resolve_calc)
 }
 
 /// A side of a box resolved against the box `style` sizes: the side itself for
