@@ -3294,7 +3294,24 @@ impl AncestorFacts {
                 + multicol_resolve_inset(doc, style.padding.right, width)
                 + multicol_resolve_inset(doc, style.border.left, width)
                 + multicol_resolve_inset(doc, style.border.right, width);
-            self.content_width[id] = (width - horizontal).max(0.0);
+            let content_constraint = |value: f32| {
+                if style.box_sizing == TaffyBoxSizing::BorderBox {
+                    (value - horizontal).max(0.0)
+                } else {
+                    value
+                }
+            };
+            let minimum =
+                multicol_definite_dimension(doc, style.min_size.width.into(), Some(width))
+                    .map(content_constraint)
+                    .unwrap_or(0.0);
+            let maximum =
+                multicol_definite_dimension(doc, style.max_size.width.into(), Some(width))
+                    .map(content_constraint);
+            let content_width = ((width - horizontal).max(0.0)).max(minimum);
+            self.content_width[id] = maximum
+                .map(|maximum| content_width.min(maximum.max(minimum)))
+                .unwrap_or(content_width);
         }
     }
 
