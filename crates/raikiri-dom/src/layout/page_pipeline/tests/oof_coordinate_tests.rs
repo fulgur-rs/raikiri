@@ -63,3 +63,130 @@ fn percentage_width_under_page_positioned_box_uses_its_owner_page() {
     document.finalize_oof_layout();
     assert_eq!(document.layout_origin_of(child).unwrap().y, 90.0);
 }
+
+#[test]
+fn vertical_pagination_keeps_an_absolute_box_at_the_page_origin() {
+    for mode in ["vertical-rl", "sideways-rl"] {
+        let mut document = Document::new();
+        let html = document.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some(&format!("display:block;writing-mode:{mode}")),
+        );
+        let body = document.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:20px"),
+        );
+        let positioned = document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:absolute;left:0;top:0;width:200px;height:50px"),
+        );
+        // Two blocks that cannot share a page make the document paginate.
+        for width in [600, 800] {
+            document.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(&format!(
+                    "display:block;width:{width}px;height:100px;break-inside:avoid"
+                )),
+            );
+        }
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade");
+
+        let pages = layout_pages_with_page_geometry_and_control(
+            &mut document,
+            &cascade,
+            page_box_800x600(),
+            &[],
+            &[],
+            &PageLayoutControl::default(),
+        )
+        .expect("paged layout");
+
+        assert!(pages.len() > 1, "{mode}");
+        // The containing block is the initial one, so the page area holds the
+        // box whatever the writing mode of the flow it was found in.
+        assert_eq!(
+            document.nodes[positioned].unrounded_layout.location,
+            taffy::Point { x: 0.0, y: 0.0 },
+            "{mode}"
+        );
+        let origin = document.layout_origin_of(positioned).unwrap();
+        assert_eq!((origin.x, origin.y), (0.0, 0.0), "{mode}");
+    }
+}
+
+#[test]
+fn a_box_in_a_filtered_inline_on_a_later_page_is_placed_like_one_in_a_relative_inline() {
+    // The paragraph starts the second 100px page. The padding box of "bb" is
+    // x 50 to 70 and y 100 to 110, so 50% of it is (60, 105).
+    for (outer_css, child_css) in [
+        ("display:inline;position:relative", "position:absolute"),
+        ("display:inline;filter:blur(1px)", "position:absolute"),
+        ("display:inline;filter:blur(1px)", "position:fixed"),
+    ] {
+        let mut document = Document::new();
+        let html =
+            document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = document.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0;font-family:Ahem;font-size:10px;line-height:10px"),
+        );
+        document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        let paragraph = document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px"),
+        );
+        document.append_text(paragraph, "aaaa ");
+        let outer =
+            document.append_element(Some(paragraph), "span", Style::default(), Some(outer_css));
+        document.append_text(outer, "bb");
+        let child = document.append_element(
+            Some(outer),
+            "span",
+            Style::default(),
+            Some(&format!(
+                "{child_css};left:50%;top:50%;width:10px;height:10px"
+            )),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade");
+        crate::layout::test_support::with_ahem(&mut document);
+        let mut page_box = page_box_800x600();
+        page_box.height = 100.0;
+
+        let pages = layout_pages_with_page_geometry_and_control(
+            &mut document,
+            &cascade,
+            page_box,
+            &[],
+            &[],
+            &PageLayoutControl::default(),
+        )
+        .expect("paged layout");
+
+        assert_eq!(pages.len(), 2, "{outer_css} {child_css}");
+        let origin = document.layout_origin_of(child).unwrap();
+        assert_eq!(
+            (origin.x, origin.y),
+            (60.0, 105.0),
+            "{outer_css} {child_css}"
+        );
+    }
+}

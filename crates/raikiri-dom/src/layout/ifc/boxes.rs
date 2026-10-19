@@ -1338,22 +1338,28 @@ fn relative_offset_of(
 }
 
 /// The nearest ancestor of `node` inside the paragraph rooted at `idx` (or at
-/// `owner`, the source owner of an anonymous cell's content) that is a
-/// containing block for absolutely positioned boxes through its `position`:
-/// only a non-atomic inline element can be one there, as an atomic inline
-/// lays its own children out.
+/// `owner`, the source owner of an anonymous cell's content) that is the
+/// containing block of `node`: for an absolutely positioned box one that is
+/// positioned or establishes the containing block of fixed boxes, for a fixed
+/// box the latter only. Only a non-atomic inline element can be one there, as
+/// an atomic inline lays its own children out.
 fn positioned_inline_ancestor(
     tree: &Document,
     idx: usize,
     owner: usize,
     node: usize,
 ) -> Option<usize> {
+    let fixed = tree.nodes[node].position() == &PositionValue::Fixed;
     tree.ancestors(node)
         .take_while(|&id| id != idx && id != owner)
         .find(|&id| {
             let ancestor = &tree.nodes[id];
             ancestor.display() != DisplayValue::Contents
-                && ancestor.position() != &PositionValue::Static
+                && if fixed {
+                    ancestor.claims_fixed_oof
+                } else {
+                    ancestor.claims_absolute_oof || ancestor.position() != &PositionValue::Static
+                }
         })
 }
 
@@ -2752,8 +2758,8 @@ struct PaddingBox {
 /// An absolutely positioned box inside a positioned inline element is placed
 /// against that element instead: the bounding box of the padding boxes of its
 /// pieces on the lines, moved by its offset (CSS 2.1 10.1). An inline element
-/// that is a containing block only through `filter` or `will-change` is left
-/// to the root.
+/// that is a containing block through `filter` or `will-change` is one for
+/// fixed boxes as well.
 pub(crate) fn place_out_of_flow(
     tree: &mut LayoutSession<'_>,
     idx: usize,
@@ -2815,9 +2821,7 @@ pub(crate) fn place_out_of_flow(
     let mut pieces = None;
     let mut candidates = taffy::OofCandidates::new();
     for node in positioned {
-        let inline_cb = (tree.nodes[node].position() == &PositionValue::Absolute)
-            .then(|| positioned_inline_ancestor(tree, idx, owner, node))
-            .flatten()
+        let inline_cb = positioned_inline_ancestor(tree, idx, owner, node)
             .and_then(|inline| {
                 let pieces = pieces.get_or_insert_with(|| {
                     let content = shodo::geometry::PhysicalSize {

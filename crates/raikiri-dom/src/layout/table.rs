@@ -41,9 +41,9 @@ use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
 use taffy::tree::{RunMode, SizingMode};
 use taffy::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Layout as TaffyLayout, LayoutInput,
-    LayoutOutput, LayoutPartialTree, LengthPercentage, NodeId, OofCandidate, OofCandidates,
-    OofPositioningArea, Point, Position, Rect, Size,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CoreStyle, Layout as TaffyLayout,
+    LayoutInput, LayoutOutput, LayoutPartialTree, LengthPercentage, NodeId, OofCandidate,
+    OofCandidates, OofPositioningArea, Point, Position, Rect, Size,
 };
 
 use crate::document::Document;
@@ -1175,15 +1175,23 @@ fn compute_table_layout_checked(
             border_spacing.1,
         );
     }
-    position_source_table_parts(
-        doc,
-        table_idx,
-        &grid,
-        &column_widths,
-        &row_heights,
-        (&col_origins, &row_origins),
-        vertical_writing,
-    );
+    let projected = projects_source_parts(doc, table_idx, &grid);
+    let part_claimants = table_part_claimants(doc, table_idx, &oof_candidates);
+    let parts = (projected || !part_claimants.is_empty()).then(|| {
+        source_part_boxes(
+            doc,
+            table_idx,
+            &grid,
+            &column_widths,
+            &row_heights,
+            (&col_origins, &row_origins),
+            vertical_writing,
+        )
+    });
+    if let Some(parts) = &parts {
+        dispatch_table_part_oof(doc, &part_claimants, parts, projected, &mut oof_candidates);
+    }
+    position_source_table_parts(doc, table_idx, &grid, parts.filter(|_| projected));
     Ok(table_layout_output(
         doc,
         table_idx,
@@ -1274,30 +1282,132 @@ fn append_direct_table_oof_candidates(
     }
 }
 
+/// Whether the source rows and groups of `table` get parent-relative boxes.
+///
+/// Pagination needs parent-relative source boxes even when all cells are
+/// explicit. Single-page callers retain their table-coordinate grid. The
+/// parts of an anonymous table are DOM children of its parent, which places
+/// them through their own boxes.
+fn projects_source_parts(doc: &LayoutSession<'_>, table: usize, grid: &TableGrid) -> bool {
+    doc.table_objects.project_explicit_parts
+        || doc.is_anonymous_table(table)
+        || grid
+            .cells
+            .iter()
+            .any(|cell| doc.is_anonymous_cell(cell.node_id))
+}
+
+/// The rows and row groups of `table` that are the containing block of an
+/// out-of-flow box in `candidates`, innermost first.
+///
+/// Taffy lays a table's cells out itself, so a row or row group that is a
+/// containing block through `position`, a transform or a filter never sees
+/// the boxes whose containing block it is.
+fn table_part_claimants(
+    doc: &LayoutSession<'_>,
+    table: usize,
+    candidates: &OofCandidates,
+) -> Vec<usize> {
+    let boundary = doc.table_parts_boundary(table);
+    let mut seen = std::collections::HashSet::new();
+    let mut claimants: Vec<usize> = Vec::new();
+    for candidate in candidates {
+        for id in doc
+            .ancestors(usize::from(candidate.node))
+            .take_while(|&id| id != boundary)
+        {
+            if is_source_table_part(doc, id)
+                && seen.insert(id)
+                && doc
+                    .get_core_container_style(NodeId::from(id))
+                    .is_containing_block()
+                    != taffy::ContainingBlockClaims::NONE
+            {
+                claimants.push(id);
+            }
+        }
+    }
+    claimants.sort_by_cached_key(|&id| std::cmp::Reverse(doc.ancestors(id).count()));
+    claimants
+}
+
+/// Lay out the candidates whose containing block is one of `claimants`,
+/// rows and row groups, against the padding box that part has in `parts`.
+/// What a part does not claim stays in `candidates`.
+///
+/// The candidates and the boxes laid out are in table coordinates until the
+/// parts are projected, and relative to the part after that.
+fn dispatch_table_part_oof(
+    doc: &mut LayoutSession<'_>,
+    claimants: &[usize],
+    parts: &std::collections::HashMap<usize, TaffyLayout>,
+    projected: bool,
+    candidates: &mut OofCandidates,
+) {
+    if claimants.is_empty() {
+        return;
+    }
+    let mut pending = candidates.take();
+    for &part in claimants {
+        // A row of a nested table is in the claimants of the outer table
+        // when it does not claim a box that passes through it, and the outer
+        // table has no box for it.
+        let Some(rect) = parts.get(&part).copied() else {
+            continue;
+        };
+        let mut inside = OofCandidates::new();
+        let mut outside = OofCandidates::new();
+        for &candidate in &pending {
+            if doc.is_ancestor_or_self(part, usize::from(candidate.node)) {
+                inside.push(candidate);
+            } else {
+                outside.push(candidate);
+            }
+        }
+        pending = outside;
+        // The location of the part's box in the frame its children are
+        // placed relative to.
+        let frame = if projected {
+            rect.location
+        } else {
+            Point::ZERO
+        };
+        inside.translate(Point {
+            x: -frame.x,
+            y: -frame.y,
+        });
+        let area = OofPositioningArea {
+            size: rect.size,
+            offset: Point {
+                x: rect.location.x - frame.x,
+                y: rect.location.y - frame.y,
+            },
+        };
+        let mut result = crate::taffy_impl::layout_container_candidates(
+            doc,
+            NodeId::from(part),
+            inside.as_slice(),
+            area,
+        );
+        result.unclaimed.translate(frame);
+        pending.append(&mut result.unclaimed);
+    }
+    *candidates = pending;
+}
+
 /// Give source rows and groups used boxes, while cell placement remains
 /// measured in table coordinates until the final parent-relative projection.
+/// `parts` are the boxes of the rows and row groups in table coordinates, or
+/// `None` where the table keeps them unprojected.
 fn position_source_table_parts(
     doc: &mut LayoutSession<'_>,
     table: usize,
     grid: &TableGrid,
-    columns: &[f32],
-    rows: &[f32],
-    origins: (&[f32], &[f32]),
-    vertical: bool,
+    parts: Option<std::collections::HashMap<usize, TaffyLayout>>,
 ) {
-    // Pagination needs parent-relative source boxes even when all cells are
-    // explicit. Single-page callers retain their table-coordinate grid.
-    // The parts of an anonymous table are DOM children of its parent, which
-    // places them through their own boxes.
-    if !doc.table_objects.project_explicit_parts
-        && !doc.is_anonymous_table(table)
-        && !grid
-            .cells
-            .iter()
-            .any(|cell| doc.is_anonymous_cell(cell.node_id))
-    {
+    let Some(parts) = parts else {
         return;
-    }
+    };
     let boundary = doc.table_parts_boundary(table);
     // A part the grid does not place, such as an empty row group, must not
     // keep a box from an earlier pass as its table-relative box.
@@ -1307,57 +1417,6 @@ fn position_source_table_parts(
         .to_vec()
     {
         doc.nodes[part].unrounded_layout = TaffyLayout::new();
-    }
-    let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
-    let (col_x, row_y) = origins;
-    let width = col_x
-        .get(columns.len().saturating_sub(1))
-        .zip(columns.last())
-        .map_or(0.0, |(x, width)| {
-            x + width - col_x.first().copied().unwrap_or(0.0)
-        });
-    let mut vertical_rows: std::collections::HashMap<usize, TaffyLayout> = Default::default();
-    if vertical {
-        for cell in &grid.cells {
-            let layout = cell
-                .resolved
-                .expect("cells were positioned before source parts");
-            vertical_rows
-                .entry(usize::from(cell.row))
-                .and_modify(|row| extend_part_bounds(row, &layout))
-                .or_insert(layout);
-        }
-    }
-    for (index, &marker) in grid.rows.iter().enumerate() {
-        let mut rect = TaffyLayout::new();
-        rect.location = Point {
-            x: col_x.first().copied().unwrap_or(0.0),
-            y: row_y[index],
-        };
-        rect.size = Size {
-            width,
-            height: rows[index],
-        };
-        if let Some(layout) = vertical_rows.get(&index) {
-            rect = *layout;
-        }
-        for id in doc
-            .inclusive_ancestors(doc.ifc_source_owner(marker))
-            .take_while(|&id| id != boundary)
-        {
-            if matches!(
-                doc.nodes[id].display(),
-                DisplayValue::TableRow
-                    | DisplayValue::TableRowGroup
-                    | DisplayValue::TableHeaderGroup
-                    | DisplayValue::TableFooterGroup
-            ) {
-                parts
-                    .entry(id)
-                    .and_modify(|part| extend_part_bounds(part, &rect))
-                    .or_insert(rect);
-            }
-        }
     }
     if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
         for &id in parts.keys() {
@@ -1461,6 +1520,76 @@ fn position_source_table_parts(
         }
     }
     doc.place_anonymous_table_parts(table);
+}
+
+/// The boxes of the rows and row groups of `table` in table coordinates:
+/// each part spans the rows of the cells it holds.
+fn source_part_boxes(
+    doc: &Document,
+    table: usize,
+    grid: &TableGrid,
+    columns: &[f32],
+    rows: &[f32],
+    origins: (&[f32], &[f32]),
+    vertical: bool,
+) -> std::collections::HashMap<usize, TaffyLayout> {
+    let boundary = doc.table_parts_boundary(table);
+    let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    let (col_x, row_y) = origins;
+    let width = col_x
+        .get(columns.len().saturating_sub(1))
+        .zip(columns.last())
+        .map_or(0.0, |(x, width)| {
+            x + width - col_x.first().copied().unwrap_or(0.0)
+        });
+    let mut vertical_rows: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    if vertical {
+        for cell in &grid.cells {
+            let layout = cell
+                .resolved
+                .expect("cells were positioned before source parts");
+            vertical_rows
+                .entry(usize::from(cell.row))
+                .and_modify(|row| extend_part_bounds(row, &layout))
+                .or_insert(layout);
+        }
+    }
+    for (index, &marker) in grid.rows.iter().enumerate() {
+        let mut rect = TaffyLayout::new();
+        rect.location = Point {
+            x: col_x.first().copied().unwrap_or(0.0),
+            y: row_y[index],
+        };
+        rect.size = Size {
+            width,
+            height: rows[index],
+        };
+        if let Some(layout) = vertical_rows.get(&index) {
+            rect = *layout;
+        }
+        for id in doc
+            .inclusive_ancestors(doc.ifc_source_owner(marker))
+            .take_while(|&id| id != boundary)
+        {
+            if is_source_table_part(doc, id) {
+                parts
+                    .entry(id)
+                    .and_modify(|part| extend_part_bounds(part, &rect))
+                    .or_insert(rect);
+            }
+        }
+    }
+    parts
+}
+
+fn is_source_table_part(doc: &Document, id: usize) -> bool {
+    matches!(
+        doc.nodes[id].display(),
+        DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+    )
 }
 
 fn extend_part_bounds(part: &mut TaffyLayout, other: &TaffyLayout) {

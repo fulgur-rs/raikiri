@@ -964,6 +964,7 @@ mod orthogonal_flow;
 mod replaced_size;
 mod vertical_block;
 mod vertical_oof;
+pub(crate) use oof::layout_container_candidates;
 pub(crate) use vertical_block::{TransposedBlock, block_right_to_left, is_table_box};
 pub(crate) use vertical_oof::used_writing_mode;
 

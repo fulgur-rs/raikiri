@@ -98,8 +98,23 @@ pub(super) fn layout_local_oof(
         return;
     };
     let candidates = output.oof_candidates.take();
+    let result = layout_container_candidates(tree, node, candidates.as_slice(), area);
+    output.oof_candidates = result.unclaimed;
+    output.scrollable_overflow_rect = output
+        .scrollable_overflow_rect
+        .union(result.scrollable_overflow_rect);
+}
+
+/// Position the `candidates` that `node` contains against `area`, its
+/// positioning area, and return what it does not claim. The direction and
+/// the claims are those of `node`'s own style.
+pub(crate) fn layout_container_candidates(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    candidates: &[OofCandidate],
+    area: OofPositioningArea,
+) -> OofLayoutResult {
     let candidates: Vec<_> = candidates
-        .as_slice()
         .iter()
         .copied()
         .map(|mut candidate| {
@@ -118,11 +133,7 @@ pub(super) fn layout_local_oof(
     let style = tree.get_core_container_style(node);
     let direction = style.direction();
     let claims = style.is_containing_block();
-    let result = layout_candidates(tree, node, &candidates, area, direction, claims);
-    output.oof_candidates = result.unclaimed;
-    output.scrollable_overflow_rect = output
-        .scrollable_overflow_rect
-        .union(result.scrollable_overflow_rect);
+    layout_candidates(tree, node, &candidates, area, direction, claims)
 }
 
 pub(super) fn layout_candidates(
