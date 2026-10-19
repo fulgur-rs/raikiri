@@ -204,3 +204,80 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         assert!(matches!(result, Ok(None)));
     }
 }
+
+// The scan of a fragment's lines for inline overflow is charged to the work
+// budget like the rest of the projection, one unit per shaped fragment.
+#[test]
+fn scanning_the_lines_of_a_paginated_fragment_is_charged_to_the_work_budget() {
+    let (mut tree, cascade, root) =
+        crate::layout::test_support::ahem_paragraph("A\nB", "width:40px;margin:0");
+    layout_single_page(
+        crate::layout::test_support::with_ahem(&mut tree),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let measured = tree.nodes[root].unrounded_layout;
+    let entries = [(
+        root,
+        LayoutOutput::from_outer_size(measured.size),
+        measured,
+        0.0,
+        0.0,
+        20.0,
+    )];
+    let context = FragmentationContext {
+        rtl: false,
+        available_width: 100.0,
+        available_height: None,
+        column_fill: ColumnFillValue::Balance,
+        column_width: 40.0,
+        column_count: 2,
+        column_gap: 20.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 1,
+    };
+    let lines = &tree.nodes[root]
+        .ifc
+        .as_ref()
+        .unwrap()
+        .lines
+        .as_ref()
+        .unwrap()
+        .lines;
+    let scanned = lines
+        .iter()
+        .map(|line| line.fragments().len())
+        .sum::<usize>();
+    assert!(scanned > 0);
+    let control = PageLayoutControl::new(None);
+    let paginate = |limit: usize| {
+        let mut work = ProjectionWork::new(&control, limit);
+        let result = paragraph_group::paginate(
+            &tree,
+            &entries,
+            context,
+            0.0,
+            &|_| (0, 0.0, 60.0),
+            &mut work,
+        );
+        (result.map(|group| group.is_some()), work.remaining())
+    };
+    let (placed, remaining) = paginate(1000);
+    assert!(matches!(placed, Ok(true)));
+    let used = 1000 - remaining;
+    // The fill and the placed ranges cost 38 units, and the scan of the two
+    // shaped fragments costs two more.
+    assert_eq!((used, scanned), (40, 2));
+    // Everything but the scan fits in the budget; the scan does not.
+    let (starved, _) = paginate(used - scanned);
+    assert!(matches!(
+        starved,
+        Err(LayoutError::FragmentLimitExceeded { .. })
+    ));
+    let (exact, _) = paginate(used);
+    assert!(matches!(exact, Ok(true)));
+}

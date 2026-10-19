@@ -647,7 +647,8 @@ pub(super) fn paginate(
                     &entries[index].2,
                     rect,
                     (x, x + context.column_width),
-                );
+                    work,
+                )?;
                 result.fragments.push(PagedFragment {
                     child: entries[index].0,
                     line_start: range.line_start,
@@ -690,7 +691,7 @@ pub(super) fn paginate(
 /// hold the box `rect` of a paragraph and the glyph runs and inline boxes of
 /// its `lines`, which reach past the box when they cannot wrap. Positions are
 /// in the coordinates of `rect`; `layout` gives the border and padding that
-/// put the lines inside the box.
+/// put the lines inside the box. Every fragment scanned is charged to `work`.
 fn inline_extent(
     tree: &Document,
     child: usize,
@@ -698,7 +699,8 @@ fn inline_extent(
     layout: &TaffyLayout,
     rect: crate::fragment::FragmentRect,
     column: (f32, f32),
-) -> (f32, f32) {
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<(f32, f32), LayoutError> {
     use shodo::geometry::{LogicalRect, PhysicalConverter, PhysicalSize, WritingMode};
 
     let (mut left, mut right) = (column.0.min(rect.x), column.1.max(rect.x + rect.width));
@@ -710,6 +712,7 @@ fn inline_extent(
         .and_then(|root| root.lines.as_ref())
         .map_or(&[][..], |ifc| &ifc.lines[lines]);
     for line in shaped {
+        work.charge(line.fragments().len())?;
         // Offsets along a line run from its inline start, which is the right
         // edge of a right-to-left line.
         let converter = PhysicalConverter::new(
@@ -737,7 +740,7 @@ fn inline_extent(
             right = right.max(rect.x + inset + physical.x + physical.width);
         }
     }
-    (left, right)
+    Ok((left, right))
 }
 
 /// Paragraphs a fill from `resume` visited. A failed fill stops anywhere up
