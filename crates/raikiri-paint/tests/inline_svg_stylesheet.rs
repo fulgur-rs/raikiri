@@ -241,3 +241,14 @@ fn revert_layer_on_a_fill_rolls_back_to_the_fill_attribute() {
         "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
     );
 }
+
+#[test]
+fn an_overridden_fill_attribute_still_matches_the_svgs_attribute_selectors() {
+    // `stroke-dasharray` is not a property the page cascade carries, so only
+    // the SVG's own stylesheet can apply it, and only while the rule's
+    // `[fill=red]` still matches the element whose `fill` the page overrides.
+    assert_paints_like(
+        "<style>rect{fill:blue;stroke:green;stroke-width:4px}</style><svg width=20 height=20><style>rect[fill=red]{stroke-dasharray:3 3}</style><rect x=4 y=4 width=12 height=12 fill=red /></svg>",
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=blue stroke=green stroke-width=4 stroke-dasharray='3 3' /></svg>",
+    );
+}
