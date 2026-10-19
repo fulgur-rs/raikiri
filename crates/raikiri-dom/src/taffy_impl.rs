@@ -642,6 +642,7 @@ impl LayoutSession<'_> {
             self.layout_dirty = false;
         }
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
+        let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
         if inputs.run_mode == taffy::RunMode::PerformLayout {
             let idx = usize::from(node_id);
             self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
@@ -2361,6 +2362,38 @@ fn flex_layout_sized(
     tree.context.flex_item_percent_bases.pop();
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
+}
+
+/// Keep the height Taffy settles an absolutely positioned box at from being a
+/// definite height for its children.
+///
+/// Taffy lays such a box out a second time at the size it measured, and calls
+/// both sizes definite. A box with an `auto` height and a `top` or `bottom`
+/// of `auto` has a height that follows from its content, and so a percentage
+/// height of a child is `auto` (CSS 2.1 10.5). A `height` of the box's own, a
+/// `top` and `bottom` that fix it, or an aspect ratio that gives it one, make
+/// it definite.
+fn with_content_height_not_definite(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if inputs.known_dimensions.height.is_none()
+        || !inputs.known_dimensions_are_definite.height
+        || tree.nodes[idx].taffy_position() != TaffyPosition::Absolute
+    {
+        return inputs;
+    }
+    let follows_content = tree.layout_node_with_style(idx).is_some_and(|node| {
+        let style = node.style;
+        style.size.height.is_auto()
+            && style.aspect_ratio.is_none()
+            && (style.inset.top.is_auto() || style.inset.bottom.is_auto())
+    });
+    if follows_content {
+        inputs.known_dimensions_are_definite.height = false;
+    }
+    inputs
 }
 
 /// Offer a box sized by `fit-content(<length-percentage>)` its limit as the
