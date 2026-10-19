@@ -127,6 +127,19 @@ fn a_floated_flex_or_grid_container_with_a_length_width_keeps_it() {
 }
 
 #[test]
+fn a_floated_flex_or_grid_container_measures_the_keyword_bounds_of_its_items() {
+    // The item is 10px wide, but its minimum width is the max-content width of
+    // its text, so the container is as wide as the item at that minimum.
+    for container in [FLEX, GRID] {
+        assert_eq!(
+            container_width("", container, "width:10px;min-width:max-content"),
+            50.0,
+            "{container}"
+        );
+    }
+}
+
+#[test]
 fn a_floated_flex_container_is_laid_out_at_the_width_it_shrinks_to() {
     let (container, item) = laid_out("", FLEX, "flex:1 1 60px");
     assert_eq!(container, (0.0, 0.0, 50.0, 30.0));

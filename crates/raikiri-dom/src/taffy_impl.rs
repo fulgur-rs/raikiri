@@ -2135,9 +2135,7 @@ fn compute_inline_block_shrink_wrap(
                     flex_layout(tree, node_id, intrinsic_inputs).size.width
                 }
                 DisplayValue::Grid | DisplayValue::InlineGrid => {
-                    compute_grid_layout(tree, node_id, intrinsic_inputs)
-                        .size
-                        .width
+                    grid_layout(tree, node_id, intrinsic_inputs).size.width
                 }
                 _ if ifc_root => {
                     compute_ifc_root(tree, node_id, intrinsic_inputs, None)
