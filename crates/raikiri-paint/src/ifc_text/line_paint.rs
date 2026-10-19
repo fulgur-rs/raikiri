@@ -205,8 +205,6 @@ pub(super) struct LinePaint<'a, 'r> {
     pub(super) writing_mode: WritingMode,
     /// Whether the lines run along the vertical axis.
     pub(super) vertical: bool,
-    /// The width the lines were broken at, and their total height.
-    pub(super) size: (f32, f32),
     pub(super) base_decorations: &'r DecorationContext,
     /// How far pagination moved each line along the block axis.
     pub(super) shifts: &'r [f32],
