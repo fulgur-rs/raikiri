@@ -921,7 +921,10 @@ impl LayoutSession<'_> {
                 let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
                 let limits = tree.nodes[idx].content_limits;
-                if style.aspect_ratio.is_none()
+                // Natural ratios resolve intrinsic limits; without them,
+                // preserve Taffy's ordinary replaced sizing path.
+                if limits != content_limits::ContentLimits::NONE
+                    && style.aspect_ratio.is_none()
                     && !tree.nodes[idx].size_containment.width
                     && !tree.nodes[idx].size_containment.height
                 {
@@ -1992,16 +1995,17 @@ fn compute_inline_block_shrink_wrap(
     let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty;
     let display = tree.nodes[idx].display();
     let is_leaf = tree.nodes[idx].children.is_empty();
+    let limits = tree.nodes[idx].content_limits;
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = tree.layout_node_with_style(idx).unwrap().style.clone();
-    if !empty
+    if limits != content_limits::ContentLimits::NONE
+        && !empty
         && !tree.nodes[idx].size_containment.width
         && !tree.nodes[idx].size_containment.height
         && leaf_style.aspect_ratio.is_none()
     {
         leaf_style.aspect_ratio = leaf_intrinsic_ratio(&tree.nodes[idx]);
     }
-    let limits = tree.nodes[idx].content_limits;
     if empty {
         leaf_style.aspect_ratio = None;
     }
