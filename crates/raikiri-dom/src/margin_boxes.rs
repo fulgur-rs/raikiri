@@ -1063,7 +1063,7 @@ fn margin_box_content(
     values: &MarginBoxNamedValues,
 ) -> (String, Vec<DeferredSlot>) {
     let quotes = margin_box_quotes(style);
-    let (text, deferred) = resolved_margin_content(
+    let (mut text, deferred) = resolved_margin_content(
         &style.content,
         document,
         cascade,
@@ -1073,6 +1073,16 @@ fn margin_box_content(
         &quotes,
         values,
     );
+    // A line feed that ends the text ends its last line; it does not start
+    // another one, which the shaper would count as an empty line. A text of
+    // nothing but a line feed keeps it, as the line it makes, and so does one
+    // that a deferred slot's placeholder ends with.
+    if text.len() > 1
+        && text.ends_with('\n')
+        && deferred.iter().all(|(range, _)| range.end < text.len())
+    {
+        text.pop();
+    }
     let registry = (!deferred.is_empty()).then(|| {
         Arc::new(fallback_chains(
             &cascade.counter_styles,

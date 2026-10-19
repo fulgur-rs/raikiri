@@ -112,6 +112,38 @@ fn auto_side_boxes_share_a_column_by_the_lines_their_text_wraps_into() {
 }
 
 #[test]
+fn a_line_feed_that_ends_the_text_does_not_start_another_line() {
+    // `\A ` is a line feed. The text of the upper box is two lines with or
+    // without the one at its end, so the column is shared the same way.
+    let left = |content: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @left-top {{ content: '{content}'; white-space: pre }} \
+               @left-bottom {{ content: 'c' }} }}"
+        )))
+    };
+    assert_eq!(left("a\\A b\\A "), left("a\\A b"));
+    // Vertical lines share a row the same way: one column per line.
+    let top = |content: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: '{content}'; white-space: pre; writing-mode: vertical-rl }} \
+               @top-right {{ content: 'c' }} }}"
+        )))
+    };
+    assert_eq!(top("a\\A b\\A "), top("a\\A b"));
+    // A line feed that does not end the text still counts: three lines
+    // against the one line of the lower box, shared in the ratio of 3 to 1.
+    assert_eq!(
+        left("a\\A b\\A c"),
+        [
+            (PageMarginBoxSlot::LeftBottom, [0.0, 205.0, 40.0, 55.0]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 165.0]),
+        ]
+    );
+}
+
+#[test]
 fn an_empty_box_counts_its_padding_along_horizontal_and_vertical_edges() {
     // The empty box asks for the 20px of its padding along the edge, the
     // other box for the 40px (or 10px) of its text.
