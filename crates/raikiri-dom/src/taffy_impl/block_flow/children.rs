@@ -327,15 +327,17 @@ pub(super) fn layout(
                         },
                     )
                 } else {
-                    let (x, edge) = if container.direction == Direction::Rtl {
-                        (width - metrics.inset.right, AxisStaticEdge::End)
-                    } else {
-                        (metrics.inset.left, AxisStaticEdge::Start)
+                    let inline_area = Line {
+                        start: metrics.inset.left,
+                        end: width - metrics.inset.right,
                     };
-                    Point {
-                        x: AxisStaticPosition::from_edge(x, edge),
-                        y: AxisStaticPosition::from_edge(static_y, AxisStaticEdge::Start),
-                    }
+                    super::positioned::aligned_static_position(
+                        container,
+                        &style,
+                        container.direction,
+                        inline_area,
+                        static_y,
+                    )
                 };
                 super::positioned::push_candidate(
                     &mut flow.oof_candidates,
