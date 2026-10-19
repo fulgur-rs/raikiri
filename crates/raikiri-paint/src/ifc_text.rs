@@ -18,7 +18,7 @@ use peniko::{Fill, Mix};
 use raikiri_dom::generated_content::{computed_for_id, generated_origin};
 use raikiri_dom::{Document, PositionedLines, cumulative_offset};
 use raikiri_style::CascadeResult;
-use raikiri_style::property::TextShadowColor;
+use raikiri_style::property::{CssColor, TextShadowColor};
 use shodo::geometry::{PhysicalConverter, WritingMode};
 use shodo::hit::{LineLayout, TextPosition};
 use shodo::node::NodeId;
@@ -741,9 +741,8 @@ fn draw_shadow(
     owner_cv: &raikiri_style::ComputedValues,
     transform: Affine,
     position: IfcPosition,
-    (width, height): (f32, f32),
+    size: (f32, f32),
 ) {
-    let font_size = run.draw.run.font_size();
     let color = match shadow.color {
         TextShadowColor::CurrentColor => owner_cv.color,
         TextShadowColor::Resolved(color) => color,
@@ -757,76 +756,117 @@ fn draw_shadow(
     let blur = shadow.blur_radius.px();
     let use_blur_layer = blur.is_finite() && blur > 0.0;
     if use_blur_layer {
-        let extent = f64::from((blur * 3.0).max(1.0));
-        let (x, y) = (
-            f64::from(position.x),
-            f64::from(position.y + position.shift_y),
-        );
-        // Text that overflows its paragraph (`nowrap`, a negative
-        // `text-indent`) lies outside the paragraph's own width, and its
-        // shadow with it, so the clip also covers the run's glyphs. A glyph's
-        // ink can stick out of its advance box (an italic or synthetic
-        // oblique overhang, a mark, a swash, tight letter spacing), so each
-        // glyph is padded by one em, which the ink of an ordinary glyph does
-        // not exceed.
-        let pad = f64::from(font_size);
-        let ink = if run.vertical {
-            let mut ink = vertical_ink_bounds(&run.draw.glyphs, pad);
-            // The marks of the run lie beside it, as far from its baseline as
-            // the ruby annotations on their side push them, and the mark of a
-            // combined square lies on the square, wherever the glyphs of the
-            // run that draws it are.
-            if let (ShadowMarks::Vertical(marks), Some(mark)) =
-                (&run.marks, run.draw.run.emphasis_mark())
-            {
-                let reach = f64::from(mark.font_size);
-                for (x, y) in crate::emphasis::vertical_mark_centers(
-                    &mark,
-                    (marks.line, &run.draw.run),
-                    (marks.writing_mode, marks.converter),
-                ) {
-                    let (x, y) = (f64::from(x), f64::from(y));
-                    ink = ink.union(Rect::new(x - reach, y - reach, x + reach, y + reach));
-                }
-            }
-            ink
-        } else {
-            let (left, right) =
-                run.draw
-                    .glyphs
-                    .iter()
-                    .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
-                        let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
-                        (
-                            left.min(start.min(end) - pad),
-                            right.max(start.max(end) + pad),
-                        )
-                    });
-            Rect::new(left, 0.0, right, f64::from(height))
-        };
-        let clip = Rect::new(
-            x + ink.x0 + dx - extent,
-            y + ink.y0 + dy - extent,
-            x + ink.x1 + dx + extent,
-            y + ink.y1 + dy + extent,
-        );
-        scene.push_layer(
-            Mix::Normal,
-            1.0,
-            Affine::IDENTITY,
-            &clip,
-            Some(Arc::new(Filter::single(FilterEffect::blur(blur / 2.0)))),
-            None,
-        );
+        push_blur_layer(scene, run, position, size, (dx, dy), blur);
     }
-    let decorations: Vec<_> = run
-        .draw
+    let offset = (dx as f32, dy as f32);
+    let decorations = shadow_decorations(run, color, offset);
+    draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::BeforeGlyphs);
+    draw_shadow_glyphs(scene, run, color, shadow_transform);
+    draw_shadow_marks(scene, run, owner_cv, color, offset);
+    draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
+    if use_blur_layer {
+        scene.pop_layer();
+    }
+}
+
+/// Open the filter layer that blurs the shadow of `run` by `blur`, clipped
+/// to the box its blurred ink can reach: the lines of a paragraph of size
+/// `(width, height)` and the glyphs of the run, grown by three times the blur
+/// radius and moved by the `(dx, dy)` offset of the shadow.
+fn push_blur_layer(
+    scene: &mut impl PaintScene,
+    run: &ShadowRun<'_, '_>,
+    position: IfcPosition,
+    (width, height): (f32, f32),
+    (dx, dy): (f64, f64),
+    blur: f32,
+) {
+    let extent = f64::from((blur * 3.0).max(1.0));
+    let (x, y) = (
+        f64::from(position.x),
+        f64::from(position.y + position.shift_y),
+    );
+    // Text that overflows its paragraph (`nowrap`, a negative
+    // `text-indent`) lies outside the paragraph's own width, and its
+    // shadow with it, so the clip also covers the run's glyphs. A glyph's
+    // ink can stick out of its advance box (an italic or synthetic
+    // oblique overhang, a mark, a swash, tight letter spacing), so each
+    // glyph is padded by one em, which the ink of an ordinary glyph does
+    // not exceed.
+    let pad = f64::from(run.draw.run.font_size());
+    let ink = shadow_ink_bounds(run, (width, height), pad);
+    let clip = Rect::new(
+        x + ink.x0 + dx - extent,
+        y + ink.y0 + dy - extent,
+        x + ink.x1 + dx + extent,
+        y + ink.y1 + dy + extent,
+    );
+    scene.push_layer(
+        Mix::Normal,
+        1.0,
+        Affine::IDENTITY,
+        &clip,
+        Some(Arc::new(Filter::single(FilterEffect::blur(blur / 2.0)))),
+        None,
+    );
+}
+
+/// The box, from the origin of the paragraph, that holds the ink of the
+/// shadow of `run` before its offset and blur. A horizontal run covers the
+/// `(width, height)` box of the paragraph, widened to hold its glyphs grown by
+/// `pad`. A vertical run covers its glyphs grown by `pad` and its emphasis
+/// marks.
+fn shadow_ink_bounds(run: &ShadowRun<'_, '_>, (width, height): (f32, f32), pad: f64) -> Rect {
+    if run.vertical {
+        let mut ink = vertical_ink_bounds(&run.draw.glyphs, pad);
+        // The marks of the run lie beside it, as far from its baseline as
+        // the ruby annotations on their side push them, and the mark of a
+        // combined square lies on the square, wherever the glyphs of the
+        // run that draws it are.
+        if let (ShadowMarks::Vertical(marks), Some(mark)) =
+            (&run.marks, run.draw.run.emphasis_mark())
+        {
+            let reach = f64::from(mark.font_size);
+            for (x, y) in crate::emphasis::vertical_mark_centers(
+                &mark,
+                (marks.line, &run.draw.run),
+                (marks.writing_mode, marks.converter),
+            ) {
+                let (x, y) = (f64::from(x), f64::from(y));
+                ink = ink.union(Rect::new(x - reach, y - reach, x + reach, y + reach));
+            }
+        }
+        ink
+    } else {
+        let (left, right) =
+            run.draw
+                .glyphs
+                .iter()
+                .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
+                    let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
+                    (
+                        left.min(start.min(end) - pad),
+                        right.max(start.max(end) + pad),
+                    )
+                });
+        Rect::new(left, 0.0, right, f64::from(height))
+    }
+}
+
+/// The decoration lines of `run` as its shadow draws them: moved by the
+/// `(dx, dy)` offset of the shadow and filled with its `color`. A vertical run
+/// has none.
+fn shadow_decorations(
+    run: &ShadowRun<'_, '_>,
+    color: CssColor,
+    (dx, dy): (f32, f32),
+) -> Vec<raikiri_dom::DecorationLine> {
+    run.draw
         .decorations
         .iter()
         .filter(|_| !run.vertical)
         .map(|line| {
             let mut line = line.clone();
-            let (dx, dy) = (dx as f32, dy as f32);
             line.x_start += dx;
             line.x_end += dx;
             line.pattern_origin_x += dx;
@@ -835,8 +875,18 @@ fn draw_shadow(
             line.color = color;
             line
         })
-        .collect();
-    draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::BeforeGlyphs);
+        .collect()
+}
+
+/// Draw the glyphs of `run` in the `color` of its shadow, or the boxes of its
+/// missing glyphs where its font has no outlines.
+fn draw_shadow_glyphs(
+    scene: &mut impl PaintScene,
+    run: &ShadowRun<'_, '_>,
+    color: CssColor,
+    shadow_transform: Affine,
+) {
+    let font_size = run.draw.run.font_size();
     if crate::text::has_glyph_outlines(run.font) {
         scene.draw_glyphs(
             run.font,
@@ -866,6 +916,17 @@ fn draw_shadow(
             shadow_transform,
         );
     }
+}
+
+/// Draw the emphasis marks of `run` in the `color` of its shadow, moved by the
+/// `(dx, dy)` offset of the shadow.
+fn draw_shadow_marks(
+    scene: &mut impl PaintScene,
+    run: &ShadowRun<'_, '_>,
+    owner_cv: &raikiri_style::ComputedValues,
+    color: CssColor,
+    (dx, dy): (f32, f32),
+) {
     match &run.marks {
         ShadowMarks::None => {}
         ShadowMarks::Horizontal((x, baseline)) => crate::emphasis::draw_marks_in(
@@ -873,7 +934,7 @@ fn draw_shadow(
             run.document,
             &run.draw.run,
             &run.draw.glyphs,
-            (x + dx as f32, baseline + dy as f32),
+            (x + dx, baseline + dy),
             owner_cv,
             css_color_to_peniko(color),
         ),
@@ -882,14 +943,10 @@ fn draw_shadow(
             run.document,
             (marks.line, &run.draw.run),
             (marks.writing_mode, marks.converter),
-            (marks.origin.0 + dx as f32, marks.origin.1 + dy as f32),
+            (marks.origin.0 + dx, marks.origin.1 + dy),
             owner_cv,
             css_color_to_peniko(color),
         ),
-    }
-    draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
-    if use_blur_layer {
-        scene.pop_layer();
     }
 }
 

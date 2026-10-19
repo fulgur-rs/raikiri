@@ -9,7 +9,7 @@
 //! are the box's lines, set in by its inline-side edges.
 
 use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
-use crate::taffy_impl::block_flow::context::BlockContext;
+use crate::taffy_impl::block_flow::context::{BlockContext, BoxProbe, BoxSlot};
 use raikiri_style::property::{
     BoxSizing, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue, Sides,
 };
@@ -328,25 +328,23 @@ impl GeneratedBlock {
             }) + sides
         };
         let stretched = |stretch: f32| stretch.max(-(margins.left + margins.right));
-        let mut after = None;
-        let slot = loop {
-            let slot = flow.ctx.find_bfc_slot(
-                from,
-                [margins.left, margins.right],
-                direction,
-                self.clear,
-                after,
-            );
-            let Some(segment) = slot.segment_id else {
-                break slot;
-            };
-            if border_width(stretched(slot.stretch_width)) <= slot.border_width + 0.001 {
-                break slot;
-            }
-            after = Some(segment);
-        };
+        // A height of its own is known before the lines are laid out, so the
+        // box must keep clear of every float it reaches. An `auto` height
+        // counts only its minimum, as the lines are not laid out yet.
+        let height = self.used_height(0.0, edges.top + edges.bottom, flow.definite_height)
+            + edges.top
+            + edges.bottom;
+        let BoxSlot { slot, width } = flow.ctx.find_box_slot(
+            from,
+            [margins.left, margins.right],
+            direction,
+            self.clear,
+            |probe| match probe {
+                BoxProbe::Width { stretch } => border_width(stretched(stretch)),
+                BoxProbe::Height { .. } => height,
+            },
+        );
         let stretch = stretched(slot.stretch_width);
-        let width = border_width(stretch);
         // `auto` side margins share the room the box leaves; the slot already
         // holds the margins that are not `auto`.
         let auto = |value| length_or_auto(value, Some(flow.width)).is_none();

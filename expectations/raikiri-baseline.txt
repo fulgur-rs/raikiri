@@ -4968,3 +4968,12 @@ css/css-grid/grid-model/grid-max-content-size-with-max-content-item.html
 # Pass once a floated flex container shrinks to fit its items: the max-content width within the room its parent leaves, never below the min-content width that an item which cannot shrink contributes at its flex base size, and a content-box width keyword on an item sizes it by the keyword.
 css/css-flexbox/flex-item-content-is-min-width-max-content.html
 css/css-flexbox/intrinsic-size/row-001.html
+
+# --- intrinsic min/max constraints on flex/grid items and grid containers (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# These cases cover flex item constraints on both axes, grid item intrinsic maximums, and grid container min/max heights including fixed tracks with no items; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/flex-item-min-height-min-content.html
+css/css-flexbox/flex-item-max-height-min-content.html
+css/css-flexbox/flex-item-max-width-min-content-002.html
+css/css-grid/grid-items/grid-intrinsic-maximums.html
+css/css-sizing/block-size-with-min-or-max-content-4.html
+css/css-sizing/block-size-with-min-or-max-content-5.html

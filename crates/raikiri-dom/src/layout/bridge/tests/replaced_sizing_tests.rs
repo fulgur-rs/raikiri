@@ -58,6 +58,24 @@ fn a_block_level_image_keeps_its_natural_width() {
 }
 
 #[test]
+fn an_empty_flex_or_grid_image_keeps_its_natural_size() {
+    let mut images = Vec::new();
+    let doc = laid_out(|doc, body| {
+        for display in ["flex", "grid"] {
+            images.push(doc.append_element(
+                Some(body),
+                "img",
+                Style::default(),
+                Some(format!("display:{display}").as_str()),
+            ));
+        }
+    });
+    for image in images {
+        assert_eq!(size(&doc, image), (25.0, 50.0));
+    }
+}
+
+#[test]
 fn a_decoded_image_keeps_its_own_natural_size_whatever_its_file_name() {
     let mut image = 0;
     let doc = laid_out(|doc, body| {

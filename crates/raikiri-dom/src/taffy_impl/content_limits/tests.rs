@@ -3,13 +3,16 @@
 //! and §5). The text of the fixtures is `AAAA BBBB` in Ahem at 10px: 40px wide
 //! at its longest word, 90px wide on one line.
 
-use super::{applies, stretch_fit_width};
+use super::{applies, stretch_fit_width, with_grid_item_content_limits};
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::test_support::{block_fixture, block_fixture_with_ahem};
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use crate::node::FormattingContext;
-use taffy::{AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode};
+use taffy::{
+    AvailableSpace, LayoutInput, LayoutOutput, LengthPercentageAuto, Line, NodeId, RequestedAxis,
+    RunMode, Size, SizingMode,
+};
 
 /// What the box under test holds.
 #[derive(Clone, Copy)]
@@ -649,7 +652,7 @@ fn boxes_with_keyword_limits_nested_deeply_are_measured_once_per_level() {
 }
 
 #[test]
-fn limits_are_resolved_for_block_and_paragraph_boxes_that_are_not_being_measured() {
+fn limits_are_resolved_for_block_inline_and_flex_grid_boxes_that_are_not_being_measured() {
     let mut child = 0;
     let fixture = block_fixture("width: 200px", |doc, root| {
         child = doc.append_element(
@@ -663,12 +666,17 @@ fn limits_are_resolved_for_block_and_paragraph_boxes_that_are_not_being_measured
     let mut session = LayoutSession::new(&mut doc);
     let limits = session.nodes[child].content_limits;
     assert_ne!(limits, super::ContentLimits::NONE);
-    for context in [FormattingContext::Block, FormattingContext::Inline] {
+    for context in [
+        FormattingContext::Block,
+        FormattingContext::Inline,
+        FormattingContext::Flex,
+        FormattingContext::Grid,
+    ] {
         session.nodes[child].formatting_context = context;
         assert!(applies(&session, child, &limits));
     }
     // A box laid out by another algorithm keeps the lengths of its style.
-    session.nodes[child].formatting_context = FormattingContext::Flex;
+    session.nodes[child].formatting_context = FormattingContext::Multicol;
     assert!(!applies(&session, child, &limits));
     // So does a box that is being measured without its limits.
     session.nodes[child].formatting_context = FormattingContext::Block;
@@ -677,4 +685,729 @@ fn limits_are_resolved_for_block_and_paragraph_boxes_that_are_not_being_measured
     // And a box without any.
     session.context.content_limit_probes.clear();
     assert!(!applies(&session, child, &super::ContentLimits::NONE));
+}
+
+fn flex_item_size(direction: &str, root_css: &str, item_css: &str) -> (f32, f32) {
+    child_size(
+        &format!("display:flex;flex-direction:{direction};align-items:flex-start;{root_css}"),
+        "",
+        &format!("flex:none;{item_css}"),
+        Body::Text,
+    )
+}
+
+#[test]
+fn flex_items_honor_intrinsic_min_width_values() {
+    for (keyword, width, height) in [
+        ("min-content", 40.0, 20.0),
+        ("max-content", 90.0, 10.0),
+        ("fit-content", 60.0, 20.0),
+        ("fit-content(60px)", 60.0, 20.0),
+    ] {
+        assert_eq!(
+            flex_item_size(
+                "row",
+                "width:60px;height:100px",
+                &format!("width:10px;min-width:{keyword}"),
+            ),
+            (width, height),
+            "min-width:{keyword}"
+        );
+    }
+    assert_eq!(
+        flex_item_size(
+            "row",
+            "width:120px;height:100px",
+            "width:10px;min-width:fit-content(50%)",
+        ),
+        (60.0, 20.0)
+    );
+    // Width is the cross axis of a column flex container.
+    assert_eq!(
+        flex_item_size(
+            "column",
+            "width:120px;height:100px",
+            "width:10px;min-width:max-content",
+        ),
+        (90.0, 10.0)
+    );
+}
+
+#[test]
+fn flex_items_honor_intrinsic_max_width_values() {
+    for (keyword, width, height) in [
+        ("min-content", 40.0, 20.0),
+        ("max-content", 90.0, 10.0),
+        ("fit-content", 60.0, 20.0),
+        ("fit-content(60px)", 60.0, 20.0),
+    ] {
+        assert_eq!(
+            flex_item_size(
+                "row",
+                "width:60px;height:100px",
+                &format!("width:300px;max-width:{keyword}"),
+            ),
+            (width, height),
+            "max-width:{keyword}"
+        );
+    }
+    assert_eq!(
+        flex_item_size(
+            "row",
+            "width:120px;height:100px",
+            "width:300px;max-width:fit-content(50%)",
+        ),
+        (60.0, 20.0)
+    );
+    // Width is the cross axis of a column flex container.
+    assert_eq!(
+        flex_item_size(
+            "column",
+            "width:120px;height:100px",
+            "width:300px;max-width:min-content",
+        ),
+        (40.0, 20.0)
+    );
+}
+
+#[test]
+fn flex_items_honor_intrinsic_min_height_values_on_both_axes() {
+    for (direction, root_css) in [
+        ("column", "width:120px;height:100px"),
+        ("row", "width:60px;height:100px"),
+    ] {
+        for keyword in [
+            "min-content",
+            "max-content",
+            "fit-content",
+            "fit-content(5px)",
+        ] {
+            assert_eq!(
+                flex_item_size(
+                    direction,
+                    root_css,
+                    &format!("width:40px;height:0;min-height:{keyword}"),
+                ),
+                (40.0, 20.0),
+                "direction:{direction};min-height:{keyword}"
+            );
+        }
+    }
+}
+
+#[test]
+fn flex_items_honor_intrinsic_max_height_values_on_both_axes() {
+    for (direction, root_css) in [
+        ("column", "width:120px;height:100px"),
+        ("row", "width:60px;height:100px"),
+    ] {
+        for keyword in [
+            "min-content",
+            "max-content",
+            "fit-content",
+            "fit-content(5px)",
+        ] {
+            assert_eq!(
+                flex_item_size(
+                    direction,
+                    root_css,
+                    &format!("width:40px;height:100px;max-height:{keyword}"),
+                ),
+                (40.0, 20.0),
+                "direction:{direction};max-height:{keyword}"
+            );
+        }
+    }
+}
+
+#[test]
+fn flex_item_intrinsic_min_width_preserves_auto_and_border_box_sizes() {
+    let default_auto = flex_item_size("row", "width:60px;height:100px", "width:10px");
+    assert_eq!(
+        flex_item_size(
+            "row",
+            "width:60px;height:100px",
+            "width:10px;min-width:auto"
+        ),
+        default_auto
+    );
+    assert_eq!(
+        flex_item_size(
+            "row",
+            "width:60px;height:100px",
+            "box-sizing:border-box;width:10px;padding:0 5px;min-width:min-content",
+        ),
+        (50.0, 20.0)
+    );
+}
+
+#[test]
+fn flex_item_intrinsic_min_max_styles_are_restored_after_layout() {
+    let mut child = 0;
+    let fixture = block_fixture_with_ahem(
+        "display:flex;width:60px;height:100px;align-items:flex-start",
+        |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;flex:none;width:10px;min-width:min-content;max-height:max-content"),
+            );
+            doc.append_text(child, "AAAA BBBB");
+        },
+    );
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let style = doc.layout_node_with_style(child).unwrap().style;
+    assert!(style.min_size.width.is_auto());
+    assert!(style.max_size.height.is_auto());
+}
+
+#[test]
+fn an_explicit_intrinsic_flex_item_minimum_changes_sibling_space_distribution() {
+    let (mut first, mut second) = (0, 0);
+    let fixture = block_fixture_with_ahem(
+        "display:flex;width:150px;height:100px;align-items:flex-start",
+        |doc, root| {
+            first = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;flex:1 1 auto;width:100px;min-width:max-content"),
+            );
+            doc.append_text(first, "AAAA BBBB");
+            second = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;flex:1 1 auto;width:100px"),
+            );
+            doc.append_text(second, "A");
+        },
+    );
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let first_rect = absolute_rect(&doc, first);
+    let second_rect = absolute_rect(&doc, second);
+    assert_eq!((first_rect.0, first_rect.2), (0.0, 90.0));
+    assert_eq!((second_rect.0, second_rect.2), (90.0, 60.0));
+}
+
+fn grid_item_size(root_css: &str, item_css: &str) -> (f32, f32) {
+    child_size(
+        &format!(
+            "display:grid;width:60px;height:100px;grid-template-columns:60px;\
+             grid-template-rows:100px;\
+             justify-items:start;align-items:start;{root_css}"
+        ),
+        "",
+        &format!("grid-column:1;grid-row:1;{item_css}"),
+        Body::Text,
+    )
+}
+
+#[test]
+fn grid_items_honor_intrinsic_min_width_values_on_fixed_and_auto_tracks() {
+    for (keyword, width, height) in [
+        ("min-content", 40.0, 20.0),
+        ("max-content", 90.0, 10.0),
+        ("fit-content", 60.0, 20.0),
+        ("fit-content(60px)", 60.0, 20.0),
+    ] {
+        assert_eq!(
+            grid_item_size("", &format!("width:10px;min-width:{keyword}")),
+            (width, height),
+            "min-width:{keyword}"
+        );
+    }
+    assert_eq!(
+        grid_item_size(
+            "width:120px;grid-template-columns:120px",
+            "width:10px;min-width:fit-content(50%)",
+        ),
+        (60.0, 20.0)
+    );
+    assert_eq!(
+        grid_item_size(
+            "width:200px;grid-template-columns:100px 100px",
+            "width:10px;min-width:fit-content(50%)",
+        ),
+        (50.0, 20.0),
+        "percentage fit-content uses the assigned 100px grid area as its basis"
+    );
+    assert_eq!(
+        grid_item_size(
+            "",
+            "box-sizing:border-box;width:10px;padding:0 5px;min-width:min-content",
+        ),
+        (50.0, 20.0)
+    );
+
+    let mut child = 0;
+    let fixture = block_fixture_with_ahem(
+        "display:grid;width:60px;grid-template-columns:auto;grid-template-rows:100px;\
+         justify-items:start;align-items:start",
+        |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;grid-column:1;grid-row:1;width:10px;min-width:max-content"),
+            );
+            doc.append_text(child, "AAAA BBBB");
+        },
+    );
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, child).2, 90.0);
+}
+
+#[test]
+fn grid_percentage_fit_content_uses_container_basis_without_track_details() {
+    let mut child = 0;
+    let fixture = block_fixture_with_ahem(
+        "display:grid;width:200px;height:100px;grid-template-columns:100px 100px;\
+         grid-template-rows:100px;justify-items:start;align-items:start",
+        |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("grid-column:1;grid-row:1;width:10px;min-width:fit-content(50%)"),
+            );
+            doc.append_text(child, "AAAA BBBB");
+        },
+    );
+    let mut doc = fixture.doc;
+    let mut tree = LayoutSession::new(&mut doc);
+    let parent_size = Size {
+        width: Some(200.0),
+        height: Some(100.0),
+    };
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size,
+        available_space: Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let mut dispatches = 0;
+    let mut installed_min_width = None;
+    with_grid_item_content_limits(
+        &mut tree,
+        NodeId::from(fixture.root),
+        inputs,
+        parent_size,
+        |tree, _, _| {
+            dispatches += 1;
+            if dispatches == 2 {
+                installed_min_width = Some(
+                    tree.layout_node_with_style(child)
+                        .unwrap()
+                        .style
+                        .min_size
+                        .width,
+                );
+            }
+            LayoutOutput::from_outer_size(Size {
+                width: 200.0,
+                height: 100.0,
+            })
+        },
+    );
+
+    assert_eq!(dispatches, 2, "preliminary and final grid passes");
+    assert_eq!(
+        installed_min_width,
+        Some(LengthPercentageAuto::length(90.0)),
+        "without track details, 50% uses the 200px grid container basis"
+    );
+}
+
+#[test]
+fn flex_grid_boxes_do_not_preserve_logical_min_block_size_keywords() {
+    for display in ["flex", "grid"] {
+        let mut child = 0;
+        let fixture = block_fixture(
+            &format!("display:{display};width:100px;height:100px;min-block-size:min-content"),
+            |doc, root| {
+                child = doc.append_element(
+                    Some(root),
+                    "div",
+                    taffy::Style::default(),
+                    Some("min-block-size:min-content"),
+                );
+            },
+        );
+        let mut doc = fixture.doc;
+        let tree = LayoutSession::new(&mut doc);
+        assert_eq!(
+            tree.nodes[fixture.root].content_limits,
+            super::ContentLimits::NONE,
+            "{display} container logical min-block-size is outside this feature"
+        );
+        assert_eq!(
+            tree.nodes[child].content_limits,
+            super::ContentLimits::NONE,
+            "{display} item logical min-block-size is outside this feature"
+        );
+    }
+}
+
+#[test]
+fn flex_grid_items_keep_physical_min_width_with_logical_min_block_size() {
+    let flex_item = flex_item_size(
+        "row",
+        "width:200px;height:100px",
+        "width:10px;min-width:min-content;min-block-size:min-content",
+    );
+    assert_eq!(flex_item.0, 40.0, "flex item width");
+
+    let grid_item = grid_item_size(
+        "width:200px;grid-template-columns:200px",
+        "width:10px;min-width:min-content;min-block-size:min-content",
+    );
+    assert_eq!(grid_item.0, 40.0, "grid item width");
+}
+
+#[test]
+fn grid_items_honor_intrinsic_max_width_values() {
+    for (keyword, width, height) in [
+        ("min-content", 40.0, 20.0),
+        ("max-content", 90.0, 10.0),
+        ("fit-content", 60.0, 20.0),
+        ("fit-content(60px)", 60.0, 20.0),
+    ] {
+        assert_eq!(
+            grid_item_size("", &format!("width:300px;max-width:{keyword}")),
+            (width, height),
+            "max-width:{keyword}"
+        );
+    }
+    assert_eq!(
+        grid_item_size(
+            "width:120px;grid-template-columns:120px",
+            "width:300px;max-width:fit-content(50%)",
+        ),
+        (60.0, 20.0)
+    );
+}
+
+#[test]
+fn grid_items_honor_intrinsic_min_height_values() {
+    for keyword in [
+        "min-content",
+        "max-content",
+        "fit-content",
+        "fit-content(5px)",
+    ] {
+        assert_eq!(
+            grid_item_size("", &format!("width:40px;height:0;min-height:{keyword}")),
+            (40.0, 20.0),
+            "min-height:{keyword}"
+        );
+    }
+}
+
+#[test]
+fn grid_items_honor_intrinsic_max_height_values() {
+    for keyword in [
+        "min-content",
+        "max-content",
+        "fit-content",
+        "fit-content(5px)",
+    ] {
+        assert_eq!(
+            grid_item_size("", &format!("width:40px;height:100px;max-height:{keyword}"),),
+            (40.0, 20.0),
+            "max-height:{keyword}"
+        );
+    }
+}
+
+fn intrinsic_container_size(display: &str, root_css: &str) -> (f32, f32) {
+    let display_css = match display {
+        "flex" => "display:flex;align-items:flex-start",
+        "grid" => {
+            "display:grid;grid-template-columns:auto;grid-template-rows:auto;\
+             justify-items:start;align-items:start"
+        }
+        _ => panic!("unsupported container display: {display}"),
+    };
+    let item_css = match display {
+        "flex" => "display:block;flex:1 1 auto",
+        "grid" => "display:block;grid-column:1;grid-row:1",
+        _ => unreachable!(),
+    };
+    let fixture = block_fixture_with_ahem(&format!("{display_css};{root_css}"), |doc, root| {
+        let item = doc.append_element(Some(root), "div", taffy::Style::default(), Some(item_css));
+        doc.append_text(item, "AAAA BBBB");
+    });
+    let root = fixture.root;
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let rect = absolute_rect(&doc, root);
+    (rect.2, rect.3)
+}
+
+#[test]
+fn flex_and_grid_containers_honor_intrinsic_min_max_width_values() {
+    for display in ["flex", "grid"] {
+        for (css, width, height) in [
+            ("width:20px;min-width:min-content", 40.0, 20.0),
+            ("width:20px;min-width:max-content", 90.0, 10.0),
+            ("width:20px;min-width:fit-content", 90.0, 10.0),
+            ("width:20px;min-width:fit-content(60px)", 60.0, 20.0),
+            ("width:400px;max-width:min-content", 40.0, 20.0),
+            ("width:400px;max-width:max-content", 90.0, 10.0),
+            ("width:400px;max-width:fit-content", 90.0, 10.0),
+            ("width:400px;max-width:fit-content(60px)", 60.0, 20.0),
+        ] {
+            assert_eq!(
+                intrinsic_container_size(display, css),
+                (width, height),
+                "display:{display};{css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn flex_and_grid_containers_honor_intrinsic_min_max_height_values() {
+    for display in ["flex", "grid"] {
+        for keyword in [
+            "min-content",
+            "max-content",
+            "fit-content",
+            "fit-content(5px)",
+        ] {
+            assert_eq!(
+                intrinsic_container_size(
+                    display,
+                    &format!("width:40px;height:0;min-height:{keyword}"),
+                ),
+                (40.0, 20.0),
+                "display:{display};min-height:{keyword}"
+            );
+            assert_eq!(
+                intrinsic_container_size(
+                    display,
+                    &format!("width:40px;height:100px;max-height:{keyword}"),
+                ),
+                (40.0, 20.0),
+                "display:{display};max-height:{keyword}"
+            );
+        }
+    }
+}
+
+#[test]
+fn flex_grid_items_keep_authored_width_when_measuring_intrinsic_height() {
+    let flex_item = flex_item_size(
+        "row",
+        "width:200px;height:100px",
+        "display:grid;width:40px;height:0;min-height:max-content;\
+         grid-template-columns:auto;grid-template-rows:auto;\
+         justify-items:start;align-items:start",
+    );
+    assert_eq!(flex_item, (40.0, 20.0), "grid item inside flex");
+
+    let grid_item = grid_item_size(
+        "width:200px;grid-template-columns:200px",
+        "display:flex;width:40px;height:0;min-height:max-content;align-items:flex-start",
+    );
+    assert_eq!(grid_item, (40.0, 20.0), "flex item inside grid");
+}
+
+#[test]
+fn flex_and_grid_min_width_probes_ignore_own_cross_axis_dimensions_and_limits() {
+    let mut widths = Vec::new();
+    for display in ["flex", "grid"] {
+        let (container, item) = match display {
+            "flex" => (
+                "display:flex;flex-direction:column;align-items:flex-start",
+                "flex:1 1 0;height:100%",
+            ),
+            "grid" => (
+                "display:grid;grid-template-columns:auto;grid-template-rows:100%;justify-items:start;align-items:start",
+                "height:100%",
+            ),
+            _ => unreachable!(),
+        };
+        let css = format!(
+            "{container};width:0;min-width:max-content;height:100px;\
+             min-height:300px;max-height:400px"
+        );
+        let mut child = 0;
+        let fixture = block_fixture_with_ahem(&css, |doc, root| {
+            child = doc.append_element(Some(root), "div", taffy::Style::default(), Some(item));
+        });
+        let root = fixture.root;
+        let mut doc = fixture.doc;
+        crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).expect("bridge");
+        doc.layout_node_with_style_mut(child)
+            .unwrap()
+            .style
+            .aspect_ratio = Some(2.0);
+        let mut tree = LayoutSession::new(&mut doc);
+        let inputs = LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size::NONE,
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            parent_size: Size {
+                width: Some(800.0),
+                height: Some(600.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(800.0),
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let output = super::with_content_limits(
+            &mut tree,
+            NodeId::from(root),
+            inputs,
+            |tree, node_id, inputs| tree.compute_child_layout_with_block_ctx(node_id, inputs, None),
+        );
+        widths.push((display, output.size.width));
+    }
+    assert_eq!(
+        widths,
+        [("flex", 0.0), ("grid", 0.0)],
+        "cross-axis size and limits must not affect intrinsic width"
+    );
+}
+
+#[test]
+fn an_empty_grid_lays_out_fixed_tracks_and_honors_intrinsic_height_limits() {
+    for (css, expected_height) in [
+        ("height:auto", 100.0),
+        ("height:0;min-height:max-content", 100.0),
+        ("height:200px;max-height:max-content", 100.0),
+    ] {
+        let fixture = block_fixture_with_ahem(
+            &format!("display:grid;width:100px;grid-template-rows:100px;{css}"),
+            |_, _| {},
+        );
+        let root = fixture.root;
+        let mut doc = fixture.doc;
+        layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600())
+            .expect("layout");
+        assert_eq!(absolute_rect(&doc, root).3, expected_height, "{css}");
+    }
+}
+
+#[test]
+fn intrinsic_container_minimum_wins_over_its_maximum() {
+    for display in ["flex", "grid"] {
+        assert_eq!(
+            intrinsic_container_size(
+                display,
+                "width:20px;min-width:max-content;max-width:min-content",
+            ),
+            (90.0, 10.0),
+            "display:{display}"
+        );
+    }
+}
+
+#[test]
+fn nested_flex_and_grid_containers_resolve_their_own_intrinsic_limits() {
+    let (mut flex, mut grid) = (0, 0);
+    let fixture = block_fixture_with_ahem("width:200px;height:200px", |doc, root| {
+        flex = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some("display:flex;width:20px;min-width:max-content;align-items:flex-start"),
+        );
+        grid = doc.append_element(
+            Some(flex),
+            "div",
+            taffy::Style::default(),
+            Some(
+                "display:grid;width:20px;min-width:max-content;\
+                 grid-template-columns:auto;grid-template-rows:auto;\
+                 justify-items:start;align-items:start",
+            ),
+        );
+        let item = doc.append_element(
+            Some(grid),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;grid-column:1;grid-row:1"),
+        );
+        doc.append_text(item, "AAAA BBBB");
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, flex).2, 90.0);
+    assert_eq!(absolute_rect(&doc, grid).2, 90.0);
+}
+
+#[test]
+fn a_flex_container_remeasures_percentage_fit_content_after_available_width_changes() {
+    let fixture = block_fixture_with_ahem(
+        "display:flex;width:10px;min-width:fit-content(50%);align-items:flex-start",
+        |doc, root| {
+            let item = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;flex:1 1 auto"),
+            );
+            doc.append_text(item, "AAAA BBBB");
+        },
+    );
+    let root = fixture.root;
+    let mut doc = fixture.doc;
+    let mut session = LayoutSession::new(&mut doc);
+    let inputs = |width| LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(width),
+            height: None,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(width),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    assert_eq!(
+        session
+            .compute_child_layout_with_block_ctx(NodeId::from(root), inputs(120.0), None)
+            .size
+            .width,
+        60.0
+    );
+    assert_eq!(
+        session
+            .compute_child_layout_with_block_ctx(NodeId::from(root), inputs(80.0), None)
+            .size
+            .width,
+        40.0
+    );
 }
