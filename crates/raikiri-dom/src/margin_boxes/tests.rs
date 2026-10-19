@@ -810,6 +810,51 @@ fn a_deferred_page_count_marks_its_placeholder() {
 }
 
 #[test]
+fn a_deferred_placeholder_that_ends_the_text_with_a_line_feed_keeps_its_range() {
+    // The line feed that ends text is not a line of its own, but this one
+    // belongs to the placeholder, which the slot's range has to keep covering.
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style feed { system: cyclic; symbols: '\\A' } \
+         @page { margin: 40px; \
+           @top-left { content: 'p' counter(pages, feed); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 9, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "p\n");
+    assert_eq!(head.deferred[0].range, 1..2);
+
+    // The text is one line, not two, when the box is sized to it: the left
+    // column is shared in the same way as with a plain 'p'.
+    let rects_of = |top: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@counter-style feed {{ system: cyclic; symbols: '\\A' }} \
+             @page {{ margin: 40px; font-family: Ahem; font-size: 10px; \
+               @left-top {{ content: {top}; white-space: pre }} \
+               @left-bottom {{ content: 'c' }} }}"
+        ));
+        page_margin_boxes(
+            &doc,
+            &cascade,
+            &cascade.page,
+            small_page(),
+            MarginBoxPageContext::new(0, 9, false).with_deferred_page_count(),
+        )
+        .iter()
+        .map(|margin_box| (margin_box.slot, margin_box.rect))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(rects_of("'p' counter(pages, feed)"), rects_of("'p'"));
+}
+
+#[test]
 fn a_deferred_page_count_in_a_linear_style_is_shown_in_decimal() {
     let (doc, cascade) = page_cascade_fixture(
         "@counter-style ticks { system: symbolic; symbols: 'x' } \
