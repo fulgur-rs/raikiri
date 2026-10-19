@@ -412,7 +412,8 @@ fn a_collapsed_column_leaves_the_row_height_it_gave() {
     assert_eq!(layout.size.height, 40.0);
 }
 
-/// A table row for [`rows_height`]: its style, then its (style, text) cells.
+/// A table row for [`rows_height`]: its style, then its (style, text) cells. A
+/// cell style that starts with `colspan=N;` makes the cell span `N` columns.
 type Row<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 
 const COLLAPSED_ROW: &str = "visibility:collapse";
@@ -463,6 +464,10 @@ fn laid_out_rows(
         );
         let mut ids = Vec::new();
         for &(css, text) in cells {
+            let (colspan, css) = css
+                .strip_prefix("colspan=")
+                .and_then(|rest| rest.split_once(';'))
+                .map_or((None, css), |(span, rest)| (Some(span), rest));
             let cell = doc.append_element(
                 Some(row),
                 "div",
@@ -471,6 +476,9 @@ fn laid_out_rows(
                     "display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px;{css}"
                 )),
             );
+            if let Some(span) = colspan {
+                set_attribute(&mut doc, cell, "colspan", span);
+            }
             // A text after `#` is set in a block box inside the cell.
             if let Some(text) = text.strip_prefix('#') {
                 let block =
@@ -732,7 +740,10 @@ fn height_of_collapsed_columns_that_lay_out_like_the_uncollapsed_ones(
 ) -> f32 {
     let laid_out = |columns: &[&'static str]| {
         let (doc, table, cells) = laid_out_rows("table-layout:fixed", 120, columns, rows);
-        let last = cells.last().expect("a last row")[0];
+        let last = *cells
+            .last()
+            .and_then(|row| row.last())
+            .expect("a cell in the last row");
         (
             doc.nodes[table].unrounded_layout.size.height,
             crate::layout::test_support::absolute_rect(&doc, last).1,
@@ -857,6 +868,28 @@ fn a_table_whose_columns_all_collapse_keeps_the_row_lines_its_cells_share() {
         height_of_collapsed_columns_that_lay_out_like_the_uncollapsed_ones(
             &[COLLAPSED_COL],
             &[COL],
+            &rows,
+        ),
+        40.0
+    );
+}
+
+#[test]
+fn a_cell_spanning_a_collapsed_column_overlaps_the_rows_by_the_border_it_keeps() {
+    // The cell above spans the collapsed column and the one beside it. With
+    // the column in place it takes the 20px top border of the cell below the
+    // collapsed column as its own bottom border. The rows that remain give it
+    // none, so it is measured without it, and the rows overlap by the borders
+    // they are measured with: the second row does not start above the end of
+    // the first.
+    let rows: [Row; 2] = [
+        ("", &[("colspan=2;", "X")]),
+        ("", &[("border-top:20px solid black", "X"), ("", "X")]),
+    ];
+    assert_eq!(
+        height_of_collapsed_columns_that_lay_out_like_the_uncollapsed_ones(
+            &[COLLAPSED_COL, COL],
+            &[COL, COL],
             &rows,
         ),
         40.0

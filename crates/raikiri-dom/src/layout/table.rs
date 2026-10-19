@@ -501,11 +501,19 @@ fn compute_table_layout_checked(
             resolve_collapsed_borders(doc, resolved, index, table_idx);
         }
     }
-    let columns_in_place = shown.as_ref().zip(borders_in_place).map(
-        |(shown, (border_width, row_overlaps, in_place))| {
-            ColumnsInPlace::new(doc, &grid, shown, border_width, row_overlaps, in_place)
-        },
-    );
+    let columns_in_place =
+        shown
+            .as_ref()
+            .zip(borders_in_place)
+            .map(|(shown, (border_width, in_place))| {
+                ColumnsInPlace::new(doc, &grid, shown, border_width, in_place).with_row_overlaps(
+                    doc,
+                    &grid,
+                    &collapsed_rows,
+                    &table_border,
+                    inputs.parent_size.width,
+                )
+            });
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
     let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
@@ -3764,10 +3772,11 @@ struct BorderState {
 struct ColumnsInPlace {
     /// [`CollapsedLines::inline_border_width`] with every column in place.
     border_width: f32,
-    /// [`CollapsedLines::row_overlaps`] with every column in place, between
-    /// each pair of consecutive rows that are not collapsed. The rows keep the
-    /// heights the cells of a collapsed column gave them, and those cells share
-    /// their row lines, which the grid that remains does not overlap.
+    /// [`CollapsedLines::row_overlaps`] of the cells with the borders `in_place`
+    /// gives them, between each pair of consecutive rows that are not
+    /// collapsed. The rows keep the heights the cells of a collapsed column
+    /// gave them, and those cells share their row lines, which the grid that
+    /// remains does not overlap.
     row_overlaps: Vec<f32>,
     /// The borders the cells are measured with: the inline sides they have
     /// with every column in place, and for the cells that remain the block
@@ -3788,7 +3797,6 @@ impl ColumnsInPlace {
         grid: &TableGrid,
         shown: &TableGrid,
         border_width: f32,
-        row_overlaps: Vec<f32>,
         in_place: BorderState,
     ) -> Self {
         let remaining = snapshot_borders(doc, grid);
@@ -3812,13 +3820,39 @@ impl ColumnsInPlace {
             .collect();
         Self {
             border_width,
-            row_overlaps,
+            row_overlaps: Vec::new(),
             in_place: BorderState {
                 cells,
                 rows: in_place.rows,
             },
             remaining,
         }
+    }
+
+    /// Set the overlaps between the rows that are not in `collapsed_rows`
+    /// from the borders the cells are measured with: a cell that remains
+    /// keeps the block borders of the grid that remains, so it shares with the
+    /// cells of a collapsed column only the line it has itself. Overlapping by
+    /// the line the cells would share with every column in place would take
+    /// more from a row than the cell was measured with.
+    fn with_row_overlaps(
+        mut self,
+        doc: &mut Document,
+        grid: &TableGrid,
+        collapsed_rows: &[bool],
+        table_border: &Rect<f32>,
+        basis: Option<f32>,
+    ) -> Self {
+        let rows_shown = without_collapsed_rows(grid, collapsed_rows);
+        if rows_shown.rows.is_empty() {
+            return self;
+        }
+        apply_borders(doc, &self.in_place);
+        let index = CellIndex::new(&rows_shown);
+        self.row_overlaps =
+            compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis).row_overlaps;
+        apply_borders(doc, &self.remaining);
+        self
     }
 
     /// Raise the overlap after each row of `row_overlaps` to the line the cells
@@ -3915,9 +3949,8 @@ fn apply_borders(doc: &mut Document, state: &BorderState) {
 
 /// The inline-axis width that collapsed borders take from the table while
 /// every column of `grid` is in place ([`CollapsedLines::inline_border_width`]
-/// of the grid with those columns), the overlaps between its rows, and the
-/// borders the cells then have. `collapsed_rows` stay out, as they do when the
-/// columns are shown.
+/// of the grid with those columns), and the borders the cells then have.
+/// `collapsed_rows` stay out, as they do when the columns are shown.
 ///
 /// Columns that collapse are still measured at the widths they had before,
 /// and those widths depend on the borders they had too, so this resolves
@@ -3933,14 +3966,13 @@ fn border_width_with_columns_in_place(
     table_idx: usize,
     table_border: &Rect<f32>,
     basis: Option<f32>,
-) -> (f32, Vec<f32>, BorderState) {
+) -> (f32, BorderState) {
     let rows_shown = without_collapsed_rows(grid, collapsed_rows);
     if rows_shown.rows.is_empty() {
         // Nothing shows, so no cell border meets the table's own.
         reset_collapsed_borders(doc, grid);
         return (
             table_border.left + table_border.right,
-            Vec::new(),
             snapshot_borders(doc, grid),
         );
     }
@@ -3950,7 +3982,7 @@ fn border_width_with_columns_in_place(
     let lines = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis);
     let in_place = snapshot_borders(doc, grid);
     reset_collapsed_borders(doc, shown);
-    (lines.inline_border_width(), lines.row_overlaps, in_place)
+    (lines.inline_border_width(), in_place)
 }
 
 fn compute_collapsed_lines(
