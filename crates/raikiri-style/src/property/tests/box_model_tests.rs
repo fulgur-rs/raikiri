@@ -2861,6 +2861,9 @@ fn box_properties_retain_css_wide_keywords_for_defaulting() {
         ("min-height", PropertyKey::MinHeight),
         ("max-width", PropertyKey::MaxWidth),
         ("max-height", PropertyKey::MaxHeight),
+        ("inline-size", PropertyKey::InlineSize),
+        ("block-size", PropertyKey::BlockSize),
+        ("min-block-size", PropertyKey::MinBlockSize),
     ] {
         for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
             let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
@@ -2879,12 +2882,11 @@ fn box_properties_retain_css_wide_keywords_for_defaulting() {
 
 #[test]
 fn box_properties_still_reject_other_keywords() {
-    // `fill-available` is no CSS-wide keyword, and the logical size
-    // longhands keep dropping the keywords for now.
+    // `fill-available` is no CSS-wide keyword.
     assert_eq!(parse("fill-available", "height"), None);
     assert_eq!(parse("fill-available", "padding-top"), None);
     for name in ["inline-size", "block-size", "min-block-size"] {
-        assert_eq!(parse("inherit", name), None, "{name}");
+        assert_eq!(parse("fill-available", name), None, "{name}");
     }
 }
 

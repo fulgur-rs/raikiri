@@ -9173,3 +9173,251 @@ fn direction_rolls_back_by_its_own_keyword_only_in_the_page_cascade() {
         )
     );
 }
+
+/// The sizes of the top-left margin box of `css`, over a page context that
+/// `css` styles, as `(width, height, min-width, min-height)`.
+fn margin_box_sizes(css: &str) -> [ComputedLengthPercentageOrAuto; 4] {
+    let result = page(css, &ComputedValues::initial());
+    let rule = result
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap();
+    let style = result.margin_box_style(&rule, None);
+    [style.width, style.height, style.min_width, style.min_height]
+}
+
+/// A page context whose own sizes are away from `auto`; a margin box inherits
+/// them.
+const SIZED_PAGE: &str = "width: 100px; height: 40px; min-width: 30px; min-height: 20px;";
+
+#[test]
+fn margin_box_logical_sizes_take_the_css_wide_keywords() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let sizes = |margin_box: &str| {
+        margin_box_sizes(&format!(
+            "@page {{ {SIZED_PAGE} @top-left {{ content: 'X'; {margin_box} }} }}"
+        ))
+    };
+    let keywords = "inline-size: inherit; block-size: inherit; min-block-size: inherit";
+    // `horizontal-tb`: the inline size is the width, the block size the height,
+    // and the minimum block size the minimum height.
+    assert_eq!(sizes(keywords), [Px(100.0), Px(40.0), Auto, Px(20.0)]);
+    // `vertical-rl`: the axes swap, whatever the order of the declarations.
+    assert_eq!(
+        sizes(&format!("writing-mode: vertical-rl; {keywords}")),
+        [Px(100.0), Px(40.0), Px(30.0), Auto]
+    );
+    assert_eq!(
+        sizes(&format!("{keywords}; writing-mode: vertical-rl")),
+        [Px(100.0), Px(40.0), Px(30.0), Auto]
+    );
+    for keyword in ["initial", "unset"] {
+        assert_eq!(
+            sizes(&format!(
+                "width: 5px; height: 6px; min-height: 7px; inline-size: {keyword}; \
+                 block-size: {keyword}; min-block-size: {keyword}"
+            )),
+            [Auto; 4],
+            "{keyword}"
+        );
+    }
+    // The later of the keyword and the physical size wins.
+    assert_eq!(sizes("inline-size: inherit; width: 5px")[0], Px(5.0));
+    assert_eq!(sizes("width: 5px; inline-size: inherit")[0], Px(100.0));
+}
+
+/// A margin box taken from the cascade of the margin boxes alone has its
+/// flow-relative sizes still unmapped, so the box maps them itself.
+#[test]
+fn an_unmapped_margin_box_resolves_the_logical_size_keywords() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let result = page(
+        &format!(
+            "@page {{ {SIZED_PAGE} @top-left {{ content: 'X'; writing-mode: vertical-rl; \
+             inline-size: inherit; block-size: inherit; min-block-size: inherit }} }}"
+        ),
+        &ComputedValues::initial(),
+    );
+    let rule = PageMarginBoxCascadeResult::cascade_matching(
+        result.margin_boxes(),
+        PageMarginBoxSlot::TopLeft,
+    )
+    .unwrap();
+    let style = result.margin_box_style(&rule, None);
+    assert_eq!(
+        [style.width, style.height, style.min_width, style.min_height],
+        [Px(100.0), Px(40.0), Px(30.0), Auto]
+    );
+}
+
+#[test]
+fn page_context_logical_sizes_take_the_css_wide_keywords() {
+    use ComputedLengthPercentageOrAuto::Px;
+    // The page context inherits from the root element.
+    let root = ComputedValues {
+        width: Px(100.0),
+        height: Px(40.0),
+        min_width: Px(30.0),
+        min_height: Px(20.0),
+        ..ComputedValues::initial()
+    };
+    let length = |px| LengthOrAuto::Length(Length::Px(px));
+    let declared = |css: &str, key: PropertyKey| {
+        page(&format!("@page {{ {css} }}"), &root)
+            .declarations()
+            .get(&key)
+            .cloned()
+    };
+    // A horizontal page's inline size is its width, its block size its height
+    // and its minimum block size its minimum height.
+    let keywords = "inline-size: inherit; block-size: inherit; min-block-size: inherit";
+    assert_eq!(
+        declared(keywords, PropertyKey::Width),
+        Some(PropertyValue::Width(length(100.0)))
+    );
+    assert_eq!(
+        declared(keywords, PropertyKey::Height),
+        Some(PropertyValue::Height(length(40.0)))
+    );
+    assert_eq!(
+        declared(keywords, PropertyKey::MinBlockSize),
+        Some(PropertyValue::MinBlockSize(length(20.0)))
+    );
+    // A vertical page swaps them.
+    let vertical = format!("writing-mode: vertical-rl; {keywords}");
+    assert_eq!(
+        declared(&vertical, PropertyKey::Width),
+        Some(PropertyValue::Width(length(100.0)))
+    );
+    assert_eq!(
+        declared(
+            "writing-mode: vertical-rl; inline-size: inherit",
+            PropertyKey::Height
+        ),
+        Some(PropertyValue::Height(length(40.0)))
+    );
+    assert_eq!(
+        declared(&vertical, PropertyKey::MinBlockSize),
+        Some(PropertyValue::MinBlockSize(length(30.0)))
+    );
+    for keyword in ["initial", "unset"] {
+        assert_eq!(
+            declared(
+                &format!("width: 5px; inline-size: {keyword}"),
+                PropertyKey::Width
+            ),
+            Some(PropertyValue::Width(LengthOrAuto::Auto)),
+            "{keyword}"
+        );
+        assert_eq!(
+            declared(
+                &format!("min-block-size: 5px; min-block-size: {keyword}"),
+                PropertyKey::MinBlockSize
+            ),
+            Some(PropertyValue::MinBlockSize(LengthOrAuto::Auto)),
+            "{keyword}"
+        );
+    }
+}
+
+/// A page context over a root with a minimum height of 20px and a minimum
+/// width of 30px, as `min-block-size` declarations leave it.
+fn declared_min_block_size(css: &str, ua: Option<&str>) -> Option<PropertyValue> {
+    let root = ComputedValues {
+        min_width: ComputedLengthPercentageOrAuto::Px(30.0),
+        min_height: ComputedLengthPercentageOrAuto::Px(20.0),
+        ..ComputedValues::initial()
+    };
+    let mut tree = RuleTree::empty();
+    if let Some(ua) = ua {
+        tree.add_stylesheet(ua, Origin::UserAgent);
+    }
+    tree.add_stylesheet(css, Origin::Author);
+    cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&root),
+    )
+    .declarations()
+    .get(&PropertyKey::MinBlockSize)
+    .cloned()
+}
+
+/// `revert` and `revert-layer` roll a `min-block-size` back like any other
+/// property, and a keyword that arrives through `var()` still resolves.
+#[test]
+fn page_context_min_block_size_rolls_back_and_substitutes() {
+    let size = |px| {
+        Some(PropertyValue::MinBlockSize(LengthOrAuto::Length(
+            Length::Px(px),
+        )))
+    };
+    assert_eq!(
+        declared_min_block_size(
+            "@page { min-block-size: 5px; min-block-size: revert }",
+            Some("@page { min-block-size: 8px }")
+        ),
+        size(8.0)
+    );
+    assert_eq!(
+        declared_min_block_size(
+            "@layer a { @page { min-block-size: 8px } } \
+             @layer b { @page { min-block-size: 5px; min-block-size: revert-layer } }",
+            None
+        ),
+        size(8.0)
+    );
+    // Nothing underneath: no declaration is left.
+    for keyword in ["revert", "revert-layer"] {
+        assert_eq!(
+            declared_min_block_size(&format!("@page {{ min-block-size: {keyword} }}"), None),
+            None,
+            "{keyword}"
+        );
+    }
+    assert_eq!(
+        declared_min_block_size("@page { --k: inherit; min-block-size: var(--k) }", None),
+        size(20.0)
+    );
+    assert_eq!(
+        declared_min_block_size(
+            "@page { --k: initial; min-block-size: 5px; min-block-size: var(--k) }",
+            None
+        ),
+        Some(PropertyValue::MinBlockSize(LengthOrAuto::Auto))
+    );
+    assert_eq!(
+        declared_min_block_size(
+            "@page { writing-mode: vertical-rl; --k: inherit; min-block-size: var(--k) }",
+            None
+        ),
+        size(30.0)
+    );
+}
+
+#[test]
+fn margin_box_min_block_size_rolls_back_and_substitutes() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let min_height = |css: &str| margin_box_sizes(css)[3];
+    assert_eq!(
+        min_height(
+            "@layer a { @page { @top-left { content: 'X'; min-block-size: 8px } } } \
+             @layer b { @page { @top-left { min-block-size: 5px; \
+             min-block-size: revert-layer } } }"
+        ),
+        Px(8.0)
+    );
+    assert_eq!(
+        min_height(&format!(
+            "@page {{ {SIZED_PAGE} --k: inherit; @top-left {{ content: 'X'; \
+             min-block-size: var(--k) }} }}"
+        )),
+        Px(20.0)
+    );
+    assert_eq!(
+        min_height(&format!(
+            "@page {{ {SIZED_PAGE} --k: initial; @top-left {{ content: 'X'; \
+             min-block-size: var(--k) }} }}"
+        )),
+        Auto
+    );
+}
