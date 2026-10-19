@@ -2524,6 +2524,21 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     inherited.list_style_image.clone()
                 });
             }
+            // Inherited: `inherit` and `unset` take the parent's computed value.
+            crate::property::PropertyKey::TextAlign => {
+                return PropertyValue::TextAlign(if initial {
+                    crate::property::TextAlign::Start
+                } else {
+                    inherited.text_align
+                });
+            }
+            crate::property::PropertyKey::TextAlignLast => {
+                return PropertyValue::TextAlignLast(if initial {
+                    crate::property::TextAlignLast::Auto
+                } else {
+                    inherited.text_align_last
+                });
+            }
             key => {
                 if let Some(value) =
                     box_defaulting_value(key, keyword == CssWideKeyword::Inherit, inherited)

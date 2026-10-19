@@ -192,6 +192,7 @@ fn apply_computed_to_style_in_session_inner(
             continue;
         }
         let vertical_sized = vertical_logical_sized(cascade, idx);
+        let raw_cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         let values = layout_values(doc, cascade, idx, vertical_sized.as_ref());
         let cv = &*values;
         // Taffy does not carry CSS `order` in Style. Retain the computed value
@@ -392,8 +393,18 @@ fn apply_computed_to_style_in_session_inner(
             &mut calc_values,
             &mut doc.context.layout_warnings,
         );
-        doc.nodes[idx].content_limits =
-            bridge_content_limits(cv, &mut calc_values, &mut doc.context.layout_warnings);
+        let content_limit_values = if crate::taffy_impl::is_table_box(raw_cv.display)
+            || crate::paint_rules::is_replaced_element(doc.document, idx)
+        {
+            raw_cv
+        } else {
+            cv
+        };
+        doc.nodes[idx].content_limits = bridge_content_limits(
+            content_limit_values,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
         bridge_border(&mut style, cv, &mut doc.context.layout_warnings);
         bridge_box_sizing(&mut style, cv);
         bridge_flex(

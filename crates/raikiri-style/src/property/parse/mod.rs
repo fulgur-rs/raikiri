@@ -127,7 +127,7 @@ fn parse_value_with_black_currentcolor(
                 | PropertyKey::BoxDecorationBreak
                 | PropertyKey::TextShadow
         )
-    ) || key.is_some_and(PropertyKey::takes_box_css_wide_keyword)
+    ) || key.is_some_and(PropertyKey::takes_cascade_css_wide_keyword)
         || key.is_some_and(PropertyKey::is_svg_presentation);
     if takes_css_wide_keyword
         && let Ok(keyword) = input.try_parse(|parser| {

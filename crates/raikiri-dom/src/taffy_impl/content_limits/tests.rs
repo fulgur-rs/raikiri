@@ -4,8 +4,8 @@
 //! at its longest word, 90px wide on one line.
 
 use super::{
-    applies, content_percentage_height_basis, stretch_fit_width, with_grid_item_content_limits,
-    with_oof_content_limits,
+    ContentLimits, applies, content_percentage_height_basis, replaced_keyword_bounds,
+    stretch_fit_width, with_grid_item_content_limits, with_oof_content_limits,
 };
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::test_support::{block_fixture, block_fixture_with_ahem};
@@ -74,6 +74,63 @@ fn child_size(root_css: &str, lead: &str, child_css: &str, body: Body) -> (f32, 
 
 fn text(root_css: &str, child_css: &str) -> (f32, f32) {
     child_size(root_css, "", child_css, Body::Text)
+}
+
+#[test]
+fn replaced_keyword_bounds_handles_nonreplaced_missing_invalid_and_sized_nodes() {
+    let mut doc = crate::document::Document::new();
+    let plain = doc.append_element(None, "div", taffy::Style::default(), None::<&str>);
+    let missing = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
+    let invalid = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
+    let sized = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
+    for (idx, intrinsic) in [
+        (invalid, raikiri_traits::IntrinsicBox::new(0.0, 10.0)),
+        (sized, raikiri_traits::IntrinsicBox::new(20.0, 10.0)),
+    ] {
+        if let crate::node::NodeData::Element(element) = &mut doc.nodes[idx].data {
+            element.image_intrinsic_size = Some(intrinsic);
+        }
+    }
+    let limits = ContentLimits {
+        min: Size {
+            width: taffy::Dimension::min_content(),
+            height: taffy::Dimension::auto(),
+        },
+        max: Size {
+            width: taffy::Dimension::max_content(),
+            height: taffy::Dimension::auto(),
+        },
+    };
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let session = LayoutSession::new(&mut doc);
+    for idx in [plain, missing, invalid] {
+        let (width, height) = replaced_keyword_bounds(&session, idx, &limits, &inputs);
+        assert_eq!(
+            (width.min, width.max, height.min, height.max),
+            (None, None, None, None),
+            "node {idx} should have no replaced intrinsic keyword bounds"
+        );
+    }
+    let bounds = replaced_keyword_bounds(&session, sized, &limits, &inputs);
+    assert_eq!(
+        (bounds.0.min, bounds.0.max, bounds.1.min, bounds.1.max),
+        (Some(20.0), Some(20.0), Some(10.0), Some(10.0))
+    );
 }
 
 #[test]
@@ -1379,6 +1436,79 @@ fn flex_item_size(direction: &str, root_css: &str, item_css: &str) -> (f32, f32)
         &format!("flex:none;{item_css}"),
         Body::Text,
     )
+}
+
+fn canvas_intrinsic_contribution_size(container_display: &str, canvas_css: &str) -> (f32, f32) {
+    let (mut outer, mut canvas) = (0, 0);
+    let fixture = block_fixture("width:200px", |doc, root| {
+        outer = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(&format!(
+                "display:{container_display};width:max-content;border:5px solid;margin:5px"
+            )),
+        );
+        canvas = doc.append_element(
+            Some(outer),
+            "canvas",
+            taffy::Style::default(),
+            Some(&format!("display:block;width:max-content;{canvas_css}")),
+        );
+        doc.set_element_attribute(canvas, "width", "50")
+            .expect("set canvas width");
+        doc.set_element_attribute(canvas, "height", "50")
+            .expect("set canvas height");
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let rect = absolute_rect(&doc, outer);
+    (rect.2, rect.3)
+}
+
+#[test]
+fn replaced_min_and_max_height_keywords_contribute_to_intrinsic_inline_size() {
+    for display in [
+        "block",
+        "flex;flex-direction:row",
+        "flex;flex-direction:column",
+        "grid",
+    ] {
+        for canvas_css in [
+            "height:0;min-height:max-content",
+            "height:100px;max-height:max-content",
+        ] {
+            assert_eq!(
+                canvas_intrinsic_contribution_size(display, canvas_css),
+                (60.0, 60.0),
+                "display:{display};{canvas_css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_out_of_flow_replaced_min_height_keyword_uses_its_inset_width() {
+    let mut canvas = 0;
+    let fixture = block_fixture("position:relative;width:60px;height:60px", |doc, root| {
+        canvas = doc.append_element(
+            Some(root),
+            "canvas",
+            taffy::Style::default(),
+            Some(
+                "position:absolute;left:5px;right:5px;top:0;width:auto;height:0;\
+                 min-height:max-content",
+            ),
+        );
+        doc.set_element_attribute(canvas, "width", "50")
+            .expect("set canvas width");
+        doc.set_element_attribute(canvas, "height", "50")
+            .expect("set canvas height");
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let rect = absolute_rect(&doc, canvas);
+    assert_eq!((rect.2, rect.3), (50.0, 50.0));
 }
 
 #[test]

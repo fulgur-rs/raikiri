@@ -767,6 +767,7 @@ fn hanging_punctuation_important_wins_cascade_and_is_inherited() {
 
 mod box_css_wide_tests;
 mod css_wide_tests;
+mod text_align_css_wide_tests;
 
 #[test]
 fn box_decoration_break_takes_the_css_wide_keywords() {
