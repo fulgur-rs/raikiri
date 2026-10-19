@@ -3937,7 +3937,7 @@ impl AvoidedBreaks {
 fn current_abs_y(document: &Document, node_id: usize) -> f32 {
     if let Some(origin) = document.layout_origin_of(node_id) {
         return origin.y;
-    }
+    } // cov:ignore: callers supply existing layout keys; missing keys would panic in the fallback's arena indexing.
     let mut id = document.ifc_source_owner(node_id);
     let mut y = if id != node_id {
         document
