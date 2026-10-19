@@ -1757,3 +1757,53 @@ fn vertical_margin_box_flow_relative_properties_land_on_their_physical_sides() {
         assert_eq!([rect.x, rect.y, rect.width, rect.height], expected, "{own}");
     }
 }
+
+/// Vertical text thicker than the box overflows toward the block start when
+/// it is aligned `top`, toward the block end when aligned `bottom`, and on
+/// both sides when aligned `middle`.
+#[test]
+fn vertical_text_wider_than_its_box_overflows_away_from_its_alignment() {
+    let origin_x = |align: &str| {
+        let boxes = boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @left-middle {{ content: 'a\\A b\\A c'; white-space: pre; \
+                 writing-mode: vertical-rl; width: 10px; vertical-align: {align} }} }}"
+        ));
+        let [left] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        (
+            left.rect.x,
+            left.text.as_ref().expect("shaped text").origin().0,
+        )
+    };
+    // The 10px box sits against the page area, from x = 30, and the three
+    // 10px lines are 20px thicker than it.
+    assert_eq!(origin_x("top"), (30.0, 10.0));
+    assert_eq!(origin_x("middle"), (30.0, 20.0));
+    assert_eq!(origin_x("bottom"), (30.0, 30.0));
+}
+
+/// Horizontal text taller than its box overflows the same way.
+#[test]
+fn horizontal_text_taller_than_its_box_overflows_away_from_its_alignment() {
+    let origin_y = |align: &str| {
+        let boxes = boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: 'a\\A b'; white-space: pre; \
+                 height: 10px; vertical-align: {align} }} }}"
+        ));
+        let [top] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        (
+            top.rect.y,
+            top.text.as_ref().expect("shaped text").origin().1,
+        )
+    };
+    // The 10px box sits against the page area, at y = 30, and the two 10px
+    // lines are 10px taller than it.
+    assert_eq!(origin_y("top"), (30.0, 30.0));
+    assert_eq!(origin_y("middle"), (30.0, 25.0));
+    assert_eq!(origin_y("bottom"), (30.0, 20.0));
+}

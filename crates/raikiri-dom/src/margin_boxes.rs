@@ -1510,13 +1510,17 @@ fn place_margin_text(
         Some(inline_size),
         spec.alignment,
     )?;
+    // Text that is thicker than the box has negative free space, which
+    // `bottom` and `middle` take as well: the text ends flush with the end of
+    // the block axis, or overflows on both sides, and not on the end side
+    // alone.
     let offset = |free: f32| match spec.vertical_align {
         MarginTextVerticalAlign::Top => 0.0,
         MarginTextVerticalAlign::Middle => free * 0.5,
         MarginTextVerticalAlign::Bottom => free,
     };
     let origin = if vertical {
-        let shift = offset((width - shaped.width()).max(0.0));
+        let shift = offset(width - shaped.width());
         let from_right = matches!(
             style.writing_mode,
             shodo::geometry::WritingMode::VerticalRl | shodo::geometry::WritingMode::SidewaysRl
@@ -1528,7 +1532,7 @@ fn place_margin_text(
         };
         (x + offset_x, y)
     } else {
-        (x, y + offset((height - shaped.height()).max(0.0)))
+        (x, y + offset(height - shaped.height()))
     };
     Some(MarginBoxText { shaped, origin })
 }
