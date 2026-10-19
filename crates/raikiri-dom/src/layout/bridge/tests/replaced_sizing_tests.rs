@@ -690,6 +690,28 @@ fn a_percentage_height_of_an_image_resolves_against_an_absolute_box_with_a_defin
 }
 
 #[test]
+fn a_percentage_height_of_an_image_resolves_against_an_absolute_box_pinned_by_its_min_and_max_height()
+ {
+    // A `min-height` that a `max-height` does not exceed fixes the height of
+    // the box whatever its content, although its `height` is `auto`.
+    for box_css in [
+        "position:absolute;min-height:100px;max-height:100px",
+        "position:absolute;min-height:100px;max-height:50px",
+        "position:fixed;min-height:100px;max-height:100px",
+    ] {
+        let (parent, image) = image_in_box(box_css, "height:100%");
+        assert_eq!(image, (50.0, 100.0), "{box_css}");
+        assert_eq!(parent.1, 100.0, "{box_css}");
+    }
+    // A range of heights leaves the height to the content.
+    let (_, image) = image_in_box(
+        "position:absolute;min-height:50px;max-height:100px",
+        "height:100%",
+    );
+    assert_eq!(image, (25.0, 50.0));
+}
+
+#[test]
 fn a_percentage_height_of_a_block_is_auto_in_an_absolute_box_that_sizes_to_its_content() {
     let height = |box_css: &str| {
         let (mut parent, mut child) = (0, 0);

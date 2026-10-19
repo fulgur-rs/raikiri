@@ -2371,13 +2371,15 @@ fn flex_layout_sized(
 /// both sizes definite. A box with an `auto` height and a `top` or `bottom`
 /// of `auto` has a height that follows from its content, and so a percentage
 /// height of a child is `auto` (CSS 2.1 10.5). A `height` of the box's own, a
-/// `top` and `bottom` that fix it, or an aspect ratio that gives it one, make
-/// it definite.
+/// `top` and `bottom` that fix it, an aspect ratio that gives it one, or a
+/// `min-height` that its `max-height` does not exceed, make it definite.
 fn with_content_height_not_definite(
     tree: &LayoutSession<'_>,
     idx: usize,
     mut inputs: LayoutInput,
 ) -> LayoutInput {
+    use taffy::MaybeResolve;
+
     if inputs.known_dimensions.height.is_none()
         || !inputs.known_dimensions_are_definite.height
         || tree.nodes[idx].taffy_position() != TaffyPosition::Absolute
@@ -2386,8 +2388,18 @@ fn with_content_height_not_definite(
     }
     let follows_content = tree.layout_node_with_style(idx).is_some_and(|node| {
         let style = node.style;
+        let min = style
+            .min_size
+            .maybe_resolve(inputs.parent_size, resolve_calc)
+            .height;
+        let max = style
+            .max_size
+            .maybe_resolve(inputs.parent_size, resolve_calc)
+            .height;
+        let pinned = matches!((min, max), (Some(min), Some(max)) if max <= min);
         style.size.height.is_auto()
             && style.aspect_ratio.is_none()
+            && !pinned
             && (style.inset.top.is_auto() || style.inset.bottom.is_auto())
     });
     if follows_content {
