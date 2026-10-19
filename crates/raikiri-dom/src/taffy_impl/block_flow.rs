@@ -235,8 +235,9 @@ pub(crate) fn compute_block_flow(
             let minimum = min_content_width(tree, node, metrics.percent_height)
                 + metrics.inset.horizontal_axis_sum();
             // The width the content asks for is capped by the maximum the
-            // box states, not by one carried over from its height.
-            metrics.clamp_width(width.max(minimum.maybe_clamp(None, metrics.own_max.width)))
+            // box states, not by one carried over from its height, which
+            // the automatic minimum overrides.
+            width.max(minimum.maybe_clamp(None, metrics.own_max.width))
         } else {
             width
         }

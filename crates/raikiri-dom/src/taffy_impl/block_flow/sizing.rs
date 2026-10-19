@@ -107,6 +107,40 @@ impl Metrics {
         let authored = specified
             .maybe_apply_aspect_ratio(style.aspect_ratio())
             .maybe_add(adjustment);
+        // Whether the content may raise an axis that the aspect ratio gives:
+        // unless the box scrolls or `min-*` says otherwise, an automatic
+        // minimum keeps it from ending up smaller than its content.
+        let ratio_eligible = |specified: Option<f32>, min_is_auto: bool, overflow: Overflow| {
+            style.aspect_ratio().is_some()
+                && (inputs.sizing_mode != SizingMode::InherentSize || specified.is_none())
+                && min_is_auto
+                && !overflow.is_scroll_container()
+        };
+        let width_eligible = ratio_eligible(
+            specified.width,
+            style.min_size().width.is_auto(),
+            style.overflow().x,
+        );
+        let height_eligible = ratio_eligible(
+            specified.height,
+            style.min_size().height.is_auto(),
+            style.overflow().y,
+        );
+        // A size the parent imposed on such an axis was settled with that
+        // minimum in mind, so only the maximum the box states caps it, not
+        // one carried over from the other axis.
+        let limit = Size {
+            width: if inputs.known_dimensions.width.is_some() && width_eligible {
+                own_max.width
+            } else {
+                max.width
+            },
+            height: if inputs.known_dimensions.height.is_some() && height_eligible {
+                own_max.height
+            } else {
+                max.height
+            },
+        };
         let preferred = inputs
             .known_dimensions
             .or(if inputs.sizing_mode == SizingMode::InherentSize {
@@ -114,42 +148,20 @@ impl Metrics {
             } else {
                 Size::NONE
             })
-            .maybe_clamp(min, max)
+            .maybe_clamp(min, limit)
             .maybe_max(padding_border.sum_axes())
             .maybe_sub(adjustment)
             .maybe_apply_aspect_ratio(style.aspect_ratio())
             .maybe_add(adjustment)
-            .maybe_clamp(min, max);
+            .maybe_clamp(min, limit);
         // An axis is ratio-dependent when its size is not authored or imposed
         // but follows from the other axis through the preferred aspect ratio.
-        // Unless the box scrolls or `min-*` says otherwise, it may then not
-        // end up smaller than its content on that axis.
-        let ratio_dependent = |known: Option<f32>,
-                               specified: Option<f32>,
-                               preferred: Option<f32>,
-                               min_is_auto: bool,
-                               overflow: Overflow| {
-            style.aspect_ratio().is_some()
-                && known.is_none()
-                && (inputs.sizing_mode != SizingMode::InherentSize || specified.is_none())
-                && preferred.is_some()
-                && min_is_auto
-                && !overflow.is_scroll_container()
-        };
-        let ratio_width = ratio_dependent(
-            inputs.known_dimensions.width,
-            specified.width,
-            preferred.width,
-            style.min_size().width.is_auto(),
-            style.overflow().x,
-        );
-        let ratio_height = ratio_dependent(
-            inputs.known_dimensions.height,
-            specified.height,
-            preferred.height,
-            style.min_size().height.is_auto(),
-            style.overflow().y,
-        );
+        let ratio_width = width_eligible
+            && inputs.known_dimensions.width.is_none()
+            && preferred.width.is_some();
+        let ratio_height = height_eligible
+            && inputs.known_dimensions.height.is_none()
+            && preferred.height.is_some();
         let gutter = |overflow| {
             if overflow == Overflow::Scroll {
                 style.scrollbar_width()

@@ -87,6 +87,28 @@ fn a_block_width_from_the_ratio_grows_to_its_min_content_width() {
 }
 
 #[test]
+fn a_maximum_carried_over_from_the_height_does_not_cap_a_width_the_content_raised() {
+    assert_eq!(
+        ratio_box_size(
+            "height:200px;max-height:100px;aspect-ratio:1/1",
+            "width:300px;height:10px"
+        ),
+        (300.0, 100.0)
+    );
+}
+
+#[test]
+fn the_maximum_width_the_block_states_caps_a_width_the_content_raised() {
+    assert_eq!(
+        ratio_box_size(
+            "height:50px;max-width:80px;aspect-ratio:2/1",
+            "width:300px;height:10px"
+        ),
+        (80.0, 50.0)
+    );
+}
+
+#[test]
 fn a_floated_block_width_from_the_ratio_grows_to_its_min_content_width() {
     assert_eq!(
         ratio_box_size(
