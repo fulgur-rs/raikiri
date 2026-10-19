@@ -4,6 +4,7 @@ use anyrender::recording::RenderCommand;
 use raikiri_dom::Document;
 use raikiri_style::property::ContentComponent;
 use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
+use raikiri_traits::PaintRect;
 use taffy::Style;
 
 mod gradient_tests;

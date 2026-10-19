@@ -39,7 +39,7 @@ use raikiri_style::{
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
-    PaintRect, RenderWarning, WarningKind,
+    RenderWarning, WarningKind,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
@@ -53,6 +53,7 @@ mod gradient;
 mod image_brush;
 mod inline_box;
 mod lines_frames;
+mod margin_box;
 mod page_geometry;
 mod paint_walk;
 mod visit;
@@ -63,6 +64,7 @@ pub(crate) use inline_box::paint_inline_box;
 
 use element_background::ElementBackgroundLayer;
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
+use margin_box::paint_margin_box;
 use page_geometry::PageGeometry;
 use paint_walk::PaintWalk;
 
@@ -1625,233 +1627,6 @@ fn paint_list_marker_with_snapshots(
         top,
         css_color(computed.color),
     );
-}
-
-/// Paint one laid-out page-margin box: background color, background image,
-/// borders, then its text and shadows clipped when its overflow clips.
-fn paint_margin_box(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    margin_box: &raikiri_dom::MarginBox,
-    page_box: &PageBox,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-) {
-    let PaintRect {
-        x,
-        y,
-        width,
-        height,
-        ..
-    } = margin_box.rect;
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-    let rect = Rect::new(x as f64, y as f64, (x + width) as f64, (y + height) as f64);
-    let borders = margin_box.border_widths();
-    // Margin-box paint/position areas honor `background-origin`/`background-clip`
-    // like elements (border box is `rect`). Unsupported `text`/`border-area`
-    // clips warn and skip the color or image instead of silently omitting pixels.
-    let border = (
-        borders.left as f64,
-        borders.top as f64,
-        borders.right as f64,
-        borders.bottom as f64,
-    );
-    let padding = (
-        margin_box.padding.left as f64,
-        margin_box.padding.top as f64,
-        margin_box.padding.right as f64,
-        margin_box.padding.bottom as f64,
-    );
-    if let Some(color) = margin_box.background_color {
-        // The bottom layer's clip also clips the color (CSS Backgrounds 3 §2.1).
-        match clip_inset_rect(rect, margin_box.background_clip, border, padding) {
-            Some(painting) => {
-                if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
-                    scene.fill(
-                        Fill::NonZero,
-                        Affine::IDENTITY,
-                        css_color(color),
-                        None,
-                        &painting,
-                    );
-                }
-            }
-            // `border-area` paints the color in the border ring only, as
-            // the element path does.
-            None if margin_box.background_clip == VisualBox::BorderArea => {
-                let inner = Rect::new(
-                    rect.x0 + border.0,
-                    rect.y0 + border.1,
-                    rect.x1 - border.2,
-                    rect.y1 - border.3,
-                );
-                let mut ring = kurbo::Shape::to_path(&rect, 0.1);
-                if inner.x1 > inner.x0 && inner.y1 > inner.y0 {
-                    ring.extend(kurbo::Shape::path_elements(&inner, 0.1));
-                }
-                scene.fill(
-                    Fill::EvenOdd,
-                    Affine::IDENTITY,
-                    css_color(color),
-                    None,
-                    &ring,
-                );
-            }
-            None => warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: None,
-                },
-                node_id: None,
-                details:
-                    "margin-box background-clip has an unsupported visual box; the color was skipped"
-                        .into(),
-            }),
-        }
-    }
-    // The layout already dropped the layers under the painted ones.
-    warn_unpainted_background_layers(margin_box.background_layer_count, warnings);
-    if let Some(source) = pixel_source.filter(|_| !margin_box.background_layers.is_empty()) {
-        // CSS Backgrounds 3 §2.1: the first layer is on top.
-        for image in margin_box.background_layers.iter().rev() {
-            let Some(url) = image_cache.image_url(&image.url) else {
-                continue;
-            };
-            let positioning =
-                origin_inset_rect(rect, image.origin, border, padding, Some(&url), warnings);
-            match clip_inset_rect(rect, image.clip, border, padding) {
-                Some(painting) => {
-                    if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
-                        paint_background_from_source(
-                            image_cache,
-                            scene,
-                            &url,
-                            positioning,
-                            painting,
-                            &image.size,
-                            &image.position,
-                            &image.repeat,
-                            None,
-                            source,
-                            warnings,
-                        );
-                    }
-                }
-                None => {
-                    warnings.push(RenderWarning {
-                        kind: WarningKind::ResourceFallback {
-                            kind: raikiri_traits::ResourceKind::Image,
-                            url: Some(redacted_image_url(&url)),
-                        },
-                        node_id: None,
-                        details:
-                            "margin-box background-clip has an unsupported visual box; the image was skipped"
-                                .into(),
-                    });
-                }
-            }
-        }
-    } else if margin_box.lime_background {
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            Color::from_rgba8(0, 255, 0, 255),
-            None,
-            &rect,
-        );
-    }
-    for (side, border) in margin_box.borders.iter().enumerate() {
-        let Some(border) = border else {
-            continue;
-        };
-        let border_width = border.width;
-        let border_rect = match side {
-            0 => Rect::new(
-                x as f64,
-                y as f64,
-                (x + width) as f64,
-                (y + border_width) as f64,
-            ),
-            1 => Rect::new(
-                (x + width - border_width) as f64,
-                y as f64,
-                (x + width) as f64,
-                (y + height) as f64,
-            ),
-            2 => Rect::new(
-                x as f64,
-                (y + height - border_width) as f64,
-                (x + width) as f64,
-                (y + height) as f64,
-            ),
-            _ => Rect::new(
-                x as f64,
-                y as f64,
-                (x + border_width) as f64,
-                (y + height) as f64,
-            ),
-        };
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            css_color(border.color),
-            None,
-            &border_rect,
-        );
-    }
-    // Text and its shadows overflow the box unless `overflow` clips them
-    // (CSS Overflow 3 §3: the initial `visible` does not clip).
-    let clipped = margin_box.overflow_clip.is_some_and(|clip| {
-        push_overflow_clip(
-            &mut crate::transform::TransformScene {
-                scene: &mut *scene,
-                transform: Affine::IDENTITY,
-            },
-            clip,
-            page_box,
-        );
-        true
-    });
-    if let Some(text) = &margin_box.text {
-        let (text_x, text_y) = text.origin();
-        let shaped = text.shaped();
-        let container = shaped.container();
-        let text_bounds = Rect::new(
-            f64::from(text_x),
-            f64::from(text_y),
-            f64::from(text_x + shaped.width().max(container.width)),
-            f64::from(text_y + shaped.height().max(container.height)),
-        );
-        crate::standalone_text::draw_shadows(
-            scene,
-            shaped,
-            text_x,
-            text_y,
-            &margin_box.text_shadows,
-            text_bounds,
-        );
-        crate::standalone_text::draw(scene, shaped, text_x, text_y, css_color(margin_box.color));
-    }
-    if let Some(image) = margin_box.lime_content_image {
-        let image_rect = Rect::new(
-            image.x as f64,
-            image.y as f64,
-            (image.x + image.width) as f64,
-            (image.y + image.height) as f64,
-        );
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            Color::from_rgba8(0, 255, 0, 255),
-            None,
-            &image_rect,
-        );
-    }
-    if clipped {
-        scene.pop_layer();
-    }
 }
 
 /// Lay out the page-margin boxes of a page for the page context in
