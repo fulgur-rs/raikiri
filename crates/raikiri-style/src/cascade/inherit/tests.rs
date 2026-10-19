@@ -12771,3 +12771,39 @@ fn an_inherited_margin_that_is_a_sizing_keyword_falls_back_to_zero() {
         LengthOrAuto::Auto
     );
 }
+
+#[test]
+fn a_root_declaring_current_color_keeps_it_over_the_fill_of_an_html_ancestor() {
+    let [root, ..] =
+        html_wrapped_svg_properties("div { fill: red } svg { fill: currentColor; color: blue }");
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("currentColor".into())))
+    );
+}
+
+#[test]
+fn an_attribute_beaten_by_inherit_leaves_the_property_to_the_html_ancestor() {
+    // The stylesheet's `inherit` beats the attribute, so the root takes the
+    // ancestor's red; the blue attribute sets nothing.
+    let [root, ..] = html_wrapped_svg_with_root_attributes(
+        "div { fill: red } svg { fill: inherit }",
+        &[("fill", "blue")],
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+}
+
+#[test]
+fn an_attribute_beaten_by_a_value_is_replaced_by_that_value() {
+    let [root, ..] = html_wrapped_svg_with_root_attributes(
+        "div { fill: red } svg { fill: green }",
+        &[("fill", "blue")],
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(0,128,0,1)".into())))
+    );
+}

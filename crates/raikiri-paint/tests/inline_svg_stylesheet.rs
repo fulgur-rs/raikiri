@@ -571,3 +571,19 @@ fn an_html_ancestors_paint_yields_to_the_roots_own_attribute() {
         "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
     );
 }
+
+#[test]
+fn a_roots_inherit_beats_its_own_attribute_and_takes_the_html_ancestors_paint() {
+    assert_paints_like(
+        "<div style='fill:red'><svg width=20 height=20 fill=blue style='fill:inherit'><rect width=20 height=20 /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=red /></svg>",
+    );
+}
+
+#[test]
+fn a_roots_current_color_fill_is_not_replaced_by_an_html_ancestors_fill() {
+    assert_paints_like(
+        "<div style='fill:red'><svg width=20 height=20 style='fill:currentColor;color:blue'><rect width=20 height=20 /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}

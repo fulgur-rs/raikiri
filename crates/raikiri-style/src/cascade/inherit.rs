@@ -573,8 +573,10 @@ pub(crate) fn walk_from<D: StyleDom>(
             .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
-        // The painting properties a presentation attribute of the element sets.
+        // The painting properties a presentation attribute of the element sets,
+        // and those a declaration that beats such an attribute sets.
         let mut attribute_set = [false; crate::property::PropertyKey::SVG_PRESENTATION.len()];
+        let mut attribute_beaten = [false; crate::property::PropertyKey::SVG_PRESENTATION.len()];
         let parent_computed =
             parent.map_or(parent_computed, |parent| &out.computed[parent.0 as usize]);
         let idx = id.0 as usize;
@@ -595,17 +597,21 @@ pub(crate) fn walk_from<D: StyleDom>(
                         }
                         _ => {}
                     }
-                    if is_svg
-                        && candidate.precedence().ranked(0).rank
-                            == cascade_rank(
-                                crate::ruletree::Origin::AuthorPresentationalHint,
-                                false,
-                            )
-                        && let Some(slot) = svg_presentation_slot(candidate.key())
-                        && !attribute_inherits(candidates.value(position))
-                    {
-                        attribute_set[slot] = true;
+                    if is_svg && let Some(slot) = svg_presentation_slot(candidate.key()) {
+                        let hint =
+                            cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false);
+                        let rank = candidate.precedence().ranked(0).rank;
+                        if rank == hint {
+                            attribute_set[slot] = !attribute_inherits(candidates.value(position));
+                        } else {
+                            attribute_beaten[slot] |= rank > hint;
+                        }
                     }
+                }
+                // A declaration that beats the attribute decides the property,
+                // and the attribute then sets nothing.
+                for (set, beaten) in attribute_set.iter_mut().zip(attribute_beaten) {
+                    *set &= !beaten;
                 }
             }
             ancestor_path.push(id);
