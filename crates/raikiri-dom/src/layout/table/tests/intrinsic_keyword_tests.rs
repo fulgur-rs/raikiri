@@ -363,3 +363,52 @@ fn vertical_fit_content_limit_without_basis_uses_intrinsic_available_space() {
         }
     });
 }
+
+#[test]
+fn vertical_caption_min_height_max_content_contributes_to_table_inline_size() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:200px"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;border-spacing:0;writing-mode:vertical-rl"),
+    );
+    let caption = doc.append_element(
+        Some(table),
+        "caption",
+        Style::default(),
+        Some(
+            "display:table-caption;min-height:max-content;margin-top:3px;margin-bottom:4px;\
+             font-family:Ahem;font-size:10px;line-height:10px",
+        ),
+    );
+    doc.append_text(caption, "AAAA BBBB");
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;width:10px;height:10px;padding:0"),
+    );
+
+    finish_ahem_layout(&mut doc);
+
+    assert!(
+        doc.nodes[table].unrounded_layout.size.height >= 97.0,
+        "vertical caption min-height:max-content and its margins should contribute at least 97px, got {}",
+        doc.nodes[table].unrounded_layout.size.height
+    );
+}

@@ -294,7 +294,7 @@ pub(super) fn keyword_bounds(
                 .max
                 .map(|width| (width - edges.width).max(0.0) / ratio + edges.height),
         );
-    }
+    } // cov:ignore: llvm-cov reports the covered ratio-transfer block's closing brace as uncovered.
     Some(bounds)
 }
 
