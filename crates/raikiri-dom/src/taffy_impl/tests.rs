@@ -377,6 +377,81 @@ fn grid_abspos_static_alignment_uses_the_content_box_and_parent_percentage_basis
     assert!((child_origin.y - expected_y).abs() < 1e-3);
 }
 
+#[test]
+fn vertical_grid_abspos_keeps_positive_inline_space_centered() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let containing_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:relative;width:200px;height:200px"),
+    );
+    let grid = doc.append_element(
+        Some(containing_block),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;position:relative;writing-mode:vertical-rl;width:100px;height:100px;grid-template-columns:100px;grid-template-rows:100px",
+        ),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some(
+            "position:absolute;grid-column:1;grid-row:1;top:10px;bottom:10px;height:20px;width:10px;margin-top:auto;margin-bottom:auto",
+        ),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, child).1,
+        40.0
+    );
+}
+
+#[test]
+fn grid_alignment_ignores_children_owned_by_another_grid() {
+    let mut doc = Document::new();
+    let grid = doc.append_element(Some(0), "div", Style::default(), Some("display:grid"));
+    let other_parent = doc.append_element(Some(0), "div", Style::default(), Some("display:block"));
+    let child = doc.append_element(
+        Some(other_parent),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    let session = LayoutSession::new(&mut doc);
+
+    assert!(
+        super::auto_grid_abspos_aligned_layout(
+            &session,
+            grid,
+            child,
+            Size::ZERO,
+            taffy::Rect::ZERO,
+            taffy::Rect::ZERO,
+            taffy::Point::ZERO,
+        )
+        .is_none()
+    );
+}
+
 /// Lays out a `container` that holds a block wrapping a `scroller` (with an
 /// 80px-tall child) and a 20px-tall sibling in a 800x600 page, and returns the
 /// top of the block and of the sibling.

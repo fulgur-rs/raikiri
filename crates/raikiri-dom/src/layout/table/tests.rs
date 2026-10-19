@@ -2672,6 +2672,64 @@ fn vertical_table_cell_alignment_accounts_for_scrollbar_width() {
 }
 
 #[test]
+fn table_oof_candidates_use_the_rtl_border_and_scrollbar_area() {
+    let mut doc = Document::new();
+    let table = doc.append_element(
+        Some(0),
+        "table",
+        Style {
+            scrollbar_width: 10.0,
+            ..Style::default()
+        },
+        Some("display:table;direction:rtl;border:2px solid;overflow-x:scroll;overflow-y:scroll"),
+    );
+    let fixed = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("position:fixed;width:10px;height:10px"),
+    );
+    let absolute = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+
+    let output = super::table_layout_output(
+        &doc,
+        table,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+        taffy::OofCandidates::new(),
+        taffy::RunMode::PerformLayout,
+    );
+
+    let area = output.oof_positioning_area.unwrap();
+    assert_eq!(
+        area.size,
+        Size {
+            width: 86.0,
+            height: 86.0
+        }
+    );
+    assert_eq!(area.offset, taffy::Point { x: 12.0, y: 2.0 });
+    let candidates = output.oof_candidates.as_slice();
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].node, taffy::NodeId::from(fixed));
+    assert_eq!(candidates[0].position, taffy::Position::Fixed);
+    assert_eq!(candidates[0].order, 0);
+    assert_eq!(candidates[1].node, taffy::NodeId::from(absolute));
+    assert_eq!(candidates[1].position, taffy::Position::Absolute);
+    assert_eq!(candidates[1].order, 1);
+}
+
+#[test]
 fn resolve_fixed_column_widths_first_row_percent_resolves_against_avail() {
     let grid = super::TableGrid {
         n_cols: 2,

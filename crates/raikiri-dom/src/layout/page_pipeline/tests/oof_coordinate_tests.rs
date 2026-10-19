@@ -44,4 +44,22 @@ fn percentage_width_under_page_positioned_box_uses_its_owner_page() {
     assert_eq!(pages.len(), 2);
     assert_eq!(document.layout_origin_of(child).unwrap().y, 90.0);
     assert_eq!(document.nodes[child].unrounded_layout.size.width, 400.0);
+    assert_eq!(
+        document.layout_offset_of(child),
+        Some(document.nodes[child].unrounded_layout.location)
+    );
+    assert_eq!(current_abs_y(&document, child), 90.0);
+
+    let local_offset = document.nodes[child].unrounded_layout.location;
+    let coordinate = document.oof_coordinates.get(&positioned).unwrap();
+    assert!(coordinate.initial_owner_origin.is_some());
+    assert!(coordinate.initial_static_origin.is_some());
+    document.begin_oof_layout();
+    let coordinate = document.oof_coordinates.get(&positioned).unwrap();
+    assert_eq!(coordinate.initial_owner_origin, None);
+    assert_eq!(coordinate.initial_static_origin, None);
+    assert_eq!(document.layout_offset_of(child), Some(local_offset));
+
+    document.finalize_oof_layout();
+    assert_eq!(document.layout_origin_of(child).unwrap().y, 90.0);
 }

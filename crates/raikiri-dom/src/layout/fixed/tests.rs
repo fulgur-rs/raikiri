@@ -458,6 +458,19 @@ fn a_right_to_left_static_position_keeps_the_right_edge() {
 }
 
 #[test]
+fn right_to_left_overconstrained_auto_margins_honor_the_right_inset() {
+    let (doc, fixed) = laid_out_in(
+        "direction:rtl",
+        "",
+        "",
+        "position:fixed;left:500px;right:400px;top:0;width:100px;height:10px;margin:auto",
+    );
+    // The horizontal insets exceed the page width by 200px. In RTL the
+    // right inset wins, so the box starts at 800 - 400 - 100 = 300px.
+    assert_eq!(absolute_rect(&doc, fixed), (300.0, 0.0, 100.0, 10.0));
+}
+
+#[test]
 fn a_transformed_body_contains_fixed_boxes() {
     let (doc, fixed) = laid_out_in(
         "transform:translateX(1px)",
