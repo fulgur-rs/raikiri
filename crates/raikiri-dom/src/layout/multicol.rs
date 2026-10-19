@@ -957,6 +957,23 @@ fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
     }
 }
 
+/// The paragraph at the end of the chain that starts at the wrapper `start`,
+/// as [`plain_paragraph_chain_leaf`] finds it, when the wrapper fills its box
+/// with a color and the paragraph is all it holds. Generated content of a box
+/// of the chain is no arena child, so it would lie beside the paragraph in a
+/// box that is cut at the columns of the paragraph.
+fn painted_wrapper_leaf(tree: &Document, start: usize) -> Option<usize> {
+    let leaf = plain_paragraph_chain_leaf(tree, start)?;
+    let mut current = start;
+    while current != leaf {
+        if tree.nodes[current].has_before_or_after_content {
+            return None;
+        }
+        current = only_element_child(tree, current)?;
+    }
+    Some(leaf)
+}
+
 fn relayout_nested_multicol_children(
     tree: &mut LayoutSession<'_>,
     node_id: TaffyNodeId,
@@ -1144,16 +1161,12 @@ fn layout_column_group(
             return None;
         }
         // A paragraph below plain wrappers is balanced like one of the
-        // container's own. The wrapper that is the container's child has one
-        // box, in the first column, so one that fills its box with a color
-        // would leave the lines of the later columns without it. The wrappers
-        // below it, and the paragraph, have a box in each column.
+        // container's own.
         let leaf = if tree.nodes[*child].ifc.is_some() {
             *child
+        } else if tree.nodes[*child].paints_background_color {
+            painted_wrapper_leaf(tree, *child)?
         } else {
-            if tree.nodes[*child].paints_background_color {
-                return None;
-            }
             plain_paragraph_chain_leaf(tree, *child)?
         };
         if !can_balance_atomic_paragraph(tree, leaf) {
@@ -2048,6 +2061,11 @@ fn record_nested_ifc_box_fragments(
     let Some(height) = context.available_height.filter(|height| *height > 0.0) else {
         return Some(());
     };
+    // A wrapper that fills its box with a color and holds a plain paragraph
+    // has a box of its own in each column the paragraph reaches.
+    let wrapper_fragments = tree.nodes[subtree_root].ifc.is_none()
+        && tree.nodes[subtree_root].paints_background_color
+        && painted_wrapper_leaf(tree, subtree_root).is_some();
     let subtree_has_float = multicol_subtree_has_float(tree, subtree_root);
     // The column the subtree root was placed in by its multicol container.
     let root_column = tree.fragment_tree.fragments[parent_fragment].fragmentainer;
@@ -2317,36 +2335,82 @@ fn record_nested_ifc_box_fragments(
                 let column_clip_height = height.max(tail_line_bottom).max(overflow_float_bottom);
                 let mut parent = parent_fragment;
                 let mut parent_offset = Point::ZERO;
+                let fragment_index = entries.range.map_or(0, |(index, _)| index);
+                let fragment_count = line_ranges.as_ref().map_or(1, Vec::len);
+                // Height of the box fragment that draws `range`: its lines,
+                // or, for a slice the paragraph goes on from, down to the
+                // fragmentainer edge, including unused space left by
+                // paragraph break minima.
+                let slice_height =
+                    |range: MulticolTextFragment,
+                     extend: bool,
+                     base: crate::fragment::LayoutFragment| {
+                        if extend && fragment_index + 1 < fragment_count {
+                            let top = if fragment_index == 0 {
+                                base.rect.y - context.origin_y
+                            } else {
+                                0.0
+                            };
+                            return (height - top).max(0.0);
+                        }
+                        lines
+                            .as_ref()
+                            .and_then(|lines| {
+                                let first = lines.lines.get(range.line_start)?;
+                                let last = lines.lines.get(range.line_end.checked_sub(1)?)?;
+                                Some(last.block_offset() + last.block_size() - first.block_offset())
+                            })
+                            .unwrap_or(base.rect.height)
+                            .max(0.0)
+                    };
+                // The wrapper that is the subtree root has a box in each
+                // column its paragraph reaches. The first column keeps the
+                // fragment it was placed with; a later one is a sibling of it
+                // at the column top, and the path continues from there.
+                let mut wrapper_fragment = None;
+                if wrapper_fragments
+                    && plain_block_path
+                    && !nested_row_flex_scope
+                    && let Some(range) = line_range
+                {
+                    let base = tree.fragment_tree.fragments[parent_fragment];
+                    let fragment_height = slice_height(range, true, base);
+                    if base.fragmentainer == column {
+                        let fragment = &mut tree.fragment_tree.fragments[parent_fragment];
+                        fragment.rect.height = fragment_height;
+                        fragment.fragment_index = fragment_index;
+                        fragment.fragment_count = fragment_count;
+                    } else {
+                        let fragment_id =
+                            tree.fragment_tree
+                                .try_push(crate::fragment::LayoutFragment {
+                                    node_id: subtree_root,
+                                    parent: base.parent,
+                                    fragmentainer: column,
+                                    rect: crate::fragment::FragmentRect {
+                                        x: base.rect.x + context.column_offset_x(column)
+                                            - context.column_offset_x(base.fragmentainer),
+                                        y: context.origin_y,
+                                        width: base.rect.width,
+                                        height: fragment_height,
+                                    },
+                                    fragmentainer_clip: None,
+                                    fragment_index,
+                                    fragment_count,
+                                    line_start: None,
+                                    line_end: None,
+                                })?;
+                        parent = fragment_id;
+                        wrapper_fragment = Some((fragment_id, node_offset_y + range.y));
+                    }
+                }
                 if root_owns_fragments && let Some(range) = line_range {
                     let base = tree.fragment_tree.fragments[parent_fragment];
-                    let fragment_index = entries.range.map_or(0, |(index, _)| index);
-                    let fragment_count = line_ranges.as_ref().map_or(1, Vec::len);
-                    let used_line_height = lines
-                        .as_ref()
-                        .and_then(|lines| {
-                            let first = lines.lines.get(range.line_start)?;
-                            let last = lines.lines.get(range.line_end.checked_sub(1)?)?;
-                            Some(last.block_offset() + last.block_size() - first.block_offset())
-                        })
-                        .unwrap_or(base.rect.height)
-                        .max(0.0);
                     let origins_recorded = tree.nodes[node_id]
                         .ifc
                         .as_ref()
                         .is_some_and(|root| root.multicol_fragment_origins_recorded);
-                    let fragment_height = if origins_recorded && fragment_index + 1 < fragment_count
-                    {
-                        // A non-final slice extends to the fragmentainer edge,
-                        // including unused space left by paragraph break minima.
-                        let top = if fragment_index == 0 {
-                            base.rect.y - context.origin_y
-                        } else {
-                            0.0
-                        };
-                        (height - top).max(0.0)
-                    } else {
-                        used_line_height
-                    };
+                    let fragment_height = slice_height(range, origins_recorded, base);
                     let fragment_id = if base.fragmentainer == column {
                         let fragment = &mut tree.fragment_tree.fragments[parent_fragment];
                         fragment.rect.height = fragment_height;
@@ -2383,6 +2447,20 @@ fn record_nested_ifc_box_fragments(
                     let is_flex_item = tree.parent_of(ancestor).is_some_and(|parent| {
                         tree.nodes[parent].formatting_context == FormattingContext::Flex
                     });
+                    // Move a plain block path into its column once; descendants
+                    // retain their local coordinates. The path below a wrapper
+                    // fragment at the column top only drops the offset of its
+                    // first line.
+                    let y = if ancestor == subtree_root || is_flex_item {
+                        layout.location.y
+                    } else if let Some((_, top)) = wrapper_fragment.filter(|(id, _)| *id == parent)
+                    {
+                        layout.location.y - top
+                    } else if plain_block_path && parent != parent_fragment {
+                        layout.location.y
+                    } else {
+                        layout.location.y - column_delta
+                    };
                     let fragment_id =
                         if let Some(&fragment_id) = existing_fragments.get(&(ancestor, column)) {
                             let fragment = &mut tree.fragment_tree.fragments[fragment_id];
@@ -2408,16 +2486,7 @@ fn record_nested_ifc_box_fragments(
                                                 } else {
                                                     0.0
                                                 },
-                                            // Move a plain block path into its column once;
-                                            // descendants retain their local coordinates.
-                                            y: if ancestor == subtree_root
-                                                || is_flex_item
-                                                || (plain_block_path && parent != parent_fragment)
-                                            {
-                                                layout.location.y
-                                            } else {
-                                                layout.location.y - column_delta
-                                            },
+                                            y,
                                             width: layout.size.width,
                                             height: layout.size.height,
                                         },

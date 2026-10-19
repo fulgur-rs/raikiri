@@ -1768,18 +1768,83 @@ fn glyphs_have_the_background_beside_them(body: &str, background: [u8; 3]) -> bo
 }
 
 #[test]
-fn a_first_wrapper_that_paints_its_own_box_does_not_leave_a_later_column_bare() {
-    // The wrapper that is the container's child has one box, in the first
-    // column, so its paragraph keeps to the strategy that its box covers.
+fn a_first_wrapper_with_a_background_color_has_a_box_in_each_column() {
+    // The wrapper that is the container's child has a box of its own in every
+    // column its paragraph reaches, so it paints as the paragraph would.
+    let lines = "A<br>B<br>C<br>D";
+    let six_lines = "A<br>B<br>C<br>D<br>E<br>F";
+    let three_columns = ".mc{width:160px;column-count:3}";
+    for (inner, css) in [
+        (lines, ""),
+        (lines, ".mc{height:40px}"),
+        (lines, ".mc{direction:rtl}"),
+        ("A<br>B<br>C", ""),
+        (six_lines, three_columns),
+        (six_lines, ".mc{width:160px;column-count:3;height:40px}"),
+    ] {
+        let painted = format!("<div style='background:yellow'><p>{inner}</p></div>");
+        let paragraph = format!("<p style='background:yellow'>{inner}</p>");
+        assert!(
+            glyphs_have_the_background_beside_them(
+                &format!("<div class=mc>{painted}</div>"),
+                [255, 255, 0]
+            ),
+            "{inner} {css}"
+        );
+        compare_bodies(
+            &format!("<div class=mc>{painted}</div><p>E</p>"),
+            &format!("<div class=mc>{paragraph}</div><p>E</p>"),
+            css,
+        );
+    }
+    // Plain wrappers between the painted one and the paragraph change nothing.
+    compare_bodies(
+        &format!(
+            "<div class=mc><div style='background:yellow'><div><p>{lines}</p></div></div></div><p>E</p>"
+        ),
+        &format!("<div class=mc><p style='background:yellow'>{lines}</p></div><p>E</p>"),
+        "",
+    );
+}
+
+#[test]
+fn a_first_wrapper_that_paints_more_than_a_color_keeps_its_paragraph_whole() {
+    // Only a background color can be cut at a column edge. A wrapper with an
+    // image, shadow or border radius would paint it again in each column, so
+    // its paragraph keeps to the strategy that its one box covers.
     for style in [
-        "background:yellow",
         "background-image:linear-gradient(yellow,yellow)",
+        "background:yellow;border-radius:4px",
+        "background:yellow;box-shadow:0 0 2px black",
     ] {
         let body =
             format!("<div class=mc><div style='{style}'><p>A<br>B<br>C<br>D</p></div></div>");
         assert!(
             glyphs_have_the_background_beside_them(&body, [255, 255, 0]),
             "{style}"
+        );
+    }
+}
+
+#[test]
+fn a_first_wrapper_with_generated_content_beside_its_paragraph_keeps_it_whole() {
+    // Generated content is no child of the wrapper, so the wrapper looks like
+    // it holds the paragraph alone. Its box holds more than the pieces of the
+    // paragraph in the columns, so a color is laid out as an image is: the
+    // paragraph keeps to the strategy that the one box covers.
+    for generated in [
+        "::before{content:'X';position:absolute;left:100px;top:0}",
+        "::after{content:'X';float:left}",
+    ] {
+        let wrapper = |style: &str| {
+            format!(
+                "<style>.w{generated}</style><div class=mc><div class=w style='{style}'><p>A<br>B<br>C<br>D</p></div></div><p>E</p>"
+            )
+        };
+        compare_bodies(
+            &wrapper("background:yellow"),
+            &wrapper("background-image:linear-gradient(yellow,yellow)"),
+            "",
         );
     }
 }
