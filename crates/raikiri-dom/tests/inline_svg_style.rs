@@ -98,6 +98,25 @@ fn css_wide_painting_keywords_are_listed_as_declarations() {
 }
 
 #[test]
+fn a_rule_on_the_root_lists_only_its_painting_properties() {
+    let elements = declarations(
+        "<style>svg{color:red;opacity:.5;fill:blue;stroke-width:3px}</style>\
+         <svg width=20 height=20><rect /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            0,
+            "fill:rgba(0,0,255,1)!important;stroke-width:3px!important;"
+        )]
+    );
+}
+
+#[test]
 fn an_svg_without_matching_rules_lists_nothing() {
     let elements = declarations("<svg width=20 height=20><rect /></svg>");
     assert!(elements.is_empty());

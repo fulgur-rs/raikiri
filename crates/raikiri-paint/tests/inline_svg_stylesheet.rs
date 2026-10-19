@@ -201,3 +201,35 @@ fn the_later_of_a_page_rule_and_an_svg_style_rule_wins_a_fill() {
         "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
     );
 }
+
+#[test]
+fn a_stylesheet_fill_on_the_root_reaches_the_descendants_that_set_none() {
+    assert_paints_like(
+        "<style>svg{fill:blue}</style><svg width=20 height=20><rect width=10 height=20 /><rect x=10 width=10 height=20 fill=red /></svg>",
+        "<svg width=20 height=20><rect width=10 height=20 fill=blue /><rect x=10 width=10 height=20 fill=red /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_on_the_root_beats_the_fill_attribute_of_the_root() {
+    assert_paints_like(
+        "<style>svg{fill:blue}</style><svg width=20 height=20 fill=red><rect width=20 height=20 /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_current_color_fill_on_the_root_paints_an_icon_in_its_color() {
+    assert_paints_like(
+        "<style>svg{fill:currentColor;color:blue}</style><svg width=20 height=20><path d='M0 0h20v20H0z' /></svg>",
+        "<svg width=20 height=20><path d='M0 0h20v20H0z' fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_stroke_on_the_root_reaches_the_descendants() {
+    assert_paints_like(
+        "<style>svg{stroke:blue;stroke-width:4px}</style><svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none /></svg>",
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none stroke=blue stroke-width=4 /></svg>",
+    );
+}
