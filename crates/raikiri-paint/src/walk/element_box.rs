@@ -313,26 +313,13 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             shift_y,
             transform_x,
             transform_y,
-            fragment_id,
-            is_fragment_visit,
             inside_fixed_containing_block,
             ..
         } = *inputs;
-        let (document, cascade, page_box, root_id, layout_fragments) = (
-            self.document,
-            self.cascade,
-            self.page_box,
-            self.root_id,
-            self.layout_fragments,
-        );
+        let (document, cascade, root_id) = (self.document, self.cascade, self.root_id);
         let PageGeometry {
-            content_height,
-            fixed_rtl,
-            fixed_content_width,
             page_offset_x,
             page_offset_y,
-            fixed_flow_shift_x,
-            fixed_origin_y,
             ..
         } = self.geometry;
         let abs_x = parent_abs_x + layout.location.x;
@@ -354,59 +341,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 && !raikiri_dom::has_applied_transform(document, node_id, cv)
                 && cv.filter.is_empty(),
         );
-        // A box laid out on the lines of an inline engine paragraph
-        // already sits at its `vertical-align` position; shifting its
-        // content again would move it twice.
-        let placed_by_inline_engine = document
-            .layout_parent_of(node_id)
-            .and_then(|parent| document.get_node(parent))
-            .is_some_and(|parent| parent.is_ifc_root())
-            && !node.in_ifc_subtree();
-        // A flex or grid item is blockified (CSS Display 3 section
-        // 2.7), and `vertical-align` does not apply to it even though
-        // the cascade keeps its `inline` display.
-        let blockified_item = document
-            .layout_parent_of(node_id)
-            .is_some_and(|parent| cascade.computed[parent].display.is_flex_or_grid_container());
-        let own_shift = if node_id == root_id || placed_by_inline_engine || blockified_item {
-            0.0
-        } else {
-            vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size)
-        };
+        let own_shift = self.own_vertical_align_shift(node, node_id, cv, parent_font_size);
         let child_shift_y = shift_y + own_shift;
-        // Taffy and the IFC block/atomic placement paths already apply
-        // relative insets. Floats, the boxes a multicol container
-        // places in its columns and manually placed table parts still
-        // use paint-side insets. The container's own fragment and the
-        // fragment of a box deeper inside a column child stand where
-        // block flow put the box, inset included.
-        let placed_in_column = is_fragment_visit
-            && fragment_id.is_some_and(|id| {
-                layout_fragments[id].parent.is_some_and(|parent| {
-                    document
-                        .get_node(layout_fragments[parent].node_id)
-                        .is_some_and(|owner| owner.is_multicol_container())
-                })
-            });
-        let needs_paint_inset = raikiri_dom::placed_without_relative_offset(
-            document,
-            cascade,
-            Some(root_id),
-            node_id,
-            cv,
-        ) || (placed_in_column && !cv.display.is_inline_level());
-        let (pos_dx, pos_dy) = if needs_paint_inset {
-            raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
-        } else if node.needs_relative_block_paint_offset() {
-            // The foundational column post-pass replaces only Y;
-            // the existing X location already includes its inset.
-            (
-                0.0,
-                raikiri_dom::used_relative_offset(document, cascade, cv, node_id).1,
-            )
-        } else {
-            (0.0, 0.0)
-        };
+        let (placed_in_column, (pos_dx, pos_dy)) = self.paint_inset(inputs, node, cv);
         // The caller already applies the root matrix to the whole document.
         let transformable =
             node_id != root_id && raikiri_dom::is_transformable(document, node_id, cv);
@@ -425,18 +362,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let establishes_fixed_containing_block =
             raikiri_dom::establishes_fixed_containing_block(document, node_id, cv);
         let (fixed_dx, fixed_dy) = if fixed_in_viewport {
-            fixed_position_px(
-                cv,
-                &layout,
-                (abs_x, abs_y),
-                fixed_rtl,
-                page_box.width,
-                fixed_origin_y,
-                fixed_content_width,
-                content_height,
-            )
-            .map(|(x, y)| (x - abs_x - fixed_flow_shift_x, y - abs_y))
-            .unwrap_or((0.0, 0.0))
+            self.fixed_offset(cv, &layout, (abs_x, abs_y))
         } else {
             (0.0, 0.0)
         };
@@ -463,6 +389,125 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_x,
             paint_y,
         }
+    }
+
+    /// How far `vertical-align` shifts the element `node_id`, whose computed
+    /// values are `cv`, below the baseline of a parent of font size
+    /// `parent_font_size`.
+    fn own_vertical_align_shift(
+        &self,
+        node: &Node,
+        node_id: usize,
+        cv: &ComputedValues,
+        parent_font_size: f32,
+    ) -> f32 {
+        let (document, cascade, root_id) = (self.document, self.cascade, self.root_id);
+        // A box laid out on the lines of an inline engine paragraph
+        // already sits at its `vertical-align` position; shifting its
+        // content again would move it twice.
+        let placed_by_inline_engine = document
+            .layout_parent_of(node_id)
+            .and_then(|parent| document.get_node(parent))
+            .is_some_and(|parent| parent.is_ifc_root())
+            && !node.in_ifc_subtree();
+        // A flex or grid item is blockified (CSS Display 3 section
+        // 2.7), and `vertical-align` does not apply to it even though
+        // the cascade keeps its `inline` display.
+        let blockified_item = document
+            .layout_parent_of(node_id)
+            .is_some_and(|parent| cascade.computed[parent].display.is_flex_or_grid_container());
+        if node_id == root_id || placed_by_inline_engine || blockified_item {
+            0.0
+        } else {
+            vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size)
+        }
+    }
+
+    /// Whether the element of `inputs` is placed in a column of a multicol
+    /// container, and the offsets that paint adds to the position of its
+    /// box for its relative insets.
+    fn paint_inset(
+        &self,
+        inputs: &BoxInputs,
+        node: &Node,
+        cv: &ComputedValues,
+    ) -> (bool, (f32, f32)) {
+        let BoxInputs {
+            node_id,
+            fragment_id,
+            is_fragment_visit,
+            ..
+        } = *inputs;
+        let (document, cascade, root_id, layout_fragments) = (
+            self.document,
+            self.cascade,
+            self.root_id,
+            self.layout_fragments,
+        );
+        // Taffy and the IFC block/atomic placement paths already apply
+        // relative insets. Floats, the boxes a multicol container
+        // places in its columns and manually placed table parts still
+        // use paint-side insets. The container's own fragment and the
+        // fragment of a box deeper inside a column child stand where
+        // block flow put the box, inset included.
+        let placed_in_column = is_fragment_visit
+            && fragment_id.is_some_and(|id| {
+                layout_fragments[id].parent.is_some_and(|parent| {
+                    document
+                        .get_node(layout_fragments[parent].node_id)
+                        .is_some_and(|owner| owner.is_multicol_container())
+                })
+            });
+        let needs_paint_inset = raikiri_dom::placed_without_relative_offset(
+            document,
+            cascade,
+            Some(root_id),
+            node_id,
+            cv,
+        ) || (placed_in_column && !cv.display.is_inline_level());
+        let offset = if needs_paint_inset {
+            raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
+        } else if node.needs_relative_block_paint_offset() {
+            // The foundational column post-pass replaces only Y;
+            // the existing X location already includes its inset.
+            (
+                0.0,
+                raikiri_dom::used_relative_offset(document, cascade, cv, node_id).1,
+            )
+        } else {
+            (0.0, 0.0)
+        };
+        (placed_in_column, offset)
+    }
+
+    /// How far a viewport-fixed box laid out as `layout` at (`abs_x`,
+    /// `abs_y`) moves to stand at its fixed position on the page.
+    fn fixed_offset(
+        &self,
+        cv: &ComputedValues,
+        layout: &taffy::Layout,
+        (abs_x, abs_y): (f32, f32),
+    ) -> (f32, f32) {
+        let PageGeometry {
+            content_height,
+            fixed_rtl,
+            fixed_content_width,
+            fixed_flow_shift_x,
+            fixed_origin_y,
+            ..
+        } = self.geometry;
+        fixed_position_px(
+            cv,
+            layout,
+            (abs_x, abs_y),
+            fixed_rtl,
+            self.page_box.width,
+            fixed_origin_y,
+            fixed_content_width,
+            content_height,
+        )
+        .map(|(x, y)| (x - abs_x - fixed_flow_shift_x, y - abs_y))
+        .unwrap_or((0.0, 0.0))
     }
 
     /// Move the scene by the transform of the element, and push the frame

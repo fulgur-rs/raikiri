@@ -749,17 +749,18 @@ fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
 /// it by an intrinsic sizing keyword in its `min-width`, `max-width`,
 /// `min-height` or `max-height` (CSS Sizing 3 §4 and §5).
 ///
-/// Only a block-level box that lays its content out in normal flow, in a
-/// horizontal writing mode inside a container that also writes horizontally,
-/// is; and only where [`sized_by_content_keyword`] holds for its width. The
-/// other boxes size themselves as if there were no such minimum or maximum:
+/// Only a block-level box that lays its content out in normal flow and writes
+/// horizontally is; a horizontal box inside a vertical container still uses
+/// its physical axes for these constraints. The box must also satisfy
+/// [`sized_by_content_keyword`] for its width. The other boxes size themselves
+/// as if there were no such minimum or maximum:
 /// - an absolutely positioned box takes its size from its insets, and a float
 ///   is placed by its container before it is laid out;
 /// - a box in a multicol flow is fragmented across the columns, so its
 ///   automatic height is not the height of one fragment;
 /// - flex, grid and table containers, their items and inline-level boxes
 ///   measure themselves by algorithms of their own;
-/// - the vertical writing modes swap the axes a keyword refers to.
+/// - a vertical box swaps the axes a keyword refers to.
 fn honors_content_limits(
     doc: &Document,
     cascade: &CascadeResult,
@@ -778,7 +779,6 @@ fn honors_content_limits(
         return false;
     }
     !is_flex_or_grid_item(doc, cascade, idx)
-        && !layout_container(doc, cascade, idx).is_some_and(|id| lays_out_vertically(cascade, id))
 }
 
 /// Whether the width of element `idx` is a sizing keyword its layout sizes the
