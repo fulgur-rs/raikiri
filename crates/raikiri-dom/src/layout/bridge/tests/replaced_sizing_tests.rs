@@ -13,6 +13,16 @@ fn laid_out_with_natural_size(
     natural: (f32, f32),
     build: impl FnOnce(&mut Document, usize),
 ) -> Document {
+    laid_out_with_natural_box(natural, true, build)
+}
+
+/// [`laid_out_with_natural_size`] where the resolver may leave the natural
+/// ratio unset (`ratio_known` is false), as `IntrinsicBox::new` does.
+fn laid_out_with_natural_box(
+    natural: (f32, f32),
+    ratio_known: bool,
+    build: impl FnOnce(&mut Document, usize),
+) -> Document {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -29,7 +39,7 @@ fn laid_out_with_natural_size(
         {
             let mut intrinsic = raikiri_traits::IntrinsicBox::new(natural.0, natural.1);
             intrinsic.aspect_ratio =
-                (natural.0 > 0.0 && natural.1 > 0.0).then(|| natural.0 / natural.1);
+                (ratio_known && natural.0 > 0.0 && natural.1 > 0.0).then(|| natural.0 / natural.1);
             element.image_intrinsic_size = Some(intrinsic);
         }
     }
@@ -872,4 +882,34 @@ fn a_replaced_box_in_a_vertical_shrink_to_fit_box_resolves_its_percentage_width(
     });
     assert_eq!(size(&doc, image), (100.0, 100.0));
     assert_eq!(size(&doc, parent), (100.0, 100.0));
+}
+
+/// Size of a 20x10 `<img>` that a resolver gave no natural ratio, with `css`.
+fn image_without_natural_ratio(css: &str) -> (f32, f32) {
+    let mut image = 0;
+    let doc = laid_out_with_natural_box((20.0, 10.0), false, |doc, body| {
+        image = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some(format!("display:block;{css}").as_str()),
+        );
+    });
+    size(&doc, image)
+}
+
+#[test]
+fn an_auto_ratio_prefers_the_ratio_of_the_natural_size_when_the_resolver_gave_none() {
+    assert_eq!(
+        image_without_natural_ratio("width:100px;aspect-ratio:auto 1/1"),
+        (100.0, 50.0)
+    );
+}
+
+#[test]
+fn an_authored_ratio_replaces_the_ratio_of_the_natural_size_when_the_resolver_gave_none() {
+    assert_eq!(
+        image_without_natural_ratio("width:100px;aspect-ratio:1/1"),
+        (100.0, 100.0)
+    );
 }

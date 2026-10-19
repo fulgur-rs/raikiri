@@ -289,9 +289,9 @@ fn apply_computed_to_style_in_session_inner(
             .unwrap()
             .style
             .item_is_replaced = crate::paint_rules::lays_out_as_replaced(doc, idx);
-        let natural_ratio = doc.nodes[idx]
-            .image_intrinsic_box()
-            .and_then(|intrinsic| intrinsic.aspect_ratio);
+        // A resolver may give the natural size and leave its ratio unset; the
+        // ratio of that size is then the natural one.
+        let natural_ratio = crate::taffy_impl::leaf_intrinsic_ratio(&doc.nodes[idx]);
         let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio);
         doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
         doc.layout_node_with_style_mut(idx)

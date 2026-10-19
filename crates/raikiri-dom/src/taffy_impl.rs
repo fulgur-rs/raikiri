@@ -33,7 +33,7 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
 }
 
 /// The preferred ratio a replaced leaf can use for size transfer.
-fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
+pub(crate) fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
     let intrinsic = node.image_intrinsic_box()?;
     intrinsic
         .aspect_ratio
