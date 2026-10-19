@@ -4876,9 +4876,10 @@ css_keywords!(TextAlign {
 ///
 /// # Scope carving
 ///
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped. The [`PropertyValue`] docs under "CSS-wide keywords"
-///   list all five and explain why, as for the sibling [`TextAlign`].
+/// - **Implemented**: CSS-wide keywords stay deferred markers (see
+///   [`CssWideKeyword`]) that the cascade resolves: `initial` is `ltr`, and
+///   `inherit` and `unset` take the parent's computed value (the property is
+///   inherited).
 /// - **(a) Invalid under the spec**: identifiers other than `ltr` and `rtl`
 ///   are silently dropped (`None`). The current §2.1 grammar has only these
 ///   two keywords, not `auto` from an older draft.
@@ -4958,9 +4959,10 @@ css_keywords!(Direction {
 ///
 /// # Scope carving
 ///
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped. The [`PropertyValue`] docs under "CSS-wide keywords"
-///   list all five and explain why.
+/// - **Implemented**: CSS-wide keywords stay deferred markers (see
+///   [`CssWideKeyword`]) that the cascade resolves: `initial` is
+///   `horizontal-tb`, and `inherit` and `unset` take the parent's computed
+///   keyword (the property is inherited).
 /// - **(a) Invalid under the spec**: identifiers other than the five listed
 ///   keywords are silently dropped (`None`).
 /// - **Non-goal — rendering vertical writing modes is not implemented**:
@@ -7787,6 +7789,14 @@ impl ContextualShorthand {
 }
 
 impl PropertyKey {
+    /// Whether the `all` shorthand resets `self`: every property but
+    /// `direction` and `unicode-bidi` (CSS Cascade 4 §3.1,
+    /// <https://www.w3.org/TR/css-cascade-4/#all-shorthand>). Their own
+    /// `revert` and `revert-layer` still roll them back.
+    pub(crate) const fn is_reset_by_all(self) -> bool {
+        !matches!(self, PropertyKey::Direction | PropertyKey::UnicodeBidi)
+    }
+
     /// The SVG 2 §13 painting properties (`fill`, `stroke`, the stroke shape
     /// properties and their rules), each with its CSS name and its initial
     /// value as an SVG renderer reads it. Each is inherited, held as validated
@@ -7844,10 +7854,11 @@ impl PropertyKey {
         }
     }
 
-    /// Whether `self` is a margin, padding, offset, physical size or
-    /// `text-align` property, or a shorthand of the first three, whose
-    /// CSS-wide keywords the cascade resolves from the parent's computed value
-    /// or the initial value.
+    /// Whether `self` is a margin, padding, offset, physical size,
+    /// `text-align` or flow (`writing-mode`, `text-orientation`, `direction`)
+    /// property, or a shorthand of the first three, whose CSS-wide keywords
+    /// the cascade resolves from the parent's computed value or the initial
+    /// value.
     pub(crate) const fn takes_cascade_css_wide_keyword(self) -> bool {
         matches!(
             self,
@@ -7880,6 +7891,9 @@ impl PropertyKey {
                 | PropertyKey::MaxHeight
                 | PropertyKey::TextAlign
                 | PropertyKey::TextAlignLast
+                | PropertyKey::WritingMode
+                | PropertyKey::TextOrientation
+                | PropertyKey::Direction
         )
     }
 }
@@ -9860,7 +9874,8 @@ pub enum FilterFunction {
 /// [`CssWideKeyword`] (see that type's docs for resolution). The margin,
 /// padding and offset (`top` / `right` / `bottom` / `left` / `inset*`)
 /// properties, their shorthands, the physical size properties (`width`,
-/// `height`, `min-*`, `max-*`), `text-align` and `text-align-last` accept them
+/// `height`, `min-*`, `max-*`), `text-align`, `text-align-last`,
+/// `writing-mode`, `text-orientation` and `direction` accept them
 /// too; the shorthands expand to per-side markers during the cascade. The
 /// logical size properties (`inline-size`, `block-size`, `min-inline-size`,
 /// ...) and `text-align-all`, which has no computed field of its own, do not
@@ -9880,7 +9895,7 @@ pub enum FilterFunction {
 /// and three of those (`border-width`, `border-style`, and `box-sizing`) had no
 /// pinning tests. The canonical sources are this paragraph and the representative
 /// tests named `rejects_css_wide_keyword` (grep the crate to find all of them,
-/// including `direction_rejects_css_wide_keyword`).
+/// including `text_transform_rejects_css_wide_keyword`).
 ///
 /// Grammars based on `<custom-ident>` (names in `counter-name` / `string-set` and
 /// arguments to `position: running()`) instead have **explicit** reject lists

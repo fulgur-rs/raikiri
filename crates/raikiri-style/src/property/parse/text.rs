@@ -1580,9 +1580,9 @@ pub(super) fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<Ha
 ///
 /// # Scope carving (detailed in the [`Direction`] documentation)
 ///
-/// - **Partially supported**: the computed cascade resolves CSS-wide `inherit` to the parent's value.
-///   Other CSS-wide keywords (`initial`, `unset`, `revert`, `revert-layer`) are
-///   unsupported and silently dropped.
+/// - **Implemented**: a lone CSS-wide keyword never gets here
+///   ([`parse_value`](super::parse_value) keeps it as a deferred marker first);
+///   see the "CSS-wide keywords" section of the [`PropertyValue`] documentation.
 /// - **(a) Invalid under the specification**: identifiers other than `ltr` / `rtl` are silently dropped (`None`).
 pub(super) fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
     Direction::from_css_ident(input.expect_ident().ok()?)
@@ -1600,9 +1600,9 @@ pub(super) fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
 ///
 /// # Scope carving (detailed in the [`WritingMode`] documentation)
 ///
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
-///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
-///   the canonical list of five keywords and the rationale.
+/// - **Implemented**: a lone CSS-wide keyword never gets here
+///   ([`parse_value`](super::parse_value) keeps it as a deferred marker first);
+///   see the "CSS-wide keywords" section of the [`PropertyValue`] documentation.
 /// - **(a) Invalid under the specification**: identifiers other than the five listed keywords are silently dropped (`None`).
 pub(super) fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMode> {
     WritingMode::from_css_ident(input.expect_ident().ok()?)

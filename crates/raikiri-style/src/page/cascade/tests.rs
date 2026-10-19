@@ -8900,3 +8900,276 @@ fn page_context_text_align_takes_the_css_wide_keywords() {
         );
     }
 }
+
+/// The physical margins and the computed `(writing-mode, text-orientation,
+/// direction)` of the top-left margin box of `css`, over a page context that
+/// `css` styles and a root with the initial values.
+fn margin_box_flow(css: &str) -> ([Option<f32>; 4], (WritingMode, TextOrientation, Direction)) {
+    let result = page(css, &ComputedValues::initial());
+    let rule = result
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap();
+    let style = result.margin_box_style(&rule, None);
+    (
+        margin_box_margins(css),
+        (
+            style.cssom_writing_mode,
+            style.text_orientation,
+            style.direction,
+        ),
+    )
+}
+
+#[test]
+fn margin_box_flow_takes_the_css_wide_keywords() {
+    const PAGE: &str = "writing-mode: vertical-rl; text-orientation: upright; direction: rtl;";
+    const FLOW: &str = "margin-block-start: 1px; margin-inline-start: 3px";
+    let inherited = (
+        [Some(3.0), Some(1.0), None, None],
+        (
+            WritingMode::VerticalRl,
+            TextOrientation::Upright,
+            Direction::Rtl,
+        ),
+    );
+    // `[top, right, bottom, left]`. Upright vertical text is `ltr` whatever
+    // its direction is, so the inline start is the top, and the block start of
+    // `vertical-rl` is the right.
+    for (declarations, expected) in [
+        (
+            "writing-mode: initial; text-orientation: initial; direction: initial",
+            (
+                [Some(1.0), None, None, Some(3.0)],
+                (
+                    WritingMode::HorizontalTb,
+                    TextOrientation::Mixed,
+                    Direction::Ltr,
+                ),
+            ),
+        ),
+        (
+            "writing-mode: inherit; text-orientation: inherit; direction: inherit",
+            inherited,
+        ),
+        (
+            "writing-mode: unset; text-orientation: unset; direction: unset",
+            inherited,
+        ),
+        // Nothing underneath, so the properties, which are inherited, take
+        // the page context's values.
+        (
+            "writing-mode: revert; text-orientation: revert; direction: revert",
+            inherited,
+        ),
+        (
+            "writing-mode: revert-layer; text-orientation: revert-layer; \
+             direction: revert-layer",
+            inherited,
+        ),
+        // Each property resets on its own.
+        (
+            "text-orientation: initial",
+            (
+                [None, Some(1.0), Some(3.0), None],
+                (
+                    WritingMode::VerticalRl,
+                    TextOrientation::Mixed,
+                    Direction::Rtl,
+                ),
+            ),
+        ),
+        (
+            "direction: initial",
+            (
+                [Some(3.0), Some(1.0), None, None],
+                (
+                    WritingMode::VerticalRl,
+                    TextOrientation::Upright,
+                    Direction::Ltr,
+                ),
+            ),
+        ),
+        (
+            "writing-mode: initial",
+            (
+                [Some(1.0), Some(3.0), None, None],
+                (
+                    WritingMode::HorizontalTb,
+                    TextOrientation::Upright,
+                    Direction::Rtl,
+                ),
+            ),
+        ),
+        // The later declaration of the same box wins.
+        (
+            "writing-mode: initial; writing-mode: vertical-lr",
+            (
+                [Some(3.0), None, None, Some(1.0)],
+                (
+                    WritingMode::VerticalLr,
+                    TextOrientation::Upright,
+                    Direction::Rtl,
+                ),
+            ),
+        ),
+        (
+            "writing-mode: vertical-lr; writing-mode: initial",
+            (
+                [Some(1.0), Some(3.0), None, None],
+                (
+                    WritingMode::HorizontalTb,
+                    TextOrientation::Upright,
+                    Direction::Rtl,
+                ),
+            ),
+        ),
+        // A substituted keyword applies, and an invalid substitution leaves
+        // the page context's value.
+        (
+            "--kw: initial; writing-mode: var(--kw)",
+            (
+                [Some(1.0), Some(3.0), None, None],
+                (
+                    WritingMode::HorizontalTb,
+                    TextOrientation::Upright,
+                    Direction::Rtl,
+                ),
+            ),
+        ),
+        ("writing-mode: var(--missing)", inherited),
+    ] {
+        let css =
+            format!("@page {{ {PAGE} @top-left {{ content: 'X'; {declarations}; {FLOW} }} }}");
+        assert_eq!(margin_box_flow(&css), expected, "{declarations}");
+    }
+}
+
+#[test]
+fn page_context_flow_takes_the_css_wide_keywords() {
+    let root = ComputedValues {
+        cssom_writing_mode: WritingMode::VerticalRl,
+        text_orientation: TextOrientation::Upright,
+        direction: Direction::Rtl,
+        ..ComputedValues::initial()
+    };
+    let flow = |css: &str| {
+        let result = page(css, &root);
+        let declarations = result.declarations();
+        (
+            declarations.get(&PropertyKey::WritingMode).cloned(),
+            declarations.get(&PropertyKey::TextOrientation).cloned(),
+            declarations.get(&PropertyKey::Direction).cloned(),
+        )
+    };
+    let resolved = |writing_mode, text_orientation, direction| {
+        (
+            Some(PropertyValue::WritingMode(writing_mode)),
+            Some(PropertyValue::TextOrientation(text_orientation)),
+            Some(PropertyValue::Direction(direction)),
+        )
+    };
+    assert_eq!(
+        flow("@page { writing-mode: initial; text-orientation: initial; direction: initial }"),
+        resolved(
+            WritingMode::HorizontalTb,
+            TextOrientation::Mixed,
+            Direction::Ltr
+        )
+    );
+    for keyword in ["inherit", "unset"] {
+        assert_eq!(
+            flow(&format!(
+                "@page {{ writing-mode: {keyword}; text-orientation: {keyword}; \
+                 direction: {keyword} }}"
+            )),
+            resolved(
+                WritingMode::VerticalRl,
+                TextOrientation::Upright,
+                Direction::Rtl
+            ),
+            "{keyword}"
+        );
+    }
+    // Nothing underneath the author declaration: no declaration is left, and
+    // the page context keeps what it inherits from the root.
+    for keyword in ["revert", "revert-layer"] {
+        assert_eq!(
+            flow(&format!(
+                "@page {{ writing-mode: {keyword}; text-orientation: {keyword}; \
+                 direction: {keyword} }}"
+            )),
+            (None, None, None),
+            "{keyword}"
+        );
+    }
+}
+
+/// The flow-relative margins of the page context itself follow a keyword it
+/// declares for its own writing mode.
+#[test]
+fn page_context_logical_margins_follow_the_css_wide_keywords() {
+    let root = ComputedValues {
+        cssom_writing_mode: WritingMode::VerticalRl,
+        ..ComputedValues::initial()
+    };
+    let sides = |css: &str| {
+        let result = page(css, &root);
+        let declarations = result.declarations();
+        [
+            PropertyKey::MarginTop,
+            PropertyKey::MarginRight,
+            PropertyKey::MarginBottom,
+            PropertyKey::MarginLeft,
+        ]
+        .map(|key| declarations.contains_key(&key))
+    };
+    // The block start of the root's `vertical-rl` is the right.
+    assert_eq!(
+        sides("@page { margin-block-start: 5px }"),
+        [false, true, false, false]
+    );
+    // `initial` is `horizontal-tb`, whose block start is the top.
+    assert_eq!(
+        sides("@page { writing-mode: initial; margin-block-start: 5px }"),
+        [true, false, false, false]
+    );
+    assert_eq!(
+        sides("@page { writing-mode: inherit; margin-block-start: 5px }"),
+        [false, true, false, false]
+    );
+}
+
+/// `all: revert-layer` leaves `direction` alone, but its own `revert-layer`
+/// rolls it back to the layer below, in the page context and in a margin box.
+#[test]
+fn direction_rolls_back_by_its_own_keyword_only_in_the_page_cascade() {
+    let root = ComputedValues {
+        direction: Direction::Rtl,
+        ..ComputedValues::initial()
+    };
+    let result = page(
+        "@layer a { @page { direction: ltr; all: revert-layer } } \
+         @layer b { @page { direction: revert-layer } }",
+        &root,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::Direction),
+        Some(&PropertyValue::Direction(Direction::Ltr))
+    );
+    // The inline start of `vertical-rl` under `rtl` is the bottom.
+    assert_eq!(
+        margin_box_flow(
+            "@layer a { @page { @top-left { content: 'X'; direction: rtl; all: revert-layer } } } \
+             @layer b { @page { @top-left { direction: revert-layer; \
+             writing-mode: vertical-rl; margin-inline-start: 1px } } }"
+        ),
+        (
+            [None, None, Some(1.0), None],
+            (
+                WritingMode::VerticalRl,
+                TextOrientation::Mixed,
+                Direction::Rtl
+            )
+        )
+    );
+}

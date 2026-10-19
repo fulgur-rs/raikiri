@@ -14,9 +14,9 @@ use crate::logical::{FlowMapping, LogicalSide};
 use crate::media::MediaContext;
 use crate::property::{
     BackgroundImage, BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, CssColor,
-    CustomProperty, Direction, Length, LengthPercentageOrCalc, OutlineStyle, OverflowValue,
-    OverflowXY, PropertyKey, PropertyValue, Sides, TextAlign, TextOrientation, VerticalAlign,
-    WritingMode,
+    CssWideKeyword, CustomProperty, Direction, Length, LengthPercentageOrCalc, OutlineStyle,
+    OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TextAlign, TextOrientation,
+    VerticalAlign, WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -213,18 +213,33 @@ impl PageMarginBoxCascadeResult {
         // the physical longhands for that side.
         let own_value = |key| margin_box_winning_value(&declared, &custom_properties, key);
         let flow = used_flow_mapping(
-            match own_value(PropertyKey::WritingMode) {
-                Some(PropertyValue::WritingMode(mode)) => mode,
-                _ => inherited.writing_mode,
-            },
-            match own_value(PropertyKey::TextOrientation) {
-                Some(PropertyValue::TextOrientation(orientation)) => orientation,
-                _ => inherited.text_orientation,
-            },
-            match own_value(PropertyKey::Direction) {
-                Some(PropertyValue::Direction(direction)) => direction,
-                _ => inherited.direction,
-            },
+            flow_keyword(
+                own_value(PropertyKey::WritingMode),
+                |value| match value {
+                    PropertyValue::WritingMode(mode) => Some(*mode),
+                    _ => None,
+                },
+                WritingMode::HorizontalTb,
+                inherited.writing_mode,
+            ),
+            flow_keyword(
+                own_value(PropertyKey::TextOrientation),
+                |value| match value {
+                    PropertyValue::TextOrientation(orientation) => Some(*orientation),
+                    _ => None,
+                },
+                TextOrientation::Mixed,
+                inherited.text_orientation,
+            ),
+            flow_keyword(
+                own_value(PropertyKey::Direction),
+                |value| match value {
+                    PropertyValue::Direction(direction) => Some(*direction),
+                    _ => None,
+                },
+                Direction::Ltr,
+                inherited.direction,
+            ),
         );
         // A `var()` value is substituted first: a flow-relative shorthand's
         // value is split by the shorthand's own name.
@@ -317,9 +332,6 @@ impl PageMarginBoxCascadeResult {
         }
         if has_rollback {
             winners.retain(|(key, name), winner| {
-                if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
-                    return true;
-                }
                 let selected = crate::cascade::rollback::select_layered_winner(
                     &candidates,
                     |_, &(rule_index, decl_index, rule, decl)| {
@@ -331,6 +343,7 @@ impl PageMarginBoxCascadeResult {
                                 _ => true,
                             };
                         let reset_all = *key != PropertyKey::Custom
+                            && key.is_reset_by_all()
                             && matches!(decl.value, PropertyValue::AllRevertLayer);
                         if !same_property && !reset_all {
                             return None;
@@ -1110,8 +1123,9 @@ fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::Laye
 /// the way the margin-box cascade below picks it. `writing-mode` and
 /// `text-orientation` honour `revert-layer` and `all: revert-layer`
 /// rollback; `direction` is exempt from `all`, like the page context's, and
-/// keeps its plain winner. A `var()` value is substituted from
-/// `custom_properties`. `None` when no declaration survives or resolves.
+/// only its own `revert` and `revert-layer` roll it back. A `var()` value is
+/// substituted from `custom_properties`. `None` when no declaration survives
+/// or resolves.
 fn margin_box_winning_value(
     declared: &[(usize, usize, &PageMarginBoxCascadeResult, &Declaration)],
     custom_properties: &CustomPropertyEnvironment,
@@ -1126,8 +1140,8 @@ fn margin_box_winning_value(
     let index = crate::cascade::rollback::select_layered_winner(
         declared,
         |_, &(rule_index, decl_index, rule, decl)| {
-            let reset_all = key != PropertyKey::Direction
-                && matches!(decl.value, PropertyValue::AllRevertLayer);
+            let reset_all =
+                key.is_reset_by_all() && matches!(decl.value, PropertyValue::AllRevertLayer);
             if decl.value.key() != key && !reset_all {
                 return None;
             }
@@ -1135,14 +1149,10 @@ fn margin_box_winning_value(
                 attached: false,
                 rank: rule.layer_order,
             };
-            let rollback = if key == PropertyKey::Direction {
-                crate::cascade::rollback::Rollback::None
-            } else {
-                resolve(&decl.value).as_ref().map_or(
-                    crate::cascade::rollback::Rollback::None,
-                    crate::cascade::rollback::rollback_kind,
-                )
-            };
+            let rollback = resolve(&decl.value).as_ref().map_or(
+                crate::cascade::rollback::Rollback::None,
+                crate::cascade::rollback::rollback_kind,
+            );
             Some((
                 (
                     cascade_rank(rule.origin, decl.important),
@@ -1160,6 +1170,28 @@ fn margin_box_winning_value(
         },
     )?;
     resolve(&declared[index].3.value)
+}
+
+/// The keyword a margin context's own `writing-mode`, `text-orientation` or
+/// `direction` winner computes to. `keyword` reads the winner when it is one,
+/// `initial` is what a CSS-wide `initial` gives, and any other winner (which
+/// is `inherit`, `unset` or an invalid substitution, as these properties are
+/// inherited) and no winner at all give the `inherited` value.
+fn flow_keyword<T>(
+    winner: Option<PropertyValue>,
+    keyword: impl FnOnce(&PropertyValue) -> Option<T>,
+    initial: T,
+    inherited: T,
+) -> T {
+    let Some(winner) = winner else {
+        return inherited;
+    };
+    if let PropertyValue::Deferred(marker) = &winner
+        && marker.css_wide_keyword() == Some(CssWideKeyword::Initial)
+    {
+        return initial;
+    }
+    keyword(&winner).unwrap_or(inherited)
 }
 
 /// The mapping of flow-relative sides for a box in `writing_mode` whose
@@ -1187,9 +1219,10 @@ fn used_flow_mapping(
 /// the values it inherits from the root element. Winners are picked the way
 /// the page cascade below picks them: `writing-mode` and `text-orientation`
 /// honour `revert-layer` and `all: revert-layer` rollback, `direction` is
-/// exempt from `all` and keeps its plain winner, and `var()` values are
-/// substituted from `custom_properties`. A winner that does not resolve to a
-/// keyword falls back to the inherited value.
+/// exempt from `all` and only its own `revert` and `revert-layer` roll it
+/// back, and `var()` values are substituted from `custom_properties`. A
+/// winner that does not resolve to a keyword falls back to the inherited
+/// value.
 fn page_flow_mapping(
     candidates: &[(PropertyValue, bool, Origin, u32, PageSpecificity, u32)],
     inherited: &ComputedValues,
@@ -1201,7 +1234,7 @@ fn page_flow_mapping(
             candidates,
             |index, (value, important, origin, priority, spec, order)| {
                 let reset_all =
-                    key != PropertyKey::Direction && matches!(value, PropertyValue::AllRevertLayer);
+                    key.is_reset_by_all() && matches!(value, PropertyValue::AllRevertLayer);
                 if value.key() != key && !reset_all {
                     return None;
                 }
@@ -1212,11 +1245,6 @@ fn page_flow_mapping(
                     } else {
                         *priority
                     },
-                };
-                let rollback = if key != PropertyKey::Direction {
-                    rollback(value)
-                } else {
-                    crate::cascade::rollback::Rollback::None
                 };
                 Some((
                     (
@@ -1229,7 +1257,7 @@ fn page_flow_mapping(
                     *origin,
                     layer,
                     *important,
-                    rollback,
+                    rollback(value),
                 ))
             },
         )?;
@@ -1239,6 +1267,7 @@ fn page_flow_mapping(
             }
             value => Some(value.clone()),
         }
+        .map(|value| crate::cascade::resolve_defaulting_value(value, inherited))
     };
     let writing_mode = match winner(PropertyKey::WritingMode) {
         Some(PropertyValue::WritingMode(mode)) => mode,
@@ -1672,13 +1701,12 @@ pub(crate) fn cascade_page_with_normal_line_height(
             if !has_rollback && !matches!(&winner.4, PropertyValue::Deferred(_)) {
                 return true;
             }
-            if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
-                return true;
-            }
             let selected = crate::cascade::rollback::select_layered_winner(
                 &candidates,
                 |idx, (value, important, origin, priority, spec, order)| {
-                    if value.key() != *key && !matches!(value, PropertyValue::AllRevertLayer) {
+                    let reset_all =
+                        key.is_reset_by_all() && matches!(value, PropertyValue::AllRevertLayer);
+                    if value.key() != *key && !reset_all {
                         return None;
                     }
                     let layer = crate::layer::LayerPosition {

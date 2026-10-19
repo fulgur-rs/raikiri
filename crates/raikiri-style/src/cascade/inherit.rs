@@ -1148,7 +1148,9 @@ fn rollback_index(
     flow: Option<FlowMapping>,
 ) -> Option<usize> {
     super::rollback::select_layered_winner(candidates.decls(), |idx, candidate| {
-        if candidate.slot(flow) != slot && !candidate.is_all_revert_layer() {
+        if candidate.slot(flow) != slot
+            && !(candidate.is_all_revert_layer() && slot.is_reset_by_all())
+        {
             return None;
         }
         let rollback = if idx == winner_index {
@@ -1378,6 +1380,7 @@ pub(crate) fn apply_winners(
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
     let flow = flow_mapping(candidates, inherited, |key, idx| {
         flow_winner_value(candidates, key, idx, &mut deferred_resolver)
+            .map(|value| resolve_defaulting_value(value, inherited))
     });
     pick_winners(candidates, winners, flow);
     // The drain below takes every slot, so the white-space winners are read
@@ -2379,7 +2382,10 @@ fn border_image_defaulting_value(
 }
 
 /// Resolve defaulting markers shared by the element and page inheritance paths.
-fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) -> PropertyValue {
+pub(crate) fn resolve_defaulting_value(
+    value: PropertyValue,
+    inherited: &ComputedValues,
+) -> PropertyValue {
     if let PropertyValue::Deferred(marker) = &value
         && let Some(keyword) = marker.css_wide_keyword()
     {
@@ -2586,6 +2592,30 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     crate::property::TextAlignLast::Auto
                 } else {
                     inherited.text_align_last
+                });
+            }
+            // The flow properties are inherited too. A child inherits the
+            // parent's writing mode keyword, not the horizontal mapping layout
+            // folds it to.
+            crate::property::PropertyKey::WritingMode => {
+                return PropertyValue::WritingMode(if initial {
+                    crate::property::WritingMode::HorizontalTb
+                } else {
+                    inherited.cssom_writing_mode
+                });
+            }
+            crate::property::PropertyKey::TextOrientation => {
+                return PropertyValue::TextOrientation(if initial {
+                    crate::property::TextOrientation::Mixed
+                } else {
+                    inherited.text_orientation
+                });
+            }
+            crate::property::PropertyKey::Direction => {
+                return PropertyValue::Direction(if initial {
+                    crate::property::Direction::Ltr
+                } else {
+                    inherited.direction
                 });
             }
             key => {
