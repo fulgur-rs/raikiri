@@ -2,6 +2,36 @@ use super::*;
 use crate::layout::test_support::TEXT_LINE_VISITS;
 
 #[test]
+fn positioned_text_start_y_falls_back_to_the_owned_first_line() {
+    let mut text_source = None;
+    let (mut doc, cascade, root) = ahem_paragraph_with("", |doc, root| {
+        doc.append_text(root, "A");
+        doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+        text_source = Some(doc.append_text(root, "B"));
+    });
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    let text_source = text_source.expect("the paragraph contains a second text node");
+    let mut text_lines = TextLineIndex::default();
+    text_lines
+        .prepare_for(&doc, text_source, || Ok(()))
+        .unwrap();
+    let owned = text_lines
+        .get(text_source)
+        .expect("the second text node owns a line");
+    let first_top = owned.lines.first().expect("owned line").top;
+    assert!(first_top > 0.0);
+
+    let layout = doc.ifc_layout_node(root).unwrap().unrounded_layout;
+    let expected = current_abs_y(&doc, root) + layout.border.top + layout.padding.top + first_top;
+    doc.nodes[root].ifc.as_mut().unwrap().lines = None;
+
+    assert_eq!(
+        positioned_text_start_y(&doc, &text_lines, text_source, Some(root)),
+        expected
+    );
+}
+
+#[test]
 fn nodes_without_shaped_paragraphs_do_not_publish_owners() {
     let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");
     let source = doc.nodes[root].children[0];

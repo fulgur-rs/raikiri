@@ -14,9 +14,9 @@ use crate::logical::{FlowMapping, LogicalSide};
 use crate::media::MediaContext;
 use crate::property::{
     BackgroundImage, BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, CssColor,
-    CssWideKeyword, CustomProperty, Direction, Length, LengthPercentageOrCalc, OutlineStyle,
-    OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TextAlign, TextOrientation,
-    VerticalAlign, WritingMode,
+    CssWideKeyword, CustomProperty, DeferredValue, Direction, Length, LengthPercentageOrCalc,
+    OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TextAlign,
+    TextOrientation, VerticalAlign, WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -1824,6 +1824,12 @@ pub(crate) fn cascade_page_with_normal_line_height(
         .into_iter()
         .filter_map(|(k, (_, _, _, _, value))| {
             let value = substitute(value)?;
+            // `min-block-size` stays flow-relative, so a CSS-wide keyword on it
+            // takes the physical minimum size of the page context's block axis.
+            // It resolves here, once `revert` has rolled back and `var()` has
+            // been substituted.
+            let value =
+                crate::cascade::resolve_logical_size_keyword(value, inherited, flow.is_vertical());
             Some((k, resolve_against_inherited(value, inherited, &ctx)))
         })
         .collect();
@@ -2121,12 +2127,25 @@ fn computed_over(
     // A page-margin box fills its page margin for a `height` of `auto`, so it
     // has to tell that from the sizing keywords, which size it to its content.
     specified.keeps_block_size_keywords = true;
+    // A CSS-wide keyword on a flow-relative size depends on the box's own
+    // `writing-mode`, which may be declared after it.
+    let mut logical_size_keywords = Vec::new();
     for value in values {
         let (value, border_width_is_computed) = match value {
             ComputedOverValue::Resolved(resolved) => {
                 let border_width_is_computed =
                     std::array::from_fn(|index| resolved.border_width_is_computed(index));
                 (resolved.into_property_value(), border_width_is_computed)
+            }
+            ComputedOverValue::Specified(
+                value @ PropertyValue::Deferred(DeferredValue {
+                    key:
+                        PropertyKey::InlineSize | PropertyKey::BlockSize | PropertyKey::MinBlockSize,
+                    ..
+                }),
+            ) => {
+                logical_size_keywords.push(value);
+                continue;
             }
             ComputedOverValue::Specified(value) => {
                 // These forms need the box's finalization path: phase-2
@@ -2156,6 +2175,13 @@ fn computed_over(
                 specified.border_width_is_computed[index] = true;
             }
         }
+    }
+    for value in logical_size_keywords {
+        let vertical = specified.writing_mode.is_vertical();
+        apply_value(
+            crate::cascade::resolve_logical_size_keyword(value, parent, vertical),
+            &mut specified,
+        );
     }
     specified.finalize_with(parent, ctx, normal_line_height)
 }
