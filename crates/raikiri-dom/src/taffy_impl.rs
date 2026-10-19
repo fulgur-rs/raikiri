@@ -1893,6 +1893,131 @@ fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
             .is_some_and(|node| node.style.float != taffy::Float::None)
 }
 
+/// The `min-width` and `max-width` of a flex item, as a probe of the
+/// container's intrinsic sizes left them.
+struct FlexItemBounds {
+    idx: usize,
+    min: taffy::LengthPercentageAuto,
+    max: taffy::LengthPercentageAuto,
+    cache: Cache,
+}
+
+/// Run `probe`, which measures the intrinsic widths of the flex container
+/// `node_id`, with the bounds Taffy leaves out of the measure put in place.
+///
+/// - Taffy breaks the lines of a wrapping container at its own `max-width`
+///   even while it measures the container's max-content width, which is the
+///   width of a single line (CSS Flexbox §9.9.1). The container's `max-width`
+///   is dropped for the probe; the caller clamps the result by it.
+/// - A row item whose flex base size is a length contributes at least that
+///   size when it cannot shrink and at most that size when it cannot grow.
+///   Taffy clamps a measured contribution by the item's `min-width` and
+///   `max-width` only, so an empty `flex: 1 0 100px` item would contribute
+///   nothing. Each such bound is installed as the item's own bound.
+///
+/// spec: https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions
+fn with_flex_intrinsic_bounds<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    probe: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let idx = usize::from(node_id);
+    let container = tree.layout_style_for_key_mut(idx).unwrap();
+    let container_max = container.max_size.width;
+    container.max_size.width = taffy::LengthPercentageAuto::auto();
+    let is_row = matches!(
+        container.flex_direction,
+        taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+    );
+    let children: Vec<NodeId> = if is_row {
+        tree.child_ids(node_id).collect()
+    } else {
+        Vec::new()
+    };
+    let mut saved = Vec::new();
+    for child in children {
+        let child_idx = usize::from(child);
+        let Some(node) = tree.layout_node_with_style(child_idx) else {
+            continue;
+        };
+        let style = &node.style;
+        if style.box_generation_mode() == BoxGenerationMode::None
+            || style.position == TaffyPosition::Absolute
+            || !style.size.width.is_auto()
+        {
+            continue;
+        }
+        let Some(basis) = crate::layout::resolve_dimension(style.flex_basis, None)
+            .filter(|basis| basis.is_finite())
+        else {
+            continue;
+        };
+        let (min, max) = (style.min_size.width, style.max_size.width);
+        let bound = |value: taffy::LengthPercentageAuto| {
+            if value.is_auto() {
+                Some(None)
+            } else {
+                crate::layout::resolve_length_percentage_auto(value, None).map(Some)
+            }
+        };
+        let (Some(min_length), Some(max_length)) = (bound(min), bound(max)) else {
+            continue;
+        };
+        let new_min = (style.flex_shrink == 0.0).then(|| {
+            taffy::LengthPercentageAuto::length(min_length.map_or(basis, |m| m.max(basis)))
+        });
+        let new_max = (style.flex_grow == 0.0).then(|| {
+            taffy::LengthPercentageAuto::length(max_length.map_or(basis, |m| m.min(basis)))
+        });
+        if new_min.is_none() && new_max.is_none() {
+            continue;
+        }
+        let style = tree.layout_style_for_key_mut(child_idx).unwrap();
+        style.min_size.width = new_min.unwrap_or(min);
+        style.max_size.width = new_max.unwrap_or(max);
+        // The entries cached while the bounds differ answer no other layout.
+        let cache = std::mem::replace(&mut tree.nodes[child_idx].cache, Cache::new());
+        saved.push(FlexItemBounds {
+            idx: child_idx,
+            min,
+            max,
+            cache,
+        });
+    }
+    let result = probe(tree);
+    for item in saved {
+        let style = tree.layout_style_for_key_mut(item.idx).unwrap();
+        style.min_size.width = item.min;
+        style.max_size.width = item.max;
+        tree.nodes[item.idx].cache = item.cache;
+    }
+    tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
+    result
+}
+
+/// The border-box `min-width` and `max-width` of element `idx` that resolve
+/// against `parent_width`, the maximum no smaller than the minimum.
+fn border_box_width_bounds(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_width: Option<f32>,
+) -> (f32, f32) {
+    let Some(node) = tree.layout_node_with_style(idx) else {
+        return (0.0, f32::INFINITY);
+    };
+    let style = &node.style;
+    let adjustment =
+        crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
+    let resolve = |value, auto: f32| {
+        crate::layout::resolve_length_percentage_auto(value, parent_width)
+            .filter(|resolved| resolved.is_finite())
+            .map_or(auto, |resolved| resolved + adjustment)
+    };
+    let min = resolve(style.min_size.width, 0.0);
+    let max = resolve(style.max_size.width, f32::INFINITY);
+    (min, max.max(min))
+}
+
 /// Shrink-to-fit layout for a width:auto inline-block.
 ///
 /// A width:auto inline-block sizes to its fit-content size: the preferred
@@ -2029,8 +2154,19 @@ fn compute_inline_block_shrink_wrap(
         }
     };
 
-    let min_w = intrinsic_width(tree, AvailableSpace::MinContent);
-    let max_w = intrinsic_width(tree, AvailableSpace::MaxContent);
+    let measure = |tree: &mut LayoutSession<'_>| {
+        (
+            intrinsic_width(tree, AvailableSpace::MinContent),
+            intrinsic_width(tree, AvailableSpace::MaxContent),
+        )
+    };
+    let (min_w, max_w) = if matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex) {
+        let (_, max_width) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+        let (min_w, max_w) = with_flex_intrinsic_bounds(tree, node_id, measure);
+        (min_w.min(max_width), max_w.min(max_width))
+    } else {
+        measure(tree)
+    };
     let (lo, hi) = if min_w <= max_w {
         (min_w, max_w)
     } else {

@@ -4963,3 +4963,8 @@ css/css-sizing/min-content-min-width-000.html
 # Pass once a flex or grid item with a min-content, max-content or fit-content width is sized by the keyword instead of the room its container offers, and its height is measured at that width; KEEP in two audit-vacuous-passes runs.
 css/css-flexbox/percentage-heights-022.html
 css/css-grid/grid-model/grid-max-content-size-with-max-content-item.html
+
+# --- floated flex containers and flex items sized by width keywords (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# Pass once a floated flex container shrinks to fit its items: the max-content width within the room its parent leaves, never below the min-content width that an item which cannot shrink contributes at its flex base size, and a content-box width keyword on an item sizes it by the keyword.
+css/css-flexbox/flex-item-content-is-min-width-max-content.html
+css/css-flexbox/intrinsic-size/row-001.html

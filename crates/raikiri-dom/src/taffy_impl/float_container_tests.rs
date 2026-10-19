@@ -38,8 +38,13 @@ fn laid_out(parent_css: &str, container_css: &str, item_css: &str) -> (BorderBox
     (absolute_rect(&doc, container), absolute_rect(&doc, item))
 }
 
+/// The border box width of the container, to the hundredth of a pixel.
 fn container_width(parent_css: &str, container_css: &str, item_css: &str) -> f32 {
-    laid_out(parent_css, container_css, item_css).0.2
+    hundredths(laid_out(parent_css, container_css, item_css).0.2)
+}
+
+fn hundredths(size: f32) -> f32 {
+    (size * 100.0).round() / 100.0
 }
 
 const FLEX: &str = "display:flex";
@@ -126,4 +131,73 @@ fn a_floated_flex_container_is_laid_out_at_the_width_it_shrinks_to() {
     let (container, item) = laid_out("", FLEX, "flex:1 1 60px");
     assert_eq!(container, (0.0, 0.0, 50.0, 30.0));
     assert_eq!(item, (5.0, 5.0, 40.0, 20.0));
+}
+
+#[test]
+fn a_floated_flex_container_is_at_least_as_wide_as_its_items_that_cannot_shrink() {
+    // The item keeps its 100px flex base size, so the container does not shrink
+    // below it however little room its parent leaves. The item's margin, padding
+    // and border come on top of a content-box flex basis.
+    assert_eq!(container_width("width:0", FLEX, "flex:1 0 100px"), 120.0);
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:1 0 100px;box-sizing:border-box"),
+        110.0
+    );
+}
+
+#[test]
+fn a_floated_flex_container_is_no_wider_than_the_flex_basis_of_items_that_cannot_grow() {
+    // The 100px basis is a ceiling for the item, which would otherwise measure
+    // its 30px of text.
+    assert_eq!(container_width("", FLEX, "flex:0 1 100px"), 50.0);
+    assert_eq!(
+        container_width("", FLEX, "flex:0 1 20px;min-width:0;margin:0"),
+        30.0
+    );
+}
+
+/// The border box width of a floated wrapping flex container with `count`
+/// items 30px wide plus a 1px border, styled by `container_css`.
+fn wrapping_container_width(container_css: &str, count: usize) -> f32 {
+    let mut container = 0;
+    let fixture = block_fixture("line-height:10px", |doc, root| {
+        container = doc.append_element(
+            Some(root),
+            "div",
+            taffy::Style::default(),
+            Some(&format!(
+                "display:flex;flex-wrap:wrap;float:left;border:1px solid;height:12px;{container_css}"
+            )),
+        );
+        for _ in 0..count {
+            doc.append_element(
+                Some(container),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;width:30px;border:1px solid"),
+            );
+        }
+    });
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    hundredths(absolute_rect(&doc, container).2)
+}
+
+#[test]
+fn a_floated_wrapping_flex_container_is_measured_as_a_single_line() {
+    // Five 32px items on one line, plus the container's 2px of border.
+    assert_eq!(wrapping_container_width("", 5), 162.0);
+    // The maximum width clamps the single line, it does not wrap it first.
+    assert_eq!(wrapping_container_width("max-width:120px", 5), 122.0);
+    assert_eq!(
+        wrapping_container_width("max-width:120px;min-width:100px", 5),
+        122.0
+    );
+    // The minimum width wins over the maximum width.
+    assert_eq!(
+        wrapping_container_width("min-width:150px;max-width:120px", 5),
+        152.0
+    );
+    assert_eq!(wrapping_container_width("min-width:100px", 0), 102.0);
+    assert_eq!(wrapping_container_width("min-width:100px", 1), 102.0);
 }
