@@ -542,6 +542,13 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | FillOpacity
         | StrokeOpacity
         | StrokeWidth
+        | FillRule
+        | ClipRule
+        | StrokeLinecap
+        | StrokeLinejoin
+        | StrokeMiterlimit
+        | StrokeDasharray
+        | StrokeDashoffset
         | ColumnSpan
         | ColumnRuleWidth
         | ColumnRuleStyle
@@ -1056,6 +1063,13 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::FillOpacity(_)
         | PropertyValue::StrokeOpacity(_)
         | PropertyValue::StrokeWidth(_)
+        | PropertyValue::FillRule(_)
+        | PropertyValue::ClipRule(_)
+        | PropertyValue::StrokeLinecap(_)
+        | PropertyValue::StrokeLinejoin(_)
+        | PropertyValue::StrokeMiterlimit(_)
+        | PropertyValue::StrokeDasharray(_)
+        | PropertyValue::StrokeDashoffset(_)
         | PropertyValue::ColumnSpan(_)
         | PropertyValue::ColumnRuleWidth(_)
         | PropertyValue::ColumnRuleStyle(_)

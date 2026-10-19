@@ -22,6 +22,18 @@ fn svg_export_properties_accept_css_wide_defaulting() {
         "font-family",
         "font-weight",
         "font-style",
+        "fill",
+        "stroke",
+        "fill-opacity",
+        "stroke-opacity",
+        "stroke-width",
+        "fill-rule",
+        "clip-rule",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
+        "stroke-dasharray",
+        "stroke-dashoffset",
     ] {
         for keyword in [
             "inherit",

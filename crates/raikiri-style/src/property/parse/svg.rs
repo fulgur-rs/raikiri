@@ -2,8 +2,8 @@
 //!
 //! Each parser validates the value and returns it in the form an SVG
 //! renderer reads: colors as `rgba()`, lengths and opacities as plain
-//! numbers. The text goes into a style declaration, so it is rebuilt from
-//! parsed tokens and never copied from the source.
+//! numbers, keywords in lowercase. The text goes into a style declaration, so
+//! it is rebuilt from parsed tokens and never copied from the source.
 
 use cssparser::{Delimiter, ParseError, Parser, Token};
 
@@ -13,8 +13,9 @@ use super::color::parse_contextual_color;
 use super::common::next_numeric_stable;
 use super::visual::parse_opacity_value;
 
-/// Parses the value of `fill`, `stroke`, `fill-opacity`, `stroke-opacity` or
-/// `stroke-width`. `None` for any other key and for an invalid value.
+/// Parses the value of an SVG painting property (`fill`, `stroke`, their
+/// opacities, `stroke-width`, the fill and clip rules and the stroke line and
+/// dash properties). `None` for any other key and for an invalid value.
 pub(super) fn parse_svg_presentation(
     key: PropertyKey,
     input: &mut Parser<'_, '_>,
@@ -24,17 +25,18 @@ pub(super) fn parse_svg_presentation(
         PropertyKey::FillOpacity | PropertyKey::StrokeOpacity => {
             format_css_number(parse_opacity_value(input)?.clamp(0.0, 1.0))
         }
-        PropertyKey::StrokeWidth => parse_svg_stroke_width(input)?,
+        PropertyKey::StrokeWidth => parse_svg_length(input, false)?,
+        PropertyKey::StrokeDashoffset => parse_svg_length(input, true)?,
+        PropertyKey::FillRule | PropertyKey::ClipRule => {
+            parse_svg_keyword(input, &["nonzero", "evenodd"])?
+        }
+        PropertyKey::StrokeLinecap => parse_svg_keyword(input, &["butt", "round", "square"])?,
+        PropertyKey::StrokeLinejoin => parse_svg_linejoin(input)?,
+        PropertyKey::StrokeMiterlimit => parse_svg_miterlimit(input)?,
+        PropertyKey::StrokeDasharray => parse_svg_dasharray(input)?,
         _ => return None,
     };
-    let text = text.into_boxed_str();
-    Some(match key {
-        PropertyKey::Fill => PropertyValue::Fill(text),
-        PropertyKey::Stroke => PropertyValue::Stroke(text),
-        PropertyKey::FillOpacity => PropertyValue::FillOpacity(text),
-        PropertyKey::StrokeOpacity => PropertyValue::StrokeOpacity(text),
-        _ => PropertyValue::StrokeWidth(text),
-    })
+    PropertyValue::svg_presentation(key, text.into_boxed_str())
 }
 
 /// `<paint>` (SVG 2 §13.1): `none | <color> | <url> [none | <color>]? |
@@ -122,27 +124,86 @@ fn parse_svg_local_url(input: &mut Parser<'_, '_>) -> Option<String> {
     Some(text)
 }
 
-/// `<length-percentage> | <number>`, not negative (SVG 2 §13.3). The units
-/// are the ones an SVG renderer resolves; a math function is not accepted.
-fn parse_svg_stroke_width(input: &mut Parser<'_, '_>) -> Option<String> {
-    let text = match next_numeric_stable(input).ok()? {
-        Token::Number { value, .. } => non_negative(value).map(format_css_number)?,
+/// One keyword out of `keywords`, in the lowercase form the list spells.
+fn parse_svg_keyword(input: &mut Parser<'_, '_>, keywords: &[&str]) -> Option<String> {
+    let ident = input.expect_ident().ok()?.clone();
+    let keyword = keywords
+        .iter()
+        .find(|keyword| ident.eq_ignore_ascii_case(keyword))?;
+    ends_declaration(input).then(|| (*keyword).to_owned())
+}
+
+/// `miter | miter-clip | round | bevel | arcs` (SVG 2 §13.5). `arcs` is
+/// written as `miter`, the fallback the specification gives a renderer that
+/// does not draw arcs joins.
+fn parse_svg_linejoin(input: &mut Parser<'_, '_>) -> Option<String> {
+    let keyword = parse_svg_keyword(input, &["miter", "miter-clip", "round", "bevel", "arcs"])?;
+    Some(if keyword == "arcs" {
+        "miter".to_owned()
+    } else {
+        keyword
+    })
+}
+
+/// `<number>` of at least `1` (SVG 2 §13.5).
+fn parse_svg_miterlimit(input: &mut Parser<'_, '_>) -> Option<String> {
+    let Token::Number { value, .. } = next_numeric_stable(input).ok()? else {
+        return None;
+    };
+    (value.is_finite() && value >= 1.0).then_some(())?;
+    ends_declaration(input).then(|| format_css_number(value))
+}
+
+/// `none | [ [ <length-percentage> | <number> ]+ ]#`, no item negative (SVG 2
+/// §13.6). The items are written separated by single spaces.
+fn parse_svg_dasharray(input: &mut Parser<'_, '_>) -> Option<String> {
+    if input
+        .try_parse(|input| input.expect_ident_matching("none"))
+        .is_ok()
+    {
+        return ends_declaration(input).then(|| "none".to_owned());
+    }
+    let mut items = vec![optional(input, |input| {
+        parse_svg_length_item(input, false)
+    })?];
+    loop {
+        // A comma must be followed by an item; a space may be followed by the
+        // end of the value or `!important`.
+        let after_comma = input.try_parse(|input| input.expect_comma()).is_ok();
+        match optional(input, |input| parse_svg_length_item(input, false)) {
+            Some(item) => items.push(item),
+            None if after_comma => return None,
+            None => break,
+        }
+    }
+    ends_declaration(input).then(|| items.join(" "))
+}
+
+/// A single `<length-percentage> | <number>` (SVG 2 §13.3), negative only when
+/// `allow_negative`.
+fn parse_svg_length(input: &mut Parser<'_, '_>, allow_negative: bool) -> Option<String> {
+    let text = parse_svg_length_item(input, allow_negative)?;
+    ends_declaration(input).then_some(text)
+}
+
+/// The next `<length-percentage> | <number>` token. The units are the ones an
+/// SVG renderer resolves; a math function is not accepted.
+fn parse_svg_length_item(input: &mut Parser<'_, '_>, allow_negative: bool) -> Option<String> {
+    let accepted =
+        |value: f32| (value.is_finite() && (allow_negative || value >= 0.0)).then_some(value);
+    Some(match next_numeric_stable(input).ok()? {
+        Token::Number { value, .. } => format_css_number(accepted(value)?),
         Token::Percentage { unit_value, .. } => {
-            format!("{}%", format_css_number(non_negative(unit_value)? * 100.0))
+            format!("{}%", format_css_number(accepted(unit_value)? * 100.0))
         }
         Token::Dimension { value, unit, .. } => {
             let unit = ["px", "em", "ex", "pt", "pc", "mm", "cm", "in"]
                 .into_iter()
                 .find(|known| unit.eq_ignore_ascii_case(known))?;
-            format!("{}{unit}", format_css_number(non_negative(value)?))
+            format!("{}{unit}", format_css_number(accepted(value)?))
         }
         _ => return None,
-    };
-    ends_declaration(input).then_some(text)
-}
-
-fn non_negative(value: f32) -> Option<f32> {
-    (value.is_finite() && value >= 0.0).then_some(value)
+    })
 }
 
 /// Whether nothing but `!important` follows.

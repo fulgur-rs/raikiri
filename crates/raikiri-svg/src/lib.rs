@@ -94,8 +94,10 @@ pub struct SvgElementStyle<'a> {
     /// Zero-based element preorder index, counting the root as index zero.
     /// The root is styled separately, so it may be included here only with
     /// painting declarations (`fill`, `stroke`, `fill-opacity`,
-    /// `stroke-opacity` and `stroke-width`), which its root style does not
-    /// carry; its descendants inherit them from it.
+    /// `stroke-opacity`, `stroke-width`, `fill-rule`, `clip-rule`,
+    /// `stroke-linecap`, `stroke-linejoin`, `stroke-miterlimit`,
+    /// `stroke-dasharray` and `stroke-dashoffset`), which its root style does
+    /// not carry; its descendants inherit them from it.
     pub element_index: usize,
     /// Resolved CSS declarations for color, display, opacity, visibility,
     /// font size, family, weight or style, and for the painting properties
@@ -2953,6 +2955,13 @@ fn with_element_style_overrides(
         "fill-opacity",
         "stroke-opacity",
         "stroke-width",
+        "fill-rule",
+        "clip-rule",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
+        "stroke-dasharray",
+        "stroke-dashoffset",
     ];
     const OTHER_PROPERTIES: &[&str] = &[
         "color",

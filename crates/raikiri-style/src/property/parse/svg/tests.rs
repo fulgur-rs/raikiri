@@ -13,7 +13,14 @@ fn parse(name: &str, text: &str) -> Option<String> {
         | PropertyValue::Stroke(text)
         | PropertyValue::FillOpacity(text)
         | PropertyValue::StrokeOpacity(text)
-        | PropertyValue::StrokeWidth(text) => Some(text.into()),
+        | PropertyValue::StrokeWidth(text)
+        | PropertyValue::FillRule(text)
+        | PropertyValue::ClipRule(text)
+        | PropertyValue::StrokeLinecap(text)
+        | PropertyValue::StrokeLinejoin(text)
+        | PropertyValue::StrokeMiterlimit(text)
+        | PropertyValue::StrokeDasharray(text)
+        | PropertyValue::StrokeDashoffset(text) => Some(text.into()),
         other => panic!("unexpected value {other:?}"),
     }
 }
@@ -102,10 +109,133 @@ fn a_stroke_width_is_a_non_negative_number_or_length() {
 }
 
 #[test]
+fn a_fill_or_clip_rule_is_nonzero_or_evenodd() {
+    assert_eq!(parse("fill-rule", "nonzero").as_deref(), Some("nonzero"));
+    assert_eq!(parse("fill-rule", "EVENODD").as_deref(), Some("evenodd"));
+    assert_eq!(parse("clip-rule", "EvenOdd").as_deref(), Some("evenodd"));
+    assert_eq!(parse("clip-rule", "nonzero").as_deref(), Some("nonzero"));
+    assert_eq!(parse("fill-rule", "even-odd"), None);
+    assert_eq!(parse("clip-rule", "inherit"), None);
+    assert_eq!(parse("fill-rule", "nonzero evenodd"), None);
+    assert_eq!(parse("fill-rule", "1"), None);
+}
+
+#[test]
+fn a_linecap_is_butt_round_or_square() {
+    assert_eq!(parse("stroke-linecap", "butt").as_deref(), Some("butt"));
+    assert_eq!(parse("stroke-linecap", "ROUND").as_deref(), Some("round"));
+    assert_eq!(parse("stroke-linecap", "Square").as_deref(), Some("square"));
+    assert_eq!(parse("stroke-linecap", "miter"), None);
+    assert_eq!(parse("stroke-linecap", "round square"), None);
+}
+
+#[test]
+fn a_linejoin_names_a_join_and_arcs_falls_back_to_miter() {
+    assert_eq!(parse("stroke-linejoin", "miter").as_deref(), Some("miter"));
+    assert_eq!(
+        parse("stroke-linejoin", "Miter-Clip").as_deref(),
+        Some("miter-clip")
+    );
+    assert_eq!(parse("stroke-linejoin", "ROUND").as_deref(), Some("round"));
+    assert_eq!(parse("stroke-linejoin", "bevel").as_deref(), Some("bevel"));
+    assert_eq!(parse("stroke-linejoin", "arcs").as_deref(), Some("miter"));
+    assert_eq!(parse("stroke-linejoin", "square"), None);
+    assert_eq!(parse("stroke-linejoin", "round bevel"), None);
+}
+
+#[test]
+fn a_miterlimit_is_a_number_of_at_least_one() {
+    assert_eq!(parse("stroke-miterlimit", "4").as_deref(), Some("4"));
+    assert_eq!(parse("stroke-miterlimit", "1").as_deref(), Some("1"));
+    assert_eq!(parse("stroke-miterlimit", "2.50").as_deref(), Some("2.5"));
+    assert_eq!(parse("stroke-miterlimit", "0.99"), None);
+    assert_eq!(parse("stroke-miterlimit", "0"), None);
+    assert_eq!(parse("stroke-miterlimit", "-4"), None);
+    assert_eq!(parse("stroke-miterlimit", "4px"), None);
+    assert_eq!(parse("stroke-miterlimit", "400%"), None);
+    assert_eq!(parse("stroke-miterlimit", "4 2"), None);
+    assert_eq!(parse("stroke-miterlimit", "none"), None);
+}
+
+#[test]
+fn a_dasharray_is_none_or_a_list_of_non_negative_items() {
+    assert_eq!(parse("stroke-dasharray", "none").as_deref(), Some("none"));
+    assert_eq!(parse("stroke-dasharray", "NONE").as_deref(), Some("none"));
+    assert_eq!(parse("stroke-dasharray", "5").as_deref(), Some("5"));
+    assert_eq!(parse("stroke-dasharray", "4 2").as_deref(), Some("4 2"));
+    assert_eq!(parse("stroke-dasharray", "4,2").as_deref(), Some("4 2"));
+    assert_eq!(parse("stroke-dasharray", "4 , 2").as_deref(), Some("4 2"));
+    assert_eq!(
+        parse("stroke-dasharray", "4px, 2 50% 1.50EM").as_deref(),
+        Some("4px 2 50% 1.5em")
+    );
+    assert_eq!(parse("stroke-dasharray", "0 0").as_deref(), Some("0 0"));
+}
+
+#[test]
+fn a_dasharray_that_an_svg_renderer_would_reject_is_invalid() {
+    assert_eq!(parse("stroke-dasharray", ""), None);
+    assert_eq!(parse("stroke-dasharray", "4 -2"), None);
+    assert_eq!(parse("stroke-dasharray", "-4px"), None);
+    assert_eq!(parse("stroke-dasharray", "4,"), None);
+    assert_eq!(parse("stroke-dasharray", "4,,2"), None);
+    assert_eq!(parse("stroke-dasharray", ",4"), None);
+    assert_eq!(parse("stroke-dasharray", "4 2vw"), None);
+    assert_eq!(parse("stroke-dasharray", "4 calc(1px + 2px)"), None);
+    assert_eq!(parse("stroke-dasharray", "4 none"), None);
+    assert_eq!(parse("stroke-dasharray", "none 4"), None);
+    assert_eq!(parse("stroke-dasharray", "dashed"), None);
+}
+
+#[test]
+fn a_dash_offset_is_a_number_or_length_and_may_be_negative() {
+    assert_eq!(parse("stroke-dashoffset", "0").as_deref(), Some("0"));
+    assert_eq!(parse("stroke-dashoffset", "-3").as_deref(), Some("-3"));
+    assert_eq!(
+        parse("stroke-dashoffset", "2.5PX").as_deref(),
+        Some("2.5px")
+    );
+    assert_eq!(parse("stroke-dashoffset", "-10%").as_deref(), Some("-10%"));
+    assert_eq!(parse("stroke-dashoffset", "2vw"), None);
+    assert_eq!(parse("stroke-dashoffset", "1 2"), None);
+    assert_eq!(parse("stroke-dashoffset", "none"), None);
+}
+
+#[test]
 fn a_declaration_may_end_in_important() {
-    let mut input = ParserInput::new("blue !important");
-    let mut parser = Parser::new(&mut input);
-    assert!(parse_svg_presentation(PropertyKey::Fill, &mut parser).is_some());
+    for (key, text) in [
+        (PropertyKey::Fill, "blue !important"),
+        (PropertyKey::FillRule, "evenodd !important"),
+        (PropertyKey::StrokeMiterlimit, "2 !important"),
+        (PropertyKey::StrokeDasharray, "4 2 !important"),
+        (PropertyKey::StrokeDasharray, "none !important"),
+        (PropertyKey::StrokeDashoffset, "-1px !important"),
+    ] {
+        let mut input = ParserInput::new(text);
+        let mut parser = Parser::new(&mut input);
+        assert!(parse_svg_presentation(key, &mut parser).is_some(), "{text}");
+    }
+}
+
+#[test]
+fn the_presentation_table_agrees_with_the_property_tables() {
+    for (key, name, initial) in PropertyKey::SVG_PRESENTATION {
+        assert_eq!(property_key_for_name(name), Some(key), "{name}");
+        assert!(key.is_svg_presentation(), "{name}");
+        assert_eq!(key.svg_presentation_name(), Some(name));
+        assert_eq!(key.svg_presentation_initial(), Some(initial));
+        assert!(
+            crate::property::is_supported_property_name(name),
+            "{name} is not listed as supported"
+        );
+        // The initial value is a value the property accepts.
+        assert!(parse(name, initial).is_some(), "{name}: {initial}");
+        let value = PropertyValue::svg_presentation(key, initial.into());
+        assert_eq!(value.map(|value| value.key()), Some(key), "{name}");
+    }
+    assert!(!PropertyKey::Opacity.is_svg_presentation());
+    assert_eq!(PropertyKey::Opacity.svg_presentation_name(), None);
+    assert_eq!(PropertyKey::Opacity.svg_presentation_initial(), None);
 }
 
 #[test]
@@ -113,4 +243,5 @@ fn only_the_presentation_keys_parse() {
     let mut input = ParserInput::new("1");
     let mut parser = Parser::new(&mut input);
     assert!(parse_svg_presentation(PropertyKey::Opacity, &mut parser).is_none());
+    assert!(PropertyValue::svg_presentation(PropertyKey::Opacity, "1".into()).is_none());
 }
