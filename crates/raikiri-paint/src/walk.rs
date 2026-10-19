@@ -53,6 +53,7 @@ mod frames;
 mod gradient;
 mod image_brush;
 mod inline_box;
+mod inline_svg;
 mod lines_frames;
 mod margin_box;
 mod page_geometry;
@@ -66,6 +67,7 @@ pub(crate) use inline_box::paint_inline_box;
 use border_image::BorderImage;
 use element_background::ElementBackgroundLayer;
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
+use inline_svg::InlineSvg;
 use margin_box::paint_margin_box;
 use page_geometry::PageGeometry;
 use paint_walk::PaintWalk;
@@ -2382,162 +2384,6 @@ fn paint_canvas(
         None,
         &Rect::new(0.0, 0.0, natural_w, natural_h),
     );
-    true
-}
-
-#[allow(clippy::too_many_arguments)]
-fn paint_inline_svg(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    cv: &ComputedValues,
-    node_id: usize,
-    border_box_width: f32,
-    border_box_height: f32,
-    abs_x: f32,
-    abs_y: f32,
-    padding: &taffy::Rect<f32>,
-    warnings: &mut Vec<RenderWarning>,
-) -> bool {
-    let bl = cv.border.left.width().px();
-    let bt = cv.border.top.width().px();
-    let br = cv.border.right.width().px();
-    let bb = cv.border.bottom.width().px();
-    let content_x = (abs_x + bl + padding.left) as f64;
-    let content_y = (abs_y + bt + padding.top) as f64;
-    let content_w = (border_box_width - bl - br - padding.left - padding.right).max(0.0);
-    let content_h = (border_box_height - bt - bb - padding.top - padding.bottom).max(0.0);
-    let opacity = cv.opacity;
-    if opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
-        return true;
-    }
-    let visible = !raikiri_dom::paint_rules::hides_own_box(cv);
-
-    let source = document.serialize_svg_subtree(node_id).ok().flatten();
-    // The declarations the page's stylesheets give to the descendants, which
-    // the serialized source does not carry. A subtree whose declarations
-    // outgrow the size bound is drawn unstyled, as it always was.
-    let descendants =
-        raikiri_dom::inline_svg_style::inline_svg_element_declarations(document, cascade, node_id)
-            .unwrap_or_default();
-    // A root that is not visible shows only the descendants that set
-    // `visibility` themselves, so a source that never mentions it paints
-    // nothing.
-    if !visible
-        && source
-            .as_deref()
-            .is_none_or(|source| !source.contains("visibility"))
-        && descendants
-            .iter()
-            .all(|descendant| !descendant.declarations.contains("visibility"))
-    {
-        return true;
-    }
-    let svg = source.and_then(|source| {
-        let svg = raikiri_svg::SvgDocument::parse(source.as_bytes()).ok()?;
-        let elements: Vec<_> = descendants
-            .iter()
-            .map(|descendant| raikiri_svg::SvgElementStyle {
-                element_index: descendant.element_index,
-                declarations: &descendant.declarations,
-            })
-            .collect();
-        let inherited_color = [cv.color.r, cv.color.g, cv.color.b, cv.color.a];
-        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
-            raikiri_svg::SvgViewport {
-                width: content_w,
-                height: content_h,
-            },
-            raikiri_svg::SvgRootStyle {
-                inherited_color,
-                // The host opacity remains the SVG root's inherited value
-                // while the rasterizer removes its group alpha. The outer
-                // paint group applies it with backgrounds and borders.
-                opacity,
-                neutralize_root_opacity: cascade
-                    .opacity_specified
-                    .get(node_id)
-                    .copied()
-                    .unwrap_or(false),
-                host_controls_root_background: cascade
-                    .background_color_specified
-                    .get(node_id)
-                    .copied()
-                    .unwrap_or(false),
-                visible,
-            },
-            raikiri_svg::SvgResolvedStyles {
-                root_color: inherited_color,
-                font: raikiri_svg::SvgRootFont {
-                    size: cv.font_size.0,
-                    weight: cv.font_weight,
-                    style: cv.font_style.as_css_str(),
-                    family: &raikiri_dom::inline_svg_style::svg_font_family(cv),
-                },
-                elements: &elements,
-            },
-            None,
-        )
-        .ok()
-    });
-    let Some(decoded) = svg else {
-        // Nothing was expected to show from a root that is not visible.
-        if visible {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: None,
-                },
-                node_id: Some(NodeId::new(node_id as u64)),
-                details: "inline SVG could not be parsed or rasterized".to_owned(),
-            });
-        }
-        return true;
-    };
-
-    let raster_w = decoded.width as f64;
-    let raster_h = decoded.height as f64;
-    if raster_w <= 0.0 || raster_h <= 0.0 {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: None,
-            },
-            node_id: Some(NodeId::new(node_id as u64)),
-            details: "inline SVG produced an empty raster size".to_owned(),
-        });
-        return true;
-    }
-    // A root that is not visible draws only the descendants that are
-    // visible themselves, so most of these paint nothing at all.
-    if !visible && decoded.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0) {
-        return true;
-    }
-    let image_data = peniko::ImageData {
-        data: peniko::Blob::from(decoded.rgba),
-        format: peniko::ImageFormat::Rgba8,
-        alpha_type: peniko::ImageAlphaType::Alpha,
-        width: decoded.width,
-        height: decoded.height,
-    };
-    let brush = peniko::ImageBrush::new(image_data);
-    let clip = Rect::new(
-        content_x,
-        content_y,
-        content_x + f64::from(content_w),
-        content_y + f64::from(content_h),
-    );
-    scene.push_clip_layer(Affine::IDENTITY, &clip);
-    scene.fill(
-        peniko::Fill::NonZero,
-        // SVG pixels retain the CSS pixel grid. The buffer is rounded up,
-        // while the clip above keeps the exact fractional viewport extent.
-        Affine::translate((content_x, content_y)),
-        brush.as_ref(),
-        None,
-        &Rect::new(0.0, 0.0, raster_w, raster_h),
-    );
-    scene.pop_layer();
     true
 }
 
