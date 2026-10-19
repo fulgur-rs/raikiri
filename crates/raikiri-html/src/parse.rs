@@ -323,64 +323,15 @@ fn fetch_external_stylesheets(
                 }
             }
             crate::sink::HeadStylesheetSource::External { node_id, href } => {
-                let Some(url) = resolve_url(&href, effective_base.as_ref()) else {
-                    // Relative URL without a base, or otherwise invalid href:
-                    // there is no request to report and the link contributes no
-                    // stylesheet source.
-                    continue;
-                };
-
-                match network.fetch(get_request(
-                    url.clone(),
-                    ResourceKind::ExternalStylesheet,
-                    None,
-                )) {
-                    Ok(fetched) => {
-                        // A successful empty response contributes no source.
-                        let css = String::from_utf8_lossy(&fetched.bytes).into_owned();
-                        if !css.is_empty() {
-                            let expanded = expand_stylesheet_imports_with_budget(
-                                &css,
-                                Some(&fetched.final_url),
-                                Some(&fetched.final_url),
-                                Some(network),
-                                &mut doc.warnings,
-                                import_budget,
-                            );
-                            let media = crate::sink::stylesheet_media_attribute(&doc.dom, node_id);
-                            ordered_sources.push(StylesheetSource {
-                                parts: expanded,
-                                media,
-                            });
-                        }
-                    }
-                    Err(NetworkError::PolicyViolation(violation)) => {
-                        // ResourcePolicy / RenderResources may deny a response
-                        // because it exceeds a byte cap. Preserve that diagnostic
-                        // separately from ordinary policy denials.
-                        doc.warnings.push(RenderWarning {
-                            kind: policy_violation_warning_kind(&violation, violation.kind),
-                            node_id: Some(node_id),
-                            details: "<link rel=stylesheet>: fetch denied by resource policy or resource limit"
-                                .to_owned(),
-                        });
-                    }
-                    Err(err) => {
-                        // All other errors are non-fatal. Keep a safe,
-                        // structured summary instead of formatting arbitrary
-                        // provider-controlled error text into the warning.
-                        let safe_url = redacted_url(&url);
-                        let summary = network_error_summary(&err);
-                        doc.warnings.push(RenderWarning {
-                            kind: WarningKind::NetworkFallback {
-                                url: safe_url.clone(),
-                            },
-                            node_id: Some(node_id),
-                            details: format!(
-                                "<link rel=stylesheet>: fetch failed for {safe_url}: {summary}"
-                            ),
-                        });
-                    }
+                if let Some(sheet) = fetch_link_stylesheet(
+                    doc,
+                    network,
+                    effective_base.as_ref(),
+                    node_id,
+                    &href,
+                    import_budget,
+                ) {
+                    ordered_sources.push(sheet);
                 }
             }
         }
@@ -397,6 +348,87 @@ fn fetch_external_stylesheets(
         )
     }));
     doc.stylesheet_sources = ordered_sources;
+}
+
+/// The stylesheet a `<link rel=stylesheet href>` at `node_id` contributes,
+/// fetched from `href` resolved against `base_url` and expanded for its
+/// `@import`s. `None` when there is no request to make, the response is
+/// empty, or the fetch fails (which records a warning in `doc`).
+fn fetch_link_stylesheet(
+    doc: &mut UncascadedDocument,
+    network: &dyn raikiri_traits::NetworkProvider,
+    base_url: Option<&Url>,
+    node_id: raikiri_traits::NodeId,
+    href: &str,
+    import_budget: &mut ImportBudget,
+) -> Option<StylesheetSource> {
+    // A relative URL without a base, or otherwise invalid href: there is no
+    // request to report and the link contributes no stylesheet source.
+    let url = resolve_url(href, base_url)?;
+    match network.fetch(get_request(
+        url.clone(),
+        ResourceKind::ExternalStylesheet,
+        None,
+    )) {
+        Ok(fetched) => {
+            // A successful empty response contributes no source.
+            let css = String::from_utf8_lossy(&fetched.bytes).into_owned();
+            (!css.is_empty()).then(|| {
+                let expanded = expand_stylesheet_imports_with_budget(
+                    &css,
+                    Some(&fetched.final_url),
+                    Some(&fetched.final_url),
+                    Some(network),
+                    &mut doc.warnings,
+                    import_budget,
+                );
+                let media = crate::sink::stylesheet_media_attribute(&doc.dom, node_id);
+                StylesheetSource {
+                    parts: expanded,
+                    media,
+                }
+            })
+        }
+        Err(error) => {
+            doc.warnings.push(link_fetch_warning(node_id, &url, error));
+            None
+        }
+    }
+}
+
+/// The warning for a `<link rel=stylesheet>` at `node_id` whose fetch of
+/// `url` failed with `error`. A fetch failure is never fatal.
+fn link_fetch_warning(
+    node_id: raikiri_traits::NodeId,
+    url: &Url,
+    error: NetworkError,
+) -> RenderWarning {
+    match error {
+        NetworkError::PolicyViolation(violation) => {
+            // ResourcePolicy / RenderResources may deny a response because it
+            // exceeds a byte cap. Preserve that diagnostic separately from
+            // ordinary policy denials.
+            RenderWarning {
+                kind: policy_violation_warning_kind(&violation, violation.kind),
+                node_id: Some(node_id),
+                details: "<link rel=stylesheet>: fetch denied by resource policy or resource limit"
+                    .to_owned(),
+            }
+        }
+        error => {
+            // Keep a safe, structured summary instead of formatting arbitrary
+            // provider-controlled error text into the warning.
+            let safe_url = redacted_url(url);
+            let summary = network_error_summary(&error);
+            RenderWarning {
+                kind: WarningKind::NetworkFallback {
+                    url: safe_url.clone(),
+                },
+                node_id: Some(node_id),
+                details: format!("<link rel=stylesheet>: fetch failed for {safe_url}: {summary}"),
+            }
+        }
+    }
 }
 
 fn expand_inline_sheet(
