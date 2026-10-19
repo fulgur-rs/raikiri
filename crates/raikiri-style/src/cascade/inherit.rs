@@ -907,9 +907,17 @@ pub(crate) fn walk_from<D: StyleDom>(
         }
 
         if !node_svg_properties.is_empty() {
+            // Every element owns a copy of the text of its painting
+            // declarations, so a long `url(#...)` paint counts once per element
+            // it reaches.
+            let expression_bytes = node_svg_properties
+                .iter()
+                .filter_map(|property| property.expression.as_ref())
+                .fold(0u64, |bytes, text| bytes.saturating_add(text.len() as u64));
             budget.output(entry_bytes(
                 &out.svg_properties,
-                bytes_of::<SvgStyleProperty>(node_svg_properties.len()),
+                bytes_of::<SvgStyleProperty>(node_svg_properties.len())
+                    .saturating_add(expression_bytes),
             ))?;
             try_insert(&mut out.svg_properties, id, node_svg_properties)?;
         }

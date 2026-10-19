@@ -30,6 +30,24 @@ fn descendant_declaration_budget_rejects_before_serializing() {
 }
 
 #[test]
+fn descendant_declaration_budget_counts_the_text_of_a_painting_property() {
+    let text = format!("url(\"#{}\")", "a".repeat(1000));
+    let properties = [SvgStyleProperty {
+        property: PropertyKey::Fill,
+        inherited: false,
+        expression: Some(text.clone()),
+    }];
+    // The declaration's own 128 bytes, then the text's 128 and its two copies.
+    let needed = 128 + 128 + 2 * text.len();
+    let mut remaining = needed - 1;
+    assert!(node_declarations(&ComputedValues::initial(), &properties, &mut remaining).is_err());
+    let mut remaining = needed;
+    let css = node_declarations(&ComputedValues::initial(), &properties, &mut remaining).unwrap();
+    assert_eq!(css, format!("fill:{text}!important;"));
+    assert_eq!(remaining, 0);
+}
+
+#[test]
 fn descendant_declarations_keep_relative_expressions_and_literal_inherit() {
     let properties = [
         SvgStyleProperty {

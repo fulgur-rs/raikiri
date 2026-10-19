@@ -144,6 +144,13 @@ fn node_declarations(
             style.font_family.iter().fold(128usize, |size, name| {
                 size.saturating_add(name.as_str().len().saturating_mul(8))
             })
+        } else if is_painting_property(property.property) && !property.inherited {
+            // The declared text is cloned and then copied into the
+            // declaration, so a long `url(#...)` paint reaching many elements
+            // counts twice per element.
+            property.expression.as_ref().map_or(128, |text| {
+                128usize.saturating_add(text.len().saturating_mul(2))
+            })
         } else {
             128
         };
