@@ -353,63 +353,8 @@ pub(crate) fn paint_page_border(
     ) {
         return;
     }
-    // The page context inherits `color` from the root element.
-    let current_color = match declarations.get(&PropertyKey::Color) {
-        Some(PropertyValue::Color(color)) => *color,
-        _ => find_html(document)
-            .and_then(|node_id| cascade.computed.get(node_id))
-            .map_or(CssColor::BLACK, |computed| computed.color),
-    };
-    let ctx = ResolveContext::initial();
-
-    let side = |width_key: PropertyKey, style_key: PropertyKey, color_key: PropertyKey| {
-        let mut border = Border::new();
-        match declarations.get(&width_key) {
-            Some(PropertyValue::BorderTopWidth(value))
-            | Some(PropertyValue::BorderRightWidth(value))
-            | Some(PropertyValue::BorderBottomWidth(value))
-            | Some(PropertyValue::BorderLeftWidth(value)) => border.width = *value,
-            _ => {}
-        }
-        match declarations.get(&style_key) {
-            Some(PropertyValue::BorderTopStyle(value))
-            | Some(PropertyValue::BorderRightStyle(value))
-            | Some(PropertyValue::BorderBottomStyle(value))
-            | Some(PropertyValue::BorderLeftStyle(value)) => border.style = *value,
-            _ => {}
-        }
-        match declarations.get(&color_key) {
-            Some(PropertyValue::BorderTopColor(value))
-            | Some(PropertyValue::BorderRightColor(value))
-            | Some(PropertyValue::BorderBottomColor(value))
-            | Some(PropertyValue::BorderLeftColor(value)) => border.color = *value,
-            _ => {}
-        }
-        resolve_border(border, ComputedLength(16.0), None, &ctx)
-    };
-
-    let borders = Sides {
-        top: side(
-            PropertyKey::BorderTopWidth,
-            PropertyKey::BorderTopStyle,
-            PropertyKey::BorderTopColor,
-        ),
-        right: side(
-            PropertyKey::BorderRightWidth,
-            PropertyKey::BorderRightStyle,
-            PropertyKey::BorderRightColor,
-        ),
-        bottom: side(
-            PropertyKey::BorderBottomWidth,
-            PropertyKey::BorderBottomStyle,
-            PropertyKey::BorderBottomColor,
-        ),
-        left: side(
-            PropertyKey::BorderLeftWidth,
-            PropertyKey::BorderLeftStyle,
-            PropertyKey::BorderLeftColor,
-        ),
-    };
+    let current_color = page_current_color(document, cascade);
+    let borders = page_border_sides(declarations);
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
     let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
@@ -442,6 +387,82 @@ pub(crate) fn paint_page_border(
         &borders,
         current_color,
     );
+}
+
+/// The `color` of the page context, which inherits it from the root element.
+fn page_current_color(document: &Document, cascade: &CascadeResult) -> CssColor {
+    match cascade.page.declarations().get(&PropertyKey::Color) {
+        Some(PropertyValue::Color(color)) => *color,
+        _ => find_html(document)
+            .and_then(|node_id| cascade.computed.get(node_id))
+            .map_or(CssColor::BLACK, |computed| computed.color),
+    }
+}
+
+/// Resolve the four borders of the page context from its `@page` declarations.
+fn page_border_sides(
+    declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
+) -> Sides<raikiri_style::resolve::ComputedBorder> {
+    let ctx = ResolveContext::initial();
+    let side = |width_key, style_key, color_key| {
+        page_border_side(declarations, width_key, style_key, color_key, &ctx)
+    };
+    Sides {
+        top: side(
+            PropertyKey::BorderTopWidth,
+            PropertyKey::BorderTopStyle,
+            PropertyKey::BorderTopColor,
+        ),
+        right: side(
+            PropertyKey::BorderRightWidth,
+            PropertyKey::BorderRightStyle,
+            PropertyKey::BorderRightColor,
+        ),
+        bottom: side(
+            PropertyKey::BorderBottomWidth,
+            PropertyKey::BorderBottomStyle,
+            PropertyKey::BorderBottomColor,
+        ),
+        left: side(
+            PropertyKey::BorderLeftWidth,
+            PropertyKey::BorderLeftStyle,
+            PropertyKey::BorderLeftColor,
+        ),
+    }
+}
+
+/// Resolve one border of the page context from the declarations under the
+/// longhands `width_key`, `style_key` and `color_key` of its side.
+fn page_border_side(
+    declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
+    width_key: PropertyKey,
+    style_key: PropertyKey,
+    color_key: PropertyKey,
+    ctx: &ResolveContext,
+) -> raikiri_style::resolve::ComputedBorder {
+    let mut border = Border::new();
+    match declarations.get(&width_key) {
+        Some(PropertyValue::BorderTopWidth(value))
+        | Some(PropertyValue::BorderRightWidth(value))
+        | Some(PropertyValue::BorderBottomWidth(value))
+        | Some(PropertyValue::BorderLeftWidth(value)) => border.width = *value,
+        _ => {}
+    }
+    match declarations.get(&style_key) {
+        Some(PropertyValue::BorderTopStyle(value))
+        | Some(PropertyValue::BorderRightStyle(value))
+        | Some(PropertyValue::BorderBottomStyle(value))
+        | Some(PropertyValue::BorderLeftStyle(value)) => border.style = *value,
+        _ => {}
+    }
+    match declarations.get(&color_key) {
+        Some(PropertyValue::BorderTopColor(value))
+        | Some(PropertyValue::BorderRightColor(value))
+        | Some(PropertyValue::BorderBottomColor(value))
+        | Some(PropertyValue::BorderLeftColor(value)) => border.color = *value,
+        _ => {}
+    }
+    resolve_border(border, ComputedLength(16.0), None, ctx)
 }
 
 /// Paint a solid `@page` outline around the page content box.
