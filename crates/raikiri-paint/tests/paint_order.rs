@@ -436,6 +436,91 @@ fn flex_order_and_z_index() {
     );
 }
 
+/// A flex or grid item with an integer `z-index` forms a stacking context
+/// even when it is not positioned (CSS Flexbox 1 §4.3, CSS Grid 1 §9.5), so it
+/// paints by stack level among the positioned boxes of the enclosing stacking
+/// context, not at its place in the flow.
+#[test]
+fn z_indexed_flex_and_grid_items_interleave_with_positioned_boxes_by_stack_level() {
+    for container in ["display: flex", "display: grid"] {
+        let result = same_order(&format!(
+            "<div id=low style=\"position: relative; z-index: 0; height: 5px; background: pink\"></div>\
+             <div style=\"{container}\"><div id=item style=\"z-index: 1; height: 5px; background: hotpink\"></div></div>\
+             <div id=high style=\"position: relative; z-index: 2; height: 5px; background: gold\"></div>"
+        ));
+        let [low, item, high] = ["low", "item", "high"].map(|id| by_id(&result, id));
+        assert!(
+            step_at(&result, Step::Box(low)) < step_at(&result, Step::Box(item)),
+            "{container}"
+        );
+        assert!(
+            step_at(&result, Step::Box(item)) < step_at(&result, Step::Box(high)),
+            "{container}"
+        );
+    }
+}
+
+/// Items of one container with the same `z-index` keep the order the
+/// container's `order` gives them.
+#[test]
+fn z_indexed_flex_items_of_one_level_keep_the_flex_order() {
+    let result = same_order(
+        "<div style=\"display: flex\">\
+         <div id=a style=\"z-index: 1; order: 2; height: 5px; background: red\"></div>\
+         <div id=b style=\"z-index: 1; order: 1; height: 5px; background: blue\"></div>\
+         <div id=c style=\"z-index: 2; order: 0; height: 5px; background: green\"></div>\
+         </div>",
+    );
+    let [a, b, c] = ["a", "b", "c"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(b)) < step_at(&result, Step::Box(a)));
+    assert!(step_at(&result, Step::Box(a)) < step_at(&result, Step::Box(c)));
+}
+
+/// A z-indexed item takes the tree-order tie with positioned boxes of its own
+/// level: after an earlier one, before a later one.
+#[test]
+fn a_z_indexed_flex_item_at_level_zero_ties_with_positioned_boxes_in_tree_order() {
+    let result = same_order(
+        "<div id=early style=\"position: relative; z-index: 0; height: 5px; background: pink\"></div>\
+         <div style=\"display: flex\"><div id=item style=\"z-index: 0; height: 5px; background: hotpink\"></div></div>\
+         <div id=late style=\"position: relative; z-index: 0; height: 5px; background: gold\"></div>",
+    );
+    let [early, item, late] = ["early", "item", "late"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(early)) < step_at(&result, Step::Box(item)));
+    assert!(step_at(&result, Step::Box(item)) < step_at(&result, Step::Box(late)));
+}
+
+/// An item inside a positioned box with `z-index: auto` is part of the
+/// enclosing stacking context, so its level sorts with the boxes around that
+/// box.
+#[test]
+fn a_z_indexed_flex_item_in_a_positioned_auto_box_sorts_with_the_boxes_around_it() {
+    let result = same_order(
+        "<div id=low style=\"position: relative; z-index: 0; height: 5px; background: pink\"></div>\
+         <div style=\"position: relative\"><div style=\"display: flex\">\
+         <div id=item style=\"z-index: 1; height: 5px; background: hotpink\"></div></div></div>\
+         <div id=high style=\"position: relative; z-index: 2; height: 5px; background: gold\"></div>",
+    );
+    let [low, item, high] = ["low", "item", "high"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(low)) < step_at(&result, Step::Box(item)));
+    assert!(step_at(&result, Step::Box(item)) < step_at(&result, Step::Box(high)));
+}
+
+/// The level of an item inside another z-indexed item counts only within that
+/// item's stacking context.
+#[test]
+fn a_z_indexed_flex_item_in_a_z_indexed_item_stays_in_its_stacking_context() {
+    let result = same_order(
+        "<div style=\"display: flex\">\
+         <div id=outer style=\"z-index: 1; height: 5px\"><div style=\"display: flex\">\
+         <div id=inner style=\"z-index: 9; height: 5px; background: hotpink\"></div></div></div></div>\
+         <div id=between style=\"position: relative; z-index: 2; height: 5px; background: gold\"></div>",
+    );
+    let [outer, inner, between] = ["outer", "inner", "between"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(outer)) < step_at(&result, Step::Box(inner)));
+    assert!(step_at(&result, Step::Box(inner)) < step_at(&result, Step::Box(between)));
+}
+
 #[test]
 fn float_and_in_flow_siblings() {
     assert_same_order(

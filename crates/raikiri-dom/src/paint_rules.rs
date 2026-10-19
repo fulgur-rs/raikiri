@@ -793,8 +793,9 @@ fn establishes_stacking_context(document: &Document, id: usize, cv: &ComputedVal
         || crate::layout::has_applied_transform(document, id, cv)
 }
 
-/// Whether a positioned box, or a box that forms a stacking context, waits
-/// for the end of the enclosing layer.
+/// Whether a positioned box, a flex or grid item with an integer `z-index`,
+/// or a box that forms a stacking context, waits for the end of the enclosing
+/// layer.
 ///
 /// Such boxes with a stack level of zero or more paint after the in-flow
 /// blocks of their stacking context and after its inline content (CSS 2.1
@@ -813,13 +814,13 @@ pub fn defers_to_positioned_layer(
     paragraphs: &LeavingParagraphs,
 ) -> bool {
     cascade.computed.get(node_id).is_some_and(|cv| {
-        let positioned = !matches!(cv.position, PositionValue::Static);
-        let negative = positioned && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0);
+        let leveled = takes_stack_level(document, cascade, node_id, cv);
+        let negative = leveled && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0);
         document
             .get_node(node_id)
             .is_some_and(|node| node.kind() == NodeKind::Element)
             && generates_box(cv)
-            && (positioned || establishes_stacking_context(document, node_id, cv))
+            && (leveled || establishes_stacking_context(document, node_id, cv))
             && !negative
             && (leaves_paragraph_lines(document, cascade, node_id, paragraphs)
                 || box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
@@ -1138,10 +1139,7 @@ fn positioned_layer_level(document: &Document, cascade: &CascadeResult, node_id:
         .computed
         .get(node_id)
         .map_or(0, |cv| match cv.z_index {
-            ZIndexValue::Integer(level)
-                if !matches!(cv.position, PositionValue::Static)
-                    || is_z_indexed_item(document, cascade, node_id, cv) =>
-            {
+            ZIndexValue::Integer(level) if takes_stack_level(document, cascade, node_id, cv) => {
                 level
             }
             _ => 0,
@@ -1321,13 +1319,14 @@ impl<F: Clone> PositionedQueue<F> {
 enum HeldLevels {
     /// None: the box is no such box, or holds none.
     None,
-    /// Only positioned boxes with a positive `z-index` that wait for the end
-    /// of the enclosing layer and reach it through the boxes between: the
-    /// painters can hand them on to sort with the boxes around the box.
+    /// Only boxes with a positive `z-index` (positioned ones, and flex or
+    /// grid items) that wait for the end of the enclosing layer and reach it
+    /// through the boxes between: the painters can hand them on to sort with
+    /// the boxes around the box.
     HandedOn,
     /// Some that the painters paint along with the box: a negative level, a
-    /// flex or grid item, a box in a paragraph's lines, or one behind a box
-    /// that keeps its positioned boxes.
+    /// box in a paragraph's lines, or one behind a box that keeps its
+    /// positioned boxes.
     Kept,
 }
 
@@ -1389,9 +1388,11 @@ fn held_levels(document: &Document, cascade: &CascadeResult, id: usize) -> HeldL
         }
         let level = positioned_layer_level(document, cascade, child);
         if level != 0 {
+            // A non-zero level only comes from a positioned box or a z-indexed
+            // flex or grid item, so a static child needs no guard of its own
+            // here: `defers_to_positioned_layer` decides for both.
             if kept
                 || level < 0
-                || matches!(cv.position, PositionValue::Static)
                 || !defers_to_positioned_layer(document, cascade, child, &paragraphs)
             {
                 return HeldLevels::Kept;
@@ -1403,6 +1404,18 @@ fn held_levels(document: &Document, cascade: &CascadeResult, id: usize) -> HeldL
         }
     }
     held
+}
+
+/// Whether a box takes a stack level from its `z-index`: a positioned box, or
+/// a flex or grid item with an integer `z-index` (see [`is_z_indexed_item`]).
+fn takes_stack_level(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    !matches!(cv.position, PositionValue::Static)
+        || is_z_indexed_item(document, cascade, node_id, cv)
 }
 
 /// Whether a flex or grid item with computed values `cv` has an integer
