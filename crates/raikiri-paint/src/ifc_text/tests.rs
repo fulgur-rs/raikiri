@@ -3444,6 +3444,31 @@ fn each_shadow_layer_covers_every_run_of_the_box_before_the_next() {
 }
 
 #[test]
+fn each_blurred_shadow_layer_blurs_every_run_of_the_box_in_one_filter() {
+    for (shadows, layers) in [
+        ("2px 3px 4px rgb(0,0,255)", 1),
+        ("2px 3px 4px rgb(0,0,255),1px 1px 2px rgb(0,0,255)", 2),
+    ] {
+        let on = painted_root(
+            &format!("width:200px;color:black;text-shadow:{shadows}"),
+            |doc, root| {
+                // Mixed directions split one text node into several runs.
+                doc.append_text(root, "ab \u{5d0}\u{5d1} cd");
+            },
+        );
+        let pushed = on
+            .commands
+            .iter()
+            .filter(|c| matches!(c, RenderCommand::PushLayer(_)))
+            .count();
+        assert_eq!(pushed, layers, "one filter per shadow: {shadows}");
+        let (outside, inside) = shadow_glyphs_outside_their_layer(&on);
+        assert!(inside > 0, "{shadows}");
+        assert!(outside.is_empty(), "{shadows}: {outside:?}");
+    }
+}
+
+#[test]
 fn a_text_shadow_covers_the_emphasis_marks() {
     let (mut doc, cascade, root) = paragraph(
         "line-height:40px;color:black;text-emphasis:dot;text-shadow:2px 3px rgb(0,0,255)",

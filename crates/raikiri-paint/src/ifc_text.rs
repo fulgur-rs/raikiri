@@ -761,62 +761,96 @@ fn vertical_ink_bounds(glyphs: &[raikiri_dom::LineGlyph], pad: f64) -> Rect {
     })
 }
 
-/// Draw one text shadow of one run, behind its glyphs and decorations.
-///
-/// CSS Text Decoration 3 §4 paints the shadows below the text, the first one
-/// on top, so callers draw the list in reverse. Each shadow is the run's glyphs
-/// and its decoration lines, in their paint order, filled with the shadow
-/// color. A blurred shadow is drawn inside a filter layer clipped to the
-/// lines and the run's glyphs, grown by three times the blur radius, which
-/// isolates the blur from the rest of the page. The Gaussian's standard deviation is half the blur
-/// radius (CSS Backgrounds 3 §7.1).
-fn draw_shadow(
-    scene: &mut impl PaintScene,
-    run: &ShadowRun<'_, '_>,
-    shadow: &raikiri_style::ComputedTextShadow,
-    owner_cv: &raikiri_style::ComputedValues,
+/// One run's part of one text shadow: the run, the shadow it casts, and the
+/// line transform and paragraph position the run is drawn at.
+struct ShadowPiece<'a, 'b> {
+    run: ShadowRun<'a, 'b>,
+    shadow: &'a raikiri_style::ComputedTextShadow,
     transform: Affine,
     position: IfcPosition,
-    size: (f32, f32),
-) {
-    let color = match shadow.color {
+}
+
+impl ShadowPiece<'_, '_> {
+    /// The blur radius of the shadow, `None` when it is drawn sharp.
+    fn blur(&self) -> Option<f32> {
+        let blur = self.shadow.blur_radius.px();
+        (blur.is_finite() && blur > 0.0).then_some(blur)
+    }
+
+    /// The `(dx, dy)` offset of the shadow.
+    fn offset(&self) -> (f64, f64) {
+        (
+            f64::from(self.shadow.offset_x.px()),
+            f64::from(self.shadow.offset_y.px()),
+        )
+    }
+}
+
+/// Draw one text shadow of consecutive runs of one box, behind their glyphs
+/// and decorations.
+///
+/// CSS Text Decoration 3 §4 paints the shadows below the text, the first one
+/// on top, so callers draw the list in reverse. Each shadow is the glyphs of
+/// the runs and their decoration lines, in their paint order, filled with the
+/// shadow color. A shadow layer is the text and its decorations composited
+/// together, so the `pieces`, which share one blur radius, are blurred in one
+/// filter layer: blurring each run on its own would composite the overlap of
+/// two runs' blurred ink twice. The layer is clipped to the ink of every run
+/// grown by three times the blur radius, which isolates the blur from the
+/// rest of the page. The Gaussian's standard deviation is half the blur
+/// radius (CSS Backgrounds 3 §7.1).
+fn draw_shadow(scene: &mut impl PaintScene, pieces: &[ShadowPiece<'_, '_>], size: (f32, f32)) {
+    let blur = pieces.first().and_then(ShadowPiece::blur);
+    if let Some(blur) = blur {
+        let clip = pieces
+            .iter()
+            .map(|piece| blur_clip(piece, size, blur))
+            .reduce(|clip, next| clip.union(next))
+            .unwrap_or(Rect::ZERO);
+        scene.push_layer(
+            Mix::Normal,
+            1.0,
+            Affine::IDENTITY,
+            &clip,
+            Some(Arc::new(Filter::single(FilterEffect::blur(blur / 2.0)))),
+            None,
+        );
+    }
+    for piece in pieces {
+        draw_shadow_ink(scene, piece);
+    }
+    if blur.is_some() {
+        scene.pop_layer();
+    }
+}
+
+/// Draw the shadow of one run: its decoration lines, glyphs and emphasis
+/// marks, moved by the shadow offset and filled with the shadow color.
+fn draw_shadow_ink(scene: &mut impl PaintScene, piece: &ShadowPiece<'_, '_>) {
+    let run = &piece.run;
+    let owner_cv = run.draw.style;
+    let color = match piece.shadow.color {
         TextShadowColor::CurrentColor => owner_cv.color,
         TextShadowColor::Resolved(color) => color,
         _ => owner_cv.color,
     };
-    let (dx, dy) = (
-        f64::from(shadow.offset_x.px()),
-        f64::from(shadow.offset_y.px()),
-    );
-    let shadow_transform = transform * Affine::translate((dx, dy));
-    let blur = shadow.blur_radius.px();
-    let use_blur_layer = blur.is_finite() && blur > 0.0;
-    if use_blur_layer {
-        push_blur_layer(scene, run, position, size, (dx, dy), blur);
-    }
+    let (dx, dy) = piece.offset();
+    let shadow_transform = piece.transform * Affine::translate((dx, dy));
     let offset = (dx as f32, dy as f32);
     let decorations = shadow_decorations(run, color, offset);
     draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::BeforeGlyphs);
     draw_shadow_glyphs(scene, run, color, shadow_transform);
     draw_shadow_marks(scene, run, owner_cv, color, offset);
     draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
-    if use_blur_layer {
-        scene.pop_layer();
-    }
 }
 
-/// Open the filter layer that blurs the shadow of `run` by `blur`, clipped
-/// to the box its blurred ink can reach: the lines of a paragraph of size
-/// `(width, height)` and the glyphs of the run, grown by three times the blur
-/// radius and moved by the `(dx, dy)` offset of the shadow.
-fn push_blur_layer(
-    scene: &mut impl PaintScene,
-    run: &ShadowRun<'_, '_>,
-    position: IfcPosition,
-    (width, height): (f32, f32),
-    (dx, dy): (f64, f64),
-    blur: f32,
-) {
+/// The box the blurred shadow of one run can reach: the lines of a paragraph
+/// of size `(width, height)` and the glyphs of the run, grown by three times
+/// the `blur` radius and moved by the offset of the shadow.
+fn blur_clip(piece: &ShadowPiece<'_, '_>, (width, height): (f32, f32), blur: f32) -> Rect {
+    let run = &piece.run;
+    let position = piece.position;
+    let (dx, dy) = piece.offset();
     let extent = f64::from((blur * 3.0).max(1.0));
     let (x, y) = (
         f64::from(position.x),
@@ -831,20 +865,12 @@ fn push_blur_layer(
     // not exceed.
     let pad = f64::from(run.draw.run.font_size());
     let ink = shadow_ink_bounds(run, (width, height), pad);
-    let clip = Rect::new(
+    Rect::new(
         x + ink.x0 + dx - extent,
         y + ink.y0 + dy - extent,
         x + ink.x1 + dx + extent,
         y + ink.y1 + dy + extent,
-    );
-    scene.push_layer(
-        Mix::Normal,
-        1.0,
-        Affine::IDENTITY,
-        &clip,
-        Some(Arc::new(Filter::single(FilterEffect::blur(blur / 2.0)))),
-        None,
-    );
+    )
 }
 
 /// The box, from the origin of the paragraph, that holds the ink of the
