@@ -373,6 +373,98 @@ fn a_constrained_wrapper_preserves_visible_unbreakable_inline_overflow() {
 }
 
 #[test]
+fn a_spanner_leaves_overflow_wider_than_a_column_visible() {
+    // The block is wider than the 80px column; its text reaches 100px with or
+    // without a spanner between the two groups.
+    compare(
+        "<div class=mc><div style='width:100px;white-space:nowrap'>ABCDE</div><div style='column-span:all'>x</div><div style='width:100px;white-space:nowrap'>ABCDE</div></div>",
+        ".mc{width:80px;column-count:auto;column-width:80px}",
+        "<div style='position:absolute;left:0;top:0;white-space:nowrap'>ABCDE</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px;white-space:nowrap'>ABCDE</div>",
+    );
+}
+
+#[test]
+fn a_spanner_leaves_a_line_that_cannot_wrap_visible_past_its_column() {
+    compare(
+        "<div class=mc><p style='white-space:nowrap'>ABCDEFGH</p><div style='column-span:all'>x</div><p>B</p></div>",
+        ".mc{width:80px;column-count:auto;column-width:80px}",
+        "<div style='position:absolute;left:0;top:0;white-space:nowrap'>ABCDEFGH</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px'>B</div>",
+    );
+}
+
+#[test]
+fn a_spanner_leaves_an_inline_box_visible_past_the_glyphs_it_wraps() {
+    // The padding of the span reaches past its glyph run, and past the column.
+    let span = "<span style='background:yellow;padding:0 20px'>ABCD</span>";
+    compare(
+        &format!(
+            "<div class=mc><p style='white-space:nowrap'>{span}</p><div style='column-span:all'>x</div><p>B</p></div>"
+        ),
+        ".mc{width:80px;column-count:auto;column-width:80px}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0;white-space:nowrap'>{span}</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px'>B</div>"
+        ),
+    );
+}
+
+#[test]
+fn a_spanner_leaves_a_ruby_base_wider_than_its_column_visible() {
+    let ruby = "<ruby>ABCDEF<rt>x</rt></ruby>";
+    compare(
+        &format!(
+            "<div class=mc><p>B</p><div style='column-span:all'>y</div><p style='white-space:nowrap'>{ruby}</p></div>"
+        ),
+        ".mc{width:80px;column-count:auto;column-width:80px}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0'>B</div><div style='position:absolute;left:0;top:20px'>y</div><div style='position:absolute;left:0;top:40px;white-space:nowrap'>{ruby}</div>"
+        ),
+    );
+}
+
+#[test]
+fn a_spanner_leaves_a_padded_line_visible_past_its_column() {
+    // The lines start inside the border and padding of the paragraph.
+    let p =
+        "<p style='white-space:nowrap;padding-left:30px;border-left:5px solid blue'>ABCDEFGH</p>";
+    compare(
+        &format!("<div class=mc>{p}<div style='column-span:all'>x</div><p>B</p></div>"),
+        ".mc{width:80px;column-count:auto;column-width:80px}",
+        &format!(
+            "<div style='position:absolute;left:0;top:0;width:80px'>{p}</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px'>B</div>"
+        ),
+    );
+}
+
+#[test]
+fn a_spanner_leaves_a_right_to_left_line_visible_past_the_left_edge_of_its_column() {
+    let p = "<p dir=rtl style='white-space:nowrap'>ABCDEFGH</p>";
+    compare(
+        &format!("<div class=mc>{p}<div style='column-span:all'>x</div><p>B</p></div>"),
+        ".mc{margin-left:100px;width:80px;column-count:auto;column-width:80px}",
+        &format!(
+            "<div style='position:absolute;left:100px;top:0;width:80px'>{p}</div><div style='position:absolute;left:100px;top:20px'>x</div><div style='position:absolute;left:100px;top:40px'>B</div>"
+        ),
+    );
+}
+
+#[test]
+fn a_spanner_leaves_the_shadows_of_a_line_visible_past_its_column() {
+    // The shadows fall 90px to the right, past the 80px column.
+    for p in [
+        "<p style='text-shadow:90px 0 red'>AB</p>",
+        "<p>A<span style='box-shadow:90px 0 blue'>B</span></p>",
+    ] {
+        compare(
+            &format!("<div class=mc>{p}<div style='column-span:all'>x</div><p>B</p></div>"),
+            ".mc{width:80px;column-count:auto;column-width:80px}",
+            &format!(
+                "<div style='position:absolute;left:0;top:0;width:80px'>{p}</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px'>B</div>"
+            ),
+        );
+    }
+}
+
+#[test]
 fn a_constrained_wrapper_background_includes_its_last_child_margin() {
     compare(
         "<div class=mc><div style='width:80px;overflow:hidden;background:lime'><p style='margin-bottom:20px'>A</p></div></div><p>B</p>",

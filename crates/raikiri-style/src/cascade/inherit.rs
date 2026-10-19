@@ -1460,13 +1460,20 @@ pub(crate) fn apply_winners(
             let to_slot = |value: PropertyValue| to_slot_of(winner.idx, value);
             let mut literal_inherit = false;
             let mut inherited_border_width = false;
+            // Winners apply in key order and `writing-mode` comes before the
+            // logical sizes, so its winner is already applied when one of them
+            // is (`inherit_follows_the_childs_own_writing_mode` guards this).
+            let vertical = specified.writing_mode.is_vertical();
             let mut default_value = |value: PropertyValue| {
                 if let PropertyValue::Deferred(marker) = &value {
                     literal_inherit = marker.css_wide_keyword() == Some(CssWideKeyword::Inherit)
                         || (marker.css_wide_keyword() == Some(CssWideKeyword::Unset)
                             && svg_property_is_inherited(winner_key));
                 }
-                resolve_defaulting_value(value, inherited)
+                resolve_defaulting_value(
+                    resolve_logical_size_keyword(value, inherited, vertical),
+                    inherited,
+                )
             };
             let mut resolve_border_wide =
                 |keyword, deferred_resolver: &mut DeferredResolver<'_>| {
@@ -2586,15 +2593,7 @@ fn box_defaulting_value(
             LengthOrAuto::Auto
         }
     };
-    // In a vertical writing mode with a declared logical size, `width` and
-    // `height` hold layout's horizontal-axis mapping; the physical sizes a child
-    // inherits are kept separately.
-    let (physical_width, physical_height) = inherited
-        .vertical_logical_size
-        .as_ref()
-        .map_or((inherited.width, inherited.height), |size| {
-            (size.width, size.height)
-        });
+    let (physical_width, physical_height) = inherited_physical_sizes(inherited);
     Some(match key {
         PropertyKey::MarginTop => PropertyValue::MarginTop(margin(inherited.margin.top)),
         PropertyKey::MarginRight => PropertyValue::MarginRight(margin(inherited.margin.right)),
@@ -2618,6 +2617,71 @@ fn box_defaulting_value(
         PropertyKey::MaxHeight => PropertyValue::MaxHeight(size_or_offset(inherited.max_height)),
         _ => return None,
     })
+}
+
+/// Resolve a CSS-wide keyword on `inline-size`, `block-size` or
+/// `min-block-size` into a value of the same property.
+///
+/// A logical size shares its computed value with the physical size it maps to
+/// (CSS Logical Properties 1 §4.1), so `inherit` takes the parent's value of
+/// that physical size, like the flow-relative margins and paddings do, and
+/// the other keywords give the initial `auto`. `vertical` is whether the box's
+/// block axis is horizontal, which decides the physical size; it is the
+/// `writing-mode` the box declares, so the `vertical-rl` that an
+/// inter-character ruby annotation is given later is not seen. The value keeps
+/// its logical key because the cascade orders it against the physical
+/// declarations of the same axis by cascade precedence. Any other value is
+/// returned unchanged.
+pub(crate) fn resolve_logical_size_keyword(
+    value: PropertyValue,
+    inherited: &ComputedValues,
+    vertical: bool,
+) -> PropertyValue {
+    use crate::property::PropertyKey;
+    let PropertyValue::Deferred(marker) = &value else {
+        return value;
+    };
+    let with_size: Option<fn(LengthOrAuto) -> PropertyValue> = match marker.key {
+        PropertyKey::InlineSize => Some(PropertyValue::InlineSize),
+        PropertyKey::BlockSize => Some(PropertyValue::BlockSize),
+        PropertyKey::MinBlockSize => Some(PropertyValue::MinBlockSize),
+        _ => None,
+    };
+    let (Some(keyword), Some(with_size)) = (marker.css_wide_keyword(), with_size) else {
+        return value;
+    };
+    let (physical_width, physical_height) = inherited_physical_sizes(inherited);
+    let parent = match (marker.key, vertical) {
+        (PropertyKey::InlineSize, false) | (PropertyKey::BlockSize, true) => physical_width,
+        (PropertyKey::MinBlockSize, false) => inherited.min_height,
+        (PropertyKey::MinBlockSize, true) => inherited.min_width,
+        // `inline-size` of a vertical box and `block-size` of a horizontal one.
+        _ => physical_height,
+    };
+    with_size(if keyword == CssWideKeyword::Inherit {
+        inherited_box_length(parent)
+    } else {
+        LengthOrAuto::Auto
+    })
+}
+
+/// The physical `(width, height)` a child inherits from `inherited`.
+///
+/// In a vertical writing mode with a declared logical size, `width` and
+/// `height` hold layout's horizontal-axis mapping; the physical sizes a child
+/// inherits are kept separately.
+fn inherited_physical_sizes(
+    inherited: &ComputedValues,
+) -> (
+    ComputedLengthPercentageOrAuto,
+    ComputedLengthPercentageOrAuto,
+) {
+    inherited
+        .vertical_logical_size
+        .as_ref()
+        .map_or((inherited.width, inherited.height), |size| {
+            (size.width, size.height)
+        })
 }
 
 /// The `key` border-image longhand of `inherited`, mapped back to the

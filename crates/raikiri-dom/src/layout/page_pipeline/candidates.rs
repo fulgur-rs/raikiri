@@ -6,12 +6,13 @@ use super::super::context::LayoutSession;
 use super::{
     BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue, FloatValue,
     FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl, PositionValue,
-    TextLineIndex, clears_float_side, has_bounded_clipping_ancestor, has_side_by_side_ancestor,
-    is_block_level_flow_box, is_floating_box_for_pagination,
+    TextLineIndex, candidate_ancestor_constraints, clears_float_side, first_owned_text_line_top,
+    in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, page_applies_to_box, page_break_is_forced,
     pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
     propagated_start_page_name_with_transposed_axes, selected_page_name,
 };
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct CandidateFlowContext {
@@ -149,24 +150,76 @@ pub(super) struct PageCandidate {
 /// positioned box with a non-auto block-start or block-end inset, which
 /// moves it away from its static position in the page flow. A fixed box
 /// repeats on every page, so it never joins the page flow.
-fn in_inset_out_of_flow_subtree(document: &Document, node_id: usize) -> bool {
-    let mut current = Some(node_id);
-    while let Some(id) = current {
-        if document.nodes[id].kind() == NodeKind::Element {
-            match document.nodes[id].position() {
-                PositionValue::Fixed => return true,
-                PositionValue::Absolute => {
-                    let inset = &document.layout_node_with_style(id).unwrap().style.inset;
-                    if !inset.top.is_auto() || !inset.bottom.is_auto() {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
+fn can_descend_for_named_page(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    document.get_node(node_id).is_some_and(|node| {
+        node.is_in_document()
+            && !node.is_non_rendered_html_element()
+            && document.nodes[node_id].display() != DisplayValue::None
+            && !matches!(
+                document.nodes[node_id].position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && !is_floating_box_for_pagination(document, cascade, node_id)
+    })
+}
+
+fn named_page_subtree_has_name(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    pagination_on_transposed_axes: bool,
+    cache: &mut HashMap<usize, bool>,
+) -> bool {
+    let mut pending = vec![(node_id, false)];
+    while let Some((current_id, visited)) = pending.pop() {
+        if cache.contains_key(&current_id) {
+            continue;
         }
-        current = document.parent_of(id);
+        if !can_descend_for_named_page(document, cascade, current_id) {
+            cache.insert(current_id, false);
+            continue;
+        }
+        if page_applies_to_box(document, current_id)
+            && selected_page_name(cascade, current_id).is_some()
+        {
+            cache.insert(current_id, true);
+            continue;
+        }
+        if is_monolithic_for_pagination_with_transposed_axes(
+            document,
+            cascade,
+            current_id,
+            pagination_on_transposed_axes,
+        ) {
+            cache.insert(current_id, false);
+            continue;
+        }
+        let Some(node) = document.get_node(current_id) else {
+            cache.insert(current_id, false);
+            continue;
+        };
+        if visited {
+            let found = node
+                .children
+                .iter()
+                .any(|child_id| cache.get(child_id).copied().unwrap_or(false));
+            cache.insert(current_id, found);
+        } else {
+            pending.push((current_id, true));
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .copied()
+                    .map(|child_id| (child_id, false)),
+            );
+        }
     }
-    false
+    cache.get(&node_id).copied().unwrap_or(false)
 }
 
 fn has_nested_named_page_descendant(
@@ -175,50 +228,52 @@ fn has_nested_named_page_descendant(
     node_id: usize,
     depth: u32,
     pagination_on_transposed_axes: bool,
+    cache: &mut HashMap<usize, bool>,
 ) -> bool {
-    let mut pending: Vec<_> = document
-        .get_node(node_id)
-        .into_iter()
-        .flat_map(|node| node.children.iter().rev().copied())
-        .map(|child_id| (child_id, depth.saturating_add(1)))
-        .collect();
-    while let Some((current_id, current_depth)) = pending.pop() {
-        let node = &document.layout_node_with_style(current_id).unwrap();
-        if !node.is_in_document()
-            || node.is_non_rendered_html_element()
-            || document.nodes[current_id].display() == DisplayValue::None
-            || matches!(
-                document.nodes[current_id].position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-            || is_floating_box_for_pagination(document, cascade, current_id)
-        {
+    let Some(node) = document.get_node(node_id) else {
+        return false;
+    };
+    let child_depth = depth.saturating_add(1);
+    for &child_id in &node.children {
+        if !can_descend_for_named_page(document, cascade, child_id) {
             continue;
         }
-        if current_depth >= 2
-            && page_applies_to_box(document, current_id)
-            && selected_page_name(cascade, current_id).is_some()
-        {
-            return true;
+        if child_depth >= 2 {
+            if named_page_subtree_has_name(
+                document,
+                cascade,
+                child_id,
+                pagination_on_transposed_axes,
+                cache,
+            ) {
+                return true;
+            }
+            continue;
         }
-        // Names inside a monolithic box have no effect on pagination.
+        // The immediate child is below the nesting threshold, but its
+        // descendants may still contain a page-name transition.
         if is_monolithic_for_pagination_with_transposed_axes(
             document,
             cascade,
-            current_id,
+            child_id,
             pagination_on_transposed_axes,
         ) {
             continue;
         }
-        if let Some(node) = document.get_node(current_id) {
-            pending.extend(
-                node.children
-                    .iter()
-                    .rev()
-                    .copied()
-                    .map(|child_id| (child_id, current_depth.saturating_add(1))),
-            );
-        } // cov:ignore: document-owned child links are valid by construction.
+        let Some(child) = document.get_node(child_id) else {
+            continue;
+        };
+        if child.children.iter().any(|&grandchild_id| {
+            named_page_subtree_has_name(
+                document,
+                cascade,
+                grandchild_id,
+                pagination_on_transposed_axes,
+                cache,
+            )
+        }) {
+            return true;
+        }
     }
     false
 }
@@ -340,6 +395,7 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     out: &'a mut Vec<PageCandidate>,
     text_lines: &'a mut TextLineIndex,
     control: &'a PageLayoutControl<'c>,
+    named_page_subtree_cache: HashMap<usize, bool>,
 }
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
@@ -360,6 +416,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             out,
             text_lines,
             control,
+            named_page_subtree_cache: HashMap::new(),
         }
     }
 
@@ -440,7 +497,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 .expect(
                                     "ifc_text_lines returns Some only when root line records exist",
                                 );
-                            let first_top = positioned.first().map_or(0.0, |line| line.0);
+                            let first_top = first_owned_text_line_top(owned, Some(&positioned));
                             let last_bottom = positioned
                                 .iter()
                                 .map(|line| line.1)
@@ -571,6 +628,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             node_id,
                             0,
                             document.context.pagination_on_transposed_axes,
+                            &mut self.named_page_subtree_cache,
                         );
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
@@ -660,43 +718,40 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 // pass can move it to the next page intact; its descendants
                 // follow it. Tables and flex containers keep their own
                 // item-level candidates.
-                let nested_avoid_candidate = participates_in_flow
+                let is_block_flow_box = is_block_level_flow_box(document.nodes[node_id].display());
+                let avoids_break = matches!(
+                    computed.break_inside,
+                    raikiri_style::property::BreakInside::Avoid
+                        | raikiri_style::property::BreakInside::AvoidPage
+                );
+                let clears_float = !inline_level
+                    && is_block_flow_box
+                    && [FloatValue::Left, FloatValue::Right]
+                        .into_iter()
+                        .any(|side| clears_float_side(computed.clear, side));
+                let nested_candidate_base = participates_in_flow
                     && !direct_body_child
+                    && !inside_table
+                    && !inside_flex
+                    && !out_of_flow_subtree;
+                let needs_ancestor_constraints = nested_candidate_base
+                    && ((!inline_level && is_block_flow_box && avoids_break)
+                        || is_float
+                        || clears_float);
+                let (side_by_side_ancestor, bounded_clipping_ancestor) =
+                    if needs_ancestor_constraints {
+                        candidate_ancestor_constraints(document, cascade, node_id, body_id)
+                    } else {
+                        (false, false)
+                    };
+                let can_move_nested = !side_by_side_ancestor && !bounded_clipping_ancestor;
+                let nested_avoid_candidate = nested_candidate_base
                     && !inline_level
-                    && !inside_table
-                    && !inside_flex
-                    && !out_of_flow_subtree
-                    && is_block_level_flow_box(document.nodes[node_id].display())
-                    && matches!(
-                        computed.break_inside,
-                        raikiri_style::property::BreakInside::Avoid
-                            | raikiri_style::property::BreakInside::AvoidPage
-                    )
-                    // Grid items in other tracks do not follow a moved item
-                    // in block flow, so grid content keeps its own handling.
-                    && !has_side_by_side_ancestor(document, node_id, body_id)
-                    // A clipping ancestor of bounded height keeps its clip
-                    // where it is, so moving the box would only hide it.
-                    && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
-                // A nested float follows an earlier float that moved in its
-                // formatting context (CSS 2.1 §9.5.1), and a nested block
-                // that clears one stays below it (§9.5.2), so both are
-                // candidates like the body's children.
-                let nested_float_candidate = (is_float
-                    || (!inline_level
-                        && is_block_level_flow_box(document.nodes[node_id].display())
-                        && [FloatValue::Left, FloatValue::Right]
-                            .into_iter()
-                            .any(|side| clears_float_side(computed.clear, side))))
-                    && participates_in_flow
-                    && !direct_body_child
-                    && !inside_table
-                    && !inside_flex
-                    && !out_of_flow_subtree
-                    && !has_side_by_side_ancestor(document, node_id, body_id)
-                    // A clipping ancestor of bounded height keeps its clip
-                    // where it is, so moving the box would only hide it.
-                    && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
+                    && is_block_flow_box
+                    && avoids_break
+                    && can_move_nested;
+                let nested_float_candidate =
+                    nested_candidate_base && (is_float || clears_float) && can_move_nested;
                 let is_break_candidate = !is_body
                     && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float

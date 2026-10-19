@@ -341,12 +341,25 @@ fn custom_highlight_paints_only_on_the_line_holding_its_text() {
     )
     .expect("paint succeeds");
 
-    let glyph_runs = scene
+    // The lines are told apart by the baselines of their glyphs: how a line's
+    // text is cut into glyph runs depends on the font.
+    let mut baselines: Vec<i64> = scene
         .commands
         .iter()
-        .filter(|command| matches!(command, RenderCommand::GlyphRun(_)))
-        .count();
-    assert_eq!(glyph_runs, 2, "each word is on its own line");
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run),
+            _ => None,
+        })
+        .flat_map(|run| {
+            let origin = run.transform.translation();
+            run.glyphs
+                .iter()
+                .map(move |glyph| ((origin.y + f64::from(glyph.y)) * 64.0).round() as i64)
+        })
+        .collect();
+    baselines.sort_unstable();
+    baselines.dedup();
+    assert_eq!(baselines.len(), 2, "each word is on its own line");
     let highlight_fills = scene
         .commands
         .iter()

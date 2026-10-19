@@ -1985,7 +1985,7 @@ fn positioned_text_start_y(
     let owned = text_lines
         .get(node_id)
         .expect("text candidate has indexed ownership");
-    current_abs_y(document, root) + text_first_line_offset(document, root, owned, 0.0)
+    current_abs_y(document, root) + text_first_line_offset(document, root, owned)
 }
 
 /// Places the text `node_id` at `y` in the paginated flow. When the text
@@ -2006,10 +2006,8 @@ fn place_text_candidate(
         materialize_y(document, root, y - offset);
     } else if let Some(root) = text_ifc_root
         && let Some(owned) = text_lines.get(node_id)
-        && let Some(first) = owned.lines.first()
     {
-        let current = current_abs_y(document, root)
-            + text_first_line_offset(document, root, owned, first.top);
+        let current = current_abs_y(document, root) + text_first_line_offset(document, root, owned);
         follow_moved_ifc_text(document, root, node_id, y - current, text_lines);
     }
     materialize_y(document, node_id, y);
@@ -2044,24 +2042,22 @@ fn shift_text_candidate(
     }
 }
 
-/// Block offset of the first line of `owned` from the border-box top of its
-/// paragraph `root`, after the paragraph's column ranges have moved it.
-/// `fallback` is the line top used when no positioned first line is found:
-/// the paragraph has no line records, or `owned` has no lines.
-fn text_first_line_offset(
-    document: &Document,
-    root: usize,
-    owned: &IfcTextLines,
-    fallback: f32,
-) -> f32 {
+/// Returns the first owned IFC line top, preferring its positioned bounds,
+/// then its indexed line record, and finally zero when neither is available.
+fn first_owned_text_line_top(owned: &IfcTextLines, positioned: Option<&[(f32, f32)]>) -> f32 {
+    positioned
+        .and_then(|lines| lines.first().map(|line| line.0))
+        .or_else(|| owned.lines.first().map(|line| line.top))
+        .unwrap_or(0.0)
+}
+
+fn text_first_line_offset(document: &Document, root: usize, owned: &IfcTextLines) -> f32 {
     let layout = document
         .ifc_layout_node(root)
         .expect("valid paragraph root")
         .unrounded_layout;
-    let first_top = positioned_owned_text_line_bounds(document, owned)
-        .and_then(|lines| lines.first().map(|line| line.0))
-        .unwrap_or(fallback);
-    layout.border.top + layout.padding.top + first_top
+    let positioned = positioned_owned_text_line_bounds(document, owned);
+    layout.border.top + layout.padding.top + first_owned_text_line_top(owned, positioned.as_deref())
 }
 
 fn positioned_owned_text_line_bounds(
@@ -4082,8 +4078,13 @@ fn current_abs_y(document: &Document, node_id: usize) -> f32 {
 /// where its child does and renders nothing before it. Moving that box moves `block` without leaving the
 /// ancestors' empty starts behind on the earlier page.
 fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) -> usize {
-    let top = |id: usize| current_abs_y(document, id);
-    let block_top = top(block);
+    let block_top = current_abs_y(document, block);
+    let mut child_top = block_top;
+    let mut unusual_coordinates = document.oof_coordinates.contains_key(&block)
+        || document.ifc_source_owner(block) != block
+        || document.nodes[block]
+            .flags
+            .contains(NodeFlags::IN_IFC_SUBTREE);
     let mut moved = block;
     let mut child = block;
     while let Some(parent) = document.layout_parent_of(child)
@@ -4118,14 +4119,29 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
         if renders_before {
             break;
         }
+        // Flow candidates follow their layout parents; carry the current top
+        // upward and fall back for out-of-flow or inline formatting coordinates.
+        let parent_top = if unusual_coordinates {
+            current_abs_y(document, parent)
+        } else if document.oof_coordinates.contains_key(&parent)
+            || document.nodes[parent]
+                .flags
+                .contains(NodeFlags::IN_IFC_SUBTREE)
+        {
+            unusual_coordinates = true;
+            current_abs_y(document, parent)
+        } else {
+            child_top - document.nodes[child].unrounded_layout.location.y
+        };
         child = parent;
+        child_top = parent_top;
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }
         let layout = &document.nodes[parent].unrounded_layout;
         if layout.border.top != 0.0
             || layout.padding.top != 0.0
-            || (top(parent) - block_top).abs() > 0.01
+            || (parent_top - block_top).abs() > 0.01
         {
             break;
         }
@@ -4134,20 +4150,33 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
     moved
 }
 
-fn has_explicit_positioned_block_ancestor(document: &Document, node_id: usize) -> bool {
-    let mut current = Some(document.ifc_source_owner(node_id));
-    while let Some(id) = current {
-        let inset = &document.layout_node_with_style(id).unwrap().style.inset;
-        if matches!(
-            document.nodes[id].position(),
-            PositionValue::Absolute | PositionValue::Fixed
-        ) && (!inset.top.is_auto() || !inset.bottom.is_auto())
-        {
-            return true;
-        }
-        current = document.parent_of(id);
+fn has_explicit_block_axis_inset(document: &Document, node_id: usize) -> bool {
+    if document.nodes[node_id].kind() != NodeKind::Element {
+        return false;
     }
-    false
+    let inset = &document
+        .layout_node_with_style(node_id)
+        .unwrap()
+        .style
+        .inset;
+    matches!(
+        document.nodes[node_id].position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    ) && (!inset.top.is_auto() || !inset.bottom.is_auto())
+}
+
+fn in_inset_out_of_flow_subtree(document: &Document, node_id: usize) -> bool {
+    document.inclusive_ancestors(node_id).any(|id| {
+        document.nodes[id].kind() == NodeKind::Element
+            && (matches!(document.nodes[id].position(), PositionValue::Fixed)
+                || has_explicit_block_axis_inset(document, id))
+    })
+}
+
+fn has_explicit_positioned_block_ancestor(document: &Document, node_id: usize) -> bool {
+    document
+        .inclusive_ancestors(document.ifc_source_owner(node_id))
+        .any(|id| has_explicit_block_axis_inset(document, id))
 }
 
 fn materialize_y(document: &mut Document, node_id: usize, desired_y: f32) -> IfcBoxShifts {
@@ -4188,7 +4217,7 @@ fn follow_moved_ifc_text(
     else {
         return; // cov:ignore: callers pass texts indexed with at least one line.
     };
-    let old_top = text_first_line_offset(document, root, owned, first.top);
+    let old_top = text_first_line_offset(document, root, owned);
     let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
         return; // cov:ignore: the paragraph root of an indexed text carries its inline layout.
     };
@@ -4293,39 +4322,16 @@ fn follow_ifc_block(
 }
 
 fn is_descendant_or_self(document: &Document, node_id: usize, ancestor_id: usize) -> bool {
-    let mut current = Some(node_id);
-    let mut guard = 0_usize;
-    while let Some(id) = current {
-        if id == ancestor_id {
-            return true;
-        }
-        if !document.is_source_node(id) || guard > document.nodes.len() {
-            break; // cov:ignore: defensive stop at a generated node or a parent cycle.
-        }
-        current = document.parent_of(id);
-        guard += 1;
-    }
-    false
+    document.is_ancestor_or_self(ancestor_id, node_id)
 }
 
 fn has_footnote_ancestor(cascade: &CascadeResult, node_id: usize, document: &Document) -> bool {
-    let mut current = document.parent_of(node_id);
-    let mut guard = 0_usize;
-    while let Some(id) = current {
-        if cascade
+    document.ancestors(node_id).any(|id| {
+        cascade
             .computed
             .get(id)
             .is_some_and(|computed| matches!(computed.float, FloatValue::Footnote))
-        {
-            return true;
-        }
-        current = document.parent_of(id);
-        guard += 1;
-        if guard > document.nodes.len() {
-            break; // cov:ignore: parent links form a tree, so the guard never trips.
-        }
-    }
-    false
+    })
 }
 
 /// Like [`layout_single_page`], but first resolve intrinsic sizes of
@@ -7551,33 +7557,6 @@ fn max_height_is_reached(document: &Document, cascade: &CascadeResult, node_id: 
         .is_some_and(|max| document.nodes[node_id].unrounded_layout.size.height >= max - 0.01)
 }
 
-/// Whether an ancestor of `node_id` inside the body clips its overflow in
-/// the block axis and has a definite height, or one its `max-height`
-/// already limits, so it does not grow with a moved descendant.
-fn has_bounded_clipping_ancestor(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    body_id: usize,
-) -> bool {
-    let mut current = document.parent_of(node_id);
-    while let Some(id) = current {
-        if id == body_id {
-            break;
-        }
-        let computed = &cascade.computed[id];
-        if !matches!(computed.overflow.y, OverflowValue::Visible)
-            && crate::paint_rules::clips_element_overflow(document, cascade, id)
-            && (definite_content_height(document, id).is_some()
-                || max_height_is_reached(document, cascade, id))
-        {
-            return true;
-        }
-        current = document.parent_of(id);
-    }
-    false
-}
-
 /// Whether the items of `grid` stack in block order like blocks, none
 /// beside or over another: the grid has one column track, no definite
 /// height and no `min-height` that could stretch its rows, its rows all
@@ -7632,25 +7611,36 @@ fn grid_rows_size_to_content(document: &Document, grid: usize) -> bool {
         && style.grid_auto_rows.iter().all(auto)
 }
 
-/// Whether a flex or multi-column container, or a grid whose items do not
-/// stack in block order, contains `node_id`, up to and including `body_id`: moving such a
-/// box would also displace the boxes beside it.
-fn has_side_by_side_ancestor(document: &Document, node_id: usize, body_id: usize) -> bool {
-    let mut current = document.parent_of(node_id);
-    while let Some(id) = current {
-        let formatting_context = document.nodes[id].formatting_context;
-        if document.nodes[id].multicol.is_some()
-            || formatting_context == FormattingContext::Flex
-            || formatting_context == FormattingContext::Grid && !grid_stacks_items(document, id)
-        {
-            return true;
+/// Find both ancestor conditions that prevent moving a nested candidate with one walk.
+/// The body can make siblings side by side, but its own clipping is not bounded here.
+fn candidate_ancestor_constraints(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    body_id: usize,
+) -> (bool, bool) {
+    let mut side_by_side = false;
+    let mut bounded_clipping = false;
+    for id in document.ancestors(node_id) {
+        if id != body_id && !bounded_clipping {
+            let computed = &cascade.computed[id];
+            bounded_clipping = !matches!(computed.overflow.y, OverflowValue::Visible)
+                && crate::paint_rules::clips_element_overflow(document, cascade, id)
+                && (definite_content_height(document, id).is_some()
+                    || max_height_is_reached(document, cascade, id));
         }
-        if id == body_id {
+        if !side_by_side {
+            let formatting_context = document.nodes[id].formatting_context;
+            side_by_side = document.nodes[id].multicol.is_some()
+                || formatting_context == FormattingContext::Flex
+                || formatting_context == FormattingContext::Grid
+                    && !grid_stacks_items(document, id);
+        }
+        if (side_by_side && bounded_clipping) || id == body_id {
             break;
         }
-        current = document.parent_of(id);
     }
-    false
+    (side_by_side, bounded_clipping)
 }
 
 /// The paragraph that lays `block` out as a block among its lines, whose

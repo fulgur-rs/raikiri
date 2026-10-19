@@ -7854,11 +7854,11 @@ impl PropertyKey {
         }
     }
 
-    /// Whether `self` is a margin, padding, offset, physical size,
-    /// `text-align` or flow (`writing-mode`, `text-orientation`, `direction`)
-    /// property, or a shorthand of the first three, whose CSS-wide keywords
-    /// the cascade resolves from the parent's computed value or the initial
-    /// value.
+    /// Whether `self` is a margin, padding, offset, size (physical or
+    /// flow-relative), `text-align` or flow (`writing-mode`,
+    /// `text-orientation`, `direction`) property, or a shorthand of the first
+    /// three, whose CSS-wide keywords the cascade resolves from the parent's
+    /// computed value or the initial value.
     pub(crate) const fn takes_cascade_css_wide_keyword(self) -> bool {
         matches!(
             self,
@@ -7889,6 +7889,9 @@ impl PropertyKey {
                 | PropertyKey::MinHeight
                 | PropertyKey::MaxWidth
                 | PropertyKey::MaxHeight
+                | PropertyKey::InlineSize
+                | PropertyKey::BlockSize
+                | PropertyKey::MinBlockSize
                 | PropertyKey::TextAlign
                 | PropertyKey::TextAlignLast
                 | PropertyKey::WritingMode
@@ -9874,11 +9877,11 @@ pub enum FilterFunction {
 /// [`CssWideKeyword`] (see that type's docs for resolution). The margin,
 /// padding and offset (`top` / `right` / `bottom` / `left` / `inset*`)
 /// properties, their shorthands, the physical size properties (`width`,
-/// `height`, `min-*`, `max-*`), `text-align`, `text-align-last`,
+/// `height`, `min-*`, `max-*`), the logical sizes (`inline-size`,
+/// `block-size`, `min-block-size`), `text-align`, `text-align-last`,
 /// `writing-mode`, `text-orientation` and `direction` accept them
-/// too; the shorthands expand to per-side markers during the cascade. The
-/// logical size properties (`inline-size`, `block-size`, `min-inline-size`,
-/// ...) and `text-align-all`, which has no computed field of its own, do not
+/// too; the shorthands expand to per-side markers during the cascade.
+/// `text-align-all`, which has no computed field of its own, does not
 /// yet. The `all` shorthand additionally accepts literal `revert-layer`
 /// through [`PropertyValue::AllRevertLayer`]; its other CSS-wide values and
 /// `var()` form are not supported. Custom
