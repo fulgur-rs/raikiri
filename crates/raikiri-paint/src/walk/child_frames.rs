@@ -36,6 +36,56 @@ pub(super) struct ChildOrigin<'a> {
     pub(super) decorations: &'a text::DecorationContext,
 }
 
+impl<'a> ChildOrigin<'a> {
+    /// Where the children of `element`, visited as `visit`, are placed from.
+    /// `decorations` is what they inherit of the text decorations.
+    pub(super) fn new(
+        element: &ElementBox<'_>,
+        visit: &VisitFrame,
+        decorations: &'a text::DecorationContext,
+    ) -> Self {
+        // Relative insets are already present in `layout.location`
+        // except where the placement of the box applies them by hand, as
+        // `pos_dx` and `pos_dy`.
+        let parent_x = element.abs_x + element.pos_dx + element.fixed_dx;
+        let parent_y = element.abs_y + element.pos_dy + element.fixed_dy;
+        let paint_offset_y = visit.paint_offset_y + element.pos_dy + element.fixed_dy;
+        // The descendants of a box that is placed in a column are
+        // placed from the origin of its fragment, which stands where
+        // layout left it. The offset that paint adds to the box moves
+        // them as well, as it does the descendants that follow the
+        // parent chain.
+        let (fragment_origin_x, fragment_origin_y) = if element.placed_in_column {
+            (
+                visit.fragment_origin_x + element.pos_dx,
+                visit.fragment_origin_y + element.pos_dy,
+            )
+        } else {
+            (visit.fragment_origin_x, visit.fragment_origin_y)
+        };
+        Self {
+            parent_x,
+            parent_y,
+            font_size: element.cv.font_size.px(),
+            shift_y: element.child_shift_y,
+            transform_x: element.child_transform_x,
+            transform_y: element.child_transform_y,
+            paint_offset_y,
+            // A paragraph inside a fixed box, or a fixed box that is a
+            // paragraph itself, repeats on every page and is not clipped
+            // like flowed text.
+            inside_fixed: visit.inside_fixed || element.fixed_in_viewport,
+            inside_fixed_containing_block: visit.inside_fixed_containing_block
+                || element.establishes_fixed_containing_block,
+            fragment_id: visit.fragment_id,
+            fragment_origin_x,
+            fragment_origin_y,
+            fragmentainer: visit.fragmentainer,
+            decorations,
+        }
+    }
+}
+
 /// How the children of an element take part in the paint of its layer.
 pub(super) struct ChildPlan {
     /// The `fragment_clip_height` of the visit of the element.
@@ -309,6 +359,72 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             })
         } else {
             None
+        }
+    }
+
+    /// How the children of `element`, visited as `visit`, take part in the
+    /// paint of its layer. `overflow_clip_pushed` is the clip that
+    /// [`PaintWalk::open_clips`] opened for the element and the transform it
+    /// was pushed in, `hold_lines` whether the lines of the element are held
+    /// for the boxes beside them, `before_advance` how far the generated text
+    /// before it pushes its direct text, and `after_pushed` whether the frame
+    /// of its `::after` content was pushed.
+    pub(super) fn child_plan(
+        &self,
+        element: &ElementBox<'w>,
+        visit: &VisitFrame,
+        overflow_clip_pushed: Option<(raikiri_traits::PaintClip, Affine)>,
+        hold_lines: bool,
+        before_advance: f32,
+        after_pushed: bool,
+    ) -> ChildPlan {
+        let (document, cascade) = (self.document, self.cascade);
+        let (node, node_id) = (element.node, element.node_id);
+        let own_multicol_clip_height = multicol_clip_height(element, visit.column_clip_height);
+        // A plain block in a block container leaves its inline
+        // content to the end of the layer (CSS 2.1 Appendix E): its
+        // lines and the boxes laid out beside them paint after the
+        // backgrounds of the blocks that follow it.
+        let defers_here = !element.multicol_clip_pushed
+            && !element.fragmentainer_clip_pushed
+            && visit.fragmentainer.is_none()
+            && !visit.is_fragment_visit
+            && !element.fixed_in_viewport;
+        let defers = defers_here
+            && overflow_clip_pushed.is_none()
+            && raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id);
+        // A plain block that clips collects its inline content in a
+        // layer of its own, which it hands to the enclosing layer
+        // inside its clip.
+        let merge = overflow_clip_pushed
+            .filter(|_| {
+                defers_here
+                    && self
+                        .deferral_scopes
+                        .last()
+                        .is_some_and(|layer| layer.allowed)
+                    && raikiri_dom::paint_rules::merges_clipped_inline_content(
+                        document, cascade, node_id,
+                    )
+            })
+            .map(|(clip, transform)| LayerClose::Merge {
+                node_id,
+                clip,
+                transform,
+            });
+        // With content positioned below the blocks, the lines place
+        // the blocks between that content and the rest.
+        let negative_content = node.is_ifc_root()
+            && raikiri_dom::paint_rules::holds_negative_stack_level(document, cascade, node_id);
+        ChildPlan {
+            fragment_clip_height: visit.fragment_clip_height,
+            multicol_clip_height: own_multicol_clip_height,
+            before_advance,
+            defers,
+            hold_lines,
+            negative_content,
+            merge,
+            after_pushed,
         }
     }
 
