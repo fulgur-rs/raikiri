@@ -490,6 +490,7 @@ fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_agai
                         parent,
                         100.0,
                         percent_height,
+                        None,
                     )
                 };
                 let root = doc.nodes[parent].ifc.as_ref().unwrap();
@@ -542,6 +543,7 @@ fn the_width_of_a_percentage_height_container_follows_the_height_it_is_measured_
                     parent,
                     100.0,
                     percent_height,
+                    None,
                 )
             };
             let root = doc.nodes[parent].ifc.as_ref().unwrap();
@@ -827,4 +829,29 @@ fn a_percentage_height_of_a_block_is_auto_in_an_absolute_box_that_sizes_to_its_c
     assert_eq!(height("position:absolute"), (10.0, 10.0));
     assert_eq!(height("position:absolute;height:30px"), (30.0, 30.0));
     assert_eq!(height("display:inline-block"), (10.0, 10.0));
+}
+
+#[test]
+fn a_replaced_box_in_a_vertical_shrink_to_fit_box_resolves_its_percentage_width() {
+    // The box is 50% of the 200px container, 100px wide. Its image takes the
+    // whole width, and the 1:1 ratio makes it 100px tall, which the box
+    // takes as the size of its single line.
+    let (mut parent, mut image) = (0, 0);
+    let doc = laid_out_with_natural_size((1.0, 1.0), |doc, body| {
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:relative;width:200px;height:100px"),
+        );
+        parent = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("position:absolute;writing-mode:vertical-rl;width:50%"),
+        );
+        image = doc.append_element(Some(parent), "img", Style::default(), Some("width:100%"));
+    });
+    assert_eq!(size(&doc, image), (100.0, 100.0));
+    assert_eq!(size(&doc, parent), (100.0, 100.0));
 }
