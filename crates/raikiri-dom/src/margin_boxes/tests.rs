@@ -189,6 +189,8 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         padding: [0.0; 4],
         width: Some(100.0),
         height: None,
+        width_keyword: None,
+        height_keyword: None,
         text_color: CssColor::BLACK,
         text_shadows: Vec::new(),
         overflow: OverflowXY::both(OverflowValue::Visible),
