@@ -2418,6 +2418,68 @@ fn background_rounded_corners_clip_url_images() {
 }
 
 #[test]
+fn background_clipped_to_an_area_the_borders_leave_empty_paints_nothing() {
+    let mut authored = Border::new();
+    authored.width = Length::Px(15.0);
+    authored.style = BorderStyle::Solid;
+    authored.color = BorderColor::Resolved(CssColor::BLACK);
+    let side = resolve_border(
+        authored,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let border = raikiri_style::property::Sides {
+        top: side,
+        right: side,
+        bottom: side,
+        left: side,
+    };
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    // Borders of 15px leave no padding box in a 20px box.
+    for clip in [
+        raikiri_style::property::VisualBox::PaddingBox,
+        raikiri_style::property::VisualBox::ContentBox,
+    ] {
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            CssColor {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
+            &[{
+                let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+                layer.clip = clip;
+                layer
+            }],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            BackgroundEnv::default(),
+            None,
+            &mut warnings,
+        );
+        assert_eq!(background_fill_count(&scene), 0);
+        assert!(warnings.is_empty());
+    }
+}
+
+#[test]
 fn background_clip_text_warns_and_border_area_masks_images() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
