@@ -12,6 +12,7 @@ use super::{
 use crate::text;
 use anyrender::PaintScene;
 use kurbo::Affine;
+use raikiri_dom::Node;
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, ZIndexValue};
 use raikiri_traits::NodeKind;
 
@@ -439,7 +440,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
     ) -> ChildFrames<'w> {
         let (document, cascade) = (self.document, self.cascade);
         let (node, node_id) = (element.node, element.node_id);
-        let geometry = self.geometry;
         // Frames of the children, last child first.
         let mut child_frames = Vec::new();
         let mut below_lines_frames = Vec::new();
@@ -449,78 +449,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let blocks_first = node.is_ifc_root() && !children.is_empty();
         for child in children.into_iter().rev() {
             if let Some(cell) = document.anonymous_table_cell(child) {
-                child_frames.push(PaintFrame::AnonymousParagraph(AnonymousParagraphFrame {
-                    key: child,
-                    cell,
-                    x: origin.parent_x + cell.unrounded_layout.location.x,
-                    y: origin.parent_y + cell.unrounded_layout.location.y,
-                    shift_y: origin.shift_y,
-                    transform_x: origin.transform_x,
-                    transform_y: origin.transform_y,
-                    paint_offset_y: origin.paint_offset_y,
-                    fragmentainer: origin.fragmentainer,
-                    inside_fixed: origin.inside_fixed,
-                    decorations: origin.decorations.clone(),
-                    fixed_viewport: fixed_background_viewport(
-                        geometry.page_area,
-                        self.root_transform,
-                        origin.inside_fixed_containing_block,
-                    ),
-                    defer: plan.defers,
-                }));
+                child_frames.push(self.anonymous_cell_frame(child, cell, origin, plan));
                 continue;
             }
-            let child_fragment_clip_height = match plan.multicol_clip_height {
-                Some(clip_height)
-                    if document.get_node(child).is_some_and(|child_node| {
-                        (cascade.computed[child].display.is_grid_container()
-                            || matches!(
-                                cascade.computed[child].display,
-                                DisplayValue::Table | DisplayValue::InlineTable
-                            )) && child_node.kind() == NodeKind::Element
-                    }) =>
-                {
-                    Some(clip_height)
-                }
-                // A zero-height block at a multicolumn break can own
-                // an overflowing parallel flow. It has no fragment
-                // area in the column, so its descendants must not
-                // paint into the following sibling's fragment. A
-                // block that layout broke into column pieces places
-                // its descendants in those pieces itself. A
-                // `display: contents` element has no box at all, so
-                // its children are the ones the columns hold.
-                Some(_) // cov:ignore: exercised by ignored exact paged-text WPT.
-                    if !self.fragmented_nodes.contains(&child) && document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
-                        child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
-                            && cascade.computed[child].display != DisplayValue::Contents
-                            && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
-                            && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
-                    }) => // cov:ignore: exercised by ignored exact paged-text WPT.
-                {
-                    Some(0.0) // cov:ignore: exercised by ignored exact paged-text WPT.
-                }
-                Some(_) => None,
-                None => plan.fragment_clip_height,
-            };
-            let is_direct_text = document
-                .get_node(child)
-                .is_some_and(|node| node.kind() == NodeKind::Text);
-            let generated_text_shift = if is_direct_text {
-                plan.before_advance
-            } else {
-                0.0
-            };
-            let inline_generated_offset = offsets
-                .inline
-                .iter()
-                .find_map(|(offset_child, offset)| (*offset_child == child).then_some(*offset))
-                .unwrap_or(0.0);
-            let vertical_generated_offset = offsets
-                .vertical
-                .iter()
-                .find_map(|(offset_child, offset)| (*offset_child == child).then_some(*offset))
-                .unwrap_or(0.0);
             // A box beside held lines joins the groups of the
             // paragraph, which composite it with the rest of their
             // paint once the lines and boxes are all recorded.
@@ -570,30 +501,9 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 });
             }
             frames.extend(inline_opacities.iter().map(|_| PaintFrame::PopOpacity));
-            frames.push(PaintFrame::Visit(VisitFrame {
-                node_id: child,
-                parent_abs_x: origin.parent_x + generated_text_shift + inline_generated_offset,
-                parent_abs_y: origin.parent_y + vertical_generated_offset,
-                parent_font_size: origin.font_size,
-                shift_y: origin.shift_y,
-                transform_x: origin.transform_x,
-                transform_y: origin.transform_y,
-                paint_offset_y: origin.paint_offset_y,
-                fragment_clip_height: child_fragment_clip_height,
-                column_clip_height: (cascade.computed[child].display == DisplayValue::Contents)
-                    .then_some(plan.multicol_clip_height)
-                    .flatten(),
-                fragment_id: origin.fragment_id,
-                fragment_origin_x: origin.fragment_origin_x,
-                fragment_origin_y: origin.fragment_origin_y,
-                fragmentainer: origin.fragmentainer,
-                fragment_rect: None,
-                fragment_clip: None,
-                is_fragment_visit: false,
-                inside_fixed: origin.inside_fixed,
-                inside_fixed_containing_block: origin.inside_fixed_containing_block,
-                decorations: origin.decorations.clone(),
-            }));
+            frames.push(PaintFrame::Visit(
+                self.child_visit(child, origin, offsets, plan),
+            ));
             frames.extend(
                 inline_opacities
                     .iter()
@@ -612,6 +522,121 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             children: child_frames,
             below_lines: below_lines_frames,
             blocks: block_frames,
+        }
+    }
+
+    /// The frame of the paragraph of `cell`, an anonymous table cell that is
+    /// the child `child` of an element.
+    fn anonymous_cell_frame(
+        &self,
+        child: usize,
+        cell: &'w Node,
+        origin: &ChildOrigin<'_>,
+        plan: &ChildPlan,
+    ) -> PaintFrame<'w> {
+        PaintFrame::AnonymousParagraph(AnonymousParagraphFrame {
+            key: child,
+            cell,
+            x: origin.parent_x + cell.unrounded_layout.location.x,
+            y: origin.parent_y + cell.unrounded_layout.location.y,
+            shift_y: origin.shift_y,
+            transform_x: origin.transform_x,
+            transform_y: origin.transform_y,
+            paint_offset_y: origin.paint_offset_y,
+            fragmentainer: origin.fragmentainer,
+            inside_fixed: origin.inside_fixed,
+            decorations: origin.decorations.clone(),
+            fixed_viewport: fixed_background_viewport(
+                self.geometry.page_area,
+                self.root_transform,
+                origin.inside_fixed_containing_block,
+            ),
+            defer: plan.defers,
+        })
+    }
+
+    /// The visit of the child `child` of an element, which generated text of
+    /// the element may shift.
+    fn child_visit(
+        &self,
+        child: usize,
+        origin: &ChildOrigin<'_>,
+        offsets: &GeneratedOffsets,
+        plan: &ChildPlan,
+    ) -> VisitFrame {
+        let (document, cascade) = (self.document, self.cascade);
+        let child_fragment_clip_height = self.child_fragment_clip_height(child, plan);
+        let is_direct_text = document
+            .get_node(child)
+            .is_some_and(|node| node.kind() == NodeKind::Text);
+        let generated_text_shift = if is_direct_text {
+            plan.before_advance
+        } else {
+            0.0
+        };
+        let inline_generated_offset = generated_shift(&offsets.inline, child);
+        let vertical_generated_offset = generated_shift(&offsets.vertical, child);
+        VisitFrame {
+            node_id: child,
+            parent_abs_x: origin.parent_x + generated_text_shift + inline_generated_offset,
+            parent_abs_y: origin.parent_y + vertical_generated_offset,
+            parent_font_size: origin.font_size,
+            shift_y: origin.shift_y,
+            transform_x: origin.transform_x,
+            transform_y: origin.transform_y,
+            paint_offset_y: origin.paint_offset_y,
+            fragment_clip_height: child_fragment_clip_height,
+            column_clip_height: (cascade.computed[child].display == DisplayValue::Contents)
+                .then_some(plan.multicol_clip_height)
+                .flatten(),
+            fragment_id: origin.fragment_id,
+            fragment_origin_x: origin.fragment_origin_x,
+            fragment_origin_y: origin.fragment_origin_y,
+            fragmentainer: origin.fragmentainer,
+            fragment_rect: None,
+            fragment_clip: None,
+            is_fragment_visit: false,
+            inside_fixed: origin.inside_fixed,
+            inside_fixed_containing_block: origin.inside_fixed_containing_block,
+            decorations: origin.decorations.clone(),
+        }
+    }
+
+    /// The height that the visit of the child `child` is clipped to.
+    fn child_fragment_clip_height(&self, child: usize, plan: &ChildPlan) -> Option<f32> {
+        let (document, cascade) = (self.document, self.cascade);
+        match plan.multicol_clip_height {
+            Some(clip_height)
+                if document.get_node(child).is_some_and(|child_node| {
+                    (cascade.computed[child].display.is_grid_container()
+                        || matches!(
+                            cascade.computed[child].display,
+                            DisplayValue::Table | DisplayValue::InlineTable
+                        )) && child_node.kind() == NodeKind::Element
+                }) =>
+            {
+                Some(clip_height)
+            }
+            // A zero-height block at a multicolumn break can own
+            // an overflowing parallel flow. It has no fragment
+            // area in the column, so its descendants must not
+            // paint into the following sibling's fragment. A
+            // block that layout broke into column pieces places
+            // its descendants in those pieces itself. A
+            // `display: contents` element has no box at all, so
+            // its children are the ones the columns hold.
+            Some(_) // cov:ignore: exercised by ignored exact paged-text WPT.
+                if !self.fragmented_nodes.contains(&child) && document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
+                    child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
+                        && cascade.computed[child].display != DisplayValue::Contents
+                        && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
+                        && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
+                }) => // cov:ignore: exercised by ignored exact paged-text WPT.
+            {
+                Some(0.0) // cov:ignore: exercised by ignored exact paged-text WPT.
+            }
+            Some(_) => None,
+            None => plan.fragment_clip_height,
         }
     }
 
@@ -670,4 +695,13 @@ pub(super) fn multicol_clip_height(
     own_multicol_clip_height.or((cv.display == DisplayValue::Contents)
         .then_some(column_clip_height)
         .flatten())
+}
+
+/// How far the generated text shifts `child`, from `(child, shift)` pairs; no
+/// shift when the child has none.
+fn generated_shift(shifts: &[(usize, f32)], child: usize) -> f32 {
+    shifts
+        .iter()
+        .find_map(|(shifted, shift)| (*shifted == child).then_some(*shift))
+        .unwrap_or(0.0)
 }
