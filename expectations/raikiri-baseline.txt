@@ -4958,3 +4958,8 @@ css/css-page/margin-boxes/dimensions-012-print.html
 css/css-sizing/fit-content-max-inline-size.tentative.html
 css/css-sizing/fit-content-min-inline-size.html
 css/css-sizing/min-content-min-width-000.html
+
+# --- flex and grid items sized by width keywords (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# Pass once a flex or grid item with a min-content, max-content or fit-content width is sized by the keyword instead of the room its container offers, and its height is measured at that width; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/percentage-heights-022.html
+css/css-grid/grid-model/grid-max-content-size-with-max-content-item.html
