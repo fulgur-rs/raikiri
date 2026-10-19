@@ -76,6 +76,7 @@ impl SavedSizes {
 fn applies(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool {
     let context = tree.nodes[idx].formatting_context;
     *limits != ContentLimits::NONE
+        && !uses_specialized_content_limits(tree, idx)
         && !tree.context.content_limit_probes.contains(&idx)
         && !is_oof_box(tree, idx)
         && matches!(
@@ -95,10 +96,17 @@ fn is_oof_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
         )
 }
 
+fn uses_specialized_content_limits(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    crate::taffy_impl::is_table_box(tree.nodes[idx].display())
+        || crate::paint_rules::is_replaced_element(tree.document, idx)
+}
+
 /// Whether `idx` has intrinsic min/max sizes that its flex/grid parent must
 /// resolve before the parent algorithm reads the child's style.
 fn applies_to_parent_item(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool {
-    *limits != ContentLimits::NONE && !tree.context.content_limit_probes.contains(&idx)
+    *limits != ContentLimits::NONE
+        && !uses_specialized_content_limits(tree, idx)
+        && !tree.context.content_limit_probes.contains(&idx)
 }
 
 fn is_flex_grid_container(tree: &LayoutSession<'_>, idx: usize) -> bool {
@@ -205,6 +213,7 @@ pub(crate) fn with_oof_child_content_limits(
     let limits = tree.nodes[idx].content_limits;
     if limits == ContentLimits::NONE
         || !is_oof_box(tree, idx)
+        || uses_specialized_content_limits(tree, idx)
         || tree.context.content_limit_probes.contains(&idx)
     {
         return dispatch(tree, node_id, inputs);
@@ -276,7 +285,9 @@ pub(crate) fn with_oof_content_limits<R>(
         })
         .into_iter()
         .filter(|&idx| {
-            tree.nodes[idx].content_limits != ContentLimits::NONE && is_oof_box(tree, idx)
+            tree.nodes[idx].content_limits != ContentLimits::NONE
+                && is_oof_box(tree, idx)
+                && !uses_specialized_content_limits(tree, idx)
         })
         .collect::<Vec<_>>();
     if targets.is_empty() {
@@ -641,8 +652,10 @@ fn with_item_content_limits_for_parent_sizes(
     mut parent_size_for_item: impl FnMut(usize) -> Size<Option<f32>>,
     mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
 ) -> LayoutOutput {
-    let has_item_limits = super::TaffyChildIter::new_for_session(tree, node_id)
-        .any(|child| tree.nodes[usize::from(child)].content_limits != ContentLimits::NONE);
+    let has_item_limits = super::TaffyChildIter::new_for_session(tree, node_id).any(|child| {
+        let idx = usize::from(child);
+        applies_to_parent_item(tree, idx, &tree.nodes[idx].content_limits)
+    });
     if !has_item_limits {
         return dispatch(tree, node_id, inputs);
     }
