@@ -1921,10 +1921,11 @@ fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
             .is_some_and(|node| node.style.float != taffy::Float::None)
 }
 
-/// The `min-width` and `max-width` of a flex item, as a probe of the
+/// The `width`, `min-width` and `max-width` of a flex item, as a probe of the
 /// container's intrinsic sizes left them.
 struct FlexItemBounds {
     idx: usize,
+    width: taffy::Dimension,
     min: taffy::LengthPercentageAuto,
     max: taffy::LengthPercentageAuto,
     cache: Cache,
@@ -1966,7 +1967,8 @@ fn with_flex_intrinsic_probe<R>(
 /// `max-width` only, so an empty `flex: 1 0 100px` item would contribute
 /// nothing. Each such bound is installed as the item's own bound, together
 /// with the bound the item already has, which is what a keyword `min-width`
-/// or `max-width` came to when the container began laying out its items.
+/// or `max-width` came to when the container began laying out its items. A
+/// `width` below the basis of an item that cannot shrink is raised to it.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
 fn with_flex_item_basis_bounds<R>(
@@ -1992,7 +1994,6 @@ fn with_flex_item_basis_bounds<R>(
         let style = &tree.layout_node_with_style(child_idx).unwrap().style;
         if style.box_generation_mode() == BoxGenerationMode::None
             || style.position == TaffyPosition::Absolute
-            || !style.size.width.is_auto()
         {
             continue;
         }
@@ -2001,7 +2002,7 @@ fn with_flex_item_basis_bounds<R>(
         else {
             continue;
         };
-        let (min, max) = (style.min_size.width, style.max_size.width);
+        let (width, min, max) = (style.size.width, style.min_size.width, style.max_size.width);
         // A percentage of the container's width, which the probe has not got,
         // bounds nothing.
         let min_length = crate::layout::resolve_length_percentage_auto(min, None);
@@ -2015,13 +2016,23 @@ fn with_flex_item_basis_bounds<R>(
         if new_min.is_none() && new_max.is_none() {
             continue;
         }
+        // Taffy takes an item's `width` as its contribution without measuring
+        // the item, and clamps it with the margin counted in, so the margin
+        // of an item that cannot shrink would be clamped away. A `width` below
+        // the basis is raised to the basis instead: the flex base size wins
+        // over it anyway.
+        let new_width = new_min
+            .and_then(|_| crate::layout::resolve_dimension(width, None))
+            .map(|width| taffy::Dimension::length(width.max(basis)));
         let style = tree.layout_style_for_key_mut(child_idx).unwrap();
+        style.size.width = new_width.unwrap_or(width);
         style.min_size.width = new_min.unwrap_or(min);
         style.max_size.width = new_max.unwrap_or(max);
         // The entries cached while the bounds differ answer no other layout.
         let cache = std::mem::replace(&mut tree.nodes[child_idx].cache, Cache::new());
         saved.push(FlexItemBounds {
             idx: child_idx,
+            width,
             min,
             max,
             cache,
@@ -2030,6 +2041,7 @@ fn with_flex_item_basis_bounds<R>(
     let result = layout(tree);
     for item in saved {
         let style = tree.layout_style_for_key_mut(item.idx).unwrap();
+        style.size.width = item.width;
         style.min_size.width = item.min;
         style.max_size.width = item.max;
         tree.nodes[item.idx].cache = item.cache;

@@ -271,3 +271,22 @@ fn a_floated_flex_container_keeps_the_flex_basis_floor_under_a_keyword_minimum()
         50.0
     );
 }
+
+#[test]
+fn a_floated_flex_container_bounds_an_explicitly_sized_item_by_its_flex_basis() {
+    // The flex basis wins over the width for the flex base size, so the item
+    // that cannot shrink keeps 100px and the one that cannot grow stops at 20px.
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:1 0 100px;width:20px"),
+        120.0
+    );
+    assert_eq!(
+        container_width("", FLEX, "flex:0 1 20px;width:200px;min-width:0;margin:0"),
+        30.0
+    );
+    // A width above the basis of an item that cannot shrink is its size.
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:1 0 100px;width:200px"),
+        220.0
+    );
+}
