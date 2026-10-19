@@ -933,3 +933,82 @@ fn a_float_adjoining_the_margins_above_a_formatting_root_block_moves_with_them()
         );
     }
 }
+
+/// The border box of a block `::after` styled `css` after `floats`, in a
+/// 100px paragraph.
+fn block_after_floats(css: &str, floats: &[&str]) -> BoxRect {
+    let (_, blocks) = placed_after_floats(
+        &format!("div::after {{ content: 'XXX'; display: flow-root; {css} }}"),
+        TEN_PX,
+        floats,
+        "",
+    );
+    let [block] = blocks.as_slice() else {
+        panic!("one placed block: {blocks:?}")
+    };
+    block.border_box
+}
+
+/// A 70x10 float at the left and a 40x30 one at the right that sits below it,
+/// as they do not fit side by side: 30px of room from y = 0, 60px from y = 10.
+const FLOATS_70X10_AND_40X30: [&str; 2] = [
+    "float: left; width: 70px; height: 10px",
+    "float: right; width: 40px; height: 30px",
+];
+
+#[test]
+fn a_formatting_root_block_taller_than_its_gap_moves_below_the_float_it_would_overlap() {
+    // 20px fit in the 30px beside the first float, but the box goes on for
+    // 30px and the right float starts after 10.
+    assert_eq!(
+        block_after_floats("width: 20px; height: 30px", &FLOATS_70X10_AND_40X30),
+        rect(0.0, 10.0, 20.0, 30.0)
+    );
+    // A box no taller than that gap stays beside the first float.
+    assert_eq!(
+        block_after_floats("width: 20px; height: 10px", &FLOATS_70X10_AND_40X30),
+        rect(70.0, 0.0, 20.0, 10.0)
+    );
+    // The height counts with its padding and border, and `min-height` and
+    // `max-height` bound it.
+    assert_eq!(
+        block_after_floats(
+            "width: 20px; height: 5px; padding: 0 0 6px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 20.0, 11.0)
+    );
+    assert_eq!(
+        block_after_floats(
+            "width: 20px; height: 5px; min-height: 30px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 20.0, 30.0)
+    );
+    assert_eq!(
+        block_after_floats(
+            "width: 20px; height: 30px; max-height: 10px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(70.0, 0.0, 20.0, 10.0)
+    );
+}
+
+#[test]
+fn a_formatting_root_block_of_auto_width_narrows_to_the_room_every_band_it_reaches_shares() {
+    // Bands 80px wide from y = 0 and 50px wide from y = 10. A box 15px tall
+    // reaches both, so it takes the 50px they share.
+    let floats = [
+        "float: left; width: 20px; height: 10px",
+        "float: left; clear: left; width: 50px; height: 10px",
+    ];
+    assert_eq!(
+        block_after_floats("height: 15px", &floats),
+        rect(50.0, 0.0, 50.0, 15.0)
+    );
+    // Only 10px tall, it stays in the first band.
+    assert_eq!(
+        block_after_floats("height: 10px", &floats),
+        rect(20.0, 0.0, 80.0, 10.0)
+    );
+}
