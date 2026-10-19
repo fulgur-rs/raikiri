@@ -126,6 +126,9 @@ fn a_line_feed_that_ends_the_text_does_not_start_another_line() {
     // A text of nothing but a line feed keeps it, and is the single line it
     // makes: as tall as the one line of 'a'.
     assert_eq!(left("\\A "), left("a"));
+    // Only the last of two line feeds ends the text; the first ends the line
+    // before the empty one, which is as tall as the line of 'b'.
+    assert_eq!(left("a\\A\\A "), left("a\\A b"));
     // Vertical lines share a row the same way: one column per line.
     let top = |content: &str| {
         rects(&boxes_for(&format!(
