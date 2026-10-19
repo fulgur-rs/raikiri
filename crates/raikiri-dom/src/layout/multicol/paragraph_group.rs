@@ -506,11 +506,12 @@ pub(super) fn fill_rows(
 }
 
 /// How far, in px, the clip of a paginated fragment reaches past the edges of
-/// its column along the inline axis. Fragmentation cuts along the block axis
-/// only, so what a fragment paints past the sides of its column, such as
-/// overflowing text and its shadows, outlines and ink, stays visible; this
-/// is far wider than any page.
-const INLINE_REACH: f32 = 1.0e5;
+/// its column along the inline axis, and past the block edges where its
+/// paragraph begins or ends. Fragmentation cuts along the block axis between
+/// the fragments of a paragraph only, so what a fragment paints past the
+/// sides of its column, such as overflowing text and its shadows, outlines
+/// and ink, stays visible; this is far wider than any page.
+const CLIP_REACH: f32 = 1.0e5;
 
 pub(super) struct PagedFragment {
     pub(super) child: usize,
@@ -651,12 +652,28 @@ pub(super) fn paginate(
                     fragmentainer,
                     rect,
                     // The clip cuts a fragment at the block edges of its
-                    // column and leaves the inline axis open.
-                    clip: crate::fragment::FragmentRect {
-                        x: x - INLINE_REACH,
-                        y: group_y,
-                        width: context.column_width + 2.0 * INLINE_REACH,
-                        height,
+                    // column, so the lines of its neighbours stay out, and
+                    // leaves the inline axis open. The edge where the
+                    // paragraph begins or ends has no neighbour behind it,
+                    // so what the box paints there, an outline for one,
+                    // stays visible too.
+                    clip: {
+                        let top = if range.line_start == 0 {
+                            group_y - CLIP_REACH
+                        } else {
+                            group_y
+                        };
+                        let bottom = if range.line_end >= paragraph.extents.len() {
+                            group_y + height + CLIP_REACH
+                        } else {
+                            group_y + height
+                        };
+                        crate::fragment::FragmentRect {
+                            x: x - CLIP_REACH,
+                            y: top,
+                            width: context.column_width + 2.0 * CLIP_REACH,
+                            height: bottom - top,
+                        }
                     },
                 });
             }
