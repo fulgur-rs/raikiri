@@ -8589,6 +8589,7 @@ fn apply_winners_deferred_border_radius_resolving_to_inherit() {
         None,
         None,
         None,
+        None,
     );
     assert_eq!(
         specified.border_radius.top_left.horizontal,
@@ -8638,6 +8639,7 @@ fn apply_winners_direct_border_radius_inherit() {
         None,
         None,
         None,
+        None,
     );
     assert_eq!(
         specified.border_radius.top_left,
@@ -8679,6 +8681,7 @@ fn apply_winners_direct_page_value() {
         &inherited,
         &custom_properties,
         Some(&mut page_value),
+        None,
         None,
         None,
     );
