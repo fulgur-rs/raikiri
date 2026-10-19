@@ -290,14 +290,10 @@ pub(super) enum Motion {
 /// The location of element `id` from the layout locations of its layout
 /// ancestors, in shared flow coordinates without page cuts.
 fn layout_position(document: &Document, id: usize) -> (f32, f32) {
-    let mut position = (0.0, 0.0);
-    let mut current = Some(id);
-    while let Some(node) = current.and_then(|id| document.get_node(id)) {
-        position.0 += node.unrounded_layout.location.x;
-        position.1 += node.unrounded_layout.location.y;
-        current = current.and_then(|id| document.layout_parent_of(id));
-    }
-    position
+    document
+        .layout_origin_of(id)
+        .map(|origin| (origin.x, origin.y))
+        .unwrap_or((0.0, 0.0))
 }
 
 /// What [`element_motion`] derives from the ancestors of the elements of

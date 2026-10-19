@@ -551,3 +551,31 @@ fn vertical_flex_item_keeps_its_padding_percentages_while_measured() {
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_eq!(absolute_rect(&doc, item).2, 50.0);
 }
+
+#[test]
+fn reversing_a_center_static_position_keeps_its_alignment_centered() {
+    let position = taffy::AxisStaticPosition {
+        area: taffy::Line {
+            start: 10.0,
+            end: 40.0,
+        },
+        align: taffy::AxisStaticAlign {
+            keyword: taffy::AxisStaticEdge::Center,
+            safety: taffy::AlignmentSafety::Safe,
+            fallback: taffy::AxisStaticEdge::End,
+        },
+    };
+
+    let reversed = super::reverse_static_position(position, 100.0);
+
+    assert_eq!(
+        reversed.area,
+        taffy::Line {
+            start: 60.0,
+            end: 90.0
+        }
+    );
+    assert_eq!(reversed.align.keyword, taffy::AxisStaticEdge::Center);
+    assert_eq!(reversed.align.safety, taffy::AlignmentSafety::Safe);
+    assert_eq!(reversed.align.fallback, taffy::AxisStaticEdge::Start);
+}

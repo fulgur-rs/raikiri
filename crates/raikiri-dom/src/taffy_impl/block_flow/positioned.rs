@@ -1,64 +1,63 @@
-//! Initial padding-box placement using the public out-of-flow routine.
+//! Collect out-of-flow children for their containing-block dispatch.
 
 use super::sizing::Metrics;
-use crate::layout::context::LayoutSession;
 use taffy::{
-    AxisStaticEdge, AxisStaticPosition, Direction, LayoutBlockContainer, NodeId, OofCandidate,
-    OofPositioningArea, Point, Position, Rect, Size,
+    AxisStaticEdge, AxisStaticPosition, Direction, OofCandidate, OofCandidates, OofPositioningArea,
+    Point, Position, Size,
 };
 
-pub(super) struct Candidate {
-    pub node: NodeId,
-    pub order: usize,
-    pub static_position: Point<f32>,
+pub(super) struct CandidateContext {
+    pub(super) direction: Direction,
+    pub(super) container_width: f32,
+    pub(super) metrics: Metrics,
 }
 
-pub(super) fn layout(
-    tree: &mut LayoutSession<'_>,
-    owner: NodeId,
-    children: &[Candidate],
-    container: Metrics,
-    size: Size<f32>,
-) -> Rect<f32> {
-    let direction = tree.get_block_container_style(owner).direction;
-    let candidates: Vec<_> = children
-        .iter()
-        .map(|child| OofCandidate {
-            node: child.node,
-            order: child.order as u32,
-            position: Position::Absolute,
-            static_position: Point {
-                x: AxisStaticPosition::from_edge(
-                    if direction == Direction::Rtl {
-                        size.width - container.inset.right
-                    } else {
-                        child.static_position.x
-                    },
-                    if direction == Direction::Rtl {
-                        AxisStaticEdge::End
-                    } else {
-                        AxisStaticEdge::Start
-                    },
-                ),
-                y: AxisStaticPosition::from_edge(child.static_position.y, AxisStaticEdge::Start),
-            },
-        })
-        .collect();
-    let area = OofPositioningArea {
+pub(super) fn push_candidate(
+    candidates: &mut OofCandidates,
+    node: taffy::NodeId,
+    order: usize,
+    position: Position,
+    static_position: Point<f32>,
+    context: CandidateContext,
+) {
+    let CandidateContext {
+        direction,
+        container_width,
+        metrics,
+    } = context;
+    candidates.push(OofCandidate {
+        node,
+        order: order as u32,
+        position,
+        static_position: Point {
+            x: AxisStaticPosition::from_edge(
+                if direction == Direction::Rtl {
+                    container_width - metrics.inset.right
+                } else {
+                    static_position.x
+                },
+                if direction == Direction::Rtl {
+                    AxisStaticEdge::End
+                } else {
+                    AxisStaticEdge::Start
+                },
+            ),
+            y: AxisStaticPosition::from_edge(static_position.y, AxisStaticEdge::Start),
+        },
+    });
+}
+
+pub(super) fn positioning_area(metrics: Metrics, size: Size<f32>) -> OofPositioningArea {
+    OofPositioningArea {
         size: Size {
-            width: (size.width
-                - container.border.horizontal_axis_sum()
-                - container.scrollbar.width)
+            width: (size.width - metrics.border.horizontal_axis_sum() - metrics.scrollbar.width)
                 .max(0.0),
-            height: (size.height
-                - container.border.vertical_axis_sum()
-                - container.scrollbar.height)
+            height: (size.height - metrics.border.vertical_axis_sum() - metrics.scrollbar.height)
                 .max(0.0),
         },
         offset: Point {
-            x: container.border.left,
-            y: container.border.top,
+            x: metrics.border.left,
+            y: metrics.border.top,
         },
-    };
-    crate::taffy_impl::oof::layout_candidates(tree, owner, &candidates, area, direction)
+    }
 }

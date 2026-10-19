@@ -23,6 +23,17 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let Some(node) = document.get_node(visit.node_id) else {
             return;
         };
+        if !visit.is_fragment_visit
+            && let Some(origin) = document.layout_origin_of(visit.node_id)
+        {
+            let parent_origin = document
+                .layout_parent_of(visit.node_id)
+                .and_then(|parent| document.layout_origin_of(parent));
+            let parent_x = parent_origin.map_or(0.0, |parent| parent.x);
+            let parent_y = parent_origin.map_or(0.0, |parent| parent.y);
+            visit.parent_abs_x += origin.x - parent_x - node.unrounded_layout.location.x;
+            visit.parent_abs_y += origin.y - parent_y - node.unrounded_layout.location.y;
+        }
         if self.push_fragment_visits(&visit, node) {
             return;
         }

@@ -268,9 +268,12 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].paints_background_color = cv.background_color.a > 0;
         doc.nodes[idx].clones_box_decorations =
             cv.box_decoration_break == BoxDecorationBreak::Clone;
+        doc.nodes[idx].claims_absolute_oof =
+            super::fixed::establishes_absolute_containing_block(doc, idx, cv);
+        doc.nodes[idx].claims_fixed_oof =
+            super::fixed::establishes_fixed_containing_block(doc, idx, cv);
         doc.nodes[idx].contains_absolute_boxes =
-            super::fixed::establishes_absolute_containing_block(doc, idx, cv)
-                && !super::fixed::establishes_fixed_containing_block(doc, idx, cv);
+            doc.nodes[idx].claims_absolute_oof && !doc.nodes[idx].claims_fixed_oof;
         doc.nodes[idx].fixed_position = cv.position == PositionValue::Fixed;
         bridge_size(doc, idx, cv);
         // Replaced elements keep their natural size where an auto width or

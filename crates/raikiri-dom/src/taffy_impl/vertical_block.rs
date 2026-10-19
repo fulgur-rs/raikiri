@@ -29,9 +29,9 @@ use std::collections::HashMap;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
-    AbsoluteAxis, AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Layout, LayoutInput,
-    LayoutOutput, LengthPercentage, Line, NodeId, Point, Position as TaffyPosition, Rect, Size,
-    SizingMode, Style, TraversePartialTree,
+    AbsoluteAxis, AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, BoxSizing,
+    CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, LengthPercentage, Line, NodeId, Point,
+    Position as TaffyPosition, Rect, Size, SizingMode, Style, TraversePartialTree,
 };
 
 use super::block_flow::compute_block_flow;
@@ -144,6 +144,7 @@ impl LayoutSession<'_> {
             .last()
             .filter(|block| block.child_styles.contains_key(&idx))?;
         let block = self.context.transposed_blocks.pop()?;
+        let right_to_left = block_right_to_left(self, block.container).unwrap_or(false);
         let inputs =
             orthogonal_child_inputs(self, idx, transpose_inputs(inputs), block.block_space);
         // Taffy resolves a box's percentage padding against the width of
@@ -167,7 +168,12 @@ impl LayoutSession<'_> {
             self.layout_node_with_style_mut(idx).unwrap().style.padding = padding;
         }
         self.context.transposed_blocks.push(block);
-        Some(transpose_output(output))
+        let reverse_extent = output.size.width;
+        Some(transpose_child_output_to_vertical(
+            output,
+            right_to_left,
+            reverse_extent,
+        ))
     }
 }
 
@@ -346,7 +352,8 @@ pub(super) fn compute_vertical_block(
     }
     let output = compute_block_flow(tree, node_id, inputs, None);
     let mut block = tree.context.transposed_blocks.pop().expect("pushed above");
-    let output = transpose_output(output);
+    let reverse_extent = output.size.height;
+    let output = transpose_output_to_physical(output, right_to_left, reverse_extent);
     // Taffy may store a child's layout more than once; the last one stands.
     block.placed.sort_unstable();
     block.placed.dedup();
@@ -496,10 +503,39 @@ fn transpose_inputs(inputs: LayoutInput) -> LayoutInput {
     }
 }
 
-/// `output` with the axes swapped. Its margins are left to the parent,
-/// which reads them from the box's style: they do not collapse with the
-/// box's children.
-fn transpose_output(output: LayoutOutput) -> LayoutOutput {
+/// Convert an output produced on the vertical block's transposed axes back
+/// to physical axes. Its margins are left to the parent, which reads them
+/// from the box's style: they do not collapse with the box's children.
+fn transpose_output_to_physical(
+    mut output: LayoutOutput,
+    right_to_left: bool,
+    reverse_extent: f32,
+) -> LayoutOutput {
+    let oof_positioning_area = output
+        .oof_positioning_area
+        .map(|area| taffy::OofPositioningArea {
+            size: swap(area.size),
+            offset: Point {
+                x: if right_to_left {
+                    reverse_extent - area.offset.y - area.size.height
+                } else {
+                    area.offset.y
+                },
+                y: area.offset.x,
+            },
+        });
+    for candidate in output.oof_candidates.as_mut_slice() {
+        let inline_axis = candidate.static_position.x;
+        let block_axis = candidate.static_position.y;
+        candidate.static_position = Point {
+            x: if right_to_left {
+                reverse_static_position(block_axis, reverse_extent)
+            } else {
+                block_axis
+            },
+            y: inline_axis,
+        };
+    }
     LayoutOutput {
         size: swap(output.size),
         scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
@@ -507,7 +543,72 @@ fn transpose_output(output: LayoutOutput) -> LayoutOutput {
         top_margin: CollapsibleMarginSet::ZERO,
         bottom_margin: CollapsibleMarginSet::ZERO,
         margins_can_collapse_through: false,
+        oof_positioning_area,
         ..output
+    }
+}
+
+/// Convert a child's physical-axis output to the transposed axes used by its
+/// vertical block parent. In `vertical-rl`, the physical block axis is
+/// reversed, while the physical inline axis is not.
+fn transpose_child_output_to_vertical(
+    mut output: LayoutOutput,
+    right_to_left: bool,
+    reverse_extent: f32,
+) -> LayoutOutput {
+    let oof_positioning_area = output
+        .oof_positioning_area
+        .map(|area| taffy::OofPositioningArea {
+            size: swap(area.size),
+            offset: Point {
+                x: area.offset.y,
+                y: if right_to_left {
+                    reverse_extent - area.offset.x - area.size.width
+                } else {
+                    area.offset.x
+                },
+            },
+        });
+    for candidate in output.oof_candidates.as_mut_slice() {
+        let physical_inline_axis = candidate.static_position.y;
+        let physical_block_axis = candidate.static_position.x;
+        candidate.static_position = Point {
+            x: physical_inline_axis,
+            y: if right_to_left {
+                reverse_static_position(physical_block_axis, reverse_extent)
+            } else {
+                physical_block_axis
+            },
+        };
+    }
+    LayoutOutput {
+        size: swap(output.size),
+        scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
+        baselines: Baselines::NONE,
+        top_margin: CollapsibleMarginSet::ZERO,
+        bottom_margin: CollapsibleMarginSet::ZERO,
+        margins_can_collapse_through: false,
+        oof_positioning_area,
+        ..output
+    }
+}
+
+fn reverse_static_position(position: AxisStaticPosition, extent: f32) -> AxisStaticPosition {
+    let reverse_edge = |edge| match edge {
+        AxisStaticEdge::Start => AxisStaticEdge::End,
+        AxisStaticEdge::Center => AxisStaticEdge::Center,
+        AxisStaticEdge::End => AxisStaticEdge::Start,
+    };
+    AxisStaticPosition {
+        area: Line {
+            start: extent - position.area.end,
+            end: extent - position.area.start,
+        },
+        align: taffy::AxisStaticAlign {
+            keyword: reverse_edge(position.align.keyword),
+            safety: position.align.safety,
+            fallback: reverse_edge(position.align.fallback),
+        },
     }
 }
 

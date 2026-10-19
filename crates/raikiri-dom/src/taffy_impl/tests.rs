@@ -2,6 +2,146 @@ use super::*;
 use crate::layout::context::LayoutSession;
 
 #[test]
+fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
+    use crate::layout::ifc::test_support::block_fixture_with_ahem;
+
+    let mut fixed = None;
+    let fixture = block_fixture_with_ahem("width:100px;height:40px", |doc, root| {
+        doc.append_text(root, "a");
+        let atomic = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+        fixed = Some(doc.append_element(
+            Some(atomic),
+            "div",
+            Style::default(),
+            Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
+        ));
+    });
+    let mut doc = fixture.doc;
+    let input = LayoutInput {
+        run_mode: taffy::RunMode::PerformLayout,
+        sizing_mode: taffy::SizingMode::InherentSize,
+        axis: taffy::RequestedAxis::Both,
+        known_dimensions: Size {
+            width: Some(100.0),
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: true,
+        },
+        parent_size: Size {
+            width: Some(100.0),
+            height: Some(100.0),
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: taffy::Line::FALSE,
+    };
+
+    let output = compute_ifc_root(
+        &mut LayoutSession::new(&mut doc),
+        NodeId::from(fixture.root),
+        input,
+        None,
+    );
+    let fixed = NodeId::from(fixed.expect("fixed child"));
+    let candidate = output
+        .oof_candidates
+        .as_slice()
+        .iter()
+        .find(|candidate| candidate.node == fixed)
+        .expect("uncontained fixed descendant bubbles out of the IFC root");
+    assert_eq!(candidate.static_position.x.area.start, 10.0);
+}
+
+#[test]
+fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
+    use crate::layout::ifc::test_support::block_fixture_with_ahem;
+
+    for (case, child_style, leading_text) in [
+        ("block", "display:block;width:10px;height:10px", Some("a")),
+        (
+            "float",
+            "display:block;float:left;width:10px;height:10px",
+            Some("a"),
+        ),
+    ] {
+        let mut fixed = None;
+        let fixture = block_fixture_with_ahem("width:100px;height:40px", |doc, root| {
+            if let Some(text) = leading_text {
+                doc.append_text(root, text);
+            }
+            let child = doc.append_element(Some(root), "div", Style::default(), Some(child_style));
+            fixed = Some(doc.append_element(
+                Some(child),
+                "div",
+                Style::default(),
+                Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
+            ));
+        });
+        let mut doc = fixture.doc;
+        let input = LayoutInput {
+            run_mode: taffy::RunMode::PerformLayout,
+            sizing_mode: taffy::SizingMode::InherentSize,
+            axis: taffy::RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(100.0),
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            parent_size: Size {
+                width: Some(100.0),
+                height: Some(100.0),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: taffy::Line::FALSE,
+        };
+
+        let output = compute_ifc_root(
+            &mut LayoutSession::new(&mut doc),
+            NodeId::from(fixture.root),
+            input,
+            None,
+        );
+        let fixed = NodeId::from(fixed.expect("fixed child"));
+        let stored_candidates = doc.nodes[fixture.root]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .map(|lines| lines.oof_candidates.as_slice());
+        let candidate = output
+            .oof_candidates
+            .as_slice()
+            .iter()
+            .find(|candidate| candidate.node == fixed)
+            .unwrap_or_else(|| {
+                panic!(
+                    "uncontained fixed descendant bubbles from {case} child; output candidates: {:?}; stored: {:?}",
+                    output.oof_candidates.as_slice(),
+                    stored_candidates
+                )
+            });
+        assert_eq!(
+            candidate.static_position.x.area.start, 0.0,
+            "candidate is translated by the final {case} child location"
+        );
+    }
+}
+
+#[test]
 fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
     use raikiri_style::property::WritingMode;
     for (mode, expected) in [
@@ -314,15 +454,21 @@ fn absolute_auto_width_respects_space_after_its_inset() {
 }
 
 #[test]
-fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
+fn grid_abspos_static_alignment_uses_the_content_box_and_parent_percentage_basis() {
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{AvailableSpace, LayoutInput, Line, RequestedAxis, RunMode, Size, SizingMode};
+    use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let grid = doc.append_element(
+    let containing_block = doc.append_element(
         Some(body),
+        "div",
+        Style::default(),
+        Some("position:relative;width:200px;height:200px"),
+    );
+    let grid = doc.append_element(
+        Some(containing_block),
         "div",
         Style::default(),
         Some(
@@ -337,39 +483,113 @@ fn grid_dispatch_aligns_auto_placed_abspos_children_in_the_content_box() {
     );
     doc.mark_in_document_flags();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
 
-    let mut session = LayoutSession::new(&mut doc);
-    grid_layout(
-        &mut session,
-        taffy::NodeId::from(grid),
-        LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size {
-                width: Some(100.0),
-                height: Some(100.0),
-            },
-            known_dimensions_are_definite: Size {
-                width: true,
-                height: true,
-            },
-            parent_size: Size {
-                width: Some(200.0),
-                height: Some(100.0),
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(100.0),
-                height: AvailableSpace::Definite(100.0),
-            },
-            vertical_margins_are_collapsible: Line::FALSE,
-        },
+    let grid_layout = doc.nodes[grid].unrounded_layout;
+    let child_layout = doc.nodes[child].unrounded_layout;
+    let grid_origin = doc.layout_origin_of(grid).unwrap();
+    let child_origin = doc.layout_origin_of(child).unwrap();
+    assert_eq!(
+        (grid_layout.padding.left, grid_layout.padding.top),
+        (20.0, 20.0)
     );
-    drop(session);
+    let expected_x = grid_origin.x
+        + grid_layout.border.left
+        + grid_layout.padding.left
+        + (grid_layout.size.width
+            - grid_layout.border.left
+            - grid_layout.border.right
+            - grid_layout.padding.left
+            - grid_layout.padding.right
+            - child_layout.size.width)
+            / 2.0;
+    let expected_y = grid_origin.y
+        + grid_layout.border.top
+        + grid_layout.padding.top
+        + (grid_layout.size.height
+            - grid_layout.border.top
+            - grid_layout.border.bottom
+            - grid_layout.padding.top
+            - grid_layout.padding.bottom
+            - child_layout.size.height)
+            / 2.0;
+    assert!((child_origin.x - expected_x).abs() < 1e-3);
+    assert!((child_origin.y - expected_y).abs() < 1e-3);
+}
 
-    let layout = doc.nodes[child].unrounded_layout;
-    assert_eq!((layout.location.x, layout.location.y), (50.0, 50.0));
+#[test]
+fn vertical_grid_abspos_keeps_positive_inline_space_centered() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let containing_block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:relative;width:200px;height:200px"),
+    );
+    let grid = doc.append_element(
+        Some(containing_block),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;position:relative;writing-mode:vertical-rl;width:100px;height:100px;grid-template-columns:100px;grid-template-rows:100px",
+        ),
+    );
+    let child = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some(
+            "position:absolute;grid-column:1;grid-row:1;top:10px;bottom:10px;height:20px;width:10px;margin-top:auto;margin-bottom:auto",
+        ),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, child).1,
+        40.0
+    );
+}
+
+#[test]
+fn grid_alignment_ignores_children_owned_by_another_grid() {
+    let mut doc = Document::new();
+    let grid = doc.append_element(Some(0), "div", Style::default(), Some("display:grid"));
+    let other_parent = doc.append_element(Some(0), "div", Style::default(), Some("display:block"));
+    let child = doc.append_element(
+        Some(other_parent),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    let session = LayoutSession::new(&mut doc);
+
+    assert!(
+        super::auto_grid_abspos_aligned_layout(
+            &session,
+            grid,
+            child,
+            Size::ZERO,
+            taffy::Rect::ZERO,
+            taffy::Rect::ZERO,
+            taffy::Point::ZERO,
+        )
+        .is_none()
+    );
 }
 
 /// Lays out a `container` that holds a block wrapping a `scroller` (with an

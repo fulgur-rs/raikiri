@@ -1656,10 +1656,10 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
 
 /// Lay out a body with `body_style` holding one empty block child and an
 /// absolutely positioned child, returning the page content width and the
-/// body, block and absolute child's layouts.
+/// body and block layouts plus the absolute child's page-coordinate origin.
 fn lay_out_body_with_children(
     body_style: &str,
-) -> (f32, taffy::Layout, taffy::Layout, taffy::Layout) {
+) -> (f32, taffy::Layout, taffy::Layout, taffy::Point<f32>) {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -1685,7 +1685,8 @@ fn lay_out_body_with_children(
         content_width,
         doc.nodes[body].unrounded_layout,
         doc.nodes[flow].unrounded_layout,
-        doc.nodes[abs].unrounded_layout,
+        doc.layout_origin_of(abs)
+            .expect("absolute child has a layout origin"),
     )
 }
 
@@ -1695,7 +1696,7 @@ fn body_inline_margins_place_and_narrow_the_body_content() {
     assert_eq!(body.location.x + flow.location.x, 30.0);
     assert_eq!(flow.size.width, width - 40.0);
     // The static position of an out-of-flow child starts at the same edge.
-    assert_eq!(body.location.x + abs.location.x, 30.0);
+    assert_eq!(abs.x, 30.0);
     assert_eq!(body.size.width, width - 40.0);
     assert_eq!((body.padding.left, body.padding.right), (0.0, 0.0));
     assert_eq!((body.margin.left, body.margin.right), (30.0, 10.0));
@@ -1760,10 +1761,7 @@ fn body_inline_margins_keep_absolute_offsets_against_the_page() {
     let width = page_margins(&cr, PageBox::A4).content_width(PageBox::A4);
     let layout = doc.nodes[abs].unrounded_layout;
     assert_eq!(layout.size.width, width / 2.0);
-    assert_eq!(
-        doc.nodes[body].unrounded_layout.location.x + layout.location.x,
-        width / 2.0
-    );
+    assert_eq!(doc.layout_origin_of(abs).unwrap().x, width / 2.0);
 }
 
 #[test]

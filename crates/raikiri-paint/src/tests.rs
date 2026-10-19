@@ -3333,6 +3333,44 @@ fn solid_fill_bounds(scene: &Scene, rgb: (u8, u8, u8)) -> Vec<kurbo::Rect> {
         .collect()
 }
 
+#[test]
+fn absolute_box_paints_from_its_containing_block_through_static_wrappers() {
+    use raikiri_html::{ParseOptions, parse};
+
+    let html = br#"<html><head><style>@page{margin:0}body{margin:0}#cb{position:relative;left:40px;top:50px;width:200px;height:200px}#wrapper{margin-left:30px;margin-top:25px}#oof{position:absolute;left:10px;top:15px;width:20px;height:20px;background:red}</style></head><body><div id=cb><div id=wrapper><div id=oof></div></div></div></body></html>"#;
+    let uncascaded = parse(
+        &html[..],
+        &ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("cascade succeeds");
+    let mut document = uncascaded.dom;
+    layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout succeeds");
+    let oof = (0..document.node_count())
+        .find(|&id| document.element_attribute(id, "id") == Some("oof"))
+        .expect("absolute box exists");
+    let origin = document
+        .layout_origin_of(oof)
+        .expect("absolute box has a layout origin");
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
+    let fills = solid_fill_bounds(&scene, (255, 0, 0));
+    assert_eq!(fills.len(), 1);
+    assert_eq!(
+        (
+            fills[0].x0,
+            fills[0].y0,
+            fills[0].width(),
+            fills[0].height(),
+        ),
+        (f64::from(origin.x), f64::from(origin.y), 20.0, 20.0)
+    );
+}
+
 /// An inline-block `::before` whose content generates nothing is still a
 /// box of its own size, with its padding and border, ahead of the text.
 #[test]
