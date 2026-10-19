@@ -1906,10 +1906,27 @@ fn an_atomic_inline_in_a_ruby_without_annotations_stays_in_the_line() {
     );
 }
 
+/// A vertical ruby with an atomic inline in its annotation over the base text
+/// "aa", in a 100px wide and 100px high paragraph in `mode`: the box.
+fn vertical_annotation_atomic(mode: &str, direction: &str) -> (f32, f32, f32, f32) {
+    let mut atomic = 0;
+    let fixture = block_fixture(
+        &format!(
+            "line-height:20px;writing-mode:{mode};direction:{direction};width:100px;height:100px"
+        ),
+        |doc, root| {
+            let container = ruby(doc, root);
+            rb(doc, container, "aa");
+            let annotation = rt(doc, container, "");
+            atomic = inline_block(doc, annotation, 10, 10);
+        },
+    );
+    let (doc, _) = lay_out(fixture);
+    border_box(&doc, atomic)
+}
+
 #[test]
-fn atomic_inlines_in_vertical_ruby_stay_plain() {
-    // The boxes of a vertical paragraph are not placed along its physical
-    // axes yet, so those of a ruby keep to the ordinary inline path.
+fn atomic_inlines_in_vertical_ruby_are_planned() {
     let planned = |mode: &str| {
         let mut container = 0;
         let fixture = block_fixture(&format!("writing-mode:{mode}"), |doc, root| {
@@ -1921,6 +1938,34 @@ fn atomic_inlines_in_vertical_ruby_stay_plain() {
         plan(&fixture.doc, &fixture.cascade, container).is_some()
     };
     assert!(planned("horizontal-tb"));
-    assert!(!planned("vertical-rl"));
-    assert!(!planned("vertical-lr"));
+    assert!(planned("vertical-rl"));
+    assert!(planned("vertical-lr"));
+}
+
+#[test]
+fn atomic_inlines_in_a_vertical_rl_annotation_are_centered_beside_their_base() {
+    // The box is centered along the 20px of base text, and sits across the
+    // right edge of the line, the line-over side, as a box in a horizontal
+    // annotation sits across the top edge (5px past it, at y = -5).
+    let atomic = vertical_annotation_atomic("vertical-rl", "ltr");
+    assert_eq!((atomic.2, atomic.3), (10.0, 10.0), "{atomic:?}");
+    assert_eq!((atomic.0, atomic.1), (95.0, 5.0), "{atomic:?}");
+}
+
+#[test]
+fn atomic_inlines_in_a_vertical_lr_annotation_are_centered_beside_their_base() {
+    // The line-over side is the right edge, at the end of a block axis that
+    // runs from the left: the box sits across the line's right edge at 20px.
+    let atomic = vertical_annotation_atomic("vertical-lr", "ltr");
+    assert_eq!((atomic.2, atomic.3), (10.0, 10.0), "{atomic:?}");
+    assert_eq!((atomic.0, atomic.1), (15.0, 5.0), "{atomic:?}");
+}
+
+#[test]
+fn atomic_inlines_in_a_vertical_annotation_follow_a_right_to_left_base() {
+    // The base text runs up from the bottom edge, and the box is centered on
+    // it.
+    let atomic = vertical_annotation_atomic("vertical-rl", "rtl");
+    assert_eq!((atomic.2, atomic.3), (10.0, 10.0), "{atomic:?}");
+    assert_eq!((atomic.0, atomic.1), (95.0, 85.0), "{atomic:?}");
 }
