@@ -1621,3 +1621,29 @@ fn an_auto_center_box_shares_the_space_with_a_larger_auto_side_box() {
         ]
     );
 }
+
+#[test]
+fn percentages_of_a_corner_box_resolve_against_the_corner() {
+    // The 40px by 40px corner is the containing block: 50% is 20px and 25% is
+    // 10px, and the box is pushed against the page area at both its inner
+    // sides like any box with no margin to spare.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left-corner {{ content: 'x'; width: 50%; height: 25% }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::TopLeftCorner, [20.0, 30.0, 20.0, 10.0])]
+    );
+    // The limit of fit-content() is a percentage of the corner as well: 20px
+    // of the 80px the text takes on one line, which is 20px broken at spaces.
+    let fit = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left-corner {{ content: 'xx xx xx'; width: fit-content(50%); \
+             height: 10px }} }}"
+    ));
+    assert_eq!(
+        rects(&fit),
+        [(PageMarginBoxSlot::TopLeftCorner, [20.0, 30.0, 20.0, 10.0])]
+    );
+}

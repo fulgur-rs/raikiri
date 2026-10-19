@@ -479,7 +479,9 @@ struct MarginBoxSpec {
     /// Used padding in top/right/bottom/left order.
     padding: [f32; 4],
     /// The specified content width, if a length. A sizing keyword leaves it
-    /// `None` until the layout has the sizes the keyword depends on.
+    /// `None` until the layout has the sizes the keyword depends on, so at
+    /// most one of `width` and `width_keyword` is `Some`; [`Self::set_size`]
+    /// keeps it so.
     width: Option<f32>,
     /// The specified content height, with the same rules as `width`.
     height: Option<f32>,
@@ -1735,15 +1737,19 @@ fn keyword_content_size(
     cross_size: f32,
 ) -> f32 {
     let frame = spec.frame(axis).outer(0.0);
-    let max = edge_max_size(document, spec, axis, cross_size);
-    let min = edge_min_size(document, spec, axis, max);
-    let [min, max] = [min, max].map(|outer| (outer - frame).max(0.0));
-    let fit = |space: f32| max.min(min.max(space));
+    let content_of = |outer: f32| (outer - frame).max(0.0);
+    let outer_max = edge_max_size(document, spec, axis, cross_size);
+    if keyword == SizeKeyword::MaxContent {
+        return content_of(outer_max);
+    }
+    // The text is measured once more, at its narrowest, only for the keywords
+    // that can end up below the max-content size.
+    let min = content_of(edge_min_size(document, spec, axis, outer_max));
+    let fit = |space: f32| content_of(outer_max).min(min.max(space));
     match keyword {
-        SizeKeyword::MinContent => min,
-        SizeKeyword::MaxContent => max,
         SizeKeyword::FitContent => fit((available - frame).max(0.0)),
         SizeKeyword::FitContentOf(limit) => fit(limit),
+        _ => min,
     }
 }
 
@@ -2148,38 +2154,11 @@ pub fn page_margin_boxes_with_values(
         let Some(rule) = margin_box_rule(page, slot) else {
             continue;
         };
-        // Percentages on an edge dimension use the available strip axis,
-        // not the full paper box.  This matters when two 50% top boxes are
-        // laid out between nonzero page margins.
-        let content_width = (page_box.width - margins.left - margins.right).max(0.0);
-        let content_height = (page_box.height - margins.top - margins.bottom).max(0.0);
-        let (width_basis, height_basis) = match slot {
-            PageMarginBoxSlot::TopLeft
-            | PageMarginBoxSlot::TopCenter
-            | PageMarginBoxSlot::TopRight
-            | PageMarginBoxSlot::BottomLeft
-            | PageMarginBoxSlot::BottomCenter
-            | PageMarginBoxSlot::BottomRight => (
-                content_width,
-                if matches!(
-                    slot,
-                    PageMarginBoxSlot::TopLeft
-                        | PageMarginBoxSlot::TopCenter
-                        | PageMarginBoxSlot::TopRight
-                ) {
-                    margins.top
-                } else {
-                    margins.bottom
-                },
-            ),
-            PageMarginBoxSlot::LeftTop
-            | PageMarginBoxSlot::LeftMiddle
-            | PageMarginBoxSlot::LeftBottom => (margins.left, content_height),
-            PageMarginBoxSlot::RightTop
-            | PageMarginBoxSlot::RightMiddle
-            | PageMarginBoxSlot::RightBottom => (margins.right, content_height),
-            _ => (page_box.width, page_box.height),
-        };
+        // Percentages resolve against the containing block of the box: along
+        // an edge the strip between the corners, not the full paper box. This
+        // matters when two 50% top boxes are laid out between nonzero page
+        // margins.
+        let (width_basis, height_basis) = slot_region(slot, page_box, margins);
         if let Some(spec) = margin_box_spec(
             document,
             cascade,
