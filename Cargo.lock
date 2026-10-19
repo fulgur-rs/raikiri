@@ -3196,9 +3196,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shodo"
-version = "0.0.36"
+version = "0.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42910522185f3e199e6bdc437e7451ad659d00c75a82375829fddaefff24cc7b"
+checksum = "7b02af552304c9112be3d7eb228a0612ea9662410ddb5f8453df5c87f3418d8d"
 dependencies = [
  "foldhash",
  "fontique",
