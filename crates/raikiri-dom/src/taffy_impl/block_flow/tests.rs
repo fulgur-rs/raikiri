@@ -1,5 +1,6 @@
 use crate::Document;
 use crate::layout::context::LayoutSession;
+use raikiri_style::property::{DisplayValue, PositionValue, TextAlign, TextAlignLast};
 use taffy::{
     AvailableSpace, Dimension, Display, Float, LayoutInput, LengthPercentage, LengthPercentageAuto,
     Line, NodeId, RequestedAxis, RunMode, Size, SizingMode, Style,
@@ -187,6 +188,64 @@ fn fixed_children_do_not_participate_in_block_flow() {
     let candidate = output.oof_candidates.as_slice().first().unwrap();
     assert_eq!(candidate.node, NodeId::from(fixed));
     assert_eq!(candidate.position, taffy::Position::Fixed);
+}
+
+#[test]
+fn inline_absolute_candidates_keep_the_rtl_float_slot_point() {
+    let mut tree = Document::new();
+    let root = tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            direction: taffy::Direction::Rtl,
+            size: Size {
+                width: Dimension::length(200.0),
+                height: Dimension::length(100.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    tree.nodes[root].static_position_text_align = TextAlign::Center;
+    tree.nodes[root].static_position_text_align_last = TextAlignLast::Auto;
+    tree.append_element(
+        Some(root),
+        "div",
+        Style {
+            display: Display::Block,
+            float: Float::Left,
+            size: Size {
+                width: Dimension::length(50.0),
+                height: Dimension::length(50.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let abs = tree.append_element(
+        Some(root),
+        "div",
+        Style {
+            position: taffy::Position::Absolute,
+            size: Size {
+                width: Dimension::length(40.0),
+                height: Dimension::length(10.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    tree.nodes[abs].set_box_properties(DisplayValue::Inline, PositionValue::Absolute);
+
+    let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    let candidate = output.oof_candidates.as_slice().first().unwrap();
+    assert_eq!(candidate.static_position.x.area.start, 125.0);
+    assert_eq!(
+        candidate.static_position.x.align.keyword,
+        taffy::AxisStaticEdge::End
+    );
+    assert_eq!(candidate.static_position.y.area.start, 0.0);
 }
 
 #[test]

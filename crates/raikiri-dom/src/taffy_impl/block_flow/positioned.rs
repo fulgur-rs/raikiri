@@ -2,48 +2,21 @@
 
 use super::sizing::Metrics;
 use taffy::{
-    AxisStaticEdge, AxisStaticPosition, Direction, OofCandidate, OofCandidates, OofPositioningArea,
-    Point, Position, Size,
+    AxisStaticPosition, OofCandidate, OofCandidates, OofPositioningArea, Point, Position, Size,
 };
-
-pub(super) struct CandidateContext {
-    pub(super) direction: Direction,
-    pub(super) container_width: f32,
-    pub(super) metrics: Metrics,
-}
 
 pub(super) fn push_candidate(
     candidates: &mut OofCandidates,
     node: taffy::NodeId,
     order: usize,
     position: Position,
-    static_position: Point<f32>,
-    context: CandidateContext,
+    static_position: Point<AxisStaticPosition>,
 ) {
-    let CandidateContext {
-        direction,
-        container_width,
-        metrics,
-    } = context;
     candidates.push(OofCandidate {
         node,
         order: order as u32,
         position,
-        static_position: Point {
-            x: AxisStaticPosition::from_edge(
-                if direction == Direction::Rtl {
-                    container_width - metrics.inset.right
-                } else {
-                    static_position.x
-                },
-                if direction == Direction::Rtl {
-                    AxisStaticEdge::End
-                } else {
-                    AxisStaticEdge::Start
-                },
-            ),
-            y: AxisStaticPosition::from_edge(static_position.y, AxisStaticEdge::Start),
-        },
+        static_position,
     });
 }
 

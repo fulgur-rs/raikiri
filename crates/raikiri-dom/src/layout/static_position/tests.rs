@@ -53,6 +53,46 @@ fn abs_rect_after(container_css: &str, before: &[&str], abs_css: &str) -> (f32, 
     absolute_rect(&doc, abs)
 }
 
+fn abs_rect_after_nested_float(
+    container_css: &str,
+    owner_css: &str,
+    float_css: &str,
+    abs_css: &str,
+) -> Rect {
+    let mut doc = Document::new();
+    let add = |doc: &mut Document, parent: usize, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let container = add(
+        &mut doc,
+        body,
+        &format!("display:block;position:relative;width:200px;height:100px;{container_css}"),
+    );
+    let owner = add(&mut doc, container, &format!("display:block;{owner_css}"));
+    add(
+        &mut doc,
+        owner,
+        &format!("display:block;width:50px;height:50px;{float_css}"),
+    );
+    let abs = add(
+        &mut doc,
+        container,
+        &format!("position:absolute;width:40px;height:10px;{abs_css}"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    absolute_rect(&doc, abs)
+}
+
 #[test]
 fn an_inline_level_box_takes_the_aligned_point_of_its_line() {
     let inline = "display:inline";
@@ -213,14 +253,204 @@ fn an_atomic_inline_is_aligned_as_its_margin_box() {
         ),
         (100.0, 50.0, 40.0, 10.0)
     );
-    // A box wider than its line starts at the line's start.
+    // A box wider than its float-shortened line moves below the float.
     assert_eq!(
         abs_rect(
             "text-align:center",
             "float:left",
             "display:inline-block;width:180px"
         ),
-        (50.0, 50.0, 180.0, 10.0)
+        (10.0, 100.0, 180.0, 10.0)
+    );
+}
+
+#[test]
+fn a_float_in_an_earlier_block_of_the_same_bfc_shortens_the_static_line() {
+    assert_eq!(
+        abs_rect_after_nested_float(
+            "text-align:center",
+            "height:20px",
+            "float:left",
+            "display:inline"
+        ),
+        (125.0, 20.0, 40.0, 10.0)
+    );
+}
+
+#[test]
+fn contents_children_participate_in_the_static_line() {
+    let mut doc = Document::new();
+    let add = |doc: &mut Document, parent: usize, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let container = add(
+        &mut doc,
+        body,
+        "display:block;position:relative;width:200px;height:100px;text-align:center",
+    );
+    let float_contents = add(&mut doc, container, "display:contents");
+    add(
+        &mut doc,
+        float_contents,
+        "display:block;width:50px;height:50px;float:left",
+    );
+    let abs_contents = add(&mut doc, container, "display:contents");
+    let abs = add(
+        &mut doc,
+        abs_contents,
+        "display:inline;position:absolute;width:40px;height:10px",
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, abs), (125.0, 0.0, 40.0, 10.0));
+}
+
+#[test]
+fn vertical_insets_do_not_change_the_float_slot_of_the_static_line() {
+    assert_eq!(
+        abs_rect("text-align:center", "float:left", "display:inline;top:60px"),
+        (125.0, 60.0, 40.0, 10.0)
+    );
+    assert_eq!(
+        abs_rect(
+            "text-align:center",
+            "float:left",
+            "display:inline;bottom:10px"
+        ),
+        (125.0, 80.0, 40.0, 10.0)
+    );
+}
+
+#[test]
+fn text_align_last_aligns_the_static_line() {
+    assert_eq!(
+        abs_rect_after(
+            "text-align:left;text-align-last:right",
+            &["height:50px"],
+            "display:inline"
+        ),
+        (200.0, 50.0, 40.0, 10.0)
+    );
+    assert_eq!(
+        abs_rect_after(
+            "text-align:left;text-align-last:center",
+            &["height:50px"],
+            "display:inline"
+        ),
+        (100.0, 50.0, 40.0, 10.0)
+    );
+}
+
+#[test]
+fn logical_and_physical_text_align_last_values_set_the_static_line_edge() {
+    for (text_align_last, expected_x) in [("start", 0.0), ("end", 200.0), ("left", 0.0)] {
+        assert_eq!(
+            abs_rect_after(
+                &format!("text-align:left;text-align-last:{text_align_last}"),
+                &[],
+                "display:inline"
+            ),
+            (expected_x, 0.0, 40.0, 10.0),
+            "text-align-last:{text_align_last}"
+        );
+    }
+}
+
+#[test]
+fn unexpandable_justified_static_lines_use_center_alignment() {
+    assert_eq!(
+        abs_rect_after(
+            "text-align:left;text-align-last:justify",
+            &[],
+            "display:inline-block;width:40px"
+        ),
+        (80.0, 0.0, 40.0, 10.0)
+    );
+    assert_eq!(
+        abs_rect_after(
+            "text-align:justify-all",
+            &[],
+            "display:inline-block;width:40px"
+        ),
+        (80.0, 0.0, 40.0, 10.0)
+    );
+}
+
+#[test]
+fn inline_static_line_still_avoids_floats_when_horizontal_inset_is_set() {
+    assert_eq!(
+        abs_rect_after(
+            "text-align:center",
+            &[
+                "height:50px",
+                "width:100px;height:50px;float:left",
+                "width:100px;height:50px;float:right",
+            ],
+            "left:0;display:inline;top:auto;bottom:auto"
+        ),
+        (0.0, 100.0, 40.0, 10.0)
+    );
+}
+
+#[test]
+fn shrink_wrapped_inline_static_line_accounts_for_margins_when_fitting() {
+    let mut doc = Document::new();
+    let add = |doc: &mut Document, parent: usize, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let container = add(
+        &mut doc,
+        body,
+        "display:block;position:relative;width:200px;height:100px",
+    );
+    add(&mut doc, container, "display:block;height:50px");
+    add(
+        &mut doc,
+        container,
+        "display:block;width:50px;height:50px;float:left",
+    );
+    let abs = add(
+        &mut doc,
+        container,
+        "position:absolute;display:inline-block;width:auto;height:10px;min-width:100px;max-width:220px;margin-left:10px;margin-right:10px;font-family:Ahem;font-size:10px",
+    );
+    doc.append_text(abs, "abcdefghij abcdefghij");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, abs).1, 50.0);
+}
+
+#[test]
+fn a_static_line_with_no_float_slot_moves_below_the_floats() {
+    assert_eq!(
+        abs_rect_after(
+            "text-align:center",
+            &[
+                "height:50px",
+                "width:100px;height:50px;float:left",
+                "width:100px;height:50px;float:right",
+            ],
+            "display:inline"
+        ),
+        (100.0, 100.0, 40.0, 10.0)
     );
 }
 

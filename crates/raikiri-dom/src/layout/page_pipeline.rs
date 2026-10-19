@@ -1181,9 +1181,6 @@ fn layout_single_page_with_table_projection(
     );
     super::fixed::correct_root_flex_static_positions(document);
     document.finalize_oof_layout();
-    // Inline-level boxes in block flow keep the hypothetical inline static
-    // position from CSS 2.1; inline paragraphs place their own OOF anchors.
-    super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
     // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only
