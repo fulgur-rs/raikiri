@@ -64,15 +64,25 @@ fn place_cells_in_session(
 ) -> Result<(), raikiri_traits::LayoutError> {
     let gaps = vec![spacing.0; column_widths.len()];
     let collapsed = vec![false; column_widths.len()];
+    let (row_heights, row_gaps, collapsed_rows) = row_tracks;
     with_layout_session(document, |session| {
+        let mut oof_candidates = taffy::OofCandidates::new();
         super::place_cells(
             session,
             grid,
-            (column_widths, &gaps, &collapsed),
-            row_tracks,
-            origins,
-            spacing,
-            vertical_writing,
+            super::CellPlacementTracks {
+                column_widths,
+                column_gaps: &gaps,
+                collapsed_columns: &collapsed,
+                row_heights,
+                row_gaps,
+                collapsed_rows,
+                column_origins: origins.0,
+                row_origins: origins.1,
+                row_spacing: spacing.1,
+                vertical_writing,
+            },
+            &mut oof_candidates,
         )
     })
 }

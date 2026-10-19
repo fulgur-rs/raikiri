@@ -1,42 +1,18 @@
-//! Out-of-flow boxes inside the document element.
+//! Containing-block predicates and CSS-specific OOF corrections.
 //!
-//! The layout-only ICB has the page-area size. Taffy initially places
-//! absolutely positioned boxes against their immediate layout parent;
-//! the inline engine similarly places one against its paragraph.
-//!
-//! [`place_fixed_boxes_in_page_area`] lays out each fixed box again against
-//! the page area, as taffy lays out absolutely positioned children,
-//! and stores its location relative to its parent so that positions summed
-//! along the DOM ancestors land on the page area. An axis whose insets are
-//! both `auto` keeps the static position taffy gave it.
-//!
-//! A transformed or filtered ancestor, or one that will change its transform
-//! or filter or contains layout or paint, is the containing block of its
-//! fixed descendants (CSS Transforms 1 §3, Filter Effects 1 §5, CSS Will
-//! Change 1 §2, CSS Containment 2 §3), and a positioned
-//! ancestor that of its absolutely positioned descendants (CSS 2.1 §10.1).
-//! When that ancestor is not the box's parent, the box is laid out again the
-//! same way against the ancestor's padding box. A containing block that is an
-//! inline box keeps the layout taffy gave.
-//!
-//! An absolutely positioned box with no positioned, transformed or filtered
-//! ancestor has the initial containing block as its containing block (CSS 2.1
-//! §10.1), which in paged media has the size and origin of the page area,
-//! independently of the root element's margins and dimensions. Taffy
-//! places such a box against its parent too, so it is laid out again here
-//! the same way.
+//! The shared OOF pass places boxes against the containing block that claims
+//! them. This module supplies the CSS predicates used to make those claims
+//! and the writing-mode and flex static-position corrections that Taffy does
+//! not model.
 
 use super::box_tree::BoxTree;
-use super::oof_containing_block::{
-    Area, ContainingBlock, KeptReason, is_vertical, parent_local_position,
-    select_fixed_containing_block_from_ancestors, walk_out_of_flow_boxes,
-};
+use super::oof_containing_block::select_fixed_containing_block_from_ancestors;
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::node::{BoxPropertiesRef, FormattingContext};
 use raikiri_style::property::WillChange;
-use taffy::util::{MaybeMath, MaybeResolve, ResolveOrZero};
-use taffy::{AlignContentKeyword, AlignItemsKeyword, AlignmentSafety, Line};
+use taffy::util::MaybeResolve;
+use taffy::{AlignContentKeyword, AlignItemsKeyword, AlignmentSafety};
 
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.
@@ -236,533 +212,125 @@ pub(super) fn establishes_absolute_containing_block(
         || fixed_containing_block_with_properties(document, id, cv, properties)
 }
 
-/// Lay out the fixed boxes below the taffy root `root`, and the nested
-/// absolutely positioned boxes whose containing block is the initial
-/// containing block, against the page area of size `area_size`, which starts
-/// at the root's border box origin. Out-of-flow boxes whose containing block
-/// is an ancestor other than their parent are laid out again against that
-/// ancestor's padding box. Run it after the root layout and before anything
-/// reads the positions of those boxes.
-pub(crate) fn place_fixed_boxes_in_page_area(
+/// Correct the root OOF pass's auto margins for the principal writing mode.
+/// Taffy's root fallback models the inline axis as horizontal; the CSS page
+/// area uses the principal writing mode's inline and block axes.
+pub(crate) fn correct_root_oof_auto_margins(
     document: &mut LayoutSession<'_>,
-    cascade: &CascadeResult,
     root: usize,
     area_size: Size<f32>,
 ) {
-    // The page area is the initial containing block, which takes the
-    // principal writing mode and direction (CSS Writing Modes 3 §8).
-    let principal = document
-        .nodes
-        .initial_containing_block_key()
-        .unwrap_or(root);
-    let page = Area {
-        origin: Point::ZERO,
-        size: area_size,
-        direction: document
-            .layout_node_with_style(principal)
-            .unwrap()
-            .style
-            .direction,
-        vertical: is_vertical(document, principal),
-    };
-    visit_out_of_flow_boxes(
-        document,
-        cascade,
-        root,
-        |document, id, parent_origin, cb| {
-            let area = match cb {
-                ContainingBlock::Page => page,
-                ContainingBlock::Box {
-                    id: cb,
-                    origin,
-                    size,
-                    direction,
-                } => Area {
-                    origin,
-                    size,
-                    direction,
-                    vertical: is_vertical(document, cb),
-                },
-                ContainingBlock::Kept { .. } => return, // cov:ignore: kept boxes are not corrected
-            };
-            place_fixed_box(document, id, parent_origin, area);
-        },
-    );
-}
-
-/// Restore explicit fixed block insets after pagination moves ancestors,
-/// preserving the box's size, descendants, and existing layout corrections.
-pub(super) fn restore_fixed_box_block_positions(
-    document: &mut LayoutSession<'_>,
-    cascade: &CascadeResult,
-    root: usize,
-    area_height: f32,
-) {
-    visit_out_of_flow_boxes(
-        document,
-        cascade,
-        root,
-        |document, id, parent_origin, cb| {
-            if !matches!(cb, ContainingBlock::Page) {
-                return;
-            }
-            let style = &document.layout_node_with_style(id).unwrap().style;
-            let layout = document.nodes[id].unrounded_layout;
-            let calc = crate::taffy_impl::resolve_calc;
-            let top = style.inset.top.maybe_resolve(Some(area_height), calc);
-            let bottom = style.inset.bottom.maybe_resolve(Some(area_height), calc);
-            let page_y = top.map(|top| top + layout.margin.top).or_else(|| {
-                bottom
-                    .map(|bottom| area_height - layout.size.height - bottom - layout.margin.bottom)
-            });
-            if let Some(page_y) = page_y {
-                document.nodes[id].unrounded_layout.location.y = page_y - parent_origin.y;
-            }
-        },
-    );
-}
-
-/// Apply the legacy correction filter to the shared containing-block walk.
-fn visit_out_of_flow_boxes(
-    document: &mut LayoutSession<'_>,
-    cascade: &CascadeResult,
-    root: usize,
-    mut visit: impl FnMut(&mut LayoutSession<'_>, usize, Point<f32>, ContainingBlock),
-) {
-    walk_out_of_flow_boxes(
-        document,
-        cascade,
-        root,
-        |document, id, parent_origin, cb| {
-            let needs_correction = match cb {
-                ContainingBlock::Page => true,
-                ContainingBlock::Box { id: cb_id, .. } => {
-                    document.taffy_parent_of(id) != Some(cb_id)
-                }
-                ContainingBlock::Kept { reason } => match reason {
-                    KeptReason::Inline { .. } | KeptReason::AncestorOutsideRoot { .. } => false,
-                },
-            };
-            if needs_correction {
-                visit(document, id, parent_origin, cb);
-            }
-        },
-    );
-}
-
-/// Lay out the absolutely positioned box `id` against `area`, as taffy lays
-/// out the absolutely positioned children of a block container, and store
-/// its location relative to its parent at `parent_origin`.
-fn place_fixed_box(tree: &mut LayoutSession<'_>, id: usize, parent_origin: Point<f32>, area: Area) {
-    let Area {
-        origin: area_origin,
-        size: area_size,
-        direction,
-        vertical,
-    } = area;
-    let calc = crate::taffy_impl::resolve_calc;
-    let style = &tree.layout_node_with_style(id).unwrap().style;
-    let area_width = Some(area_size.width);
-    let area_height = Some(area_size.height);
-    let aspect_ratio = style.aspect_ratio;
-    let margin = style
-        .margin
-        .map(|margin| margin.resolve_to_option(area_size.width, calc));
-    let padding = style.padding.resolve_or_zero(area_width, calc);
-    let border = style.border.resolve_or_zero(area_width, calc);
-    let padding_border_sum = (padding + border).sum_axes();
-    let box_sizing_adjustment = if style.box_sizing == TaffyBoxSizing::ContentBox {
-        padding_border_sum
-    } else {
-        Size::ZERO
-    };
-    let left = style.inset.left.maybe_resolve(area_width, calc);
-    let right = style.inset.right.maybe_resolve(area_width, calc);
-    let top = style.inset.top.maybe_resolve(area_height, calc);
-    let bottom = style.inset.bottom.maybe_resolve(area_height, calc);
-    let size_style = style.size;
-    let area = area_size.map(Some);
-    let style_size = size_style
-        .maybe_resolve(area, calc)
-        .maybe_apply_aspect_ratio(aspect_ratio)
-        .maybe_add(box_sizing_adjustment);
-    let min_size = style
-        .min_size
-        .maybe_resolve(area, calc)
-        .maybe_apply_aspect_ratio(aspect_ratio)
-        .maybe_add(box_sizing_adjustment)
-        .or(padding_border_sum.map(Some))
-        .maybe_max(padding_border_sum);
-    let max_size = style
-        .max_size
-        .maybe_resolve(area, calc)
-        .maybe_apply_aspect_ratio(aspect_ratio)
-        .maybe_add(box_sizing_adjustment);
-    let mut known_dimensions = style_size.maybe_clamp(min_size, max_size);
-    let current = tree.nodes[id].unrounded_layout;
-    // A sizing keyword measures the box again against the page area, and
-    // the min and max sizes resolved against it clamp the result, unless an
-    // aspect ratio already gave the axis its size.
-    if size_style.width.is_sizing_keyword() || size_style.height.is_sizing_keyword() {
-        let insets = Rect {
-            left,
-            right,
-            top,
-            bottom,
+    let vertical = document.nodes[root].used_writing_mode.is_vertical();
+    let direction = document
+        .layout_node_with_style(root)
+        .unwrap()
+        .style
+        .direction;
+    let candidates: Vec<_> = document
+        .oof_coordinates
+        .iter()
+        .filter_map(|(&node, coordinate)| (coordinate.owner == root).then_some(node))
+        .collect();
+    for node in candidates {
+        let (left, right, top, bottom, auto_left, auto_right, auto_top, auto_bottom) = {
+            let style = &document.layout_node_with_style(node).unwrap().style;
+            (
+                style
+                    .inset
+                    .left
+                    .maybe_resolve(Some(area_size.width), crate::taffy_impl::resolve_calc),
+                style
+                    .inset
+                    .right
+                    .maybe_resolve(Some(area_size.width), crate::taffy_impl::resolve_calc),
+                style
+                    .inset
+                    .top
+                    .maybe_resolve(Some(area_size.height), crate::taffy_impl::resolve_calc),
+                style
+                    .inset
+                    .bottom
+                    .maybe_resolve(Some(area_size.height), crate::taffy_impl::resolve_calc),
+                style.margin.left.is_auto(),
+                style.margin.right.is_auto(),
+                style.margin.top.is_auto(),
+                style.margin.bottom.is_auto(),
+            )
         };
-        resolve_sizing_keywords(
-            tree,
-            id,
-            &mut known_dimensions,
-            size_style,
-            area_size,
-            insets,
-            margin,
-        );
-        known_dimensions = known_dimensions
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_clamp(min_size, max_size);
-    }
-    if let (None, Some(left), Some(right)) = (known_dimensions.width, left, right) {
-        let width = area_size
-            .width
-            .maybe_sub(margin.left)
-            .maybe_sub(margin.right)
-            - left
-            - right;
-        known_dimensions.width = Some(width.max(0.0));
-        known_dimensions = known_dimensions
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_clamp(min_size, max_size);
-    }
-    if let (None, Some(top), Some(bottom)) = (known_dimensions.height, top, bottom) {
-        let height = area_size
-            .height
-            .maybe_sub(margin.top)
-            .maybe_sub(margin.bottom)
-            - top
-            - bottom;
-        known_dimensions.height = Some(height.max(0.0));
-        known_dimensions = known_dimensions
-            .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_clamp(min_size, max_size);
-    }
-    let available_space = Size {
-        width: AvailableSpace::Definite(
-            area_size.width.maybe_clamp(min_size.width, max_size.width),
-        ),
-        height: AvailableSpace::Definite(
-            area_size
-                .height
-                .maybe_clamp(min_size.height, max_size.height),
-        ),
-    };
-    let input = |known_dimensions, run_mode| LayoutInput {
-        known_dimensions,
-        known_dimensions_are_definite: Size {
-            width: true,
-            height: true,
-        },
-        parent_size: area,
-        available_space,
-        sizing_mode: SizingMode::ContentSize,
-        axis: RequestedAxis::Both,
-        run_mode,
-        vertical_margins_are_collapsible: Line::FALSE,
-    };
-    let node_id = TaffyNodeId::from(id);
-    let final_size = match (known_dimensions.width, known_dimensions.height) {
-        (Some(width), Some(height)) => Size { width, height },
-        _ => {
-            let measured = tree
-                .compute_child_layout(node_id, input(known_dimensions, RunMode::ComputeSize))
-                .size;
-            known_dimensions.unwrap_or(measured)
-        }
-    }
-    .maybe_clamp(min_size, max_size);
-    let output =
-        tree.compute_child_layout(node_id, input(final_size.map(Some), RunMode::PerformLayout));
-
-    // CSS 2.1 §10.3.7 and §10.6.4: auto margins take the free space only
-    // when both insets of their axis are set, and are zero otherwise.
-    let non_auto_margin = Rect {
-        left: if left.is_some() {
-            margin.left.unwrap_or(0.0)
-        } else {
-            0.0
-        },
-        right: if right.is_some() {
-            margin.right.unwrap_or(0.0)
-        } else {
-            0.0
-        },
-        top: if top.is_some() {
-            margin.top.unwrap_or(0.0)
-        } else {
-            0.0
-        },
-        bottom: if bottom.is_some() {
-            margin.bottom.unwrap_or(0.0)
-        } else {
-            0.0
-        },
-    };
-    let free_space = Size {
-        width: right.map_or(final_size.width, |right| {
-            area_size.width - right - left.unwrap_or(0.0)
-        }) - final_size.width
-            - non_auto_margin.horizontal_axis_sum(),
-        height: bottom.map_or(final_size.height, |bottom| {
-            area_size.height - bottom - top.unwrap_or(0.0)
-        }) - final_size.height
-            - non_auto_margin.vertical_axis_sum(),
-    };
-    // Two auto margins share the free space equally. Only the rule for the
-    // inline axis of the containing block (§10.3.7) zeroes them when that
-    // would make them negative; the block axis rule (§10.6.4) has no such
-    // exception (CSS Positioned Layout 3 §4.1).
-    let auto_margin =
-        |insets_set: bool, start: Option<f32>, end: Option<f32>, free: f32, zero_negative: bool| {
-            let count = start.is_none() as u8 + end.is_none() as u8;
-            if !insets_set || count == 0 || (count == 2 && zero_negative && free <= 0.0) {
+        let layout = &mut document.nodes[node].unrounded_layout;
+        if auto_left
+            && auto_right
+            && let (Some(left), Some(right)) = (left, right)
+        {
+            let free = area_size.width - left - right - layout.size.width;
+            let margin = if !vertical && free < 0.0 {
                 0.0
             } else {
-                free / f32::from(count)
-            }
-        };
-    let auto_width = auto_margin(
-        left.is_some() && right.is_some(),
-        margin.left,
-        margin.right,
-        free_space.width,
-        !vertical,
-    );
-    let auto_height = auto_margin(
-        top.is_some() && bottom.is_some(),
-        margin.top,
-        margin.bottom,
-        free_space.height,
-        vertical,
-    );
-    let resolved_margin = Rect {
-        left: margin.left.unwrap_or(auto_width),
-        right: margin.right.unwrap_or(auto_width),
-        top: margin.top.unwrap_or(auto_height),
-        bottom: margin.bottom.unwrap_or(auto_height),
-    };
-
-    let from_end_x =
-        |right: f32| area_size.width - final_size.width - right - resolved_margin.right;
-    let page_x = match (left, right) {
-        (Some(_), Some(right)) if direction == TaffyDirection::Rtl => Some(from_end_x(right)),
-        (Some(left), _) => Some(left + resolved_margin.left),
-        (None, Some(right)) => Some(from_end_x(right)),
-        (None, None) => None,
-    };
-    let page_y =
-        top.map(|top| top + resolved_margin.top).or(bottom
-            .map(|bottom| area_size.height - final_size.height - bottom - resolved_margin.bottom));
-    // The margins may resolve differently against the page area than
-    // against the parent; the static position is that of the margin box,
-    // which keeps the edge or center its parent aligns it by.
-    let margin_box = |size: Size<f32>, margin: Rect<f32>| Size {
-        width: size.width + margin.horizontal_axis_sum(),
-        height: size.height + margin.vertical_axis_sum(),
-    };
-    let old_margin_box = margin_box(current.size, current.margin);
-    let new_margin_box = margin_box(final_size, resolved_margin);
-    // The margin box sits at `alignment * (space - margin box)` from the
-    // start of the space its parent aligns it in; the alignment itself may
-    // change when the new size overflows that space.
-    let (old_alignment, space) = static_position_alignment(tree, id, old_margin_box);
-    let (new_alignment, _) = static_position_alignment(tree, id, new_margin_box);
-    let shift = |space: f32, old: f32, new: f32, old_alignment: f32, new_alignment: f32| {
-        new_alignment * (space - new) - old_alignment * (space - old)
-    };
-    let static_x = current.location.x - current.margin.left
-        + resolved_margin.left
-        + shift(
-            space.width,
-            old_margin_box.width,
-            new_margin_box.width,
-            old_alignment.width,
-            new_alignment.width,
-        );
-    let static_y = current.location.y - current.margin.top
-        + resolved_margin.top
-        + shift(
-            space.height,
-            old_margin_box.height,
-            new_margin_box.height,
-            old_alignment.height,
-            new_alignment.height,
-        );
-    let parent_local = parent_local_position(
-        area_origin,
-        Point {
-            x: page_x.unwrap_or(0.0),
-            y: page_y.unwrap_or(0.0),
-        },
-        parent_origin,
-    );
-    let location = Point {
-        x: page_x.map_or(static_x, |_| parent_local.x),
-        y: page_y.map_or(static_y, |_| parent_local.y),
-    };
-    let layout = TaffyLayout {
-        location,
-        size: final_size,
-        scrollable_overflow_rect: output.scrollable_overflow_rect,
-        padding,
-        border,
-        margin: resolved_margin,
-        ..current
-    };
-    tree.set_unrounded_layout(node_id, &layout);
-}
-
-/// How a sizing keyword of an absolutely positioned box resolves in one axis.
-enum KeywordSize {
-    /// Measure the box under this available space.
-    Measure(AvailableSpace),
-    /// The box takes this size without measuring.
-    Exact(f32),
-}
-
-/// Resolve a sizing keyword against the containing block, whose stretch size
-/// in this axis is `stretch` and whose percentage basis is `basis`.
-fn resolve_sizing_keyword(style: Dimension, stretch: f32, basis: f32) -> Option<KeywordSize> {
-    // spec: https://www.w3.org/TR/css-sizing-3/#sizing-values
-    // spec: https://drafts.csswg.org/css-sizing-4/#stretch-fit-sizing
-    match style.tag() {
-        CompactLength::MIN_CONTENT_TAG => Some(KeywordSize::Measure(AvailableSpace::MinContent)),
-        CompactLength::MAX_CONTENT_TAG => Some(KeywordSize::Measure(AvailableSpace::MaxContent)),
-        CompactLength::FIT_CONTENT_PX_TAG => Some(KeywordSize::Measure(AvailableSpace::Definite(
-            style.value(),
-        ))),
-        CompactLength::FIT_CONTENT_PERCENT_TAG => Some(KeywordSize::Measure(
-            AvailableSpace::Definite(basis * style.value()),
-        )),
-        CompactLength::FIT_CONTENT_KEYWORD_TAG => {
-            Some(KeywordSize::Measure(AvailableSpace::Definite(stretch)))
+                free / 2.0
+            };
+            layout.margin.left = margin;
+            layout.margin.right = margin;
+            layout.location.x = if direction == TaffyDirection::Rtl {
+                area_size.width - right - layout.size.width - margin
+            } else {
+                left + margin
+            };
         }
-        // A calc pointer carries address bits in its tag, so it is tested by
-        // its own predicate.
-        _ if style.is_fit_content_calc() => Some(KeywordSize::Measure(AvailableSpace::Definite(
-            crate::taffy_impl::resolve_calc(style.calc_value(), basis),
-        ))),
-        CompactLength::STRETCH_TAG => Some(KeywordSize::Exact(stretch)),
-        _ => None,
+        if auto_top
+            && auto_bottom
+            && let (Some(top), Some(bottom)) = (top, bottom)
+        {
+            let free = area_size.height - top - bottom - layout.size.height;
+            let margin = if vertical && free < 0.0 {
+                0.0
+            } else {
+                free / 2.0
+            };
+            layout.margin.top = margin;
+            layout.margin.bottom = margin;
+            layout.location.y = top + margin;
+        }
     }
 }
 
-/// Fill in the axes of `known_dimensions` that a sizing keyword sizes, by
-/// measuring the box `id` against the containing block of size `area_size`,
-/// as taffy sizes an absolutely positioned box against its parent.
-fn resolve_sizing_keywords(
-    tree: &mut LayoutSession<'_>,
-    id: usize,
-    known_dimensions: &mut Size<Option<f32>>,
-    size_style: Size<Dimension>,
-    area_size: Size<f32>,
-    inset: Rect<Option<f32>>,
-    margin: Rect<Option<f32>>,
-) {
-    // The stretch size is the containing block less the insets and margins.
-    let stretch = Size {
-        width: (area_size.width
-            - inset.left.unwrap_or(0.0)
-            - inset.right.unwrap_or(0.0)
-            - margin.left.unwrap_or(0.0)
-            - margin.right.unwrap_or(0.0))
-        .max(0.0),
-        height: (area_size.height
-            - inset.top.unwrap_or(0.0)
-            - inset.bottom.unwrap_or(0.0)
-            - margin.top.unwrap_or(0.0)
-            - margin.bottom.unwrap_or(0.0))
-        .max(0.0),
-    };
-    let width = known_dimensions
-        .width
-        .is_none()
-        .then(|| resolve_sizing_keyword(size_style.width, stretch.width, area_size.width))
-        .flatten();
-    let height = known_dimensions
-        .height
-        .is_none()
-        .then(|| resolve_sizing_keyword(size_style.height, stretch.height, area_size.height))
-        .flatten();
-    let node_id = TaffyNodeId::from(id);
-    let measure = |tree: &mut LayoutSession<'_>, known, available, axis| {
-        tree.compute_child_layout(
-            node_id,
-            LayoutInput {
-                known_dimensions: known,
-                known_dimensions_are_definite: Size {
-                    width: true,
-                    height: true,
-                },
-                parent_size: area_size.map(Some),
-                available_space: available,
-                sizing_mode: SizingMode::ContentSize,
-                axis,
-                run_mode: RunMode::ComputeSize,
-                vertical_margins_are_collapsible: Line::FALSE,
-            },
-        )
-        .size
-    };
-    if let (Some(KeywordSize::Measure(width)), Some(KeywordSize::Measure(height))) =
-        (&width, &height)
-    {
-        let size = measure(
-            tree,
-            Size::NONE,
-            Size {
-                width: *width,
-                height: *height,
-            },
-            RequestedAxis::Both,
-        );
-        *known_dimensions = size.map(Some);
-        return;
-    }
-    if let Some(width) = width {
-        known_dimensions.width = Some(match width {
-            KeywordSize::Exact(width) => width,
-            KeywordSize::Measure(available) => {
-                measure(
-                    tree,
-                    *known_dimensions,
-                    Size {
-                        width: available,
-                        height: AvailableSpace::Definite(stretch.height),
-                    },
-                    RequestedAxis::Horizontal,
-                )
-                .width
-            }
-        });
-    }
-    if let Some(height) = height {
-        known_dimensions.height = Some(match height {
-            KeywordSize::Exact(height) => height,
-            KeywordSize::Measure(available) => {
-                let width = known_dimensions.width.unwrap_or(stretch.width);
-                measure(
-                    tree,
-                    *known_dimensions,
-                    Size {
-                        width: AvailableSpace::Definite(width),
-                        height: available,
-                    },
-                    RequestedAxis::Vertical,
-                )
-                .height
-            }
-        });
+/// Keep flex static alignment anchored to its source flex container when the
+/// OOF box is sized against a different containing block.
+pub(crate) fn correct_root_flex_static_positions(document: &mut LayoutSession<'_>) {
+    let candidates: Vec<_> = document
+        .oof_coordinates
+        .iter()
+        .map(|(&node, coordinate)| (node, coordinate.owner, coordinate.static_owner))
+        .filter(|&(_, _, static_owner)| {
+            document.nodes[static_owner].formatting_context == FormattingContext::Flex
+        })
+        .collect();
+    for (node, owner, static_owner) in candidates {
+        let style = &document.layout_node_with_style(node).unwrap().style;
+        let mut layout = document.nodes[node].unrounded_layout;
+        let margin_box = Size {
+            width: layout.size.width + layout.margin.left + layout.margin.right,
+            height: layout.size.height + layout.margin.top + layout.margin.bottom,
+        };
+        let (alignment, space) = static_position_alignment(document, node, margin_box);
+        let static_origin = document
+            .layout_origin_of(static_owner)
+            .unwrap_or(Point::ZERO);
+        let owner_origin = document.layout_origin_of(owner).unwrap_or(Point::ZERO);
+        let static_layout = document.nodes[static_owner].unrounded_layout;
+        let insets = static_layout.padding + static_layout.border;
+        if style.inset.left.is_auto() && style.inset.right.is_auto() {
+            let free = space.width - margin_box.width;
+            layout.location.x =
+                static_origin.x + insets.left + free * alignment.width + layout.margin.left
+                    - owner_origin.x;
+        }
+        if style.inset.top.is_auto() && style.inset.bottom.is_auto() {
+            let free = space.height - margin_box.height;
+            layout.location.y =
+                static_origin.y + insets.top + free * alignment.height + layout.margin.top
+                    - owner_origin.y;
+        }
+        document.set_unrounded_layout(taffy::NodeId::from(node), &layout);
     }
 }
 

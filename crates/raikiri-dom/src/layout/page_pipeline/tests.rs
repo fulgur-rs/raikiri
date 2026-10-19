@@ -2249,7 +2249,11 @@ fn grid_auto_abspos_last_baseline_keeps_an_oversized_box_at_the_start_edge() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     let layout = doc.nodes[child].unrounded_layout;
-    assert!((layout.location.x - 10.0).abs() < 0.01);
+    assert!(
+        (layout.location.x - 10.0).abs() < 0.01,
+        "x: {}",
+        layout.location.x
+    );
     assert!((layout.location.y - 10.0).abs() < 0.01);
 }
 

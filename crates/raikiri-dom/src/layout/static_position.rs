@@ -196,6 +196,7 @@ fn keep_placed_fixed_descendants(
     while let Some(id) = stack.pop() {
         let cv = &cascade.computed[id];
         if matches!(document.nodes[id].position(), PositionValue::Fixed)
+            && !document.oof_coordinates.contains_key(&id)
             && !(matches!(cv.left, ComputedLengthPercentageOrAuto::Auto)
                 && matches!(cv.right, ComputedLengthPercentageOrAuto::Auto))
         {

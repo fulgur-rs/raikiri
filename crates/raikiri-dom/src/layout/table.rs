@@ -34,15 +34,16 @@
 
 use raikiri_style::ComputedBorder;
 use raikiri_style::property::{
-    BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, Sides, TableLayoutValue,
-    VerticalAlign, WritingMode,
+    BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, PositionValue, Sides,
+    TableLayoutValue, VerticalAlign, WritingMode,
 };
 use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
 use taffy::tree::{RunMode, SizingMode};
 use taffy::{
-    AvailableSpace, Layout as TaffyLayout, LayoutInput, LayoutOutput, LayoutPartialTree,
-    LengthPercentage, NodeId, Point, Rect, Size,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Layout as TaffyLayout, LayoutInput,
+    LayoutOutput, LayoutPartialTree, LengthPercentage, NodeId, OofCandidate, OofCandidates,
+    OofPositioningArea, Point, Position, Rect, Size,
 };
 
 use crate::document::Document;
@@ -441,6 +442,7 @@ fn compute_table_layout_checked(
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
     let mut grid = build_table_grid(doc, table_idx)?;
+    let mut oof_candidates = OofCandidates::new();
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let cell_index =
@@ -679,7 +681,13 @@ fn compute_table_layout_checked(
             caption_size,
             inputs.run_mode,
         );
-        return Ok(LayoutOutput::from_outer_size(wrapper_size));
+        return Ok(table_layout_output(
+            doc,
+            table_idx,
+            wrapper_size,
+            OofCandidates::new(),
+            inputs.run_mode,
+        ));
     }
 
     // Overlap totals up front: tracks are sized in pre-overlap space
@@ -1059,11 +1067,19 @@ fn compute_table_layout_checked(
     place_cells(
         doc,
         &mut grid,
-        (&column_widths, &col_gaps, &collapsed_cols),
-        (&row_heights, &row_gaps, &collapsed_rows),
-        (&col_origins, &row_origins),
-        border_spacing,
-        vertical_writing,
+        CellPlacementTracks {
+            column_widths: &column_widths,
+            column_gaps: &col_gaps,
+            collapsed_columns: &collapsed_cols,
+            row_heights: &row_heights,
+            row_gaps: &row_gaps,
+            collapsed_rows: &collapsed_rows,
+            column_origins: &col_origins,
+            row_origins: &row_origins,
+            row_spacing: border_spacing.1,
+            vertical_writing,
+        },
+        &mut oof_candidates,
     )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
     // The first row the table still shows carries its baseline.
     let baseline_row = collapsed_rows
@@ -1125,7 +1141,94 @@ fn compute_table_layout_checked(
         (&col_origins, &row_origins),
         vertical_writing,
     );
-    Ok(LayoutOutput::from_outer_size(wrapper_size))
+    Ok(table_layout_output(
+        doc,
+        table_idx,
+        wrapper_size,
+        oof_candidates,
+        inputs.run_mode,
+    ))
+}
+
+fn table_layout_output(
+    doc: &Document,
+    table: usize,
+    size: Size<f32>,
+    mut candidates: OofCandidates,
+    run_mode: RunMode,
+) -> LayoutOutput {
+    let mut output = LayoutOutput::from_outer_size(size);
+    if run_mode != RunMode::PerformLayout {
+        return output;
+    }
+    append_direct_table_oof_candidates(doc, table, &mut candidates);
+    if candidates.is_empty() {
+        return output;
+    }
+    let style = &doc.layout_node_with_style(table).unwrap().style;
+    let border = style
+        .border
+        .resolve_or_zero(Some(size.width), crate::taffy_impl::resolve_calc);
+    let gutter_x = if style.overflow.y.is_scroll_container() {
+        style.scrollbar_width
+    } else {
+        0.0
+    };
+    let gutter_y = if style.overflow.x.is_scroll_container() {
+        style.scrollbar_width
+    } else {
+        0.0
+    };
+    let rtl_gutter = if style.direction == taffy::Direction::Rtl {
+        gutter_x
+    } else {
+        0.0
+    };
+    output.oof_candidates = candidates;
+    output.oof_positioning_area = Some(OofPositioningArea {
+        size: Size {
+            width: (size.width - border.left - border.right - gutter_x).max(0.0),
+            height: (size.height - border.top - border.bottom - gutter_y).max(0.0),
+        },
+        offset: Point {
+            x: border.left + rtl_gutter,
+            y: border.top,
+        },
+    });
+    output
+}
+
+fn append_direct_table_oof_candidates(
+    doc: &Document,
+    table: usize,
+    candidates: &mut OofCandidates,
+) {
+    for (order, &child) in doc.nodes[table].children.iter().enumerate() {
+        if !doc.nodes[child].is_in_document()
+            || doc.nodes[child].taffy_position() != Position::Absolute
+            // The table layout has always placed absolute captions at its
+            // local origin; preserve that legacy geometry while dispatching
+            // fixed captions against the page area.
+            || doc.nodes[child].display() == DisplayValue::TableCaption
+                && doc.nodes[child].position() == &PositionValue::Absolute
+        {
+            continue;
+        }
+        let position = if doc.nodes[child].position() == &PositionValue::Fixed {
+            Position::Fixed
+        } else {
+            Position::Absolute
+        };
+        candidates.push(OofCandidate {
+            node: NodeId::from(child),
+            order: order as u32,
+            position,
+            static_position: Point {
+                x: AxisStaticPosition::from_edge(0.0, AxisStaticEdge::Start),
+                y: AxisStaticPosition::from_edge(0.0, AxisStaticEdge::Start),
+            },
+        });
+    }
 }
 
 /// Give source rows and groups used boxes, while cell placement remains
@@ -2673,18 +2776,37 @@ fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
         })
 }
 
+struct CellPlacementTracks<'a> {
+    column_widths: &'a [f32],
+    column_gaps: &'a [f32],
+    collapsed_columns: &'a [bool],
+    row_heights: &'a [f32],
+    row_gaps: &'a [f32],
+    collapsed_rows: &'a [bool],
+    column_origins: &'a [f32],
+    row_origins: &'a [f32],
+    row_spacing: f32,
+    vertical_writing: bool,
+}
+
 fn place_cells(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
-    col_tracks: (&[f32], &[f32], &[bool]),
-    row_tracks: (&[f32], &[f32], &[bool]),
-    origins: (&[f32], &[f32]),
-    spacing: (f32, f32),
-    vertical_writing: bool,
+    tracks: CellPlacementTracks<'_>,
+    oof_candidates: &mut OofCandidates,
 ) -> Result<(), raikiri_traits::LayoutError> {
-    let (column_widths, col_gaps, collapsed_cols) = col_tracks;
-    let (row_heights, row_gaps, collapsed_rows) = row_tracks;
-    let (col_x, row_y) = origins;
+    let CellPlacementTracks {
+        column_widths,
+        column_gaps: col_gaps,
+        collapsed_columns: collapsed_cols,
+        row_heights,
+        row_gaps,
+        collapsed_rows,
+        column_origins: col_x,
+        row_origins: row_y,
+        row_spacing,
+        vertical_writing,
+    } = tracks;
     // A cell moved past collapsed rows aligns with the row it now starts in.
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
@@ -2740,15 +2862,17 @@ fn place_cells(
                 .iter()
                 .filter(|gap| **gap != 0.0)
                 .count() as f32
-                * spacing.1;
+                * row_spacing;
         // Final layout for cell contents with definite size. A cell whose
         // content does not depend on its height keeps its row-pass lines.
         let reused = cell
             .row_pass
             .filter(|pass| pass.width == cell_width)
             .map(|pass| pass.scrollable_overflow_rect);
-        let scrollable_overflow_rect = reused.unwrap_or_else(|| {
-            doc.compute_child_layout(
+        let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
+            (rect, OofCandidates::new())
+        } else {
+            let output = doc.compute_child_layout(
                 NodeId::from(cell.node_id),
                 LayoutInput {
                     run_mode: RunMode::PerformLayout,
@@ -2772,9 +2896,14 @@ fn place_cells(
                     },
                     vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
                 },
-            )
-            .scrollable_overflow_rect
+            );
+            (output.scrollable_overflow_rect, output.oof_candidates)
+        };
+        child_candidates.translate(Point {
+            x: cell_x,
+            y: cell_y,
         });
+        oof_candidates.append(&mut child_candidates);
         // A cell laid out by the inline engine has no child layouts: its
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.

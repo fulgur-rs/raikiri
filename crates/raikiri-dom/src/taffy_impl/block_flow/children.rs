@@ -19,7 +19,7 @@ pub(super) struct Flow {
     pub float_overflow: Rect<f32>,
     pub baselines: Baselines,
     pub placed: Vec<NodeId>,
-    pub positioned: Vec<super::positioned::Candidate>,
+    pub oof_candidates: taffy::OofCandidates,
 }
 
 fn place_inline_axis(
@@ -156,7 +156,7 @@ pub(super) fn layout(
         float_overflow: Rect::ZERO,
         baselines: Baselines::NONE,
         placed: Vec::new(),
-        positioned: Vec::new(),
+        oof_candidates: taffy::OofCandidates::new(),
     };
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut pending = CollapsibleMarginSet::ZERO;
@@ -174,14 +174,31 @@ pub(super) fn layout(
         }
         let mut margin = margins(&style, content_width);
         if style.position == Position::Absolute {
-            flow.positioned.push(super::positioned::Candidate {
-                node: child,
-                order,
-                static_position: Point {
-                    x: metrics.inset.left,
-                    y: flow.end + pending.resolve(),
-                },
-            });
+            if inputs.run_mode == RunMode::PerformLayout {
+                super::positioned::push_candidate(
+                    &mut flow.oof_candidates,
+                    child,
+                    order,
+                    if tree.nodes[usize::from(child)].fixed_position
+                        || tree.nodes[usize::from(child)].position()
+                            == &raikiri_style::property::PositionValue::Fixed
+                        || style.position == Position::Fixed
+                    {
+                        Position::Fixed
+                    } else {
+                        Position::Absolute
+                    },
+                    Point {
+                        x: metrics.inset.left,
+                        y: flow.end + pending.resolve(),
+                    },
+                    super::positioned::CandidateContext {
+                        direction: container.direction,
+                        container_width: width,
+                        metrics,
+                    },
+                );
+            }
             continue;
         }
         let mut child_input = child_inputs(parent, None, inputs.run_mode);
@@ -214,6 +231,11 @@ pub(super) fn layout(
             flow.float_overflow =
                 flow.float_overflow
                     .union(overflow(&style, child_metrics, &output, location));
+            if inputs.run_mode == RunMode::PerformLayout && !output.oof_candidates.is_empty() {
+                let mut surfaced = output.oof_candidates.clone();
+                surfaced.translate(location);
+                flow.oof_candidates.append(&mut surfaced);
+            }
             if inputs.run_mode == RunMode::PerformLayout {
                 commit(tree, child, order, child_metrics, &output, location, margin);
             }
@@ -435,6 +457,11 @@ pub(super) fn layout(
             x: left + offset.x,
             y: top + offset.y,
         };
+        if inputs.run_mode == RunMode::PerformLayout && !output.oof_candidates.is_empty() {
+            let mut surfaced = output.oof_candidates.clone();
+            surfaced.translate(location);
+            flow.oof_candidates.append(&mut surfaced);
+        }
         flow.overflow = flow
             .overflow
             .union(overflow(&style, child_metrics, &output, location));
@@ -487,9 +514,7 @@ pub(super) fn align(tree: &mut LayoutSession<'_>, style: &Style, flow: &mut Flow
         flow.overflow.top += offset;
         flow.overflow.bottom += offset;
     }
-    for candidate in &mut flow.positioned {
-        candidate.static_position.y += offset;
-    }
+    flow.oof_candidates.translate(Point { x: 0.0, y: offset });
     for &node in &flow.placed {
         let mut layout = tree.nodes[usize::from(node)].unrounded_layout;
         layout.location.y += offset;

@@ -159,7 +159,13 @@ fn content_overflow_end(
         // Layout places some boxes without their relative offset, which
         // the painter adds to the box and its subtree.
         let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
-        let y = parent_y + node.unrounded_layout.location.y + paint_offset;
+        // OOF locations are relative to their containing-block owner, which
+        // may differ from the DOM parent used by this traversal.
+        let y = if document.oof_coordinates.contains_key(&node_id) {
+            current_abs_y(document, node_id) + paint_offset
+        } else {
+            parent_y + node.unrounded_layout.location.y + paint_offset
+        };
         let bottom = if node_id == body_id {
             block_border_box_end(
                 document,
@@ -1158,26 +1164,21 @@ fn layout_single_page_with_table_projection(
         width: AvailableSpace::Definite(content_width),
         height: AvailableSpace::Definite(content_height),
     };
+    document.begin_oof_layout();
     taffy::compute_root_layout(document, TaffyNodeId::from(icb), available_space);
     take_layout_failure(document)?;
-    // Step 5a: post-layout corrections taffy does not make: the containing
-    // block of nested fixed boxes and auto-height ancestors of floats. Grid
-    // abspos static positions are aligned within the grid dispatch.
-    // Taffy places fixed boxes against their parents, not the page area,
-    // their containing block.
-    let page_area = taffy::Size {
-        width: content_width,
-        height: content_height,
-    };
-    document.fixed_page_area = Some((content_width, content_height));
-    super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
-    let root = super::initial_containing_block::root_element(document).unwrap_or(body_id);
-    place_fixed_boxes_in_page_area(document, cascade, root, page_area);
-    // Laying those boxes out again can fail a table or exhaust the
-    // fragment budget like the root layout above.
-    take_layout_failure(document)?;
-    // Again for the boxes inside fixed boxes that relayout put back; the
-    // pass is idempotent, so the boxes placed above stay where they are.
+    super::fixed::correct_root_oof_auto_margins(
+        document,
+        icb,
+        taffy::Size {
+            width: content_width,
+            height: content_height,
+        },
+    );
+    super::fixed::correct_root_flex_static_positions(document);
+    document.finalize_oof_layout();
+    // Inline-level boxes in block flow keep the hypothetical inline static
+    // position from CSS 2.1; inline paragraphs place their own OOF anchors.
     super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
@@ -3284,8 +3285,7 @@ fn paginate_flow(
     let page_step_at = |page_index: u32| page_origins.step_at(page_index);
     let page_origin = |page_index: u32| page_origins.origin(page_index);
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
-    let leading_margins_moved =
-        leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
+    leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
     let root_flow_offset = 0.0;
 
     // Page heights are known here, after source layout has established each
@@ -3458,13 +3458,6 @@ fn paginate_flow(
     document.table_objects.headers = std::mem::take(&mut state.table_headers);
 
     state.reach_overflow_pages(document, &env, content_height)?;
-
-    // Truncating margins can move an ancestor of a fixed box. Restore only
-    // its block position, preserving the already-corrected subtree layout.
-    if state.sibling_margins.moved_boxes || leading_margins_moved {
-        let root = super::initial_containing_block::root_element(document).unwrap_or(body_id);
-        super::fixed::restore_fixed_box_block_positions(document, cascade, root, content_height);
-    }
 
     scale_percent_widths(
         document,
@@ -3942,6 +3935,15 @@ impl AvoidedBreaks {
 // materialized relative to an already-shifted ancestor instead of being
 // shifted twice.
 fn current_abs_y(document: &Document, node_id: usize) -> f32 {
+    if let Some(node) = document.get_node(node_id)
+        && (document.layout_coordinate_parent_of(node_id) != document.layout_parent_of(node_id)
+            || document
+                .layout_offset_of(node_id)
+                .is_some_and(|offset| offset.y != node.unrounded_layout.location.y))
+        && let Some(origin) = document.layout_origin_of(node_id)
+    {
+        return origin.y;
+    }
     let mut id = document.ifc_source_owner(node_id);
     let mut y = if id != node_id {
         document

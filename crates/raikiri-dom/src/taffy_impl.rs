@@ -10,11 +10,12 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BoxGenerationMode, Cache, CacheTree, CollapsibleMarginSet, CoreStyle,
-    DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
-    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
-    Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
-    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    AvailableSpace, BoxGenerationMode, Cache, CacheTree, CollapsibleMarginSet,
+    ContainingBlockClaims, CoreStyle, DetailedGridInfo, ExpandedDimension, Layout,
+    LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput,
+    LayoutPartialTree, NodeId, Position as TaffyPosition, Size, Style, TraversePartialTree,
+    TraverseTree, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
+    compute_leaf_layout,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -516,14 +517,22 @@ impl CacheTree for LayoutSession<'_> {
 impl LayoutPartialTree for LayoutSession<'_> {
     type CustomIdent = String;
     type CoreContainerStyle<'a>
-        = &'a Style
+        = BlockChildStyle<'a>
     where
         Self: 'a;
 
     fn get_core_container_style(&self, node_id: NodeId) -> Self::CoreContainerStyle<'_> {
-        self.layout_node_with_style(usize::from(node_id))
-            .unwrap()
-            .style
+        let idx = usize::from(node_id);
+        let style = self.layout_node_with_style(idx).unwrap().style;
+        BlockChildStyle::for_container(
+            style,
+            ContainingBlockClaims {
+                // Preserve Taffy's default for position-established absolute
+                // containing blocks when a caller lays out an unbridged tree.
+                absolute: self.nodes[idx].claims_absolute_oof || style.position.is_positioned(),
+                fixed: self.nodes[idx].claims_fixed_oof,
+            },
+        )
     }
 
     /// The **only** path by which taffy writes layout into the arena.
@@ -676,7 +685,19 @@ impl LayoutSession<'_> {
                 // Taffy has no table layout; the table engine lays the
                 // wrapper box out.
                 FormattingContext::Table => {
-                    return crate::layout::table::compute_table_layout(tree, node_id, inputs);
+                    let mut output =
+                        crate::layout::table::compute_table_layout(tree, node_id, inputs);
+                    if inputs.run_mode == RunMode::PerformLayout {
+                        oof::layout_local_oof(tree, node_id, &mut output);
+                        center_absolute_children_in_block_axis(
+                            tree,
+                            idx,
+                            &inputs,
+                            output.size,
+                            None,
+                        );
+                    }
+                    return output;
                 }
                 _ => {}
             }
@@ -1131,7 +1152,7 @@ fn compute_ifc_root(
     output.top_margin = leading_margin;
     output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
     if inputs.run_mode == RunMode::PerformLayout {
-        crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size);
+        crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size, &mut output);
     }
     // When `min-height` gives the used height, the last child's bottom margin
     // no longer adjoins the box's bottom edge and does not collapse through
@@ -1148,6 +1169,10 @@ fn compute_ifc_root(
     } else {
         escaping_margin
     };
+    if inputs.run_mode == RunMode::PerformLayout {
+        oof::layout_local_oof(tree, node_id, &mut output);
+        center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
+    }
     output
 }
 
@@ -2024,7 +2049,11 @@ pub(crate) fn block_layout(
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     if let Some(right_to_left) = vertical_block::block_right_to_left(tree, idx) {
-        let output = vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left);
+        let mut output =
+            vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left);
+        if inputs.run_mode == RunMode::PerformLayout {
+            oof::layout_local_oof(tree, node_id, &mut output);
+        }
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
         return output;
     }
@@ -2038,6 +2067,9 @@ pub(crate) fn block_layout(
         tree.context.block_item_percent_bases.push((idx, basis));
         output = compute_block_flow(tree, node_id, inputs, None);
         tree.context.block_item_percent_bases.pop();
+    }
+    if inputs.run_mode == RunMode::PerformLayout {
+        oof::layout_local_oof(tree, node_id, &mut output);
     }
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
@@ -2154,24 +2186,26 @@ fn center_absolute_children_in_block_axis(
             bottom: size.height - border.bottom - gutter_y,
         }
     };
-    let children: Vec<usize> = TaffyChildIter::new_for_session(tree, NodeId::from(idx))
-        .map(usize::from)
-        .filter(|&child| {
-            let style = &tree.layout_node_with_style(child).unwrap().style;
-            let (start, end) = if block_is_height {
-                (style.margin.top, style.margin.bottom)
-            } else {
-                (style.margin.left, style.margin.right)
-            };
-            tree.nodes[child].taffy_position() == TaffyPosition::Absolute
-                && !tree.nodes[child].is_display_none()
-                && start.is_auto()
-                && end.is_auto()
-        })
+    let children: Vec<usize> = tree
+        .context
+        .taffy_hoisted_children
+        .get(&idx)
+        .into_iter()
+        .flatten()
+        .map(|child| usize::from(*child))
+        .filter(|&child| !tree.nodes[child].is_display_none())
         .collect();
-    for child in children {
+    for child in children.iter().copied() {
         let node = &tree.layout_node_with_style(child).unwrap();
         let style = &node.style;
+        let (start, end) = if block_is_height {
+            (style.margin.top, style.margin.bottom)
+        } else {
+            (style.margin.left, style.margin.right)
+        };
+        if !start.is_auto() || !end.is_auto() {
+            continue;
+        }
         let area = match grid {
             Some(grid) => grid.resolve_absolute_grid_area(
                 style.grid_row.clone(),
@@ -2215,6 +2249,48 @@ fn center_absolute_children_in_block_axis(
         }
         tree.set_unrounded_layout(NodeId::from(child), &layout);
     }
+    if !block_is_height {
+        for child in children {
+            let node = &tree.layout_node_with_style(child).unwrap();
+            let style = &node.style;
+            if !style.margin.top.is_auto() || !style.margin.bottom.is_auto() {
+                continue;
+            }
+            let area = match grid {
+                Some(grid) => grid.resolve_absolute_grid_area(
+                    style.grid_row.clone(),
+                    style.grid_column.clone(),
+                    direction,
+                    padding_box,
+                ),
+                None => padding_box,
+            };
+            let start = style
+                .inset
+                .top
+                .maybe_resolve(area.bottom - area.top, resolve_calc);
+            let end = style
+                .inset
+                .bottom
+                .maybe_resolve(area.bottom - area.top, resolve_calc);
+            let (Some(start), Some(end)) = (start, end) else {
+                continue;
+            };
+            let mut layout = node.unrounded_layout;
+            let free_space = area.bottom - area.top - start - end - layout.size.height;
+            if free_space >= 0.0 {
+                continue;
+            }
+            layout.margin.top = 0.0;
+            layout.margin.bottom = 0.0;
+            layout.location.y = if direction == taffy::Direction::Rtl {
+                area.bottom - end - layout.size.height
+            } else {
+                area.top + start
+            };
+            tree.set_unrounded_layout(NodeId::from(child), &layout);
+        }
+    }
 }
 
 /// Lay out the flex container `node_id` with taffy's flexbox algorithm,
@@ -2244,7 +2320,9 @@ fn flex_layout_sized(
     };
     tree.context.flex_item_percent_bases.push((idx, basis));
     let mut output = compute_flexbox_layout(tree, node_id, inputs);
-    oof::layout_local_oof(tree, node_id, &mut output);
+    if inputs.run_mode == RunMode::PerformLayout {
+        oof::layout_local_oof(tree, node_id, &mut output);
+    }
     tree.context.flex_item_percent_bases.pop();
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
@@ -2319,7 +2397,9 @@ fn with_fit_content_width(
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
     let mut output = compute_grid_layout(tree, node_id, inputs);
-    oof::layout_local_oof(tree, node_id, &mut output);
+    if inputs.run_mode == RunMode::PerformLayout {
+        oof::layout_local_oof(tree, node_id, &mut output);
+    }
     // Taffy reports the tracks only from a layout it performs.
     let grid = tree.context.grid_layout_info.remove(&idx);
     if let Some(taffy::DetailedLayoutInfo::Grid(grid)) = grid {
@@ -2431,65 +2511,142 @@ fn align_auto_grid_abspos_children(
     let padding = parent_style
         .padding
         .resolve_or_zero(percent_basis, resolve_calc);
-    let content_width =
-        (size.width - border.left - border.right - padding.left - padding.right).max(0.0);
-    let content_height =
-        (size.height - border.top - border.bottom - padding.top - padding.bottom).max(0.0);
 
-    let placed: Vec<(usize, taffy::Layout)> =
-        TaffyChildIter::new_for_session(tree, NodeId::from(idx))
-            .filter_map(|child| {
-                let child = usize::from(child);
-                if tree.nodes[child].taffy_position() != TaffyPosition::Absolute
-                    || tree.nodes[child].is_display_none()
-                {
-                    return None;
-                }
-                let node = tree.layout_node_with_style(child).unwrap();
-                let style = &node.style;
-                let mut layout = node.unrounded_layout;
-                // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
-                // §10.6.4).
-                let margin = taffy::Rect {
-                    left: if style.margin.left.is_auto() {
-                        0.0
-                    } else {
-                        layout.margin.left
-                    },
-                    right: if style.margin.right.is_auto() {
-                        0.0
-                    } else {
-                        layout.margin.right
-                    },
-                    top: if style.margin.top.is_auto() {
-                        0.0
-                    } else {
-                        layout.margin.top
-                    },
-                    bottom: if style.margin.bottom.is_auto() {
-                        0.0
-                    } else {
-                        layout.margin.bottom
-                    },
-                };
-                let free_width = content_width - layout.size.width - margin.left - margin.right;
-                let free_height = content_height - layout.size.height - margin.top - margin.bottom;
-                let overflows = Size {
-                    width: free_width < 0.0,
-                    height: free_height < 0.0,
-                };
-                let alignment = auto_grid_abspos_static_alignment(style, parent_style, overflows)?;
-                layout.location.x =
-                    border.left + padding.left + margin.left + alignment.width * free_width;
-                layout.location.y =
-                    border.top + padding.top + margin.top + alignment.height * free_height;
-                Some((child, layout))
-            })
-            .collect();
+    let placed: Vec<(usize, taffy::Layout)> = tree
+        .context
+        .taffy_hoisted_children
+        .get(&idx)
+        .into_iter()
+        .flatten()
+        .filter_map(|child| {
+            let child = usize::from(*child);
+            auto_grid_abspos_aligned_layout(
+                tree,
+                idx,
+                child,
+                size,
+                border,
+                padding,
+                taffy::Point::ZERO,
+            )
+            .map(|layout| (child, layout))
+        })
+        .collect();
 
     for (child, layout) in placed {
         tree.set_unrounded_layout(NodeId::from(child), &layout);
     }
+}
+
+/// Apply grid static alignment after an outer containing block has laid out
+/// an out-of-flow grid child.
+pub(super) fn align_hoisted_grid_abspos_children(
+    tree: &mut LayoutSession<'_>,
+    owner: NodeId,
+    children: &[NodeId],
+) {
+    let owner = usize::from(owner);
+    let owner_origin = tree
+        .document
+        .layout_origin_of(owner)
+        .unwrap_or(taffy::Point::ZERO);
+    let placed: Vec<_> = children
+        .iter()
+        .copied()
+        .filter_map(|candidate| {
+            let child = usize::from(candidate);
+            let grid = tree.taffy_parent_of(child)?;
+            if grid == owner
+                || !matches!(
+                    tree.nodes[grid].display(),
+                    DisplayValue::Grid | DisplayValue::InlineGrid
+                )
+            {
+                return None;
+            }
+            let grid_layout = tree.nodes[grid].unrounded_layout;
+            let grid_origin = tree
+                .document
+                .layout_origin_of(grid)
+                .unwrap_or(taffy::Point::ZERO);
+            let grid_to_owner = taffy::Point {
+                x: grid_origin.x - owner_origin.x,
+                y: grid_origin.y - owner_origin.y,
+            };
+            auto_grid_abspos_aligned_layout(
+                tree,
+                grid,
+                child,
+                grid_layout.size,
+                grid_layout.border,
+                grid_layout.padding,
+                grid_to_owner,
+            )
+            .map(|layout| (child, layout))
+        })
+        .collect();
+
+    for (child, layout) in placed {
+        tree.set_unrounded_layout(NodeId::from(child), &layout);
+    }
+}
+
+fn auto_grid_abspos_aligned_layout(
+    tree: &LayoutSession<'_>,
+    grid: usize,
+    child: usize,
+    size: Size<f32>,
+    border: taffy::Rect<f32>,
+    padding: taffy::Rect<f32>,
+    grid_to_owner: taffy::Point<f32>,
+) -> Option<taffy::Layout> {
+    if tree.nodes[child].is_display_none() || tree.taffy_parent_of(child) != Some(grid) {
+        return None;
+    }
+    let parent_style = &tree.layout_node_with_style(grid)?.style;
+    let node = tree.layout_node_with_style(child)?;
+    let style = &node.style;
+    let mut layout = node.unrounded_layout;
+    // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
+    // §10.6.4).
+    let margin = taffy::Rect {
+        left: if style.margin.left.is_auto() {
+            0.0
+        } else {
+            layout.margin.left
+        },
+        right: if style.margin.right.is_auto() {
+            0.0
+        } else {
+            layout.margin.right
+        },
+        top: if style.margin.top.is_auto() {
+            0.0
+        } else {
+            layout.margin.top
+        },
+        bottom: if style.margin.bottom.is_auto() {
+            0.0
+        } else {
+            layout.margin.bottom
+        },
+    };
+    let content_width =
+        (size.width - border.left - border.right - padding.left - padding.right).max(0.0);
+    let content_height =
+        (size.height - border.top - border.bottom - padding.top - padding.bottom).max(0.0);
+    let free_width = content_width - layout.size.width - margin.left - margin.right;
+    let free_height = content_height - layout.size.height - margin.top - margin.bottom;
+    let overflows = Size {
+        width: free_width < 0.0,
+        height: free_height < 0.0,
+    };
+    let alignment = auto_grid_abspos_static_alignment(style, parent_style, overflows)?;
+    layout.location.x =
+        grid_to_owner.x + border.left + padding.left + margin.left + alignment.width * free_width;
+    layout.location.y =
+        grid_to_owner.y + border.top + padding.top + margin.top + alignment.height * free_height;
+    Some(layout)
 }
 
 impl LayoutSession<'_> {
@@ -2639,6 +2796,7 @@ pub struct BlockChildStyle<'a> {
     padding: taffy::Rect<taffy::LengthPercentage>,
     border: taffy::Rect<taffy::LengthPercentage>,
     oof_table: bool,
+    claims: Option<ContainingBlockClaims>,
 }
 
 impl<'a> BlockChildStyle<'a> {
@@ -2662,13 +2820,22 @@ impl<'a> BlockChildStyle<'a> {
                 padding: resolve_vertical(style.padding, basis),
                 border: resolve_vertical(style.border, basis),
                 oof_table: taffy::OofItemStyle::is_table(style),
+                claims: None,
             },
             None => Self {
                 style,
                 padding: style.padding,
                 border: style.border,
                 oof_table: taffy::OofItemStyle::is_table(style),
+                claims: None,
             },
+        }
+    }
+
+    fn for_container(style: &'a Style, claims: ContainingBlockClaims) -> Self {
+        Self {
+            claims: Some(claims),
+            ..Self::new(style, None)
         }
     }
 }
@@ -2729,6 +2896,10 @@ impl CoreStyle for BlockChildStyle<'_> {
     }
     fn contain(&self) -> taffy::Contain {
         self.style.contain()
+    }
+    fn is_containing_block(&self) -> ContainingBlockClaims {
+        self.claims
+            .unwrap_or_else(|| self.style.is_containing_block())
     }
 }
 

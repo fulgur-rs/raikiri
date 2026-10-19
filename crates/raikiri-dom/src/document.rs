@@ -32,6 +32,16 @@ use raikiri_traits::{QuirksMode, StylesheetKind};
 use crate::fragment::FragmentTree;
 use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData};
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OofCoordinate {
+    pub(crate) owner: usize,
+    pub(crate) static_owner: usize,
+    pub(crate) follow_static_x: bool,
+    pub(crate) follow_static_y: bool,
+    pub(crate) initial_owner_origin: Option<taffy::Point<f32>>,
+    pub(crate) initial_static_origin: Option<taffy::Point<f32>>,
+}
+
 mod mutation;
 pub use mutation::DomMutationError;
 
@@ -427,6 +437,8 @@ pub struct Document {
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
     pub(crate) fixed_page_area: Option<(f32, f32)>,
+    /// The geometry owner and static-position source for each laid-out OOF box.
+    pub(crate) oof_coordinates: HashMap<usize, OofCoordinate>,
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -528,6 +540,7 @@ impl Document {
         ));
         self.ifc = Some(crate::layout::ifc::root::IfcState::new(fonts, limits));
         self.layout_dirty = true;
+        self.oof_coordinates.clear();
     }
 
     /// The measurer of `line-height: normal` in the fonts this document lays
@@ -668,6 +681,7 @@ impl Document {
             normal_line_height: None,
             layout_cascade_generation: None,
             fixed_page_area: None,
+            oof_coordinates: Default::default(),
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
@@ -2034,6 +2048,7 @@ impl Document {
             normal_line_height,
             layout_cascade_generation: _,
             fixed_page_area: _,
+            oof_coordinates: _,
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,
@@ -3033,6 +3048,7 @@ impl Document {
         self.page_projection.clear();
         self.counter_snapshot_cache.take();
         self.drop_retained_paragraphs();
+        self.oof_coordinates.clear();
         self.layout_dirty = true;
     }
 
@@ -3414,6 +3430,7 @@ impl Document {
             }
         }
         self.layout_dirty = true;
+        self.oof_coordinates.clear();
     }
 
     /// Pixels of image `index` (counted among the images of the `content`

@@ -22,8 +22,9 @@ use shodo::{
 use std::collections::{HashMap, HashSet};
 use taffy::util::ResolveOrZero;
 use taffy::{
-    AvailableSpace, Clear, CollapsibleMarginSet, FloatDirection, LayoutInput, LayoutPartialTree,
-    Line, RequestedAxis, RunMode, Size, SizingMode,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Clear, CollapsibleMarginSet,
+    FloatDirection, LayoutInput, LayoutPartialTree, Line, OofCandidate, OofPositioningArea, Point,
+    Position, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -2706,7 +2707,12 @@ struct PaddingBox {
 /// pieces on the lines, moved by its offset (CSS 2.1 10.1). An inline element
 /// that is a containing block only through `filter` or `will-change` is left
 /// to the root.
-pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border_box: Size<f32>) {
+pub(crate) fn place_out_of_flow(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    border_box: Size<f32>,
+    output: &mut taffy::LayoutOutput,
+) {
     use taffy::util::MaybeResolve;
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
         return;
@@ -2747,8 +2753,9 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
     // The pieces of the inline elements on the lines, made when a box needs
     // them.
     let mut pieces = None;
+    let mut candidates = taffy::OofCandidates::new();
     for node in positioned {
-        let cb = (tree.nodes[node].position() == &PositionValue::Absolute)
+        let inline_cb = (tree.nodes[node].position() == &PositionValue::Absolute)
             .then(|| positioned_inline_ancestor(tree, idx, owner, node))
             .flatten()
             .and_then(|inline| {
@@ -2781,8 +2788,7 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
                     y: content_top + inline.y + dy,
                     ..inline
                 }
-            })
-            .unwrap_or(root_cb);
+            });
         let anchor = lines.lines.iter().enumerate().find_map(|(index, line)| {
             line.fragments().find_map(|fragment| match fragment {
                 shodo::Fragment::OutOfFlowAnchor(anchor) if anchor.node.0 as usize == node => {
@@ -2808,6 +2814,23 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
                 }
             }
             None => (content_left, content_top + lines.height),
+        };
+        let Some(cb) = inline_cb else {
+            let position = if tree.nodes[node].position() == &PositionValue::Fixed {
+                Position::Fixed
+            } else {
+                Position::Absolute
+            };
+            candidates.push(OofCandidate {
+                node: taffy::NodeId::from(node),
+                order: tree.nodes[node].unrounded_layout.order,
+                position,
+                static_position: Point {
+                    x: AxisStaticPosition::from_edge(static_x, AxisStaticEdge::Start),
+                    y: AxisStaticPosition::from_edge(static_y, AxisStaticEdge::Start),
+                },
+            });
+            continue;
         };
         let child = &tree.layout_node_with_style(node).unwrap().style;
         // Two auto margins share the free space between the insets equally.
@@ -2902,6 +2925,19 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
             (None, None) => static_y + margin.top,
         };
         commit_child_layout(tree, node, &output, taffy::Point { x, y }, cb.width);
+    }
+    if !candidates.is_empty() {
+        output.oof_candidates.append(&mut candidates);
+        output.oof_positioning_area = Some(OofPositioningArea {
+            size: Size {
+                width: root_cb.width,
+                height: root_cb.height,
+            },
+            offset: Point {
+                x: root_cb.x,
+                y: root_cb.y,
+            },
+        });
     }
 }
 

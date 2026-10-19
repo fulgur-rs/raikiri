@@ -184,10 +184,9 @@ fn fixed_children_do_not_participate_in_block_flow() {
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(output.size.height, 10.0);
     assert_eq!(tree.nodes[sibling].unrounded_layout.location.y, 0.0);
-    assert_eq!(
-        tree.nodes[fixed].unrounded_layout.location,
-        taffy::Point { x: 10.0, y: 15.0 }
-    );
+    let candidate = output.oof_candidates.as_slice().first().unwrap();
+    assert_eq!(candidate.node, NodeId::from(fixed));
+    assert_eq!(candidate.position, taffy::Position::Fixed);
 }
 
 #[test]

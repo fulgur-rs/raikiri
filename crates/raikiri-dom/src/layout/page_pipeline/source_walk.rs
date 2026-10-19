@@ -220,7 +220,7 @@ struct SourceWalk<'a> {
 impl<'a> SourceWalk<'a> {
     fn visit(
         &mut self,
-        visit: ProjectionVisit,
+        mut visit: ProjectionVisit,
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         let (document, cascade, fragments) =
@@ -236,6 +236,17 @@ impl<'a> SourceWalk<'a> {
             return Ok(());
         };
         let layout = node.unrounded_layout;
+        if !visit.is_fragment_visit
+            && let Some(origin) = document.layout_origin_of(node_id)
+        {
+            let parent_origin = document
+                .layout_parent_of(node_id)
+                .and_then(|parent| document.layout_origin_of(parent));
+            let parent_x = parent_origin.map_or(0.0, |parent| parent.x);
+            let parent_y = parent_origin.map_or(0.0, |parent| parent.y);
+            visit.parent_origin.0 += origin.x - parent_x - layout.location.x;
+            visit.parent_origin.1 += origin.y - parent_y - layout.location.y;
+        }
         if self.enter_fragments(&visit, node_id, (layout.location.x, layout.location.y)) {
             return Ok(());
         }

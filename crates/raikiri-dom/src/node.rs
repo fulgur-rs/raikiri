@@ -520,6 +520,10 @@ pub struct Node {
     /// transform, filter or containment that would make it the containing
     /// block of fixed boxes as well. Bridged from the cascade.
     pub(crate) contains_absolute_boxes: bool,
+    /// Whether this box establishes a containing block for absolute boxes.
+    pub(crate) claims_absolute_oof: bool,
+    /// Whether this box establishes a containing block for fixed boxes.
+    pub(crate) claims_fixed_oof: bool,
     /// Whether this box is `position: fixed`, which Taffy lays out as
     /// absolutely positioned.
     pub(crate) fixed_position: bool,
@@ -732,6 +736,8 @@ impl Node {
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
             contains_absolute_boxes: false,
+            claims_absolute_oof: false,
+            claims_fixed_oof: false,
             fixed_position: false,
             size_containment: taffy::Size {
                 width: false,
