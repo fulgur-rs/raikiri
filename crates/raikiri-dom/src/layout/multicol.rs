@@ -957,6 +957,23 @@ fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
     }
 }
 
+/// The paragraph at the end of the chain that starts at the wrapper `start`,
+/// as `plain_paragraph_chain_leaf` finds it, when the wrapper fills its box
+/// with a color and the paragraph is all it holds. Generated content of a box
+/// of the chain is no arena child, so it would lie beside the paragraph in a
+/// box that is cut at the columns of the paragraph.
+fn painted_wrapper_leaf(tree: &Document, start: usize) -> Option<usize> {
+    let leaf = plain_paragraph_chain_leaf(tree, start)?;
+    let mut current = start;
+    while current != leaf {
+        if tree.nodes[current].has_before_or_after_content {
+            return None;
+        }
+        current = only_element_child(tree, current)?;
+    }
+    Some(leaf)
+}
+
 fn relayout_nested_multicol_children(
     tree: &mut LayoutSession<'_>,
     node_id: TaffyNodeId,
@@ -1147,6 +1164,8 @@ fn layout_column_group(
         // container's own.
         let leaf = if tree.nodes[*child].ifc.is_some() {
             *child
+        } else if tree.nodes[*child].paints_background_color {
+            painted_wrapper_leaf(tree, *child)?
         } else {
             plain_paragraph_chain_leaf(tree, *child)?
         };
@@ -2046,7 +2065,7 @@ fn record_nested_ifc_box_fragments(
     // has a box of its own in each column the paragraph reaches.
     let wrapper_fragments = tree.nodes[subtree_root].ifc.is_none()
         && tree.nodes[subtree_root].paints_background_color
-        && plain_paragraph_chain_leaf(tree, subtree_root).is_some();
+        && painted_wrapper_leaf(tree, subtree_root).is_some();
     let subtree_has_float = multicol_subtree_has_float(tree, subtree_root);
     // The column the subtree root was placed in by its multicol container.
     let root_column = tree.fragment_tree.fragments[parent_fragment].fragmentainer;

@@ -1827,6 +1827,29 @@ fn a_first_wrapper_that_paints_more_than_a_color_keeps_its_paragraph_whole() {
 }
 
 #[test]
+fn a_first_wrapper_with_generated_content_beside_its_paragraph_keeps_it_whole() {
+    // Generated content is no child of the wrapper, so the wrapper looks like
+    // it holds the paragraph alone. Its box holds more than the pieces of the
+    // paragraph in the columns, so a color is laid out as an image is: the
+    // paragraph keeps to the strategy that the one box covers.
+    for generated in [
+        "::before{content:'X';position:absolute;left:100px;top:0}",
+        "::after{content:'X';float:left}",
+    ] {
+        let wrapper = |style: &str| {
+            format!(
+                "<style>.w{generated}</style><div class=mc><div class=w style='{style}'><p>A<br>B<br>C<br>D</p></div></div><p>E</p>"
+            )
+        };
+        compare_bodies(
+            &wrapper("background:yellow"),
+            &wrapper("background-image:linear-gradient(yellow,yellow)"),
+            "",
+        );
+    }
+}
+
+#[test]
 fn a_background_below_the_first_wrapper_covers_each_column_of_the_paragraph() {
     let (paragraph, painted) = (
         "<p style='background:yellow'>A<br>B<br>C<br>D</p>",
