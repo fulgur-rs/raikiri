@@ -326,3 +326,34 @@ fn a_floated_flex_container_is_not_widened_by_the_flex_basis_of_boxes_outside_it
     // No room: the min-content width of the item, 10px of text and its edges.
     assert_eq!(hundredths(container.2), 30.0);
 }
+
+#[test]
+fn a_floated_flex_container_is_not_floored_by_a_content_based_flex_basis() {
+    // Only a flex basis that is a length floors the min-content width of the
+    // container by the flex base size of an item that cannot shrink. Browsers
+    // leave the item's own min-content contribution where the flex basis is
+    // content-based (`auto`, `max-content`, a percentage), so the container
+    // takes the 10px of its longest word and the item overflows it, as in
+    // css-flexbox/intrinsic-size/row-001.
+    for item in [
+        "flex:none",
+        "flex:0 0 auto",
+        "flex:1 0 max-content",
+        "flex:0 0 50%",
+    ] {
+        assert_eq!(container_width("width:0", FLEX, item), 30.0, "{item}");
+    }
+    // The `width` is the item's contribution, and a content-based flex basis
+    // does not raise it, whether the parent leaves room or not.
+    for item in [
+        "flex:0 0 auto;width:10px",
+        "flex:1 0 max-content;width:10px",
+        "flex:0 0 50%;width:10px",
+    ] {
+        assert_eq!(container_width("width:0", FLEX, item), 30.0, "{item}");
+    }
+    assert_eq!(
+        container_width("", FLEX, "flex:1 0 max-content;width:10px"),
+        30.0
+    );
+}
