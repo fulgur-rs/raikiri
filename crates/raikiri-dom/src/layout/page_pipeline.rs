@@ -1181,10 +1181,10 @@ fn layout_single_page_with_table_projection(
     );
     super::fixed::correct_root_flex_static_positions(document);
     document.finalize_oof_layout();
-    // Step 5b: check semantic parent-child geometry invariants and replace
-    // any invalid subtree with the deterministic fallback (zero). Step 5
-    // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only
-    // finite values. This check therefore sits one layer above it; see the
+    // After Step 5, check semantic parent-child geometry invariants and
+    // replace any invalid subtree with the deterministic fallback (zero).
+    // `set_unrounded_layout` sanitizes non-finite values; this check validates
+    // parent-child relationships above that layer. See the
     // `enforce_layout_invariants` documentation. Events enter the session's
     // warning buffer along with Steps 1 and 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
