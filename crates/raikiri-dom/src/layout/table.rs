@@ -546,6 +546,9 @@ fn compute_table_layout_checked(
     // "Visibility-collapse rendering"). Their lines come from the rows that
     // remain: the rows around a collapsed run meet at their resolved line,
     // and a run at either end of the table leaves no line behind.
+    let kept_rows: Vec<usize> = (0..collapsed_rows.len())
+        .filter(|&row| !collapsed_rows[row])
+        .collect();
     let collapsed = match (cell_index.as_ref(), shown.as_ref(), shown_index.as_ref()) {
         (None, ..) => CollapsedLines::separate(&table_border),
         (Some(index), None, _) => {
@@ -559,9 +562,6 @@ fn compute_table_layout_checked(
                 &table_border,
                 inputs.parent_size.width,
             );
-            let kept_rows: Vec<usize> = (0..collapsed_rows.len())
-                .filter(|&row| !collapsed_rows[row])
-                .collect();
             let kept_cols: Vec<usize> = (0..collapsed_cols.len())
                 .filter(|&column| !collapsed_cols[column])
                 .collect();
@@ -569,12 +569,8 @@ fn compute_table_layout_checked(
             for (line, rows) in lines.row_overlaps.iter().zip(kept_rows.windows(2)) {
                 row_overlaps[rows[0]] = *line;
             }
-            // The rows keep the heights the cells of a collapsed column gave
-            // them, so they keep the lines those cells share as well.
             if let Some(columns) = columns_in_place.as_ref() {
-                for (line, rows) in columns.row_overlaps.iter().zip(kept_rows.windows(2)) {
-                    row_overlaps[rows[0]] = row_overlaps[rows[0]].max(*line);
-                }
+                columns.raise_row_overlaps(&kept_rows, &mut row_overlaps);
             }
             let mut col_overlaps = vec![0.0; usize::from(grid.n_cols) - 1];
             for (line, columns) in lines.col_overlaps.iter().zip(kept_cols.windows(2)) {
@@ -587,14 +583,20 @@ fn compute_table_layout_checked(
             }
         }
         // Nothing shows, so no cell border meets the table's own.
-        (Some(_), Some(_), None) => CollapsedLines {
-            col_overlaps: vec![0.0; usize::from(grid.n_cols) - 1],
-            row_overlaps: vec![0.0; grid.rows.len() - 1],
-            outer_left: table_border.left,
-            outer_right: table_border.right,
-            outer_top: table_border.top,
-            outer_bottom: table_border.bottom,
-        },
+        (Some(_), Some(_), None) => {
+            let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
+            if let Some(columns) = columns_in_place.as_ref() {
+                columns.raise_row_overlaps(&kept_rows, &mut row_overlaps);
+            }
+            CollapsedLines {
+                col_overlaps: vec![0.0; usize::from(grid.n_cols) - 1],
+                row_overlaps,
+                outer_left: table_border.left,
+                outer_right: table_border.right,
+                outer_top: table_border.top,
+                outer_bottom: table_border.bottom,
+            }
+        }
     };
     let border_spacing = if collapse {
         (0.0, 0.0)
@@ -3816,6 +3818,16 @@ impl ColumnsInPlace {
                 rows: in_place.rows,
             },
             remaining,
+        }
+    }
+
+    /// Raise the overlap after each row of `row_overlaps` to the line the cells
+    /// of the collapsed columns share there, between the rows in `kept_rows`.
+    /// The rows keep the heights those cells gave them, so they keep the lines
+    /// the cells share as well.
+    fn raise_row_overlaps(&self, kept_rows: &[usize], row_overlaps: &mut [f32]) {
+        for (line, rows) in self.row_overlaps.iter().zip(kept_rows.windows(2)) {
+            row_overlaps[rows[0]] = row_overlaps[rows[0]].max(*line);
         }
     }
 

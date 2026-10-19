@@ -715,6 +715,21 @@ fn a_border_only_a_collapsed_column_gives_the_rows_is_not_counted_twice() {
 /// table must lay out as it does with the column in place: the same height,
 /// and the last row starting at the same place.
 fn height_of_a_table_that_lays_out_like_the_uncollapsed_one(rows: &[Row]) -> f32 {
+    height_of_collapsed_columns_that_lay_out_like_the_uncollapsed_ones(
+        &[COL, COLLAPSED_COL, COL],
+        &[COL, COL, COL],
+        rows,
+    )
+}
+
+/// The height of the table `rows` make with `collapsed` columns, which must be
+/// that of the table with `uncollapsed` columns, and its last row must start
+/// at the same place.
+fn height_of_collapsed_columns_that_lay_out_like_the_uncollapsed_ones(
+    collapsed: &[&'static str],
+    uncollapsed: &[&'static str],
+    rows: &[Row],
+) -> f32 {
     let laid_out = |columns: &[&'static str]| {
         let (doc, table, cells) = laid_out_rows("table-layout:fixed", 120, columns, rows);
         let last = cells.last().expect("a last row")[0];
@@ -723,8 +738,8 @@ fn height_of_a_table_that_lays_out_like_the_uncollapsed_one(rows: &[Row]) -> f32
             crate::layout::test_support::absolute_rect(&doc, last).1,
         )
     };
-    let collapsed = laid_out(&[COL, COLLAPSED_COL, COL]);
-    assert_eq!(collapsed, laid_out(&[COL, COL, COL]));
+    let collapsed = laid_out(collapsed);
+    assert_eq!(collapsed, laid_out(uncollapsed));
     collapsed.0
 }
 
@@ -826,6 +841,24 @@ fn a_collapsed_row_between_the_rows_a_collapsed_column_gives_a_line_leaves_that_
     ];
     assert_eq!(
         height_of_a_table_that_lays_out_like_the_uncollapsed_one(&rows),
+        40.0
+    );
+}
+
+#[test]
+fn a_table_whose_columns_all_collapse_keeps_the_row_lines_its_cells_share() {
+    // No column remains to overlap the rows, yet they keep the heights their
+    // cells gave them, so the line the cells share is still counted once.
+    let rows: [Row; 2] = [
+        ("", &[("border-bottom:20px solid black", "X")]),
+        ("", &[("border-top:20px solid black", "X")]),
+    ];
+    assert_eq!(
+        height_of_collapsed_columns_that_lay_out_like_the_uncollapsed_ones(
+            &[COLLAPSED_COL],
+            &[COL],
+            &rows,
+        ),
         40.0
     );
 }
