@@ -46,6 +46,59 @@ fn resolve_cell_width(doc: &mut Document, cell: usize, available_space: Availabl
     )[0]
 }
 
+fn compute_table_intrinsic_width(limits: &str, available_space: AvailableSpace) -> f32 {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:200px"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some(&format!("display:table;border-spacing:0;{limits}")),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(cell, "AAAA BBBB");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    let inputs = LayoutInput {
+        run_mode: taffy::RunMode::ComputeSize,
+        axis: taffy::RequestedAxis::Horizontal,
+        parent_size: Size {
+            width: Some(200.0),
+            height: None,
+        },
+        available_space: Size {
+            width: available_space,
+            height: AvailableSpace::MaxContent,
+        },
+        ..super::column_probe_input()
+    };
+
+    super::with_layout_session(&mut doc, |session| {
+        super::compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+            .size
+            .width
+    })
+}
+
 fn finish_ahem_layout(doc: &mut Document) {
     doc.mark_in_document_flags();
     let computed = cascade(doc, &build_rule_tree(doc)).unwrap();
@@ -262,4 +315,51 @@ fn caption_min_width_max_content_contributes_to_table_minimum() {
         "caption min-width:max-content should raise table CAPMIN to 90px, got {}",
         doc.nodes[table].unrounded_layout.size.width
     );
+}
+
+#[test]
+fn table_wrapper_limits_constrain_min_content_and_max_content_measurements() {
+    assert_eq!(
+        compute_table_intrinsic_width("min-width:max-content", AvailableSpace::MinContent),
+        90.0
+    );
+    assert_eq!(
+        compute_table_intrinsic_width("max-width:min-content", AvailableSpace::MaxContent),
+        40.0
+    );
+}
+
+#[test]
+fn vertical_fit_content_limit_without_basis_uses_intrinsic_available_space() {
+    let mut doc = Document::new();
+    super::with_layout_session(&mut doc, |session| {
+        let inputs = LayoutInput {
+            parent_size: Size {
+                width: None,
+                height: None,
+            },
+            ..super::column_probe_input()
+        };
+        for (available_space, expected) in [
+            (AvailableSpace::MinContent, 20.0),
+            (AvailableSpace::MaxContent, 80.0),
+        ] {
+            let context = super::super::IntrinsicSizeContext {
+                min_content: 20.0,
+                max_content: 80.0,
+                inputs: &inputs,
+                available_space,
+                horizontal: false,
+            };
+            assert_eq!(
+                super::super::resolve_intrinsic_limit(
+                    session,
+                    0,
+                    Dimension::fit_content_percent(0.5),
+                    context,
+                ),
+                Some(expected)
+            );
+        }
+    });
 }

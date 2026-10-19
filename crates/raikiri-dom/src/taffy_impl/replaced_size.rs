@@ -101,7 +101,7 @@ pub(super) fn auto_sides_size(
                 .max
                 .map(|size| content_box_from_border_box(size, edges.height)),
         );
-    }
+    } // cov:ignore: valid natural dimensions above guarantee keyword_bounds returns Some.
     let (min_width, min_height) = (min.width.unwrap_or(0.0), min.height.unwrap_or(0.0));
     // A max below its min is raised to it.
     let max_width = max.width.unwrap_or(f32::INFINITY).max(min_width);

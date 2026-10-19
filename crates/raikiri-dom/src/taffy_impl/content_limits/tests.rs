@@ -4,8 +4,8 @@
 //! at its longest word, 90px wide on one line.
 
 use super::{
-    applies, content_percentage_height_basis, stretch_fit_width, with_grid_item_content_limits,
-    with_oof_content_limits,
+    ContentLimits, applies, content_percentage_height_basis, replaced_keyword_bounds,
+    stretch_fit_width, with_grid_item_content_limits, with_oof_content_limits,
 };
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::test_support::{block_fixture, block_fixture_with_ahem};
@@ -74,6 +74,63 @@ fn child_size(root_css: &str, lead: &str, child_css: &str, body: Body) -> (f32, 
 
 fn text(root_css: &str, child_css: &str) -> (f32, f32) {
     child_size(root_css, "", child_css, Body::Text)
+}
+
+#[test]
+fn replaced_keyword_bounds_handles_nonreplaced_missing_invalid_and_sized_nodes() {
+    let mut doc = crate::document::Document::new();
+    let plain = doc.append_element(None, "div", taffy::Style::default(), None::<&str>);
+    let missing = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
+    let invalid = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
+    let sized = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
+    for (idx, intrinsic) in [
+        (invalid, raikiri_traits::IntrinsicBox::new(0.0, 10.0)),
+        (sized, raikiri_traits::IntrinsicBox::new(20.0, 10.0)),
+    ] {
+        if let crate::node::NodeData::Element(element) = &mut doc.nodes[idx].data {
+            element.image_intrinsic_size = Some(intrinsic);
+        }
+    }
+    let limits = ContentLimits {
+        min: Size {
+            width: taffy::Dimension::min_content(),
+            height: taffy::Dimension::auto(),
+        },
+        max: Size {
+            width: taffy::Dimension::max_content(),
+            height: taffy::Dimension::auto(),
+        },
+    };
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    let session = LayoutSession::new(&mut doc);
+    for idx in [plain, missing, invalid] {
+        let (width, height) = replaced_keyword_bounds(&session, idx, &limits, &inputs);
+        assert_eq!(
+            (width.min, width.max, height.min, height.max),
+            (None, None, None, None),
+            "node {idx} should have no replaced intrinsic keyword bounds"
+        );
+    }
+    let bounds = replaced_keyword_bounds(&session, sized, &limits, &inputs);
+    assert_eq!(
+        (bounds.0.min, bounds.0.max, bounds.1.min, bounds.1.max),
+        (Some(20.0), Some(20.0), Some(10.0), Some(10.0))
+    );
 }
 
 #[test]

@@ -939,7 +939,7 @@ fn replaced_keyword_bounds(
         .layout_node_with_style(idx)
         .map(|node| node.style.clone())
     else {
-        return (Bounds::default(), Bounds::default());
+        return (Bounds::default(), Bounds::default()); // cov:ignore: every source node retains a layout style for its lifetime; this guards malformed arena state.
     };
     if style.aspect_ratio.is_none() {
         style.aspect_ratio = super::leaf_intrinsic_ratio(&tree.nodes[idx]);

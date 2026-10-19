@@ -229,6 +229,52 @@ fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
 }
 
 #[test]
+fn keyword_bounds_transfer_all_min_and_max_sides_through_the_ratio() {
+    let style = ratio_style(Dimension::auto(), Dimension::auto());
+    let limits = limits(
+        Size {
+            width: Dimension::min_content(),
+            height: Dimension::min_content(),
+        },
+        Size {
+            width: Dimension::max_content(),
+            height: Dimension::max_content(),
+        },
+    );
+
+    let bounds = keyword_bounds(&style, &inputs(), natural_size(), limits).unwrap();
+
+    assert_eq!(bounds.width.min, Some(10.0));
+    assert_eq!(bounds.width.max, Some(10.0));
+    assert_eq!(bounds.height.min, Some(10.0));
+    assert_eq!(bounds.height.max, Some(10.0));
+}
+
+#[test]
+fn keyword_bounds_reject_nonpositive_natural_dimensions() {
+    let limits = limits(
+        Size {
+            width: Dimension::min_content(),
+            height: Dimension::auto(),
+        },
+        Size::auto(),
+    );
+
+    assert_eq!(
+        keyword_bounds(
+            &ratio_style(Dimension::auto(), Dimension::auto()),
+            &inputs(),
+            Size {
+                width: 0.0,
+                height: 10.0,
+            },
+            limits,
+        ),
+        None
+    );
+}
+
+#[test]
 fn conflicting_numeric_bounds_raise_max_to_min() {
     let style = Style {
         aspect_ratio: Some(1.0),
