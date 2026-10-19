@@ -3644,15 +3644,6 @@ fn a_blurred_vertical_shadow_layer_covers_marks_pushed_out_by_a_ruby_annotation(
     );
     lay_out(&mut doc, &cascade);
     let scene = draw_root(&doc, &cascade, root);
-    let layers: Vec<_> = scene
-        .commands
-        .iter()
-        .filter_map(|command| match command {
-            RenderCommand::PushLayer(layer) => Some(layer),
-            _ => None,
-        })
-        .collect();
-    assert!(!layers.is_empty(), "the shadow is blurred");
     let blue = solid(0, 0, 255);
     let shadow: Vec<_> = glyphs(&scene).into_iter().filter(|g| g.3 == blue).collect();
     // The base and its annotation, and the mark of the base.
@@ -3663,13 +3654,105 @@ fn a_blurred_vertical_shadow_layer_covers_marks_pushed_out_by_a_ruby_annotation(
         across > 30.0,
         "the annotation pushes the mark out: {shadow:?}"
     );
-    // Every layer that holds the base also holds the mark pushed out beside it.
-    let clip = kurbo::Shape::bounding_box(&layers[0].clip);
-    for glyph in &shadow {
-        assert!(
-            clip.x0 <= glyph.1 && glyph.1 <= clip.x1 && clip.y0 <= glyph.2 && glyph.2 <= clip.y1,
-            "{clip:?} around {glyph:?}"
+    // Every glyph, the mark pushed out beside the base included, is inside
+    // the layer it is blurred in.
+    let (outside, inside) = shadow_glyphs_outside_their_layer(&scene);
+    assert_eq!(inside, 3);
+    assert!(outside.is_empty(), "{outside:?}");
+}
+
+/// The page points of the blue (shadow) glyphs in `scene` that sit outside
+/// the blur layer they are drawn in, and how many sit inside one.
+fn shadow_glyphs_outside_their_layer(scene: &Scene) -> (Vec<(f64, f64)>, usize) {
+    let blue = solid(0, 0, 255);
+    // The clip of each open layer, `None` for a layer that does not blur.
+    let mut clips: Vec<Option<Rect>> = Vec::new();
+    let (mut outside, mut inside) = (Vec::new(), 0);
+    for command in &scene.commands {
+        match command {
+            RenderCommand::PushLayer(layer) => {
+                clips.push(Some(kurbo::Shape::bounding_box(&layer.clip)));
+            }
+            RenderCommand::PushClipLayer(_) => clips.push(None),
+            RenderCommand::PopLayer => {
+                clips.pop();
+            }
+            RenderCommand::GlyphRun(run) if run.brush == blue => {
+                let Some(clip) = clips.iter().rev().find_map(|clip| *clip) else {
+                    continue;
+                };
+                let origin = run.transform.translation();
+                for glyph in &run.glyphs {
+                    let (x, y) = (origin.x + f64::from(glyph.x), origin.y + f64::from(glyph.y));
+                    if clip.x0 <= x && x <= clip.x1 && clip.y0 <= y && y <= clip.y1 {
+                        inside += 1;
+                    } else {
+                        outside.push((x, y));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (outside, inside)
+}
+
+#[test]
+fn a_blurred_vertical_shadow_layer_covers_the_mark_of_a_combined_square_down_the_line() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;white-space:pre;\
+         color:black;text-emphasis:dot;text-shadow:2px 3px 4px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aaaaaa");
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "\t1");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = draw_root(&doc, &cascade, root);
+    let (outside, inside) = shadow_glyphs_outside_their_layer(&scene);
+    // The six letters and their marks, the digit's compressed glyph and the
+    // square's mark.
+    assert_eq!(inside + outside.len(), 14);
+    assert!(outside.is_empty(), "{outside:?}");
+}
+
+#[test]
+fn a_blurred_shadow_layer_follows_the_vertical_shift_of_its_paragraph() {
+    for mode in ["horizontal-tb", "vertical-rl"] {
+        let (mut doc, cascade, root) = paragraph(
+            &format!(
+                "writing-mode:{mode};text-orientation:upright;line-height:40px;color:black;\
+                 text-shadow:2px 3px 4px rgb(0,0,255)"
+            ),
+            |doc, root| {
+                doc.append_text(root, "aaaa");
+            },
         );
+        lay_out(&mut doc, &cascade);
+        let mut scene = Scene::new();
+        draw_ifc_lines(
+            &mut scene,
+            &doc,
+            &cascade,
+            root,
+            IfcPosition {
+                x: 0.0,
+                y: 0.0,
+                shift_y: 300.0,
+            },
+            &crate::text::DecorationContext::default(),
+            None,
+            &[],
+        );
+        let (outside, inside) = shadow_glyphs_outside_their_layer(&scene);
+        assert_eq!(inside + outside.len(), 4, "{mode}");
+        assert!(outside.is_empty(), "{mode}: {outside:?}");
     }
 }
 

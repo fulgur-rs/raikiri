@@ -758,7 +758,10 @@ fn draw_shadow(
     let use_blur_layer = blur.is_finite() && blur > 0.0;
     if use_blur_layer {
         let extent = f64::from((blur * 3.0).max(1.0));
-        let (x, y) = (f64::from(position.x), f64::from(position.y));
+        let (x, y) = (
+            f64::from(position.x),
+            f64::from(position.y + position.shift_y),
+        );
         // Text that overflows its paragraph (`nowrap`, a negative
         // `text-indent`) lies outside the paragraph's own width, and its
         // shadow with it, so the clip also covers the run's glyphs. A glyph's
@@ -768,18 +771,25 @@ fn draw_shadow(
         // not exceed.
         let pad = f64::from(font_size);
         let ink = if run.vertical {
+            let mut ink = vertical_ink_bounds(&run.draw.glyphs, pad);
             // The marks of the run lie beside it, as far from its baseline as
-            // their offset (which a ruby annotation on the same side pushes
-            // out) and their own size.
-            let marks = match run.marks {
-                ShadowMarks::Vertical(_) => run
-                    .draw
-                    .run
-                    .emphasis_mark()
-                    .map_or(0.0, |mark| f64::from(mark.offset.abs() + mark.font_size)),
-                _ => 0.0,
-            };
-            vertical_ink_bounds(&run.draw.glyphs, pad + marks)
+            // the ruby annotations on their side push them, and the mark of a
+            // combined square lies on the square, wherever the glyphs of the
+            // run that draws it are.
+            if let (ShadowMarks::Vertical(marks), Some(mark)) =
+                (&run.marks, run.draw.run.emphasis_mark())
+            {
+                let reach = f64::from(mark.font_size);
+                for (x, y) in crate::emphasis::vertical_mark_centers(
+                    &mark,
+                    (marks.line, &run.draw.run),
+                    (marks.writing_mode, marks.converter),
+                ) {
+                    let (x, y) = (f64::from(x), f64::from(y));
+                    ink = ink.union(Rect::new(x - reach, y - reach, x + reach, y + reach));
+                }
+            }
+            ink
         } else {
             let (left, right) =
                 run.draw
