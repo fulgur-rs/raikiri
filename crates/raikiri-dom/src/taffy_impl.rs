@@ -1542,7 +1542,22 @@ fn measure_ifc_root(
             _ => 0.0,
         };
         let percent_height = measure.definite_height.filter(|_| !vertical);
-        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis, percent_height)
+        // A vertical paragraph's boxes are measured along their heights, and
+        // their percentage widths refer to the physical width the root has
+        // when it is known or stretched.
+        let physical_width = known_width
+            .or(match available.width {
+                AvailableSpace::Definite(size) if measure.stretched_width => Some(size),
+                _ => None,
+            })
+            .filter(|_| vertical);
+        crate::layout::ifc::boxes::intrinsics_of_boxes(
+            tree,
+            idx,
+            basis,
+            percent_height,
+            physical_width,
+        )
     } else {
         crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };

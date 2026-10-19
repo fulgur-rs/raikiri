@@ -141,3 +141,66 @@ fn the_margins_of_an_atomic_in_a_right_to_left_vertical_line_start_at_the_bottom
         (78.0, 67.0, 20.0, 10.0)
     );
 }
+
+#[test]
+fn an_atomic_resolves_a_percentage_width_against_the_physical_width_of_a_vertical_root() {
+    // The 100px wide, 50px tall root is the containing block: 50% of its
+    // width is 50px and 20% of its height 10px. The line is as wide as the
+    // box and sits at the right edge, with the text above the box.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (x, y, width, height) = atomic_rect_styled(
+            &format!("writing-mode:{mode};width:100px;height:50px"),
+            "width:50%;height:20%",
+        );
+        assert_eq!(
+            (y, width, height),
+            (20.0, 50.0, 10.0),
+            "{mode}: the box is 50x10 and follows the text"
+        );
+        assert_eq!(x, if mode == "vertical-rl" { 50.0 } else { 0.0 }, "{mode}");
+    }
+}
+
+#[test]
+fn a_shrink_to_fit_vertical_root_counts_the_height_of_an_atomic_along_its_lines() {
+    // The text takes 20px along the line and the box 10px: the float is 30px
+    // tall, not 20px plus the 20px width of the box.
+    let mut atomic = 0;
+    let fixture = block_fixture(
+        "line-height:10px;writing-mode:vertical-rl;float:left",
+        |doc, root| {
+            doc.append_text(root, "aa");
+            atomic = doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:inline-block;width:20px;height:10px"),
+            );
+        },
+    );
+    let mut doc = fixture.doc;
+    layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
+    let size = doc.nodes[fixture.root].unrounded_layout.size;
+    assert_eq!((size.width, size.height), (20.0, 30.0));
+    assert_eq!(absolute_rect(&doc, atomic).3, 10.0);
+}
+
+#[test]
+fn the_percentage_edges_of_an_atomic_in_a_vertical_root_resolve_against_its_inline_size() {
+    // Padding takes its percentage of the 50px inline size, the root's
+    // height, while the width takes its own of the 100px physical width.
+    let size = |atomic_css: &str| {
+        let (_, _, width, height) = atomic_rect_styled(
+            "writing-mode:vertical-rl;width:100px;height:50px",
+            &format!("width:20px;height:10px;{atomic_css}"),
+        );
+        (width, height)
+    };
+    assert_eq!(size("padding:10%"), (30.0, 20.0));
+    assert_eq!(size("padding:10%;width:50%"), (60.0, 20.0));
+    // With `border-box` the padding is part of the sizes.
+    assert_eq!(
+        size("padding:10%;width:50%;box-sizing:border-box"),
+        (50.0, 10.0)
+    );
+}
