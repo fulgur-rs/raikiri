@@ -2132,6 +2132,10 @@ fn auto_height_columns_balance_lineless_blocks_inside_wrappers() {
 fn auto_height_columns_balance_lineless_blocks_inside_nested_wrappers() {
     let (doc, parent, child) = nested_wrapped_lineless_fixture();
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+    assert!(
+        lineless::supported_for_auto_balance(&doc, parent).is_some(),
+        "a span below flow-root is regular column content"
+    );
     let fragments = fragment_rects(&doc, child);
     assert_eq!(
         fragments
@@ -2145,6 +2149,85 @@ fn auto_height_columns_balance_lineless_blocks_inside_nested_wrappers() {
         fragments.iter().map(|fragment| fragment.3).sum::<f32>(),
         400.0
     );
+}
+
+#[test]
+fn auto_balance_preserves_spanners_in_the_multicol_formatting_context() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;columns:4;column-gap:0"),
+    );
+    let wrapper = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
+    let spanner = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;column-span:all"),
+    );
+    doc.append_element(
+        Some(spanner),
+        "div",
+        Style::default(),
+        Some("display:block;width:25px;height:400px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+
+    assert!(
+        lineless::supported_for_auto_balance(&doc, parent).is_none(),
+        "a spanner in the multicol formatting context must keep the spanning path active"
+    );
+}
+
+#[test]
+fn auto_balance_applies_wrapper_edge_trimming_only_to_boundary_leaves() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;columns:2;column-gap:0"),
+    );
+    let outer = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;padding-top:2px"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:flow-root"),
+    );
+    let children: Vec<_> = (0..2)
+        .map(|_| {
+            doc.append_element(
+                Some(inner),
+                "div",
+                Style::default(),
+                Some("display:block;width:25px;height:20px"),
+            )
+        })
+        .collect();
+    layout_nested_flex_float_fixture(&mut doc);
+
+    for child in children {
+        assert_eq!(
+            fragment_rects(&doc, child)
+                .iter()
+                .map(|fragment| fragment.3)
+                .sum::<f32>(),
+            20.0,
+            "wrapper padding must not trim a non-boundary leaf"
+        );
+    }
 }
 
 #[test]

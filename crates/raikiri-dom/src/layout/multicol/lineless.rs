@@ -213,18 +213,16 @@ impl WrappedBlockTree {
         let layout = self.layout?;
         let last = self.children.len().checked_sub(1)?;
         for (index, child) in self.children.iter().enumerate() {
-            let leading = leading
-                + if index == 0 {
-                    layout.stream_leading
-                } else {
-                    0.0
-                };
-            let trailing = trailing
-                + if index == last {
-                    layout.stream_trailing
-                } else {
-                    0.0
-                };
+            let leading = if index == 0 {
+                leading + layout.stream_leading
+            } else {
+                0.0
+            };
+            let trailing = if index == last {
+                trailing + layout.stream_trailing
+            } else {
+                0.0
+            };
             match child {
                 WrappedBlockChild::Leaf(leaf) => adjustments.push((*leaf, leading, trailing)),
                 WrappedBlockChild::Wrapper(wrapper) => {
@@ -244,7 +242,7 @@ fn wrapped_blocks(
     wrapper: usize,
     allow_sliced_wrappers: bool,
 ) -> Option<WrappedBlockTree> {
-    wrapped_block_tree(tree, wrapper, allow_sliced_wrappers, true, 0)
+    wrapped_block_tree(tree, wrapper, allow_sliced_wrappers, true, true, 0)
 }
 
 fn wrapped_block_tree(
@@ -252,12 +250,18 @@ fn wrapped_block_tree(
     wrapper: usize,
     allow_sliced_wrappers: bool,
     is_root: bool,
+    in_multicol_context: bool,
     depth: usize,
 ) -> Option<WrappedBlockTree> {
     if depth >= MAX_WRAPPED_BLOCK_DEPTH {
         return None;
     }
     let node = &tree.layout_node_with_style(wrapper).unwrap();
+    if in_multicol_context && node.column_span_all {
+        return None;
+    }
+    let children_in_multicol_context =
+        in_multicol_context && node.display() != DisplayValue::FlowRoot;
     let has_edges = has_block_edge_decorations(node.style);
     if node.display() == DisplayValue::FlowRoot && !allow_sliced_wrappers
         || has_edges
@@ -299,7 +303,14 @@ fn wrapped_block_tree(
             {
                 return None;
             }
-            let nested = wrapped_block_tree(tree, child, true, false, depth + 1)?;
+            let nested = wrapped_block_tree(
+                tree,
+                child,
+                true,
+                false,
+                children_in_multicol_context,
+                depth + 1,
+            )?;
             leaf_count = leaf_count.checked_add(nested.leaf_count)?;
             children.push(WrappedBlockChild::Wrapper(Box::new(nested)));
         }
