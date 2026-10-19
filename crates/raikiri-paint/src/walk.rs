@@ -49,6 +49,7 @@ mod box_layers;
 mod box_paint;
 mod child_frames;
 mod element_background;
+mod element_border;
 mod element_box;
 mod frames;
 mod gradient;
@@ -68,6 +69,7 @@ pub(crate) use inline_box::paint_inline_box;
 use background_image::ImageLayer;
 use border_image::BorderImage;
 use element_background::ElementBackgroundLayer;
+use element_border::ElementBorder;
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
 use inline_svg::InlineSvg;
 use margin_box::paint_margin_box;
@@ -3547,132 +3549,16 @@ fn paint_element_border_with_top(
     current_color: CssColor,
     paint_top: bool,
 ) {
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-
-    let x0 = (abs_x as f64).round();
-    let y0 = (abs_y as f64).round();
-    let x1 = ((abs_x + width) as f64).round();
-    let y1 = ((abs_y + height) as f64).round();
-    let bl = border.left.width().px() as f64;
-    let bt = border.top.width().px() as f64;
-    let br = border.right.width().px() as f64;
-    let bb = border.bottom.width().px() as f64;
-    if bl <= 0.0 && bt <= 0.0 && br <= 0.0 && bb <= 0.0 {
-        return;
-    }
-    let resolve = |b: &raikiri_style::resolve::ComputedBorder| -> Option<Color> {
-        if matches!(b.style(), BorderStyle::None | BorderStyle::Hidden) {
-            return None;
-        }
-        let w = b.width().px();
-        if w <= 0.0 {
-            return None;
-        }
-        let c = match b.color {
-            raikiri_style::property::BorderColor::CurrentColor => current_color,
-            raikiri_style::property::BorderColor::Resolved(col) => col,
-            _ => current_color,
-        };
-        if c.a == 0 {
-            return None;
-        }
-        Some(Color::from_rgba8(c.r, c.g, c.b, c.a))
-    };
-    let c_left = resolve(&border.left);
-    let c_top = resolve(&border.top);
-    let c_right = resolve(&border.right);
-    let c_bottom = resolve(&border.bottom);
-    let inner_y0 = if paint_top { (y0 + bt).round() } else { y0 };
-    let inner_y1 = (y1 - bb).round();
-    // Left and right strips only need a vertical span. When the content
-    // width collapses to zero (a border-only quadrant where left plus right
-    // exactly fill the border box, as in the conic reference files), the
-    // full inner box is empty but both side strips still cover their rects.
-    let inner_height_valid = inner_y1 > inner_y0;
-    // One side strip: `solid` (and unhandled styles) fill the whole
-    // strip; `double` draws outer + inner thirds per CSS Backgrounds 3
-    // §5.6 ("two parallel solid lines"), leaving the middle third
-    // transparent. Below 3px the thirds vanish, so small doubles fall
-    // back to solid (matches browser clamping behavior closely enough
-    // for reftest purposes).
-    let mut strip = |x_a: f64,
-                     y_a: f64,
-                     x_b: f64,
-                     y_b: f64,
-                     w: f64,
-                     horizontal: bool,
-                     col: Color,
-                     double: bool| {
-        if !double || w < 3.0 {
-            let r = Rect::new(x_a, y_a, x_b, y_b);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
-            return;
-        }
-        let third = w / 3.0;
-        if horizontal {
-            let r1 = Rect::new(x_a, y_a, x_b, y_a + third);
-            let r2 = Rect::new(x_a, y_b - third, x_b, y_b);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r2);
-        } else {
-            let r1 = Rect::new(x_a, y_a, x_a + third, y_b);
-            let r2 = Rect::new(x_b - third, y_a, x_b, y_b);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r2);
-        }
-    };
-    let is_double = |b: &raikiri_style::resolve::ComputedBorder| b.style() == BorderStyle::Double;
-    if paint_top
-        && bt > 0.0
-        && let Some(col) = c_top
-    {
-        strip(x0, y0, x1, y0 + bt, bt, true, col, is_double(&border.top));
-    }
-    if bb > 0.0
-        && let Some(col) = c_bottom
-    {
-        strip(
-            x0,
-            y1 - bb,
-            x1,
-            y1,
-            bb,
-            true,
-            col,
-            is_double(&border.bottom),
-        );
-    }
-    if bl > 0.0
-        && inner_height_valid
-        && let Some(col) = c_left
-    {
-        strip(
-            x0,
-            inner_y0,
-            x0 + bl,
-            inner_y1,
-            bl,
-            false,
-            col,
-            is_double(&border.left),
-        );
-    }
-    if br > 0.0
-        && inner_height_valid
-        && let Some(col) = c_right
-    {
-        strip(
-            x1 - br,
-            inner_y0,
-            x1,
-            inner_y1,
-            br,
-            false,
-            col,
-            is_double(&border.right),
-        );
+    if let Some(border) = ElementBorder::new(
+        width,
+        height,
+        abs_x,
+        abs_y,
+        border,
+        current_color,
+        paint_top,
+    ) {
+        border.paint(scene);
     }
 }
 
