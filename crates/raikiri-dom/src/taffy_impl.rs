@@ -1973,10 +1973,11 @@ fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
             .is_some_and(|node| node.style.float != taffy::Float::None)
 }
 
-/// The `width`, `min-width` and `max-width` of a flex item, as a probe of the
-/// container's intrinsic sizes left them.
+/// The `flex-shrink`, `width`, `min-width` and `max-width` of a flex item, as a
+/// probe of the container's intrinsic sizes left them.
 struct FlexItemBounds {
     idx: usize,
+    shrink: f32,
     width: taffy::Dimension,
     min: taffy::LengthPercentageAuto,
     max: taffy::LengthPercentageAuto,
@@ -2072,8 +2073,11 @@ fn with_flex_item_basis_bounds<R>(
             .sum();
         let (cannot_shrink, cannot_grow) = (style.flex_shrink == 0.0, style.flex_grow == 0.0);
         let preferred = crate::layout::resolve_dimension(width, None);
+        // The flex base size floors the contribution, and then the item's own
+        // bounds clamp it, the minimum over the maximum.
         let new_min = cannot_shrink.then(|| {
-            taffy::LengthPercentageAuto::length(min_length.map_or(basis, |m| m.max(basis)))
+            let floor = max_length.map_or(basis, |max| basis.min(max));
+            taffy::LengthPercentageAuto::length(min_length.map_or(floor, |min| min.max(floor)))
         });
         let new_max = (cannot_grow && preferred.is_none()).then(|| {
             taffy::LengthPercentageAuto::length(
@@ -2098,6 +2102,14 @@ fn with_flex_item_basis_bounds<R>(
             continue;
         }
         let style = tree.layout_style_for_key_mut(child_idx).unwrap();
+        // Taffy floors the contribution of an item that cannot shrink by its
+        // flex base size on its own, ahead of the item's maximum. The floor
+        // installed above has the maximum applied, so the item is shrinkable
+        // while the container is measured.
+        let shrink = style.flex_shrink;
+        if cannot_shrink {
+            style.flex_shrink = 1.0;
+        }
         style.size.width = new_width.unwrap_or(width);
         style.min_size.width = new_min.unwrap_or(min);
         style.max_size.width = new_max.unwrap_or(max);
@@ -2105,6 +2117,7 @@ fn with_flex_item_basis_bounds<R>(
         let cache = std::mem::replace(&mut tree.nodes[child_idx].cache, Cache::new());
         saved.push(FlexItemBounds {
             idx: child_idx,
+            shrink,
             width,
             min,
             max,
@@ -2114,6 +2127,7 @@ fn with_flex_item_basis_bounds<R>(
     let result = layout(tree);
     for item in saved {
         let style = tree.layout_style_for_key_mut(item.idx).unwrap();
+        style.flex_shrink = item.shrink;
         style.size.width = item.width;
         style.min_size.width = item.min;
         style.max_size.width = item.max;

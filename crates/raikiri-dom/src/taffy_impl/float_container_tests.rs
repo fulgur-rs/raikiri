@@ -378,3 +378,27 @@ fn a_floated_flex_container_is_not_floored_by_a_content_based_flex_basis() {
         30.0
     );
 }
+
+#[test]
+fn a_floated_flex_container_clamps_the_flex_basis_floor_by_the_bounds_of_its_items() {
+    // The flex base size floors the contribution, and then the item's own
+    // `max-width` caps it: 20px of width, 10px of padding and border, 10px of
+    // margin.
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:1 0 100px;max-width:20px"),
+        40.0
+    );
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:1 0 100px;width:30px;max-width:20px"),
+        40.0
+    );
+    // The `min-width` wins over the `max-width`.
+    assert_eq!(
+        container_width(
+            "width:0",
+            FLEX,
+            "flex:1 0 100px;max-width:20px;min-width:50px"
+        ),
+        70.0
+    );
+}
