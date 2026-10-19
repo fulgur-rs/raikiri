@@ -538,70 +538,34 @@ impl TypographicPaint {
         leaves: Option<&dyn Fn(usize) -> bool>,
     ) -> (Scene, Vec<Scene>, Scene, Vec<(usize, Scene)>) {
         let mut left = Vec::new();
-        // The enclosing TransformScene transforms recorded commands on replay.
-        // Counter-transform only the opacity clip so it remains in page space.
-        let inverse = paint_transform.inverse();
-        let clip_transform = if inverse.as_coeffs().iter().all(|value| value.is_finite()) {
-            inverse
-        } else {
-            // A singular ancestor transform has no drawable two-dimensional ink.
-            Affine::IDENTITY
-        };
+        let clip_transform = opacity_clip_transform(paint_transform);
         let mut roots = std::mem::take(&mut self.root_children);
         if let Some((first_line, opacity)) = first_line {
-            let mut content = Scene::new();
-            first_line.finish(&mut content, clip, paint_transform, None);
-            if !content.commands.is_empty() {
-                let mut composite = Scene::new();
-                composite.push_layer(Mix::Normal, opacity, clip_transform, &clip, None, None);
-                composite.append_scene(content, Affine::IDENTITY);
-                composite.pop_layer();
-                roots.push((self.normal.commands.len(), 0, 0, composite));
-            }
+            roots.extend(self.first_line_child(
+                first_line,
+                opacity,
+                clip,
+                paint_transform,
+                clip_transform,
+            ));
         }
-        let mut remaining = vec![0; self.groups.len()];
-        for group in &self.groups {
-            if let Some(parent) = group.parent {
-                remaining[parent] += 1;
-            }
-        }
+        let mut remaining = self.child_group_counts();
         let mut order: Vec<_> = remaining
             .iter()
             .enumerate()
             .filter_map(|(index, &children)| (children == 0).then_some(index))
             .collect();
         while let Some(index) = order.pop() {
-            let group = &mut self.groups[index];
-            let mut content = std::mem::take(&mut group.boxes);
-            content.append_scene(
-                merge_children(
-                    std::mem::take(&mut group.scene),
-                    std::mem::take(&mut group.children),
-                ),
-                Affine::IDENTITY,
-            );
-            // A group whose pieces are on lines painted elsewhere draws
-            // nothing here, and neither does one turned by a singular
-            // transform (CSS Transforms 1 §5).
-            let transform = group.transform.unwrap_or(Affine::IDENTITY);
-            let mut composite = Scene::new();
-            if !content.commands.is_empty() && crate::transform::is_invertible(transform) {
-                if let Some(opacity) = group.opacity {
-                    composite.push_layer(Mix::Normal, opacity, clip_transform, &clip, None, None);
-                }
-                composite.append_scene(content, transform);
-                if group.opacity.is_some() {
-                    composite.pop_layer();
-                }
-            }
+            let composite = self.composite_group(index, clip, clip_transform);
+            let group = &self.groups[index];
+            let parent = group.parent;
+            let level = group.level;
+            let owner = group.owner;
             // A group composites after the rest of its parent's paint, like
             // the other stacking contexts with `z-index: auto` of the
             // paragraph (CSS Color 4 §3.3; CSS 2.1 Appendix E step 8). One
             // with a negative stack level goes below that paint, above only
             // the parent's own boxes (Appendix E step 3).
-            let parent = group.parent;
-            let level = group.level;
-            let owner = group.owner;
             let insertion = if level < 0 {
                 0
             } else {
@@ -637,6 +601,85 @@ impl TypographicPaint {
                 .map(|(_, owner, scene)| (owner, scene))
                 .collect(),
         )
+    }
+
+    /// The group a translucent `::first-line` forms around `first_line`, the
+    /// paint of the paragraph's first line, as a child of the paragraph's own
+    /// paint. It comes before every other group at its place, as the first
+    /// line comes first in tree order. A line that paints nothing forms none.
+    fn first_line_child(
+        &self,
+        first_line: Self,
+        opacity: f32,
+        clip: Rect,
+        paint_transform: Affine,
+        clip_transform: Affine,
+    ) -> Option<Child> {
+        let mut content = Scene::new();
+        first_line.finish(&mut content, clip, paint_transform, None);
+        (!content.commands.is_empty()).then(|| {
+            let mut composite = Scene::new();
+            composite.push_layer(Mix::Normal, opacity, clip_transform, &clip, None, None);
+            composite.append_scene(content, Affine::IDENTITY);
+            composite.pop_layer();
+            (self.normal.commands.len(), 0, 0, composite)
+        })
+    }
+
+    /// For each group, how many groups have it as their parent.
+    fn child_group_counts(&self) -> Vec<usize> {
+        let mut counts = vec![0; self.groups.len()];
+        for group in &self.groups {
+            if let Some(parent) = group.parent {
+                counts[parent] += 1;
+            }
+        }
+        counts
+    }
+
+    /// Composite the group `index`, whose nested groups are all composited:
+    /// its own boxes, then its paint with those groups merged in, in a layer
+    /// of the group's opacity.
+    fn composite_group(&mut self, index: usize, clip: Rect, clip_transform: Affine) -> Scene {
+        let group = &mut self.groups[index];
+        let mut content = std::mem::take(&mut group.boxes);
+        content.append_scene(
+            merge_children(
+                std::mem::take(&mut group.scene),
+                std::mem::take(&mut group.children),
+            ),
+            Affine::IDENTITY,
+        );
+        // A group whose pieces are on lines painted elsewhere draws
+        // nothing here, and neither does one turned by a singular
+        // transform (CSS Transforms 1 §5).
+        let transform = group.transform.unwrap_or(Affine::IDENTITY);
+        let mut composite = Scene::new();
+        if !content.commands.is_empty() && crate::transform::is_invertible(transform) {
+            if let Some(opacity) = group.opacity {
+                composite.push_layer(Mix::Normal, opacity, clip_transform, &clip, None, None);
+            }
+            composite.append_scene(content, transform);
+            if group.opacity.is_some() {
+                composite.pop_layer();
+            }
+        }
+        composite
+    }
+}
+
+/// The transform of the clip of an opacity layer, which is drawn inside a
+/// scene replayed under `paint_transform`.
+///
+/// The enclosing `TransformScene` transforms recorded commands on replay.
+/// Counter-transforming only the opacity clip keeps it in page space.
+fn opacity_clip_transform(paint_transform: Affine) -> Affine {
+    let inverse = paint_transform.inverse();
+    if inverse.as_coeffs().iter().all(|value| value.is_finite()) {
+        inverse
+    } else {
+        // A singular ancestor transform has no drawable two-dimensional ink.
+        Affine::IDENTITY
     }
 }
 
