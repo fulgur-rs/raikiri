@@ -4,14 +4,15 @@ use super::candidates::FlowRoots;
 use super::{
     AvoidedBreaks, BoxFit, BoxOverflow, BoxParentScope, BoxTree, CascadeResult, CheckedParagraphs,
     ColumnContexts, DeferredShifts, EnteredParagraphs, FloatShifts, FloatTransition, FloatValue,
-    FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError, LineBreakFix, LineMove,
-    MarginBreak, MarginTruncation, PageBox, PageCandidate, PageContentInsets, PageLayoutControl,
-    PageNames, PageOrigins, PageReach, ParagraphLineFit, PendingBreak, PrecedingFlexItems,
-    SiblingMargins, SubtreeShifts, TextLineIndex, TrailingFlexChildren, TransitionLanding,
-    TransitionMove, accumulated_relative_offset_y, block_effective_y, block_fits_page_step,
-    box_changes_page_name, box_occupies_column, box_sets_page_name, break_margins,
-    collapses_through, collapses_with_previous_block, content_overflow_end, current_abs_y,
-    fits_decorated_paper, flex_line_paragraph, forced_target_page, grow_ancestors_for_shift,
+    FootnoteAreas, HeaderRepeats, IfcBoxShifts, LastNamedBox, LayoutError, LineBreakFix,
+    LineBreakMove, LineMove, MarginBreak, MarginTruncation, PageBox, PageCandidate,
+    PageContentInsets, PageLayoutControl, PageNames, PageOrigins, PageReach, ParagraphLineFit,
+    PendingBreak, PrecedingFlexItems, SiblingMargins, SubtreeShifts, TextLineIndex,
+    TrailingFlexChildren, TransitionLanding, TransitionMove, accumulated_relative_offset_y,
+    block_effective_y, block_fits_page_step, box_changes_page_name, box_occupies_column,
+    box_sets_page_name, break_margins, collapses_through, collapses_with_previous_block,
+    content_overflow_end, current_abs_y, fits_decorated_paper, flex_line_paragraph,
+    forced_line_breaks, forced_line_moves, forced_target_page, grow_ancestors_for_shift,
     has_explicit_positioned_block_ancestor, has_fixed_height, has_footnote_ancestor,
     in_row_flex_container, line_block_parent, lines_can_shift_inside, make_room_for_table_header,
     margin_box_starts_page, materialize_y, move_box_by_truncated_margin, move_box_for_transition,
@@ -1118,6 +1119,24 @@ impl PaginationState {
             && self.checked_paragraphs.orphans_widows.insert(block_id)
             && let Some(line_metrics) = paragraph_line_bounds(document, node_id, text_lines)
         {
+            // Forced breaks between the lines come first. The lines they
+            // leave on either side are not repaired for orphans and widows.
+            if blocks.paragraph_root == Some(block_id)
+                && self.deferred_shifts.line_splits.is_empty()
+                && lines_can_shift_inside(document, block_id)
+            {
+                let moves = forced_line_moves(
+                    &forced_line_breaks(document, block_id),
+                    &line_metrics,
+                    text.effective_y,
+                    page_origins,
+                );
+                if !moves.is_empty() {
+                    return self.move_lines(
+                        document, env, candidate, entry, blocks, text, block_id, moves,
+                    );
+                }
+            }
             let page_start = page_origins.origin(self.current_page);
             let page_end = page_start + page_origins.step_at(self.current_page);
             let line_fit = ParagraphLineFit::measure(
@@ -1148,28 +1167,16 @@ impl PaginationState {
             );
             match fix {
                 LineBreakFix::MoveLines(moves) => {
-                    for (line, shift, page) in moves.into_iter().flatten() {
-                        reach_page(control, page)?;
-                        move_paragraph_lines(
-                            document,
-                            cascade,
-                            body_id,
-                            &LineMove {
-                                block_id,
-                                flex_line: blocks.flex_line,
-                                line,
-                                shift,
-                            },
-                            &mut self.subtree_shifts,
-                            entry.page_before_candidate,
-                        );
-                        if reaches_line(text_lines.get(node_id), line) {
-                            text.height += shift;
-                        }
-                        self.deferred_shifts
-                            .line_splits
-                            .push((block_id, line, shift));
-                    }
+                    self.move_lines(
+                        document,
+                        env,
+                        candidate,
+                        entry,
+                        blocks,
+                        text,
+                        block_id,
+                        moves.into_iter().flatten(),
+                    )?;
                 }
                 LineBreakFix::MoveBlock => {
                     // The move is measured from where the block is now.
@@ -1199,6 +1206,54 @@ impl PaginationState {
                 }
                 LineBreakFix::Keep => {}
             }
+        }
+        Ok(())
+    }
+
+    /// Moves lines of the paragraph `block_id`, which holds the text
+    /// `candidate`, down to the pages `moves` name: see [`LineBreakMove`].
+    /// Each shift is also taken by the flow after the paragraph, and by the
+    /// text of the paragraph that starts on a moved line.
+    #[allow(clippy::too_many_arguments)]
+    fn move_lines(
+        &mut self,
+        document: &mut LayoutSession<'_>,
+        env: &FlowEnv<'_>,
+        candidate: &PageCandidate,
+        entry: &CandidateEntry,
+        blocks: &LineBlocks,
+        text: &mut TextPosition,
+        block_id: usize,
+        moves: impl IntoIterator<Item = LineBreakMove>,
+    ) -> Result<(), Halt> {
+        let FlowEnv {
+            cascade,
+            body_id,
+            control,
+            text_lines,
+            ..
+        } = *env;
+        for (line, shift, page) in moves {
+            reach_page(control, page)?;
+            move_paragraph_lines(
+                document,
+                cascade,
+                body_id,
+                &LineMove {
+                    block_id,
+                    flex_line: blocks.flex_line,
+                    line,
+                    shift,
+                },
+                &mut self.subtree_shifts,
+                entry.page_before_candidate,
+            );
+            if reaches_line(text_lines.get(candidate.node_id), line) {
+                text.height += shift;
+            }
+            self.deferred_shifts
+                .line_splits
+                .push((block_id, line, shift));
         }
         Ok(())
     }

@@ -20227,3 +20227,143 @@ fn boxes_outside_the_paginated_flow_reach_the_pages_they_paint_on() {
         })
     ));
 }
+
+/// Four 20px lines, 100px pages: a break before line 2 sits on the first
+/// page, so line 2 moves to the top of the second.
+const FOUR_LINES: [(f32, f32); 4] = [(0.0, 20.0), (20.0, 40.0), (40.0, 60.0), (60.0, 80.0)];
+
+fn forced(line: usize, lead: f32, gap: f32) -> ForcedLineBreak {
+    ForcedLineBreak { line, lead, gap }
+}
+
+#[test]
+fn a_forced_line_break_moves_the_line_after_it_to_the_next_page() {
+    let pages = PageOrigins::new(&[], 100.0);
+    assert_eq!(
+        forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 0.0, &pages),
+        vec![(2, 60.0, 1)]
+    );
+}
+
+#[test]
+fn a_forced_line_break_keeps_the_gap_and_the_lead_above_the_line() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // The content that starts the next page begins 5px above the line and
+    // keeps a 7px margin: it sits 7px below the page top, the line 12px.
+    assert_eq!(
+        forced_line_moves(&[forced(2, 5.0, 7.0)], &FOUR_LINES, 0.0, &pages),
+        vec![(2, 72.0, 1)]
+    );
+}
+
+#[test]
+fn a_forced_line_break_follows_the_offset_of_the_paragraph() {
+    let pages = PageOrigins::new(&[], 100.0);
+    assert_eq!(
+        forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 30.0, &pages),
+        vec![(2, 30.0, 1)]
+    );
+}
+
+#[test]
+fn a_forced_line_break_at_the_edge_of_the_paragraph_moves_nothing() {
+    let pages = PageOrigins::new(&[], 100.0);
+    for line in [0, 4, 9] {
+        assert!(
+            forced_line_moves(&[forced(line, 0.0, 0.0)], &FOUR_LINES, 0.0, &pages).is_empty(),
+            "line {line}"
+        );
+    }
+    assert!(forced_line_moves(&[forced(1, 0.0, 0.0)], &[], 0.0, &pages).is_empty());
+}
+
+#[test]
+fn a_forced_line_break_on_a_page_edge_moves_nothing() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // Line 2 already starts the second page.
+    assert!(forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 60.0, &pages).is_empty());
+}
+
+#[test]
+fn a_forced_line_break_before_a_box_that_starts_on_the_previous_page_moves_it() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = [
+        (0.0, 20.0),
+        (20.0, 40.0),
+        (40.0, 60.0),
+        (60.0, 80.0),
+        (80.0, 100.0),
+        (100.0, 120.0),
+    ];
+    // Line 5 is on the second page, but the box that the break is before
+    // begins 30px above it, on the first: the box moves to the second page,
+    // and the line with it.
+    assert_eq!(
+        forced_line_moves(&[forced(5, 30.0, 0.0)], &lines, 0.0, &pages),
+        vec![(5, 30.0, 1)]
+    );
+    // A box that begins at the top of the second page is already there.
+    assert!(forced_line_moves(&[forced(5, 0.0, 0.0)], &lines, 0.0, &pages).is_empty());
+}
+
+#[test]
+fn a_forced_line_break_with_an_unusable_distance_moves_nothing() {
+    let pages = PageOrigins::new(&[], 100.0);
+    for (lead, gap) in [
+        (f32::NAN, 0.0),
+        (0.0, f32::NAN),
+        (f32::INFINITY, 0.0),
+        (0.0, f32::INFINITY),
+    ] {
+        assert!(
+            forced_line_moves(&[forced(2, lead, gap)], &FOUR_LINES, 0.0, &pages).is_empty(),
+            "lead {lead}, gap {gap}"
+        );
+    }
+}
+
+#[test]
+fn forced_line_breaks_add_up_on_the_pages_they_open() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = [
+        (0.0, 20.0),
+        (20.0, 40.0),
+        (40.0, 60.0),
+        (60.0, 80.0),
+        (80.0, 100.0),
+        (100.0, 120.0),
+    ];
+    // Line 2 moves to page 1 (60px down); line 4 then sits 120px down, 20px
+    // into page 1, and moves to page 2 (another 60px down).
+    assert_eq!(
+        forced_line_moves(
+            &[forced(2, 0.0, 0.0), forced(4, 0.0, 0.0)],
+            &lines,
+            0.0,
+            &pages
+        ),
+        vec![(2, 60.0, 1), (4, 60.0, 2)]
+    );
+}
+
+#[test]
+fn forced_line_breaks_on_a_scheduled_page_use_its_origin() {
+    // The first page is 60px tall and the second starts at 60px.
+    let pages = PageOrigins::new(&[60.0, 100.0], 100.0);
+    assert_eq!(
+        forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 0.0, &pages),
+        vec![(2, 20.0, 1)]
+    );
+}
+
+#[test]
+fn forced_line_breaks_before_the_same_line_are_one_break() {
+    let mut breaks = vec![
+        forced(4, 0.0, 0.0),
+        forced(2, 0.0, 3.0),
+        forced(2, 6.0, 1.0),
+        forced(2, 2.0, 0.0),
+    ];
+    merge_forced_line_breaks(&mut breaks);
+    assert_eq!(breaks, [forced(2, 6.0, 3.0), forced(4, 0.0, 0.0)]);
+}
