@@ -3468,6 +3468,227 @@ fn a_text_shadow_covers_the_emphasis_marks() {
     }
 }
 
+/// `(brush, glyph transform)` of every recorded glyph run, in command order.
+fn run_transforms(scene: &Scene) -> Vec<(anyrender::Paint, Option<Affine>)> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some((run.brush.clone(), run.glyph_transform)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_vertical_text_shadow_is_painted_below_the_glyphs() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, cascade, root) = paragraph(
+            &format!(
+                "writing-mode:{mode};text-orientation:upright;line-height:40px;color:black;\
+                 text-shadow:2px 3px rgb(0,0,255)"
+            ),
+            |doc, root| {
+                doc.append_text(root, "aa");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let placed = glyphs(&draw_root(&doc, &cascade, root));
+        let blue = solid(0, 0, 255);
+        let black = solid(0, 0, 0);
+        assert_eq!(placed.len(), 4, "{mode}: two letters and their shadows");
+        let (shadow, own) = placed.split_at(2);
+        assert!(shadow.iter().all(|g| g.3 == blue), "{mode}: {placed:?}");
+        assert!(own.iter().all(|g| g.3 == black), "{mode}: {placed:?}");
+        for (shadow, own) in shadow.iter().zip(own) {
+            let (dx, dy) = (shadow.1 - own.1, shadow.2 - own.2);
+            assert!(
+                (dx - 2.0).abs() < 0.01 && (dy - 3.0).abs() < 0.01,
+                "{mode}: {dx},{dy}"
+            );
+        }
+        assert!(own[1].2 > own[0].2, "{mode}: the letters run down the line");
+    }
+}
+
+#[test]
+fn a_vertical_text_shadow_turns_its_glyphs_as_the_text_is_turned() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:sideways;line-height:40px;color:black;\
+         text-shadow:2px 3px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let runs = run_transforms(&draw_root(&doc, &cascade, root));
+    assert_eq!(runs.len(), 2, "the shadow run and the text run: {runs:?}");
+    assert!(runs[0].1.is_some(), "sideways glyphs are turned: {runs:?}");
+    assert_eq!(runs[0].1, runs[1].1);
+}
+
+#[test]
+fn a_vertical_text_shadow_is_not_drawn_with_decoration_lines() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;color:black;\
+         text-decoration:underline;text-shadow:2px 3px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = draw_root(&doc, &cascade, root);
+    assert_eq!(glyphs(&scene).len(), 4, "the letters and their shadows");
+    assert!(
+        !scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Fill(_))),
+        "a vertical line has no decoration line, nor does its shadow"
+    );
+}
+
+#[test]
+fn a_blurred_vertical_shadow_is_drawn_inside_a_layer_that_covers_its_glyphs() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;color:black;\
+         text-shadow:2px 3px 4px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aaaaaaaa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = draw_root(&doc, &cascade, root);
+    let layers: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => Some(layer),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(layers.len(), 1);
+    assert_eq!(
+        layers[0].filter.as_deref(),
+        Some(&anyrender::filters::Filter::single(
+            anyrender::filters::FilterEffect::blur(2.0)
+        ))
+    );
+    // The blur reaches three times its radius past the glyphs, shadow
+    // offset included, down the whole line.
+    let clip = kurbo::Shape::bounding_box(&layers[0].clip);
+    let blue = solid(0, 0, 255);
+    let shadow: Vec<_> = glyphs(&scene).into_iter().filter(|g| g.3 == blue).collect();
+    assert_eq!(shadow.len(), 8);
+    for glyph in shadow {
+        assert!(
+            clip.x0 <= glyph.1 - 12.0 && glyph.1 + 12.0 <= clip.x1,
+            "{clip:?} across {glyph:?}"
+        );
+        assert!(
+            clip.y0 <= glyph.2 - 12.0 && glyph.2 + 12.0 <= clip.y1,
+            "{clip:?} down {glyph:?}"
+        );
+    }
+}
+
+#[test]
+fn a_vertical_text_shadow_covers_the_emphasis_marks() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;color:black;\
+         text-emphasis:dot;text-shadow:2px 3px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    let black = solid(0, 0, 0);
+    // Two letters and two marks, each in the text color and the shadow's.
+    let shadow: Vec<_> = placed.iter().filter(|g| g.3 == blue).collect();
+    let own: Vec<_> = placed.iter().filter(|g| g.3 == black).collect();
+    assert_eq!((shadow.len(), own.len()), (4, 4), "{placed:?}");
+    for (shadow, own) in shadow.iter().zip(&own) {
+        let (dx, dy) = (shadow.1 - own.1, shadow.2 - own.2);
+        assert!(
+            (dx - 2.0).abs() < 0.01 && (dy - 3.0).abs() < 0.01,
+            "{dx},{dy}"
+        );
+    }
+}
+
+#[test]
+fn a_vertical_text_shadow_follows_a_combined_square() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;line-height:40px;color:black;text-shadow:2px 3px rgb(0,0,255)",
+        |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;text-combine-upright:all"),
+            );
+            doc.append_text(span, "12");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = draw_root(&doc, &cascade, root);
+    let placed = glyphs(&scene);
+    let blue = solid(0, 0, 255);
+    let (shadow, own): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == blue);
+    assert_eq!((shadow.len(), own.len()), (2, 2), "{placed:?}");
+    for (shadow, own) in shadow.iter().zip(&own) {
+        let (dx, dy) = (shadow.1 - own.1, shadow.2 - own.2);
+        assert!(
+            (dx - 2.0).abs() < 0.01 && (dy - 3.0).abs() < 0.01,
+            "{dx},{dy}"
+        );
+    }
+    // The shadow is squeezed into the square with the digits.
+    let runs = run_transforms(&scene);
+    assert!(runs[0].1.is_some(), "the digits are compressed: {runs:?}");
+    assert_eq!(runs[0].1, runs[1].1);
+}
+
+#[test]
+fn a_vertical_text_shadow_covers_a_ruby_annotation() {
+    let (mut doc, cascade, root) = paragraph(
+        "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;color:black;\
+         text-shadow:2px 3px rgb(0,0,255)",
+        |doc, root| {
+            let ruby =
+                doc.append_element(Some(root), "ruby", Style::default(), Some("display:ruby"));
+            let base = doc.append_element(
+                Some(ruby),
+                "rb",
+                Style::default(),
+                Some("display:ruby-base"),
+            );
+            doc.append_text(base, "a");
+            let annotation = doc.append_element(
+                Some(ruby),
+                "rt",
+                Style::default(),
+                Some("display:ruby-text;font-size:5px"),
+            );
+            doc.append_text(annotation, "xy");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    let (shadow, own): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == blue);
+    assert_eq!((shadow.len(), own.len()), (3, 3), "{placed:?}");
+    for (shadow, own) in shadow.iter().zip(&own) {
+        let (dx, dy) = (shadow.1 - own.1, shadow.2 - own.2);
+        assert!(
+            (dx - 2.0).abs() < 0.01 && (dy - 3.0).abs() < 0.01,
+            "{dx},{dy}"
+        );
+    }
+}
+
 #[test]
 fn the_text_nodes_of_one_box_share_its_decoration_phases() {
     let on = painted_root(
