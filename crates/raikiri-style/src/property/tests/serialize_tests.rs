@@ -977,6 +977,13 @@ fn svg_presentation_values_serialize_to_their_validated_text() {
         ("fill-opacity", "50%", "0.5"),
         ("stroke-opacity", "2", "1"),
         ("stroke-width", "3PX", "3px"),
+        ("fill-rule", "EvenOdd", "evenodd"),
+        ("clip-rule", "nonzero", "nonzero"),
+        ("stroke-linecap", "ROUND", "round"),
+        ("stroke-linejoin", "arcs", "miter"),
+        ("stroke-miterlimit", "2.50", "2.5"),
+        ("stroke-dasharray", "4px, 2 50%", "4px 2 50%"),
+        ("stroke-dashoffset", "-1EM", "-1em"),
     ] {
         let mut input = cssparser::ParserInput::new(source);
         let mut parser = cssparser::Parser::new(&mut input);

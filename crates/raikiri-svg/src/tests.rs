@@ -2672,6 +2672,84 @@ fn descendant_overrides_accept_the_painting_properties() {
 }
 
 #[test]
+fn descendant_overrides_accept_the_stroke_and_rule_properties() {
+    let prepared = source_with_descendant_styles(
+        br##"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h20v10z" fill-rule="nonzero" clip-rule="nonzero" stroke-linecap="butt" stroke-linejoin="bevel" stroke-miterlimit="9" stroke-dasharray="9" stroke-dashoffset="5" style="stroke-dasharray:8;fill-rule:nonzero"/></svg>"##,
+        &[super::SvgElementStyle {
+            element_index: 1,
+            declarations: "fill-rule:evenodd!important;clip-rule:evenodd!important;stroke-linecap:round!important;stroke-linejoin:miter-clip!important;stroke-miterlimit:2!important;stroke-dasharray:4 2!important;stroke-dashoffset:-1px!important",
+        }],
+    )
+    .unwrap();
+    let xml = roxmltree::Document::parse(&prepared).unwrap();
+    let path = xml
+        .descendants()
+        .find(|node| node.has_tag_name("path"))
+        .unwrap();
+    for attribute in [
+        "fill-rule",
+        "clip-rule",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "stroke-miterlimit",
+        "stroke-dasharray",
+        "stroke-dashoffset",
+    ] {
+        assert_eq!(path.attribute(attribute), None, "{attribute}");
+    }
+    let style = path.attribute("style").unwrap();
+    for declaration in [
+        "fill-rule:evenodd",
+        "clip-rule:evenodd",
+        "stroke-linecap:round",
+        "stroke-linejoin:miter-clip",
+        "stroke-miterlimit:2",
+        "stroke-dasharray:4 2",
+        "stroke-dashoffset:-1px",
+    ] {
+        assert!(style.contains(declaration), "{declaration} in {style}");
+    }
+    assert!(!style.contains("stroke-dasharray:8"));
+    assert!(!style.contains("fill-rule:nonzero"));
+}
+
+#[test]
+fn a_root_dasharray_is_inherited_by_the_descendants() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' stroke='black' stroke-width='4' width='20' height='10'><line x2='20' y1='2' y2='2'/><line x2='20' y1='7' y2='7' stroke-dasharray='20'/></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let elements = [super::SvgElementStyle {
+        element_index: 0,
+        declarations: "stroke-dasharray:5 5!important",
+    }];
+    let image = svg
+        .rasterize_at_css_pixel_scale_with_resolved_styles(
+            SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            super::SvgResolvedStyles {
+                root_color: [0, 0, 0, 255],
+                font: super::SvgRootFont {
+                    size: 12.0,
+                    family: "sans-serif",
+                    weight: 400.0,
+                    style: "normal",
+                },
+                elements: &elements,
+            },
+            None,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &image.rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(2, 2), &[0, 0, 0, 255], "inside a dash");
+    assert_eq!(pixel(7, 2)[3], 0, "inside a gap");
+    assert_eq!(pixel(7, 7), &[0, 0, 0, 255], "its own attribute wins");
+}
+
+#[test]
 fn root_overrides_take_the_painting_properties_only() {
     let source = br##"<svg xmlns="http://www.w3.org/2000/svg" fill="red" stroke="green" width="20" height="10"><rect width="20" height="10"/></svg>"##;
     let prepared = source_with_descendant_styles(

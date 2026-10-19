@@ -244,11 +244,111 @@ fn revert_layer_on_a_fill_rolls_back_to_the_fill_attribute() {
 
 #[test]
 fn an_overridden_fill_attribute_still_matches_the_svgs_attribute_selectors() {
-    // `stroke-dasharray` is not a property the page cascade carries, so only
-    // the SVG's own stylesheet can apply it, and only while the rule's
+    // `paint-order` is not a property the page cascade carries, so only the
+    // SVG's own stylesheet can apply it, and only while the rule's
     // `[fill=red]` still matches the element whose `fill` the page overrides.
     assert_paints_like(
-        "<style>rect{fill:blue;stroke:green;stroke-width:4px}</style><svg width=20 height=20><style>rect[fill=red]{stroke-dasharray:3 3}</style><rect x=4 y=4 width=12 height=12 fill=red /></svg>",
-        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=blue stroke=green stroke-width=4 stroke-dasharray='3 3' /></svg>",
+        "<style>rect{fill:blue;stroke:green;stroke-width:4px}</style><svg width=20 height=20><style>rect[fill=red]{paint-order:stroke}</style><rect x=4 y=4 width=12 height=12 fill=red /></svg>",
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=blue stroke=green stroke-width=4 paint-order=stroke /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_dasharray_dashes_the_stroke() {
+    assert_paints_like(
+        "<style>path{stroke:black;stroke-width:4px;stroke-dasharray:4px 4px}</style><svg width=20 height=20><path d='M0 10h20' fill=none /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='4 4' /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_dasharray_beats_the_attribute_and_none_removes_it() {
+    assert_paints_like(
+        "<style>path{stroke-dasharray:2 6}</style><svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='8 8' /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='2 6' /></svg>",
+    );
+    assert_paints_like(
+        "<style>path{stroke-dasharray:none}</style><svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='8 8' /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_dashoffset_shifts_the_dashes() {
+    assert_paints_like(
+        "<style>path{stroke:black;stroke-width:4px;stroke-dasharray:6 6;stroke-dashoffset:3px}</style><svg width=20 height=20><path d='M0 10h20' fill=none /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='6 6' stroke-dashoffset='3' /></svg>",
+    );
+}
+
+#[test]
+fn an_invalid_stylesheet_dasharray_keeps_the_earlier_declaration() {
+    assert_paints_like(
+        "<style>path{stroke:black;stroke-width:4px;stroke-dasharray:4 4;stroke-dasharray:4 -4}</style><svg width=20 height=20><path d='M0 10h20' fill=none /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='4 4' /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_dasharray_on_the_root_reaches_the_descendants() {
+    assert_paints_like(
+        "<style>svg{stroke:black;stroke-width:4px;stroke-dasharray:4 4}</style><svg width=20 height=20><path d='M0 10h20' fill=none /><path d='M0 4h20' fill=none stroke-dasharray=none /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='4 4' /><path d='M0 4h20' fill=none stroke=black stroke-width=4 stroke-dasharray=none /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_rule_opens_a_hole() {
+    assert_paints_like(
+        "<style>path{fill:blue;fill-rule:evenodd}</style><svg width=20 height=20><path d='M2 2h16v16h-16z M6 6h8v8h-8z' /></svg>",
+        "<svg width=20 height=20><path d='M2 2h16v16h-16z M6 6h8v8h-8z' fill=blue fill-rule=evenodd /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_fill_rule_on_a_group_is_inherited_by_its_shapes() {
+    assert_paints_like(
+        "<style>g{fill-rule:evenodd}</style><svg width=20 height=20><g><path d='M2 2h16v16h-16z M6 6h8v8h-8z' fill=blue /></g></svg>",
+        "<svg width=20 height=20><g><path d='M2 2h16v16h-16z M6 6h8v8h-8z' fill=blue fill-rule=evenodd /></g></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_clip_rule_clips_with_a_hole() {
+    assert_paints_like(
+        "<style>.k{clip-rule:evenodd}</style><svg width=20 height=20><clipPath id=c><path class=k d='M2 2h16v16h-16z M6 6h8v8h-8z' /></clipPath><rect width=20 height=20 fill=blue clip-path='url(#c)' /></svg>",
+        "<svg width=20 height=20><clipPath id=c><path clip-rule=evenodd d='M2 2h16v16h-16z M6 6h8v8h-8z' /></clipPath><rect width=20 height=20 fill=blue clip-path='url(#c)' /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_linecap_rounds_the_ends() {
+    assert_paints_like(
+        "<style>line{stroke:black;stroke-width:8px;stroke-linecap:round}</style><svg width=20 height=20><line x1=6 y1=10 x2=14 y2=10 /></svg>",
+        "<svg width=20 height=20><line x1=6 y1=10 x2=14 y2=10 stroke=black stroke-width=8 stroke-linecap=round /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_linejoin_bevels_the_corner() {
+    assert_paints_like(
+        "<style>polyline{fill:none;stroke:black;stroke-width:4px;stroke-linejoin:bevel}</style><svg width=20 height=20><polyline points='4,16 10,4 16,16' /></svg>",
+        "<svg width=20 height=20><polyline points='4,16 10,4 16,16' fill=none stroke=black stroke-width=4 stroke-linejoin=bevel /></svg>",
+    );
+}
+
+#[test]
+fn a_stylesheet_miterlimit_bevels_a_long_miter() {
+    assert_paints_like(
+        "<style>polyline{fill:none;stroke:black;stroke-width:4px;stroke-miterlimit:1}</style><svg width=20 height=20><polyline points='4,16 10,4 16,16' /></svg>",
+        "<svg width=20 height=20><polyline points='4,16 10,4 16,16' fill=none stroke=black stroke-width=4 stroke-miterlimit=1 /></svg>",
+    );
+}
+
+#[test]
+fn revert_layer_on_a_dasharray_rolls_back_to_the_earlier_layer() {
+    assert_paints_like(
+        "<style>@layer a, b; @layer a {path{stroke-dasharray:2 6}} @layer b {path{stroke-dasharray:revert-layer}}</style><svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='8 8' /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='2 6' /></svg>",
     );
 }

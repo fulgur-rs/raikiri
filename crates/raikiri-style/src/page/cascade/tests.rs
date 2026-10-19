@@ -4192,7 +4192,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 185;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 192;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -4922,6 +4922,13 @@ property_key_samples! {
     FillOpacity => PropertyValue::FillOpacity("0.5".into()),
     StrokeOpacity => PropertyValue::StrokeOpacity("0.5".into()),
     StrokeWidth => PropertyValue::StrokeWidth("2em".into()),
+    FillRule => PropertyValue::FillRule("evenodd".into()),
+    ClipRule => PropertyValue::ClipRule("evenodd".into()),
+    StrokeLinecap => PropertyValue::StrokeLinecap("round".into()),
+    StrokeLinejoin => PropertyValue::StrokeLinejoin("bevel".into()),
+    StrokeMiterlimit => PropertyValue::StrokeMiterlimit("2".into()),
+    StrokeDasharray => PropertyValue::StrokeDasharray("4 2".into()),
+    StrokeDashoffset => PropertyValue::StrokeDashoffset("1em".into()),
     ColumnSpan => PropertyValue::ColumnSpan(crate::property::ColumnSpanValue::All),
     BorderImageSource => PropertyValue::BorderImageSource(BackgroundImage::Url("frame.png".into())),
     BorderImageSlice => PropertyValue::BorderImageSlice(crate::property::BorderImageSlice::INITIAL),
@@ -5396,6 +5403,13 @@ property_value_variant_registry! {
     FillOpacity,
     StrokeOpacity,
     StrokeWidth,
+    FillRule,
+    ClipRule,
+    StrokeLinecap,
+    StrokeLinejoin,
+    StrokeMiterlimit,
+    StrokeDasharray,
+    StrokeDashoffset,
     ColumnSpan,
     BorderImageSource,
     BorderImageSlice,
@@ -5771,6 +5785,13 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::FillOpacity(_)
             | PropertyValue::StrokeOpacity(_)
             | PropertyValue::StrokeWidth(_)
+            | PropertyValue::FillRule(_)
+            | PropertyValue::ClipRule(_)
+            | PropertyValue::StrokeLinecap(_)
+            | PropertyValue::StrokeLinejoin(_)
+            | PropertyValue::StrokeMiterlimit(_)
+            | PropertyValue::StrokeDasharray(_)
+            | PropertyValue::StrokeDashoffset(_)
             | PropertyValue::ColumnSpan(_)
             | PropertyValue::ColumnRuleStyle(_)
             | PropertyValue::ColumnRuleColor(_)

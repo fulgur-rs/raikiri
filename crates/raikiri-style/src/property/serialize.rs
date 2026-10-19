@@ -60,7 +60,14 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Stroke(text)
         | PropertyValue::FillOpacity(text)
         | PropertyValue::StrokeOpacity(text)
-        | PropertyValue::StrokeWidth(text) => Some(text.to_string()),
+        | PropertyValue::StrokeWidth(text)
+        | PropertyValue::FillRule(text)
+        | PropertyValue::ClipRule(text)
+        | PropertyValue::StrokeLinecap(text)
+        | PropertyValue::StrokeLinejoin(text)
+        | PropertyValue::StrokeMiterlimit(text)
+        | PropertyValue::StrokeDasharray(text)
+        | PropertyValue::StrokeDashoffset(text) => Some(text.to_string()),
         PropertyValue::FontSizeKeyword(keyword) => Some(keyword.as_css_str().to_owned()),
         PropertyValue::FontSizeCalc(calc) => Some(serialize_length_percentage_or_calc(
             &LengthPercentageOrCalc::RelativeCalc(*calc),

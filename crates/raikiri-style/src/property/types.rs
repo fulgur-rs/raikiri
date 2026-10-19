@@ -7784,6 +7784,63 @@ impl ContextualShorthand {
 }
 
 impl PropertyKey {
+    /// The SVG 2 §13 painting properties (`fill`, `stroke`, the stroke shape
+    /// properties and their rules), each with its CSS name and its initial
+    /// value as an SVG renderer reads it. Each is inherited, held as validated
+    /// text by [`PropertyValue::Fill`] and its siblings, and read only by the
+    /// inline SVG export.
+    pub const SVG_PRESENTATION: [(PropertyKey, &'static str, &'static str); 12] = [
+        (PropertyKey::Fill, "fill", "black"),
+        (PropertyKey::Stroke, "stroke", "none"),
+        (PropertyKey::FillOpacity, "fill-opacity", "1"),
+        (PropertyKey::StrokeOpacity, "stroke-opacity", "1"),
+        (PropertyKey::StrokeWidth, "stroke-width", "1"),
+        (PropertyKey::FillRule, "fill-rule", "nonzero"),
+        (PropertyKey::ClipRule, "clip-rule", "nonzero"),
+        (PropertyKey::StrokeLinecap, "stroke-linecap", "butt"),
+        (PropertyKey::StrokeLinejoin, "stroke-linejoin", "miter"),
+        (PropertyKey::StrokeMiterlimit, "stroke-miterlimit", "4"),
+        (PropertyKey::StrokeDasharray, "stroke-dasharray", "none"),
+        (PropertyKey::StrokeDashoffset, "stroke-dashoffset", "0"),
+    ];
+
+    /// The name and initial value of `self` among [`Self::SVG_PRESENTATION`];
+    /// `None` for any other key.
+    const fn svg_presentation_entry(self) -> Option<(&'static str, &'static str)> {
+        let mut index = 0;
+        while index < Self::SVG_PRESENTATION.len() {
+            let (key, name, initial) = Self::SVG_PRESENTATION[index];
+            if key as usize == self as usize {
+                return Some((name, initial));
+            }
+            index += 1;
+        }
+        None
+    }
+
+    /// Whether `self` is an SVG 2 §13 painting property that the host cascade
+    /// resolves for inline SVG only.
+    pub const fn is_svg_presentation(self) -> bool {
+        self.svg_presentation_entry().is_some()
+    }
+
+    /// The CSS name of an SVG painting property; `None` for any other key.
+    pub const fn svg_presentation_name(self) -> Option<&'static str> {
+        match self.svg_presentation_entry() {
+            Some((name, _)) => Some(name),
+            None => None,
+        }
+    }
+
+    /// The initial value of an SVG painting property, as an SVG renderer reads
+    /// it; `None` for any other key.
+    pub(crate) const fn svg_presentation_initial(self) -> Option<&'static str> {
+        match self.svg_presentation_entry() {
+            Some((_, initial)) => Some(initial),
+            None => None,
+        }
+    }
+
     /// Whether `self` is a margin, padding, offset or physical size property,
     /// or a shorthand of the first three, whose CSS-wide keywords the cascade
     /// resolves from the parent's computed value or the initial value.
@@ -7858,12 +7915,8 @@ impl DeferredValue {
                 | PropertyKey::BorderImageRepeat
                 | PropertyKey::BoxDecorationBreak
                 | PropertyKey::TextShadow
-                | PropertyKey::Fill
-                | PropertyKey::Stroke
-                | PropertyKey::FillOpacity
-                | PropertyKey::StrokeOpacity
-                | PropertyKey::StrokeWidth
         ) && !self.key.takes_box_css_wide_keyword()
+            && !self.key.is_svg_presentation()
         {
             return None;
         }
@@ -11569,6 +11622,31 @@ pub enum PropertyValue {
     /// non-negative number, percentage or length an SVG renderer resolves;
     /// same shape as [`PropertyValue::Fill`].
     StrokeWidth(Box<str>),
+    /// `fill-rule: nonzero | evenodd` — **inherited**, initial `nonzero`
+    /// (SVG 2 §13.4). Same shape as [`PropertyValue::Fill`].
+    FillRule(Box<str>),
+    /// `clip-rule: nonzero | evenodd` — **inherited**, initial `nonzero`
+    /// (SVG 2 §13.4). Same shape as [`PropertyValue::Fill`].
+    ClipRule(Box<str>),
+    /// `stroke-linecap: butt | round | square` — **inherited**, initial `butt`
+    /// (SVG 2 §13.5). Same shape as [`PropertyValue::Fill`].
+    StrokeLinecap(Box<str>),
+    /// `stroke-linejoin: miter | miter-clip | round | bevel` — **inherited**,
+    /// initial `miter` (SVG 2 §13.5). `arcs` is written as `miter`, the
+    /// fallback the specification names. Same shape as [`PropertyValue::Fill`].
+    StrokeLinejoin(Box<str>),
+    /// `stroke-miterlimit` — **inherited**, initial `4` (SVG 2 §13.5). The text
+    /// is a number of at least `1`; same shape as [`PropertyValue::Fill`].
+    StrokeMiterlimit(Box<str>),
+    /// `stroke-dasharray: none | <dasharray>` — **inherited**, initial `none`
+    /// (SVG 2 §13.6). The text is a list of non-negative numbers, percentages
+    /// and lengths an SVG renderer resolves; same shape as
+    /// [`PropertyValue::Fill`].
+    StrokeDasharray(Box<str>),
+    /// `stroke-dashoffset` — **inherited**, initial `0` (SVG 2 §13.6). The text
+    /// is a number, percentage or length an SVG renderer resolves; same shape
+    /// as [`PropertyValue::Fill`].
+    StrokeDashoffset(Box<str>),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12187,16 +12265,44 @@ pub enum PropertyKey {
     BorderImage,
     // CSS Text 4 text-group-align; appended to preserve existing key slots.
     TextGroupAlign,
-    // SVG 2 painting properties carried by `PropertyValue::SvgPresentation`;
-    // appended to preserve existing key slots.
+    // SVG 2 painting properties, carried as validated text by
+    // `PropertyValue::Fill` and its siblings; appended to preserve existing key
+    // slots.
     Fill,
     Stroke,
     FillOpacity,
     StrokeOpacity,
     StrokeWidth,
+    FillRule,
+    ClipRule,
+    StrokeLinecap,
+    StrokeLinejoin,
+    StrokeMiterlimit,
+    StrokeDasharray,
+    StrokeDashoffset,
 }
 
 impl PropertyValue {
+    /// The value of the SVG painting property `key` holding `text`; `None` for
+    /// any other key.
+    pub(crate) fn svg_presentation(key: PropertyKey, text: Box<str>) -> Option<Self> {
+        Some(match key {
+            PropertyKey::Fill => PropertyValue::Fill(text),
+            PropertyKey::Stroke => PropertyValue::Stroke(text),
+            PropertyKey::FillOpacity => PropertyValue::FillOpacity(text),
+            PropertyKey::StrokeOpacity => PropertyValue::StrokeOpacity(text),
+            PropertyKey::StrokeWidth => PropertyValue::StrokeWidth(text),
+            PropertyKey::FillRule => PropertyValue::FillRule(text),
+            PropertyKey::ClipRule => PropertyValue::ClipRule(text),
+            PropertyKey::StrokeLinecap => PropertyValue::StrokeLinecap(text),
+            PropertyKey::StrokeLinejoin => PropertyValue::StrokeLinejoin(text),
+            PropertyKey::StrokeMiterlimit => PropertyValue::StrokeMiterlimit(text),
+            PropertyKey::StrokeDasharray => PropertyValue::StrokeDasharray(text),
+            PropertyKey::StrokeDashoffset => PropertyValue::StrokeDashoffset(text),
+            _ => return None,
+        })
+    }
+
     /// Returns the property key for this value.
     ///
     /// Used as the discriminant for selecting one winner per property in the
@@ -12451,6 +12557,13 @@ impl PropertyValue {
             PropertyValue::FillOpacity(_) => PropertyKey::FillOpacity,
             PropertyValue::StrokeOpacity(_) => PropertyKey::StrokeOpacity,
             PropertyValue::StrokeWidth(_) => PropertyKey::StrokeWidth,
+            PropertyValue::FillRule(_) => PropertyKey::FillRule,
+            PropertyValue::ClipRule(_) => PropertyKey::ClipRule,
+            PropertyValue::StrokeLinecap(_) => PropertyKey::StrokeLinecap,
+            PropertyValue::StrokeLinejoin(_) => PropertyKey::StrokeLinejoin,
+            PropertyValue::StrokeMiterlimit(_) => PropertyKey::StrokeMiterlimit,
+            PropertyValue::StrokeDasharray(_) => PropertyKey::StrokeDasharray,
+            PropertyValue::StrokeDashoffset(_) => PropertyKey::StrokeDashoffset,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
             PropertyValue::BorderSpacing(_) => PropertyKey::BorderSpacing,
@@ -13607,6 +13720,13 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "fill-opacity" => PropertyKey::FillOpacity,
         "stroke-opacity" => PropertyKey::StrokeOpacity,
         "stroke-width" => PropertyKey::StrokeWidth,
+        "fill-rule" => PropertyKey::FillRule,
+        "clip-rule" => PropertyKey::ClipRule,
+        "stroke-linecap" => PropertyKey::StrokeLinecap,
+        "stroke-linejoin" => PropertyKey::StrokeLinejoin,
+        "stroke-miterlimit" => PropertyKey::StrokeMiterlimit,
+        "stroke-dasharray" => PropertyKey::StrokeDasharray,
+        "stroke-dashoffset" => PropertyKey::StrokeDashoffset,
         _ => return None,
     })
 }
