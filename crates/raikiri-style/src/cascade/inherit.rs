@@ -573,8 +573,8 @@ pub(crate) fn walk_from<D: StyleDom>(
             .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
-        // The stroke lengths a presentation attribute of the element sets.
-        let mut attribute_declared = [false; STROKE_LENGTHS.len()];
+        // The painting properties a presentation attribute of the element sets.
+        let mut attribute_set = [false; crate::property::PropertyKey::SVG_PRESENTATION.len()];
         let parent_computed =
             parent.map_or(parent_computed, |parent| &out.computed[parent.0 as usize]);
         let idx = id.0 as usize;
@@ -601,10 +601,10 @@ pub(crate) fn walk_from<D: StyleDom>(
                                 crate::ruletree::Origin::AuthorPresentationalHint,
                                 false,
                             )
-                        && let Some(slot) = stroke_length_slot(candidate.key())
+                        && let Some(slot) = svg_presentation_slot(candidate.key())
                         && !attribute_inherits(candidates.value(position))
                     {
-                        attribute_declared[slot] = true;
+                        attribute_set[slot] = true;
                     }
                 }
             }
@@ -714,7 +714,10 @@ pub(crate) fn walk_from<D: StyleDom>(
                     &custom_properties,
                     Some(&mut out.page_values[idx]),
                     Some(&mut out.authored_writing_modes[idx]),
-                    is_svg.then_some(&mut node_svg_properties),
+                    Some(SvgCollector {
+                        properties: &mut node_svg_properties,
+                        painting_only: !is_svg,
+                    }),
                     is_svg.then_some(&mut node_svg_relative_presentation_attributes),
                 );
             }
@@ -941,6 +944,18 @@ pub(crate) fn walk_from<D: StyleDom>(
                 .copied()
                 .unwrap_or_default();
             if share_source.is_none() {
+                if !parent_is_svg {
+                    // The last ancestor is this element.
+                    let ancestors = &ancestor_path[..ancestor_path.len().saturating_sub(1)];
+                    inherit_ancestor_paint(
+                        &mut node_svg_properties,
+                        attribute_set,
+                        ancestors,
+                        &out.svg_properties,
+                        &out.computed,
+                        computed.font_size.0,
+                    );
+                }
                 absolutize_inherited_lengths(
                     &mut node_svg_properties,
                     parent_declarers,
@@ -950,7 +965,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                 );
             }
             if let Some(slot) = stroke_declarers.last_mut() {
-                *slot = parent_declarers.declared_by(&node_svg_properties, attribute_declared, id);
+                *slot = parent_declarers.declared_by(&node_svg_properties, attribute_set, id);
             }
         }
         if !node_svg_properties.is_empty() {
@@ -1413,7 +1428,7 @@ pub(crate) fn apply_winners(
     custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
-    mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
+    mut svg_properties: Option<SvgCollector<'_>>,
     mut svg_relative_presentation_attributes: Option<&mut Vec<SvgStyleProperty>>,
 ) {
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
@@ -1593,11 +1608,12 @@ pub(crate) fn apply_winners(
                     expression: Some(expression),
                 });
             }
-            if let Some(properties) = svg_properties.as_deref_mut()
+            if let Some(collector) = svg_properties.as_mut()
                 && svg_property_is_exported(winner_key)
+                && (!collector.painting_only || winner_key.is_svg_presentation())
                 && !winning_paint_hint
             {
-                properties.push(SvgStyleProperty {
+                collector.properties.push(SvgStyleProperty {
                     property: winner_key,
                     inherited: literal_inherit
                         || matches!(&value, Some(PropertyValue::ContextualColor(color))
@@ -1657,6 +1673,72 @@ pub(crate) fn apply_winners(
     }
 }
 
+/// Where [`apply_winners`] lists the winners an inline SVG needs.
+pub(crate) struct SvgCollector<'a> {
+    pub(crate) properties: &'a mut Vec<SvgStyleProperty>,
+    /// Whether only the painting properties are listed: the element is not
+    /// an SVG element, and a descendant SVG inherits just those from it.
+    pub(crate) painting_only: bool,
+}
+
+/// Completes the painting properties of the root of an inline SVG with the
+/// values it inherits from its ancestors.
+///
+/// The standalone SVG has no parent to inherit from, so a value the HTML
+/// around it gave to `fill`, `stroke` or any other painting property
+/// (CSS inheritance, SVG 2 §13) is written on the root. An ancestor that
+/// itself inherits the property hands the question to its own parent; a root
+/// that inherits a property takes the value in place of `inherit`. A
+/// font-relative stroke length is written in px when the ancestor and the
+/// root have different font sizes, as for [`absolutize_inherited_lengths`].
+fn inherit_ancestor_paint(
+    properties: &mut Vec<SvgStyleProperty>,
+    attribute_set: [bool; crate::property::PropertyKey::SVG_PRESENTATION.len()],
+    ancestors: &[StyleNodeId],
+    exported: &HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    computed: &[ComputedValues],
+    font_size_px: f32,
+) {
+    // A property the root sets itself, in a declaration or by an attribute,
+    // is not the ancestors' to give.
+    let mut pending = crate::property::PropertyKey::SVG_PRESENTATION.map(|(key, _, _)| {
+        !properties
+            .iter()
+            .any(|property| property.property == key && !property.inherited)
+    });
+    for (pending, set) in pending.iter_mut().zip(attribute_set) {
+        *pending &= !set;
+    }
+    for ancestor in ancestors.iter().rev() {
+        let Some(listed) = exported.get(ancestor) else {
+            continue;
+        };
+        for entry in listed {
+            let Some(slot) = svg_presentation_slot(entry.property)
+                .filter(|&slot| pending[slot] && !entry.inherited)
+            else {
+                continue;
+            };
+            pending[slot] = false;
+            let in_px = computed
+                .get(ancestor.0 as usize)
+                .and_then(|c| declared_length_in_px(entry, c.font_size.0, font_size_px));
+            let value = SvgStyleProperty {
+                property: entry.property,
+                inherited: false,
+                expression: in_px.or_else(|| entry.expression.clone()),
+            };
+            match properties
+                .iter_mut()
+                .find(|property| property.property == entry.property)
+            {
+                Some(own) => *own = value,
+                None => properties.push(value),
+            }
+        }
+    }
+}
+
 /// Whether the value text `raw` substitutes a custom property.
 fn references_variable(raw: &str) -> bool {
     let mut references = Vec::new();
@@ -1707,6 +1789,13 @@ fn attribute_inherits(value: &PropertyValue) -> bool {
     )
 }
 
+/// The position of `key` among the painting properties.
+fn svg_presentation_slot(key: crate::property::PropertyKey) -> Option<usize> {
+    crate::property::PropertyKey::SVG_PRESENTATION
+        .iter()
+        .position(|(painting, _, _)| *painting == key)
+}
+
 fn stroke_length_slot(key: crate::property::PropertyKey) -> Option<usize> {
     STROKE_LENGTHS.iter().position(|length| *length == key)
 }
@@ -1719,20 +1808,16 @@ struct StrokeDeclarers([Option<StyleNodeId>; STROKE_LENGTHS.len()]);
 impl StrokeDeclarers {
     /// The declarers for element `id`, below elements whose declarers are
     /// `self`. The element exports `properties`, and its presentation
-    /// attributes set the lengths in `attribute_declared`. A length it
-    /// inherits stays with the declarer above.
+    /// attributes set the painting properties flagged in `attribute_set`. A
+    /// length it inherits stays with the declarer above.
     fn declared_by(
         mut self,
         properties: &[SvgStyleProperty],
-        attribute_declared: [bool; STROKE_LENGTHS.len()],
+        attribute_set: [bool; crate::property::PropertyKey::SVG_PRESENTATION.len()],
         id: StyleNodeId,
     ) -> Self {
-        for ((slot, key), by_attribute) in self
-            .0
-            .iter_mut()
-            .zip(STROKE_LENGTHS)
-            .zip(attribute_declared)
-        {
+        for (slot, key) in self.0.iter_mut().zip(STROKE_LENGTHS) {
+            let by_attribute = svg_presentation_slot(key).is_some_and(|at| attribute_set[at]);
             let exported = properties.iter().find(|property| property.property == key);
             // An attribute that wins is not exported.
             if exported.map_or(by_attribute, |property| !property.inherited) {
@@ -1767,21 +1852,33 @@ fn absolutize_inherited_lengths(
         else {
             continue;
         };
-        let declared_font_size = computed.get(declarer.0 as usize).map(|c| c.font_size.0);
-        if let Some(declared_font_size) = declared_font_size
-            && declared_font_size != font_size_px
+        if let Some(declared_font_size) = computed.get(declarer.0 as usize).map(|c| c.font_size.0)
             && let Some(entry) = exported.get(&declarer).and_then(|entries| {
                 entries
                     .iter()
                     .find(|entry| entry.property == property.property && !entry.inherited)
             })
-            && let Some(text) = entry.expression.as_deref()
-            && let Some(text) = svg_lengths_in_px(text, declared_font_size)
+            && let Some(text) = declared_length_in_px(entry, declared_font_size, font_size_px)
         {
             property.inherited = false;
             property.expression = Some(text);
         }
     }
+}
+
+/// The stroke length `entry`, declared on an element of font size
+/// `declared_font_size`, in px for an element of font size `font_size_px`;
+/// `None` when it is not a stroke length with a font-relative term or the two
+/// font sizes agree.
+fn declared_length_in_px(
+    entry: &SvgStyleProperty,
+    declared_font_size: f32,
+    font_size_px: f32,
+) -> Option<String> {
+    if declared_font_size == font_size_px || stroke_length_slot(entry.property).is_none() {
+        return None;
+    }
+    svg_lengths_in_px(entry.expression.as_deref()?, declared_font_size)
 }
 
 /// `text`, a validated list of SVG lengths, with its `em` and `ex` terms

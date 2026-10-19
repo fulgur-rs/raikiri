@@ -276,6 +276,38 @@ fn inline_svg_export_resolves_a_variable_in_a_fill_attribute() {
 }
 
 #[test]
+fn inline_svg_export_carries_the_fill_and_dashes_of_an_html_ancestor() {
+    let result = laid_out(
+        "<style>@page{size:100px 100px;margin:0}svg{display:block}div{fill:blue;stroke:lime;stroke-width:4px;stroke-dasharray:20 20}</style><div><svg width='20' height='20'><rect x='4' y='4' width='12' height='12'/></svg></div>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 20.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &image.rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(10, 10), &[0, 0, 255, 255], "the inherited fill");
+    assert_eq!(
+        pixel(10, 2),
+        &[0, 255, 0, 255],
+        "the first dash of the top edge"
+    );
+    assert_eq!(pixel(10, 17), &[0, 0, 0, 0], "a gap of the bottom edge");
+}
+
+#[test]
 fn inline_svg_export_carries_stylesheet_fill_and_stroke() {
     let result = laid_out(
         "<style>@page{size:100px 100px;margin:0}svg{display:block}rect{fill:blue;stroke:lime;stroke-width:4px}</style><svg width='20' height='20'><rect x='4' y='4' width='12' height='12' fill='red' stroke='red'/></svg>",
