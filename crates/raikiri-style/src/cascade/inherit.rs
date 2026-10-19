@@ -7,6 +7,7 @@ use crate::PseudoElem;
 use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
+use crate::logical::FlowMapping;
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     Length, LengthOrAuto, LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize,
@@ -1079,6 +1080,11 @@ fn flow_winner_value(
 }
 
 /// Find a longhand's surviving value after origin or layer rollback.
+///
+/// For properties whose declarations are never flow-relative (writing mode,
+/// direction, borders). Margin, padding and inset use [`rollback_index`] with a
+/// [`FlowMapping`], which matches a logical declaration to the physical side it
+/// maps to.
 fn find_rollback(
     candidates: ElementCandidates<'_>,
     key: crate::property::PropertyKey,
@@ -1086,8 +1092,31 @@ fn find_rollback(
     keyword: CssWideKeyword,
     deferred_resolver: &mut DeferredResolver<'_>,
 ) -> Option<PropertyValue> {
-    let index = super::rollback::select_layered_winner(candidates.decls(), |idx, candidate| {
-        if candidate.key() != key && !candidate.is_all_revert_layer() {
+    let index = rollback_index(
+        candidates,
+        key,
+        winner_index,
+        keyword,
+        deferred_resolver,
+        None,
+    )?;
+    Some(candidates.value(index).clone())
+}
+
+/// The candidate that survives origin or layer rollback of the declaration at
+/// `winner_index`, among those that compete for the cascade slot `slot`.
+/// Under `flow`, a flow-relative declaration competes for the physical side
+/// its own side maps to.
+fn rollback_index(
+    candidates: ElementCandidates<'_>,
+    slot: crate::property::PropertyKey,
+    winner_index: usize,
+    keyword: CssWideKeyword,
+    deferred_resolver: &mut DeferredResolver<'_>,
+    flow: Option<FlowMapping>,
+) -> Option<usize> {
+    super::rollback::select_layered_winner(candidates.decls(), |idx, candidate| {
+        if candidate.slot(flow) != slot && !candidate.is_all_revert_layer() {
             return None;
         }
         let rollback = if idx == winner_index {
@@ -1105,8 +1134,7 @@ fn find_rollback(
             candidate.rollback()
         };
         Some(candidate.precedence().layered(idx, rollback))
-    })?;
-    Some(candidates.value(index).clone())
+    })
 }
 
 /// Resolve one border longhand CSS-wide marker to its concrete specified value.
@@ -1332,11 +1360,14 @@ pub(crate) fn apply_winners(
             let winner_key = candidates.decls()[winner.idx].key();
             // A flow-relative declaration moves to the physical side its
             // slot names once its value is known.
-            let to_slot =
-                |value: PropertyValue| match (candidates.decls()[winner.idx].logical(), flow) {
-                    (Some(side), Some(flow)) => flow.value(value, side),
-                    _ => value,
-                };
+            let to_slot_of = |index: usize, value: PropertyValue| match (
+                candidates.decls()[index].logical(),
+                flow,
+            ) {
+                (Some(side), Some(flow)) => flow.value(value, side),
+                _ => value,
+            };
+            let to_slot = |value: PropertyValue| to_slot_of(winner.idx, value);
             let mut literal_inherit = false;
             let mut inherited_border_width = false;
             let mut default_value = |value: PropertyValue| {
@@ -1376,17 +1407,25 @@ pub(crate) fn apply_winners(
                             Some(
                                 keyword @ (CssWideKeyword::Revert | CssWideKeyword::RevertLayer),
                             ) => {
-                                match find_rollback(
+                                // The declaration that survives moves to its own
+                                // physical side, which is the winner's.
+                                match rollback_index(
                                     candidates,
-                                    winner_key,
+                                    candidates.decls()[winner.idx].slot(flow),
                                     winner.idx,
                                     keyword,
                                     &mut deferred_resolver,
+                                    flow,
                                 ) {
-                                    Some(PropertyValue::Deferred(fallback)) => {
-                                        deferred_resolver.resolve(&fallback).map(&mut default_value)
-                                    }
-                                    Some(value) => Some(default_value(value)),
+                                    Some(index) => match candidates.value(index) {
+                                        PropertyValue::Deferred(fallback) => deferred_resolver
+                                            .resolve(fallback)
+                                            .map(|value| to_slot_of(index, value))
+                                            .map(&mut default_value),
+                                        value => {
+                                            Some(default_value(to_slot_of(index, value.clone())))
+                                        }
+                                    },
                                     None => None,
                                 }
                             }
@@ -2199,6 +2238,22 @@ fn inherited_text_decoration_thickness(
 }
 
 fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
+    match inherited_box_length(value) {
+        // Margins never compute to a sizing keyword; fall back to the initial 0.
+        LengthOrAuto::MinContent
+        | LengthOrAuto::MaxContent
+        | LengthOrAuto::FitContent
+        | LengthOrAuto::FitContentOf(_) => LengthOrAuto::Length(Length::Px(0.0)),
+        other => other,
+    }
+}
+
+/// Lift a parent computed size or offset back into the specified layer for
+/// `inherit`. Unlike a margin, it can compute to a sizing keyword.
+///
+/// A parent's `height` has already lost a sizing keyword to `auto`
+/// (see `without_sizing_keyword`), so `height: inherit` cannot recover it.
+fn inherited_box_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
         ComputedLengthPercentageOrAuto::Percent(percent) => {
@@ -2206,12 +2261,78 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
         }
         ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
         ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
-        // Margins never compute to a sizing keyword; fall back to the initial 0.
-        ComputedLengthPercentageOrAuto::MinContent
-        | ComputedLengthPercentageOrAuto::MaxContent
-        | ComputedLengthPercentageOrAuto::FitContent
-        | ComputedLengthPercentageOrAuto::FitContentOf(_) => LengthOrAuto::Length(Length::Px(0.0)),
+        ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
+        ComputedLengthPercentageOrAuto::MaxContent => LengthOrAuto::MaxContent,
+        ComputedLengthPercentageOrAuto::FitContent => LengthOrAuto::FitContent,
+        ComputedLengthPercentageOrAuto::FitContentOf(limit) => {
+            LengthOrAuto::FitContentOf(crate::resolve::lift_length_percentage_or_calc(limit))
+        }
     }
+}
+
+/// The value a CSS-wide keyword gives the margin, padding, offset or size
+/// longhand `key`: the parent's computed value for `inherit`, the initial value
+/// otherwise, since none of these properties is inherited. `None` for another
+/// property.
+fn box_defaulting_value(
+    key: crate::property::PropertyKey,
+    inherit: bool,
+    inherited: &ComputedValues,
+) -> Option<PropertyValue> {
+    use crate::property::PropertyKey;
+    let margin = |parent: ComputedLengthPercentageOrAuto| {
+        if inherit {
+            inherited_margin_length(parent)
+        } else {
+            LengthOrAuto::Length(Length::Px(0.0))
+        }
+    };
+    let padding = |parent: ComputedLengthPercentageOrCalc| {
+        if inherit {
+            crate::resolve::lift_length_percentage_or_calc(parent)
+        } else {
+            LengthPercentageOrCalc::Length(Length::Px(0.0))
+        }
+    };
+    let size_or_offset = |parent: ComputedLengthPercentageOrAuto| {
+        if inherit {
+            inherited_box_length(parent)
+        } else {
+            LengthOrAuto::Auto
+        }
+    };
+    // In a vertical writing mode with a declared logical size, `width` and
+    // `height` hold layout's horizontal-axis mapping; the physical sizes a child
+    // inherits are kept separately.
+    let (physical_width, physical_height) = inherited
+        .vertical_logical_size
+        .as_ref()
+        .map_or((inherited.width, inherited.height), |size| {
+            (size.width, size.height)
+        });
+    Some(match key {
+        PropertyKey::MarginTop => PropertyValue::MarginTop(margin(inherited.margin.top)),
+        PropertyKey::MarginRight => PropertyValue::MarginRight(margin(inherited.margin.right)),
+        PropertyKey::MarginBottom => PropertyValue::MarginBottom(margin(inherited.margin.bottom)),
+        PropertyKey::MarginLeft => PropertyValue::MarginLeft(margin(inherited.margin.left)),
+        PropertyKey::PaddingTop => PropertyValue::PaddingTop(padding(inherited.padding.top)),
+        PropertyKey::PaddingRight => PropertyValue::PaddingRight(padding(inherited.padding.right)),
+        PropertyKey::PaddingBottom => {
+            PropertyValue::PaddingBottom(padding(inherited.padding.bottom))
+        }
+        PropertyKey::PaddingLeft => PropertyValue::PaddingLeft(padding(inherited.padding.left)),
+        PropertyKey::Top => PropertyValue::Top(size_or_offset(inherited.top)),
+        PropertyKey::Right => PropertyValue::Right(size_or_offset(inherited.right)),
+        PropertyKey::Bottom => PropertyValue::Bottom(size_or_offset(inherited.bottom)),
+        PropertyKey::Left => PropertyValue::Left(size_or_offset(inherited.left)),
+        PropertyKey::Width => PropertyValue::Width(size_or_offset(physical_width)),
+        PropertyKey::Height => PropertyValue::Height(size_or_offset(physical_height)),
+        PropertyKey::MinWidth => PropertyValue::MinWidth(size_or_offset(inherited.min_width)),
+        PropertyKey::MinHeight => PropertyValue::MinHeight(size_or_offset(inherited.min_height)),
+        PropertyKey::MaxWidth => PropertyValue::MaxWidth(size_or_offset(inherited.max_width)),
+        PropertyKey::MaxHeight => PropertyValue::MaxHeight(size_or_offset(inherited.max_height)),
+        _ => return None,
+    })
 }
 
 /// The `key` border-image longhand of `inherited`, mapped back to the
@@ -2444,7 +2565,13 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     inherited.list_style_image.clone()
                 });
             }
-            _ => {}
+            key => {
+                if let Some(value) =
+                    box_defaulting_value(key, keyword == CssWideKeyword::Inherit, inherited)
+                {
+                    return value;
+                }
+            }
         }
     }
     resolve_css_wide_color_font(

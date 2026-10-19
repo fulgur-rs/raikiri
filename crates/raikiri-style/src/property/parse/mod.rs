@@ -90,7 +90,7 @@ fn parse_value_with_black_currentcolor(
     // Preserve defaulting markers until inheritance or cascade rollback can
     // supply the correct value. Canonicalize the token so escapes, case, and
     // comments have the same behavior throughout the cascade.
-    if matches!(
+    let takes_css_wide_keyword = matches!(
         key,
         Some(
             PropertyKey::Color
@@ -132,10 +132,13 @@ fn parse_value_with_black_currentcolor(
                 | PropertyKey::StrokeOpacity
                 | PropertyKey::StrokeWidth
         )
-    ) && let Ok(keyword) = input.try_parse(|parser| {
-        let keyword = parse_css_wide_keyword_res(parser)?;
-        Ok::<_, ParseError<'_, ()>>(keyword)
-    }) {
+    ) || key.is_some_and(PropertyKey::takes_box_css_wide_keyword);
+    if takes_css_wide_keyword
+        && let Ok(keyword) = input.try_parse(|parser| {
+            let keyword = parse_css_wide_keyword_res(parser)?;
+            Ok::<_, ParseError<'_, ()>>(keyword)
+        })
+    {
         return Some(PropertyValue::Deferred(DeferredValue {
             property: normalized_name.clone().into(),
             value: keyword.as_css_str().into(),

@@ -498,7 +498,11 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                     }
                     return Ok(());
                 }
-                let raw_y = parent_abs_y + node.unrounded_layout.location.y;
+                let raw_y = if document.oof_coordinates.contains_key(&node_id) {
+                    super::current_abs_y(document, node_id)
+                } else {
+                    parent_abs_y + node.unrounded_layout.location.y
+                };
                 let computed = &cascade.computed[node_id];
                 // A floated box does not establish a page transition merely
                 // because it carries an inherited/explicit `page` value.  In

@@ -8,6 +8,7 @@ mod candidate_text_tests;
 mod column_projection_tests;
 mod fragment_sources_tests;
 pub(super) mod link_ancestor_tests;
+mod oof_coordinate_tests;
 mod paged_spanning_tests;
 mod source_walk_tests;
 mod table_follow_tests;
@@ -2249,7 +2250,11 @@ fn grid_auto_abspos_last_baseline_keeps_an_oversized_box_at_the_start_edge() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     let layout = doc.nodes[child].unrounded_layout;
-    assert!((layout.location.x - 10.0).abs() < 0.01);
+    assert!(
+        (layout.location.x - 10.0).abs() < 0.01,
+        "x: {}",
+        layout.location.x
+    );
     assert!((layout.location.y - 10.0).abs() < 0.01);
 }
 
@@ -8916,24 +8921,27 @@ fn a_positioned_box_with_insets_is_placed_against_the_containing_block() {
 /// "bb" is the 20px from x 50 to x 70. Returns the child's border-box
 /// location from the root's border box.
 fn child_of_relative_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
+    child_of_inline_location(
+        &format!("display:inline;position:relative;{outer_css}"),
+        &format!("position:absolute;{child_css}"),
+    )
+}
+
+/// [`child_of_relative_inline_location`] with the whole style of the inline
+/// element and of its child given, so the inline element need not be
+/// positioned and the child may be fixed.
+fn child_of_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
     let mut child = 0;
     let (mut doc, cascade, root) =
         ahem_paragraph_with("width:200px;position:relative", |doc, root| {
             doc.append_text(root, "aaaa ");
-            let outer = doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some(&format!("display:inline;position:relative;{outer_css}")),
-            );
+            let outer = doc.append_element(Some(root), "span", Style::default(), Some(outer_css));
             doc.append_text(outer, "bb");
             child = doc.append_element(
                 Some(outer),
                 "span",
                 Style::default(),
-                Some(&format!(
-                    "position:absolute;width:10px;height:10px;{child_css}"
-                )),
+                Some(&format!("width:10px;height:10px;{child_css}")),
             );
         });
     lay_out(&mut doc, &cascade);
@@ -8968,6 +8976,39 @@ fn the_containing_block_of_a_relative_inline_is_its_padding_box() {
     assert_eq!(
         child_of_relative_inline_location("padding:0 4px;border:2px solid", "left:50%;top:50%"),
         (66.0, 5.0)
+    );
+}
+
+#[test]
+fn a_filtered_inline_is_the_containing_block_of_absolute_and_fixed_boxes() {
+    // Hand-computed (Filter Effects 1): the inline needs no `position` to
+    // contain both kinds of boxes, so 50% is half of the 20px "bb".
+    for outer_css in [
+        "display:inline;filter:blur(1px)",
+        "display:inline;will-change:filter",
+    ] {
+        for position in ["absolute", "fixed"] {
+            assert_eq!(
+                child_of_inline_location(
+                    outer_css,
+                    &format!("position:{position};left:50%;top:50%")
+                ),
+                (60.0, 5.0),
+                "{outer_css} {position}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_relative_inline_is_not_the_containing_block_of_fixed_boxes() {
+    // The fixed box is placed against the page area, not the "bb" at x 50.
+    assert_eq!(
+        child_of_inline_location(
+            "display:inline;position:relative",
+            "position:fixed;left:5px;top:7px"
+        ),
+        (5.0, 7.0)
     );
 }
 
@@ -20226,4 +20267,144 @@ fn boxes_outside_the_paginated_flow_reach_the_pages_they_paint_on() {
             actual: 3
         })
     ));
+}
+
+/// Four 20px lines, 100px pages: a break before line 2 sits on the first
+/// page, so line 2 moves to the top of the second.
+const FOUR_LINES: [(f32, f32); 4] = [(0.0, 20.0), (20.0, 40.0), (40.0, 60.0), (60.0, 80.0)];
+
+fn forced(line: usize, lead: f32, gap: f32) -> ForcedLineBreak {
+    ForcedLineBreak { line, lead, gap }
+}
+
+#[test]
+fn a_forced_line_break_moves_the_line_after_it_to_the_next_page() {
+    let pages = PageOrigins::new(&[], 100.0);
+    assert_eq!(
+        forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 0.0, &pages),
+        vec![(2, 60.0, 1)]
+    );
+}
+
+#[test]
+fn a_forced_line_break_keeps_the_gap_and_the_lead_above_the_line() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // The content that starts the next page begins 5px above the line and
+    // keeps a 7px margin: it sits 7px below the page top, the line 12px.
+    assert_eq!(
+        forced_line_moves(&[forced(2, 5.0, 7.0)], &FOUR_LINES, 0.0, &pages),
+        vec![(2, 72.0, 1)]
+    );
+}
+
+#[test]
+fn a_forced_line_break_follows_the_offset_of_the_paragraph() {
+    let pages = PageOrigins::new(&[], 100.0);
+    assert_eq!(
+        forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 30.0, &pages),
+        vec![(2, 30.0, 1)]
+    );
+}
+
+#[test]
+fn a_forced_line_break_at_the_edge_of_the_paragraph_moves_nothing() {
+    let pages = PageOrigins::new(&[], 100.0);
+    for line in [0, 4, 9] {
+        assert!(
+            forced_line_moves(&[forced(line, 0.0, 0.0)], &FOUR_LINES, 0.0, &pages).is_empty(),
+            "line {line}"
+        );
+    }
+    assert!(forced_line_moves(&[forced(1, 0.0, 0.0)], &[], 0.0, &pages).is_empty());
+}
+
+#[test]
+fn a_forced_line_break_on_a_page_edge_moves_nothing() {
+    let pages = PageOrigins::new(&[], 100.0);
+    // Line 2 already starts the second page.
+    assert!(forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 60.0, &pages).is_empty());
+}
+
+#[test]
+fn a_forced_line_break_before_a_box_that_starts_on_the_previous_page_moves_it() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = [
+        (0.0, 20.0),
+        (20.0, 40.0),
+        (40.0, 60.0),
+        (60.0, 80.0),
+        (80.0, 100.0),
+        (100.0, 120.0),
+    ];
+    // Line 5 is on the second page, but the box that the break is before
+    // begins 30px above it, on the first: the box moves to the second page,
+    // and the line with it.
+    assert_eq!(
+        forced_line_moves(&[forced(5, 30.0, 0.0)], &lines, 0.0, &pages),
+        vec![(5, 30.0, 1)]
+    );
+    // A box that begins at the top of the second page is already there.
+    assert!(forced_line_moves(&[forced(5, 0.0, 0.0)], &lines, 0.0, &pages).is_empty());
+}
+
+#[test]
+fn a_forced_line_break_with_an_unusable_distance_moves_nothing() {
+    let pages = PageOrigins::new(&[], 100.0);
+    for (lead, gap) in [
+        (f32::NAN, 0.0),
+        (0.0, f32::NAN),
+        (f32::INFINITY, 0.0),
+        (0.0, f32::INFINITY),
+    ] {
+        assert!(
+            forced_line_moves(&[forced(2, lead, gap)], &FOUR_LINES, 0.0, &pages).is_empty(),
+            "lead {lead}, gap {gap}"
+        );
+    }
+}
+
+#[test]
+fn forced_line_breaks_add_up_on_the_pages_they_open() {
+    let pages = PageOrigins::new(&[], 100.0);
+    let lines = [
+        (0.0, 20.0),
+        (20.0, 40.0),
+        (40.0, 60.0),
+        (60.0, 80.0),
+        (80.0, 100.0),
+        (100.0, 120.0),
+    ];
+    // Line 2 moves to page 1 (60px down); line 4 then sits 120px down, 20px
+    // into page 1, and moves to page 2 (another 60px down).
+    assert_eq!(
+        forced_line_moves(
+            &[forced(2, 0.0, 0.0), forced(4, 0.0, 0.0)],
+            &lines,
+            0.0,
+            &pages
+        ),
+        vec![(2, 60.0, 1), (4, 60.0, 2)]
+    );
+}
+
+#[test]
+fn forced_line_breaks_on_a_scheduled_page_use_its_origin() {
+    // The first page is 60px tall and the second starts at 60px.
+    let pages = PageOrigins::new(&[60.0, 100.0], 100.0);
+    assert_eq!(
+        forced_line_moves(&[forced(2, 0.0, 0.0)], &FOUR_LINES, 0.0, &pages),
+        vec![(2, 20.0, 1)]
+    );
+}
+
+#[test]
+fn forced_line_breaks_before_the_same_line_are_one_break() {
+    let mut breaks = vec![
+        forced(4, 0.0, 0.0),
+        forced(2, 0.0, 3.0),
+        forced(2, 6.0, 1.0),
+        forced(2, 2.0, 0.0),
+    ];
+    merge_forced_line_breaks(&mut breaks);
+    assert_eq!(breaks, [forced(2, 6.0, 3.0), forced(4, 0.0, 0.0)]);
 }

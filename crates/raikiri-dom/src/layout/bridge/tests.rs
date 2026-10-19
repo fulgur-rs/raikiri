@@ -2607,6 +2607,267 @@ fn bridged_widths(cases: &[(&str, &str, &str)]) -> Vec<Dimension> {
         .collect()
 }
 
+/// The keyword `min-*` and `max-*` sizes bridged for each
+/// `(parent css, child tag, child css)`, with the Taffy min and max size.
+fn bridged_content_limits(
+    cases: &[(&str, &str, &str)],
+) -> Vec<(
+    crate::taffy_impl::content_limits::ContentLimits,
+    taffy::Size<LengthPercentageAuto>,
+    taffy::Size<LengthPercentageAuto>,
+)> {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let children: Vec<usize> = cases
+        .iter()
+        .map(|&(parent_css, tag, child_css)| {
+            let parent = doc.append_element(Some(html), "div", Style::default(), Some(parent_css));
+            doc.append_element(Some(parent), tag, Style::default(), Some(child_css))
+        })
+        .collect();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+    children
+        .into_iter()
+        .map(|child| {
+            let style = &doc.layout_node_with_style(child).unwrap().style;
+            (
+                doc.nodes[child].content_limits,
+                style.min_size,
+                style.max_size,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_block_in_normal_flow_records_its_keyword_min_and_max_sizes() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let css = "display:block;min-width:min-content;max-width:fit-content;\
+               min-height:max-content;max-height:fit-content(10px)";
+    for (parent, display) in [
+        ("display:block", "block"),
+        ("display:flow-root", "block"),
+        ("display:block", "flow-root"),
+        ("display:block", "list-item"),
+    ] {
+        let case = css.replace("display:block", &format!("display:{display}"));
+        let [(limits, min, max)] = bridged_content_limits(&[(parent, "div", &case)])[..] else {
+            panic!("one case");
+        };
+        assert_eq!(
+            limits,
+            ContentLimits {
+                min: taffy::Size {
+                    width: Dimension::min_content(),
+                    height: Dimension::max_content(),
+                },
+                max: taffy::Size {
+                    width: Dimension::fit_content(),
+                    height: Dimension::fit_content_px(10.0),
+                },
+            },
+            "{display} in {parent}"
+        );
+        // Taffy cannot hold a keyword and sees no constraint.
+        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+    }
+}
+
+#[test]
+fn a_flex_or_grid_container_records_its_keyword_min_and_max_sizes() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let css = "min-width:min-content;max-width:fit-content;\
+               min-height:max-content;max-height:fit-content(10px)";
+    for display in ["flex", "grid"] {
+        let child_css = format!("display:{display};{css}");
+        let [(limits, min, max)] =
+            bridged_content_limits(&[("display:block", "div", &child_css)])[..]
+        else {
+            panic!("one case");
+        };
+        assert_eq!(
+            limits,
+            ContentLimits {
+                min: taffy::Size {
+                    width: Dimension::min_content(),
+                    height: Dimension::max_content(),
+                },
+                max: taffy::Size {
+                    width: Dimension::fit_content(),
+                    height: Dimension::fit_content_px(10.0),
+                },
+            },
+            "display:{display}"
+        );
+        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+    }
+}
+
+#[test]
+fn a_flex_or_grid_item_records_its_keyword_min_and_max_sizes() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let css = "display:block;min-width:min-content;max-width:fit-content;\
+               min-height:max-content;max-height:fit-content(10px)";
+    for parent in ["display:flex", "display:grid"] {
+        let [(limits, min, max)] = bridged_content_limits(&[(parent, "div", css)])[..] else {
+            panic!("one case");
+        };
+        assert_eq!(
+            limits,
+            ContentLimits {
+                min: taffy::Size {
+                    width: Dimension::min_content(),
+                    height: Dimension::max_content(),
+                },
+                max: taffy::Size {
+                    width: Dimension::fit_content(),
+                    height: Dimension::fit_content_px(10.0),
+                },
+            },
+            "{parent}"
+        );
+        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+    }
+}
+
+#[test]
+fn a_size_that_is_no_keyword_is_no_content_limit() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let [(limits, min, max)] = bridged_content_limits(&[(
+        "display:block",
+        "div",
+        "display:block;min-width:10px;max-width:50%;min-height:auto;max-height:none",
+    )])[..] else {
+        panic!("one case");
+    };
+    assert_eq!(limits, ContentLimits::NONE);
+    assert_eq!(min.width, LengthPercentageAuto::length(10.0));
+    assert_eq!(max.width, LengthPercentageAuto::percent(0.5));
+}
+
+#[test]
+fn unsupported_box_content_limits_record_none() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let keyword = "min-width:min-content;max-height:max-content";
+    let block = format!("display:block;{keyword}");
+    let cases: Vec<(&str, &str, String)> = vec![
+        // Tables that size themselves.
+        ("display:block", "div", format!("display:table;{keyword}")),
+        // An inline-level box.
+        ("display:block", "span", format!("display:inline;{keyword}")),
+        (
+            "display:block",
+            "div",
+            format!("display:grid;{keyword};writing-mode:vertical-rl"),
+        ),
+        (
+            "display:flex",
+            "div",
+            format!("display:grid;{keyword};writing-mode:vertical-rl"),
+        ),
+        // A replaced element, a multicol container and a box in its columns.
+        ("display:block", "img", block.clone()),
+        ("display:block", "img", format!("display:flex;{keyword}")),
+        ("display:block", "img", format!("display:grid;{keyword}")),
+        ("display:block", "div", format!("{block};column-count:2")),
+        ("display:block;column-count:2", "div", block.clone()),
+        // A vertical box writes on physical axes different from its parent.
+        (
+            "display:block",
+            "div",
+            format!("{block};writing-mode:vertical-rl"),
+        ),
+    ];
+    let borrowed: Vec<(&str, &str, &str)> = cases
+        .iter()
+        .map(|(parent, tag, css)| (*parent, *tag, css.as_str()))
+        .collect();
+    for (case, (limits, ..)) in borrowed.iter().zip(bridged_content_limits(&borrowed)) {
+        assert_eq!(limits, ContentLimits::NONE, "{case:?}");
+    }
+}
+
+#[test]
+fn a_display_contents_parent_passes_its_own_container_to_the_content_limits() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let mut items = Vec::new();
+    for container in ["display:flex", "display:block"] {
+        let outer = doc.append_element(Some(html), "div", Style::default(), Some(container));
+        let contents = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        items.push(doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;min-width:max-content"),
+        ));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+
+    assert_eq!(
+        doc.nodes[items[0]].content_limits.min.width,
+        Dimension::max_content()
+    );
+    assert_eq!(
+        doc.nodes[items[1]].content_limits.min.width,
+        Dimension::max_content()
+    );
+}
+
+#[test]
+fn a_display_contents_parent_passes_its_own_container_to_the_width_keyword() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let mut items = Vec::new();
+    for container in ["display:flex", "display:block"] {
+        let outer = doc.append_element(Some(html), "div", Style::default(), Some(container));
+        let contents = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        items.push(doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;width:max-content;max-width:100px"),
+        ));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+
+    // The flex item is clamped, so its keyword stays out of Taffy's way; the
+    // block is sized by the keyword and clamped afterwards.
+    let width = |item: usize| doc.layout_node_with_style(item).unwrap().style.size.width;
+    assert_eq!(width(items[0]), Dimension::auto());
+    assert_eq!(width(items[1]), Dimension::max_content());
+}
+
 #[test]
 fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
     for keyword in [
@@ -2617,10 +2878,23 @@ fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
     ] {
         let width = format!("display:block;width:{keyword}");
         let widths = bridged_widths(&[
-            // A flex or grid item is sized by the container's algorithm.
-            ("display:flex", "div", &width),
-            ("display:inline-flex", "div", &width),
-            ("display:grid", "div", &width),
+            // A vertical flex or grid item takes its inline size from the
+            // height, which the container sizes along its physical axes.
+            (
+                "display:flex",
+                "div",
+                &format!("{width};writing-mode:vertical-rl"),
+            ),
+            (
+                "display:grid",
+                "div",
+                &format!("{width};writing-mode:vertical-rl"),
+            ),
+            // A flex or grid item with a minimum or maximum width is measured
+            // by Taffy before the size is clamped.
+            ("display:flex", "div", &format!("{width};max-width:100px")),
+            ("display:flex", "div", &format!("{width};min-width:10px")),
+            ("display:grid", "div", &format!("{width};max-width:50%")),
             // A replaced element takes its natural size, also when it is
             // absolutely positioned.
             ("display:block", "img", &width),
@@ -2681,6 +2955,33 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
             ("display:block", "div", "display:grid;width:max-content"),
             ("display:flex", "div", "position:absolute;width:max-content"),
             ("display:flex", "div", "position:fixed;width:max-content"),
+            // A flex or grid item, also one that is a flex or grid container
+            // itself.
+            ("display:flex", "div", width),
+            ("display:inline-flex", "div", width),
+            ("display:grid", "div", width),
+            ("display:flex", "div", "display:flex;width:max-content"),
+            // A minimum width that is zero or `auto` clamps nothing.
+            (
+                "display:flex",
+                "div",
+                "display:block;width:max-content;min-width:0"
+            ),
+            (
+                "display:grid",
+                "div",
+                "display:block;width:max-content;min-width:auto"
+            ),
+            (
+                "display:flex",
+                "div",
+                "display:block;width:max-content;min-width:0%"
+            ),
+            (
+                "display:grid",
+                "div",
+                "display:block;width:max-content;min-width:calc(0% + 0px)"
+            ),
             (
                 "display:block",
                 "div",
@@ -2694,9 +2995,43 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
             keyword,
             keyword,
             keyword,
+            keyword,
+            keyword,
+            keyword,
+            keyword,
+            keyword,
+            keyword,
+            keyword,
+            keyword,
             Dimension::auto()
         ],
     );
+}
+
+#[test]
+fn a_size_that_is_zero_whatever_it_refers_to_is_a_zero_length() {
+    use raikiri_style::property::CalcLengthPercentage;
+
+    let calc =
+        |percent, px| ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage { percent, px });
+    for zero in [
+        ComputedLengthPercentageOrAuto::Px(0.0),
+        ComputedLengthPercentageOrAuto::Px(-0.0),
+        ComputedLengthPercentageOrAuto::Percent(0.0),
+        calc(0.0, 0.0),
+    ] {
+        assert!(is_zero_length(zero), "{zero:?}");
+    }
+    for other in [
+        ComputedLengthPercentageOrAuto::Px(1.0),
+        ComputedLengthPercentageOrAuto::Percent(5.0),
+        calc(10.0, 0.0),
+        calc(0.0, 4.0),
+        ComputedLengthPercentageOrAuto::Auto,
+        ComputedLengthPercentageOrAuto::MinContent,
+    ] {
+        assert!(!is_zero_length(other), "{other:?}");
+    }
 }
 
 #[test]
@@ -2714,51 +3049,134 @@ fn a_vertical_box_takes_its_inline_size_keyword_from_the_height() {
             Dimension::fit_content()
         };
         assert_eq!(sizes[0].height, expected, "{keyword} in a block");
-        // A flex item or a replaced element is not sized by the keyword.
+        // A vertical flex item or a replaced element is not sized by the
+        // keyword.
         assert_eq!(sizes[1].height, Dimension::auto(), "{keyword} in a flex");
         assert_eq!(sizes[2].height, Dimension::auto(), "{keyword} on an image");
     }
 }
 
-#[test]
-fn a_display_contents_parent_passes_its_own_parent_to_the_children() {
+/// The Taffy `align-self` bridged for each `(parent css, child tag, child
+/// css)`, in a child of a `display: contents` wrapper when `wrapped`.
+fn bridged_align_selves(
+    cases: &[(&str, &str, &str)],
+    wrapped: bool,
+) -> Vec<Option<taffy::AlignItems>> {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let child_css = "display:block;width:max-content";
-    let mut items = Vec::new();
-    for container in ["display:flex", "display:block"] {
-        let outer = doc.append_element(Some(html), "div", Style::default(), Some(container));
-        let contents = doc.append_element(
-            Some(outer),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        let nested = doc.append_element(
-            Some(contents),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        items.push(doc.append_element(Some(nested), "div", Style::default(), Some(child_css)));
-    }
+    let children: Vec<usize> = cases
+        .iter()
+        .map(|&(parent_css, tag, child_css)| {
+            let parent = doc.append_element(Some(html), "div", Style::default(), Some(parent_css));
+            let parent = if wrapped {
+                doc.append_element(
+                    Some(parent),
+                    "div",
+                    Style::default(),
+                    Some("display:contents"),
+                )
+            } else {
+                parent
+            };
+            doc.append_element(Some(parent), tag, Style::default(), Some(child_css))
+        })
+        .collect();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+    children
+        .into_iter()
+        .map(|child| doc.layout_node_with_style(child).unwrap().style.align_self)
+        .collect()
+}
 
-    let widths: Vec<Dimension> = items
+#[test]
+fn an_item_of_a_column_flex_container_with_a_keyword_width_is_aligned_at_the_start() {
+    let start = Some(taffy::AlignItems::FLEX_START);
+    let column = "display:flex;flex-direction:column";
+    for keyword in [
+        "min-content",
+        "max-content",
+        "fit-content",
+        "fit-content(50px)",
+        "fit-content(50%)",
+    ] {
+        let item = format!("display:block;width:{keyword}");
+        for wrapped in [false, true] {
+            assert_eq!(
+                bridged_align_selves(
+                    &[
+                        (column, "div", &item),
+                        ("display:flex;flex-direction:column-reverse", "div", &item),
+                        ("display:inline-flex;flex-direction:column", "div", &item),
+                        (
+                            &format!("{column};align-items:stretch"),
+                            "div",
+                            &format!("{item};align-self:normal"),
+                        ),
+                        (column, "div", &format!("{item};align-self:stretch")),
+                    ],
+                    wrapped
+                ),
+                [start; 5],
+                "{keyword} wrapped: {wrapped}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_item_that_is_not_stretched_keeps_its_alignment() {
+    use taffy::AlignItems;
+
+    let column = "display:flex;flex-direction:column";
+    let keyword = "display:block;width:max-content";
+    let cases = [
+        // An alignment of its own, or the container's, that is no stretch.
+        (column, "div", format!("{keyword};align-self:center")),
+        (column, "div", format!("{keyword};align-self:baseline")),
+        (
+            "display:flex;flex-direction:column;align-items:center",
+            "div",
+            keyword.to_string(),
+        ),
+        // A width that is no keyword.
+        (column, "div", "display:block;width:auto".to_string()),
+        (column, "div", "display:block;width:100px".to_string()),
+        // A container with another cross axis, or no flex layout.
+        ("display:flex", "div", keyword.to_string()),
+        ("display:grid", "div", keyword.to_string()),
+        ("display:block", "div", keyword.to_string()),
+        // A vertical item takes its sizes from the logical properties.
+        (column, "div", format!("{keyword};writing-mode:vertical-rl")),
+    ];
+    let borrowed: Vec<(&str, &str, &str)> = cases
         .iter()
-        .map(|item| doc.layout_node_with_style(*item).unwrap().style.size.width)
+        .map(|(parent, tag, css)| (*parent, *tag, css.as_str()))
         .collect();
-    assert_eq!(widths, [Dimension::auto(), Dimension::max_content()]);
+    assert_eq!(
+        bridged_align_selves(&borrowed, false),
+        [
+            Some(AlignItems::CENTER),
+            Some(AlignItems::BASELINE),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ]
+    );
 }
 
 #[test]
 fn a_sizing_keyword_is_no_min_max_constraint_and_no_margin() {
-    // Only `width` / `inline-size` keep a sizing keyword; where one reaches a
-    // min/max size or a margin, it is no constraint and no margin.
+    // Taffy's min and max sizes hold no sizing keyword (the node's content
+    // limits do) and a margin never computes to one; where one reaches either,
+    // it is no constraint and no margin.
     for keyword in [
         ComputedLengthPercentageOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent,

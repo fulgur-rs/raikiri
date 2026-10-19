@@ -2,7 +2,7 @@ use super::*;
 use crate::cascade::candidate::{OwnedCandidates, Precedence};
 use crate::cascade::test_support::*;
 use crate::cascade::{cascade, cascade_with_media_context_for_page, cascade_with_options};
-use crate::computed::{ComputedValues, INITIAL_FONT_SIZE_PX};
+use crate::computed::{ComputedValues, INITIAL_FONT_SIZE_PX, VerticalLogicalSize};
 use crate::media::MediaContext;
 use crate::property::CssColor;
 use crate::property::DisplayValue;
@@ -410,6 +410,42 @@ fn min_block_size_maps_to_the_authored_block_axis() {
         ComputedLengthPercentageOrAuto::Px(20.0)
     );
     assert_eq!(physical.min_block_size, None);
+}
+
+#[test]
+fn block_size_keywords_compute_to_auto_for_an_element() {
+    // An element sizes itself to its content along the block axis for
+    // `min-content`, `max-content` and `fit-content` alike (CSS Sizing 3
+    // §5.1), so they compute to `auto` however they are declared.
+    for declaration in [
+        "height: min-content",
+        "height: max-content",
+        "height: fit-content",
+        "height: fit-content(10px)",
+        "block-size: max-content",
+    ] {
+        let horizontal = cascade_doc("", "div", Some(declaration));
+        assert_eq!(
+            horizontal.height,
+            ComputedLengthPercentageOrAuto::Auto,
+            "{declaration}"
+        );
+        assert_eq!(horizontal.width, ComputedLengthPercentageOrAuto::Auto);
+    }
+    // In a vertical writing mode the block size is the physical width, and
+    // the inline size keeps its keyword as the physical height.
+    let vertical = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-rl; block-size: max-content; inline-size: max-content"),
+    );
+    assert_eq!(
+        vertical.vertical_logical_size,
+        Some(VerticalLogicalSize {
+            width: ComputedLengthPercentageOrAuto::Auto,
+            height: ComputedLengthPercentageOrAuto::MaxContent,
+        })
+    );
 }
 
 #[test]
@@ -9997,6 +10033,49 @@ fn max_width_none_maps_to_auto() {
         cv_px.max_height,
         ComputedLengthPercentageOrAuto::Percent(50.0)
     );
+}
+
+#[test]
+fn min_and_max_sizes_compute_to_the_sizing_keyword() {
+    // CSS Sizing 3 §4 and §5: the sizing keywords are computed values of
+    // `min-*` and `max-*`, and `fit-content()` keeps its limit.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "min-width: min-content; max-width: fit-content(20px); \
+             min-height: max-content; max-height: fit-content",
+        ),
+    );
+    assert_eq!(cv.min_width, ComputedLengthPercentageOrAuto::MinContent);
+    assert_eq!(
+        cv.max_width,
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Px(20.0))
+    );
+    assert_eq!(cv.min_height, ComputedLengthPercentageOrAuto::MaxContent);
+    assert_eq!(cv.max_height, ComputedLengthPercentageOrAuto::FitContent);
+}
+
+#[test]
+fn min_block_size_computes_to_the_sizing_keyword_on_the_block_axis() {
+    // `min-block-size` is the physical `min-height` in horizontal writing and
+    // the physical `min-width` in vertical writing.
+    let horizontal = cascade_doc("", "div", Some("min-block-size: max-content"));
+    assert_eq!(
+        horizontal.min_height,
+        ComputedLengthPercentageOrAuto::MaxContent
+    );
+    assert_eq!(horizontal.min_width, ComputedLengthPercentageOrAuto::Auto);
+    let vertical = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-rl; min-block-size: min-content"),
+    );
+    assert_eq!(
+        vertical.min_width,
+        ComputedLengthPercentageOrAuto::MinContent
+    );
+    assert_eq!(vertical.min_height, ComputedLengthPercentageOrAuto::Auto);
 }
 
 #[test]

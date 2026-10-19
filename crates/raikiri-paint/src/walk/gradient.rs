@@ -5,10 +5,11 @@
 //! every tile with a brush transform.
 
 use super::*;
+use raikiri_dom::image_geometry::BackgroundTiles;
 use raikiri_style::property::{
-    BackgroundRepeatKeyword, GradientColorInterpolation, GradientColorStop, HorizontalSide,
-    LengthPercentageOrCalc, LinearGradient, LinearGradientDirection, RadialExtent, RadialGradient,
-    RadialShape, RadialSize, VerticalSide,
+    BackgroundRepeat, BackgroundRepeatKeyword, GradientColorInterpolation, GradientColorStop,
+    HorizontalSide, LengthPercentageOrCalc, LinearGradient, LinearGradientDirection, RadialExtent,
+    RadialGradient, RadialShape, RadialSize, VerticalSide,
 };
 
 /// What one gradient tile is filled with.
@@ -69,41 +70,98 @@ pub(super) fn paint_gradient_layer(
     if !matches!(gradient, Gradient::Linear(_) | Gradient::Radial(_)) {
         return false;
     }
-    let Some((tile_w, tile_h)) = gradient_image_size(size, positioning) else {
-        return true;
-    };
-    // Repeated tiles below one pixel cannot be drawn without coverage gaps;
-    // like browsers, repeat such a gradient in one-pixel tiles. A
-    // `no-repeat` tile keeps its size.
-    let enlarge = |keyword, tile: f64| match keyword {
-        BackgroundRepeatKeyword::NoRepeat => tile,
-        _ => tile.max(1.0),
-    };
-    let (tile_w, tile_h) = (enlarge(repeat.x, tile_w), enlarge(repeat.y, tile_h));
-    // `space` with room for fewer than two of the used tiles places one,
-    // like `no-repeat` (CSS Backgrounds 3 §2.4).
-    let repeats = |keyword, extent: f64, tile: f64| match keyword {
-        BackgroundRepeatKeyword::NoRepeat => false,
-        BackgroundRepeatKeyword::Space => extent >= 2.0 * tile,
-        _ => true,
-    };
-    let (repeat_x, repeat_y) = (
-        repeats(repeat.x, positioning.width(), tile_w),
-        repeats(repeat.y, positioning.height(), tile_h),
-    );
-    // Too many tiles to fill one by one, such as one-pixel tiles over a
-    // large box, are approximated by the average color of one tile, which
-    // keeps the scene bounded.
-    let estimate = |repeats: bool, extent: f64, tile: f64| {
-        if repeats {
-            (extent / tile).ceil() + 2.0
-        } else {
-            1.0
+    GradientLayer {
+        gradient,
+        positioning,
+        painting,
+        size,
+        position,
+        repeat,
+        current_color,
+    }
+    .paint(scene);
+    true
+}
+
+/// One gradient layer: the boxes it is placed in and how its tiles repeat.
+struct GradientLayer<'a> {
+    gradient: &'a Gradient,
+    /// The `background-origin` box.
+    positioning: Rect,
+    /// The `background-clip` box.
+    painting: Rect,
+    size: &'a ComputedBackgroundSize,
+    position: &'a ComputedCssPosition,
+    repeat: &'a BackgroundRepeat,
+    current_color: CssColor,
+}
+
+/// The used size of the tiles of a layer and whether each axis repeats.
+#[derive(Clone, Copy)]
+struct TileSizes {
+    width: f64,
+    height: f64,
+    repeat_x: bool,
+    repeat_y: bool,
+}
+
+impl TileSizes {
+    /// How many tiles at most cover a painting area of the given size, with
+    /// two spare tiles on a repeating axis.
+    fn estimated_count(&self, painting: Rect) -> f64 {
+        let estimate = |repeats: bool, extent: f64, tile: f64| {
+            if repeats {
+                (extent / tile).ceil() + 2.0
+            } else {
+                1.0
+            }
+        };
+        estimate(self.repeat_x, painting.width(), self.width)
+            * estimate(self.repeat_y, painting.height(), self.height)
+    }
+}
+
+impl GradientLayer<'_> {
+    /// Paints the layer, unless its tiles have no size.
+    fn paint(&self, scene: &mut impl PaintScene) {
+        if let Some(sizes) = self.tile_sizes() {
+            self.paint_sized(scene, sizes);
         }
-    };
-    if estimate(repeat_x, painting.width(), tile_w) * estimate(repeat_y, painting.height(), tile_h)
-        > MAX_GRADIENT_TILES as f64
-    {
+    }
+
+    /// The size of the tiles and whether each axis repeats.
+    fn tile_sizes(&self) -> Option<TileSizes> {
+        gradient_image_size(self.size, self.positioning).map(|(tile_w, tile_h)| {
+            let (width, height) = (
+                enlarged(self.repeat.x, tile_w),
+                enlarged(self.repeat.y, tile_h),
+            );
+            TileSizes {
+                width,
+                height,
+                repeat_x: axis_repeats(self.repeat.x, self.positioning.width(), width),
+                repeat_y: axis_repeats(self.repeat.y, self.positioning.height(), height),
+            }
+        })
+    }
+
+    /// Paints the tiles of the given size, one by one or, when there are too
+    /// many of them, as the average color of one tile.
+    fn paint_sized(&self, scene: &mut impl PaintScene, sizes: TileSizes) {
+        // Too many tiles to fill one by one, such as one-pixel tiles over a
+        // large box, are approximated by the average color of one tile, which
+        // keeps the scene bounded.
+        if sizes.estimated_count(self.painting) > MAX_GRADIENT_TILES as f64 {
+            self.paint_average(scene, sizes);
+        } else {
+            self.paint_tiles(scene, sizes);
+        }
+    }
+
+    /// Fills the area the tiles would cover with the average color of one
+    /// tile.
+    fn paint_average(&self, scene: &mut impl PaintScene, sizes: TileSizes) {
+        let positioning = self.positioning;
         // A `no-repeat` axis still shows its one positioned tile.
         let span = |repeats: bool, start: f64, extent: f64, tile: f64, offset| {
             if repeats {
@@ -114,103 +172,159 @@ pub(super) fn paint_gradient_layer(
             }
         };
         let (x0, x1) = span(
-            repeat_x,
+            sizes.repeat_x,
             positioning.x0,
             positioning.width(),
-            tile_w,
-            position.horizontal,
+            sizes.width,
+            self.position.horizontal,
         );
         let (y0, y1) = span(
-            repeat_y,
+            sizes.repeat_y,
             positioning.y0,
             positioning.height(),
-            tile_h,
-            position.vertical,
+            sizes.height,
+            self.position.vertical,
         );
+        let painting = self.painting;
         let area = Rect::new(
             x0.max(painting.x0),
             y0.max(painting.y0),
             x1.min(painting.x1),
             y1.min(painting.y1),
         );
-        let tile = Rect::new(0.0, 0.0, tile_w, tile_h);
+        let tile = Rect::new(0.0, 0.0, sizes.width, sizes.height);
         if area.width() > 0.0
             && area.height() > 0.0
-            && let Some(fill) = gradient_fill(gradient, tile, current_color)
+            && let Some(fill) = gradient_fill(self.gradient, tile, self.current_color)
         {
             fill_average(scene, &fill, area);
         }
-        return true;
     }
-    let Some(tiles) = background_tiles(
-        (
-            positioning.x0,
-            positioning.y0,
-            positioning.width(),
-            positioning.height(),
-        ),
-        (
-            painting.x0,
-            painting.y0,
-            painting.width(),
-            painting.height(),
-        ),
-        (tile_w, tile_h),
-        position,
-        repeat,
-    ) else {
-        return true;
-    };
-    // `round` may rescale the tile, so the brush is built for the used size.
-    let tile = Rect::new(0.0, 0.0, tiles.width, tiles.height);
-    let Some(fill) = gradient_fill(gradient, tile, current_color) else {
-        return true;
-    };
-    if tiles.x.len().saturating_mul(tiles.y.len()) > MAX_GRADIENT_TILES {
-        fill_average(scene, &fill, painting);
-        return true;
+
+    /// Fills each tile of the layer, clipped to the painting area.
+    fn paint_tiles(&self, scene: &mut impl PaintScene, sizes: TileSizes) {
+        let positioning = self.positioning;
+        let painting = self.painting;
+        let Some(tiles) = background_tiles(
+            (
+                positioning.x0,
+                positioning.y0,
+                positioning.width(),
+                positioning.height(),
+            ),
+            (
+                painting.x0,
+                painting.y0,
+                painting.width(),
+                painting.height(),
+            ),
+            (sizes.width, sizes.height),
+            self.position,
+            self.repeat,
+        ) else {
+            return;
+        };
+        // `round` may rescale the tile, so the brush is built for the used size.
+        let tile = Rect::new(0.0, 0.0, tiles.width, tiles.height);
+        if let Some(fill) = gradient_fill(self.gradient, tile, self.current_color) {
+            self.fill_tiles(scene, &fill, &tiles, sizes);
+        }
     }
-    scene.push_clip_layer(Affine::IDENTITY, &painting);
-    for tile_y in &tiles.y {
-        for tile_x in &tiles.x {
-            // Repeated tile edges snap to whole pixels so neighboring tiles
-            // meet without antialiased seams; a single tile and the
-            // painting area keep their own edges.
-            let snap = |edge: f64, snaps: bool| if snaps { edge.round() } else { edge };
-            let (snap_x, snap_y) = (repeat_x && tiles.x.len() > 1, repeat_y && tiles.y.len() > 1);
-            let snapped = Rect::new(
-                snap(*tile_x, snap_x),
-                snap(*tile_y, snap_y),
-                snap(tile_x + tiles.width, snap_x),
-                snap(tile_y + tiles.height, snap_y),
-            );
-            let shape = snapped.intersect(painting);
-            if shape.width() <= 0.0 || shape.height() <= 0.0 {
-                continue;
+
+    /// Fills every tile with `fill`, clipped to the painting area, or the
+    /// whole area with its average color when there are too many tiles.
+    fn fill_tiles(
+        &self,
+        scene: &mut impl PaintScene,
+        fill: &GradientFill,
+        tiles: &BackgroundTiles,
+        sizes: TileSizes,
+    ) {
+        if tiles.x.len().saturating_mul(tiles.y.len()) > MAX_GRADIENT_TILES {
+            fill_average(scene, fill, self.painting);
+            return;
+        }
+        scene.push_clip_layer(Affine::IDENTITY, &self.painting);
+        for tile_y in &tiles.y {
+            for tile_x in &tiles.x {
+                self.fill_tile(scene, fill, tiles, (*tile_x, *tile_y), sizes);
             }
-            // The brush is stretched onto the snapped tile, so every copy
-            // shows the whole gradient from its first color to its last.
-            let offset = Affine::translate((snapped.x0, snapped.y0))
-                * Affine::scale_non_uniform(
-                    snapped.width() / tiles.width,
-                    snapped.height() / tiles.height,
-                );
-            match &fill {
-                GradientFill::Brush(brush, brush_transform) => scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    brush.as_ref(),
-                    Some(offset * brush_transform.unwrap_or(Affine::IDENTITY)),
-                    &shape,
-                ),
-                GradientFill::Solid(color) => {
-                    scene.fill(Fill::NonZero, Affine::IDENTITY, *color, None, &shape)
-                }
+        }
+        scene.pop_layer();
+    }
+
+    /// Fills the tile at (`tile_x`, `tile_y`) with the gradient.
+    fn fill_tile(
+        &self,
+        scene: &mut impl PaintScene,
+        fill: &GradientFill,
+        tiles: &BackgroundTiles,
+        (tile_x, tile_y): (f64, f64),
+        sizes: TileSizes,
+    ) {
+        // Repeated tile edges snap to whole pixels so neighboring tiles
+        // meet without antialiased seams; a single tile and the
+        // painting area keep their own edges.
+        let (snap_x, snap_y) = (
+            sizes.repeat_x && tiles.x.len() > 1,
+            sizes.repeat_y && tiles.y.len() > 1,
+        );
+        let snapped = Rect::new(
+            snapped_edge(tile_x, snap_x),
+            snapped_edge(tile_y, snap_y),
+            snapped_edge(tile_x + tiles.width, snap_x),
+            snapped_edge(tile_y + tiles.height, snap_y),
+        );
+        let shape = snapped.intersect(self.painting);
+        if shape.width() <= 0.0 || shape.height() <= 0.0 {
+            return;
+        }
+        // The brush is stretched onto the snapped tile, so every copy
+        // shows the whole gradient from its first color to its last.
+        let offset = Affine::translate((snapped.x0, snapped.y0))
+            * Affine::scale_non_uniform(
+                snapped.width() / tiles.width,
+                snapped.height() / tiles.height,
+            );
+        match fill {
+            GradientFill::Brush(brush, brush_transform) => scene.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                brush.as_ref(),
+                Some(offset * brush_transform.unwrap_or(Affine::IDENTITY)),
+                &shape,
+            ),
+            GradientFill::Solid(color) => {
+                scene.fill(Fill::NonZero, Affine::IDENTITY, *color, None, &shape)
             }
         }
     }
-    scene.pop_layer();
-    true
+}
+
+/// The tile extent of a repeat keyword. Repeated tiles below one pixel cannot
+/// be drawn without coverage gaps; like browsers, repeat such a gradient in
+/// one-pixel tiles. A `no-repeat` tile keeps its size.
+fn enlarged(keyword: BackgroundRepeatKeyword, tile: f64) -> f64 {
+    match keyword {
+        BackgroundRepeatKeyword::NoRepeat => tile,
+        _ => tile.max(1.0),
+    }
+}
+
+/// Whether an axis of `extent` repeats tiles of the given size. `space` with
+/// room for fewer than two of the used tiles places one, like `no-repeat`
+/// (CSS Backgrounds 3 §2.4).
+fn axis_repeats(keyword: BackgroundRepeatKeyword, extent: f64, tile: f64) -> bool {
+    match keyword {
+        BackgroundRepeatKeyword::NoRepeat => false,
+        BackgroundRepeatKeyword::Space => extent >= 2.0 * tile,
+        _ => true,
+    }
+}
+
+/// A tile edge, rounded to a whole pixel when `snaps`.
+fn snapped_edge(edge: f64, snaps: bool) -> f64 {
+    if snaps { edge.round() } else { edge }
 }
 
 /// Fill the painting area once with the average color of a tile.

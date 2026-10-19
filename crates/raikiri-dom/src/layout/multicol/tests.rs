@@ -3339,6 +3339,34 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_non_replaced_inline() {
 }
 
 #[test]
+fn ancestor_width_table_counts_a_keyword_width_on_a_flex_item() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:flex;width:400px"),
+    );
+    // A flex item is sized by its keyword like any other box, so its text
+    // takes the width the keyword gives.
+    let item = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:max-content"),
+    );
+    let text = doc.append_text(item, "test");
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    assert!(widths.in_intrinsic_width(item));
+    assert!(widths.in_intrinsic_width(text));
+}
+
+#[test]
 fn ancestor_width_table_ignores_a_keyword_width_the_layout_does_not_use() {
     use raikiri_style::{build_rule_tree, cascade};
 
@@ -3350,19 +3378,26 @@ fn ancestor_width_table_ignores_a_keyword_width_the_layout_does_not_use() {
         Style::default(),
         Some("display:flex;width:400px"),
     );
-    // A flex item is sized as `auto`, so its text takes the width a page
-    // gives the nearest authored ancestor like any other.
-    let item = doc.append_element(
+    // A replaced element and a multicol container take their natural and
+    // their authored sizes, as if the width were `auto`.
+    let image = doc.append_element(
         Some(body),
-        "div",
+        "img",
         Style::default(),
         Some("display:block;width:max-content"),
     );
-    let text = doc.append_text(item, "test");
+    let columns = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;width:max-content"),
+    );
+    let text = doc.append_text(columns, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
     let widths = AncestorFacts::new(&doc, &cascade, 800.0);
-    assert!(!widths.in_intrinsic_width(item));
+    assert!(!widths.in_intrinsic_width(image));
+    assert!(!widths.in_intrinsic_width(columns));
     assert!(!widths.in_intrinsic_width(text));
 }
 

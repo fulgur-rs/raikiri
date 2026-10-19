@@ -7783,6 +7783,44 @@ impl ContextualShorthand {
     }
 }
 
+impl PropertyKey {
+    /// Whether `self` is a margin, padding, offset or physical size property,
+    /// or a shorthand of the first three, whose CSS-wide keywords the cascade
+    /// resolves from the parent's computed value or the initial value.
+    pub(crate) const fn takes_box_css_wide_keyword(self) -> bool {
+        matches!(
+            self,
+            PropertyKey::Margin
+                | PropertyKey::MarginTop
+                | PropertyKey::MarginRight
+                | PropertyKey::MarginBottom
+                | PropertyKey::MarginLeft
+                | PropertyKey::MarginInline
+                | PropertyKey::MarginBlock
+                | PropertyKey::Padding
+                | PropertyKey::PaddingTop
+                | PropertyKey::PaddingRight
+                | PropertyKey::PaddingBottom
+                | PropertyKey::PaddingLeft
+                | PropertyKey::PaddingInline
+                | PropertyKey::PaddingBlock
+                | PropertyKey::Inset
+                | PropertyKey::InsetInline
+                | PropertyKey::InsetBlock
+                | PropertyKey::Top
+                | PropertyKey::Right
+                | PropertyKey::Bottom
+                | PropertyKey::Left
+                | PropertyKey::Width
+                | PropertyKey::Height
+                | PropertyKey::MinWidth
+                | PropertyKey::MinHeight
+                | PropertyKey::MaxWidth
+                | PropertyKey::MaxHeight
+        )
+    }
+}
+
 impl DeferredValue {
     /// Return a canonical defaulting marker for the supported deferred longhands.
     pub(crate) fn css_wide_keyword(&self) -> Option<CssWideKeyword> {
@@ -7825,7 +7863,8 @@ impl DeferredValue {
                 | PropertyKey::FillOpacity
                 | PropertyKey::StrokeOpacity
                 | PropertyKey::StrokeWidth
-        ) {
+        ) && !self.key.takes_box_css_wide_keyword()
+        {
             return None;
         }
         CssWideKeyword::from_css_ident(self.value.as_ref())
@@ -9759,9 +9798,14 @@ pub enum FilterFunction {
 /// `vertical-align`,
 /// the border longhands and the `border` /
 /// `border-right` shorthands, which accept all five keywords through
-/// [`CssWideKeyword`] (see that type's docs for resolution). The `all` shorthand
-/// additionally accepts literal `revert-layer` through [`PropertyValue::AllRevertLayer`];
-/// its other CSS-wide values and `var()` form are not supported. Custom
+/// [`CssWideKeyword`] (see that type's docs for resolution). The margin,
+/// padding and offset (`top` / `right` / `bottom` / `left` / `inset*`)
+/// properties, their shorthands, and the physical size properties (`width`,
+/// `height`, `min-*`, `max-*`) accept them too; the shorthands expand to
+/// per-side markers during the cascade. The logical size properties
+/// (`inline-size`, `block-size`, `min-inline-size`, ...) do not yet. The
+/// `all` shorthand additionally accepts literal `revert-layer` through
+/// [`PropertyValue::AllRevertLayer`]; its other CSS-wide values and `var()` form are not supported. Custom
 /// properties interpret literal `revert` and `revert-layer` during cascading;
 /// their other CSS-wide defaults are not supported.
 ///

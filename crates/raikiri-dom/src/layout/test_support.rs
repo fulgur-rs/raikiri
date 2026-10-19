@@ -50,14 +50,9 @@ pub(crate) fn ahem_paragraph_with(
 /// The border box of `node` in page coordinates, accumulated from the layout
 /// locations of its ancestors.
 pub(crate) fn absolute_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32) {
-    let (mut x, mut y) = (0.0, 0.0);
-    for id in doc.inclusive_ancestors(node) {
-        let layout = doc.nodes[id].unrounded_layout;
-        x += layout.location.x;
-        y += layout.location.y;
-    }
+    let origin = doc.layout_origin_of(node).unwrap_or(taffy::Point::ZERO);
     let size = doc.nodes[node].unrounded_layout.size;
-    (x, y, size.width, size.height)
+    (origin.x, origin.y, size.width, size.height)
 }
 
 /// Font declarations shared by the Ahem paragraph fixtures.

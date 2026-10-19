@@ -21,6 +21,7 @@ use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
     CssColor, FontFamilyName, OverflowValue, OverflowXY, PropertyKey, PropertyValue, QuoteKeyword,
     StringFetchMode, TextAlign, TextShadowColor, VerticalAlign, VisualBox, WritingMode,
+    ZIndexValue,
 };
 use raikiri_style::resolve::ComputedOverflowClipMargin;
 use raikiri_style::{
@@ -31,6 +32,7 @@ use raikiri_style::{
 };
 use raikiri_traits::{NodeId, PageBox, PaintClip, PaintInsets, PaintRect};
 use smol_str::SmolStr;
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -280,6 +282,12 @@ pub struct MarginBox {
     /// Shaped content, `None` when the content is empty or the content box
     /// has no area.
     pub text: Option<MarginBoxText>,
+    /// The `z-index` of the box, `0` for `auto`. A margin box always
+    /// establishes a stacking context, whatever its `position` (CSS Page 3
+    /// §3.1). The document's canvas, page borders and contents count as one
+    /// element of level `0`, so a box of a negative level paints behind the
+    /// canvas background and any other box in front of the document.
+    pub z_index: i32,
     /// Padding-box clip of the box's text and content image, `None` when
     /// `overflow` is `visible` on both axes. Margin boxes follow the usual
     /// property rules (CSS Paged Media 3 §4.2), so their content overflows
@@ -320,6 +328,7 @@ impl MarginBox {
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
+            z_index: 0,
             overflow_clip: None,
             deferred: Vec::new(),
             running: None,
@@ -393,10 +402,7 @@ impl MarginBox {
         {
             return out;
         }
-        let index = SLOTS
-            .iter()
-            .position(|slot| *slot == self.slot)
-            .unwrap_or(0);
+        let index = slot_index(self.slot);
         // Margin boxes are not DOM nodes: the line identity uses a key from
         // the top of the id space, one per slot.
         let root = NodeId::new(u64::MAX - index as u64);
@@ -414,7 +420,9 @@ impl MarginBox {
     }
 }
 
-/// The sixteen slots in the order their content is resolved.
+/// The sixteen slots in the order their content is resolved. It is also the
+/// default painting order of the boxes (CSS Page 3 §3.1): from the top-left
+/// corner, then clockwise.
 const SLOTS: [PageMarginBoxSlot; 16] = [
     PageMarginBoxSlot::TopLeftCorner,
     PageMarginBoxSlot::TopLeft,
@@ -433,6 +441,12 @@ const SLOTS: [PageMarginBoxSlot; 16] = [
     PageMarginBoxSlot::LeftMiddle,
     PageMarginBoxSlot::LeftTop,
 ];
+
+/// The position of `slot` in [`SLOTS`], which is also its place in the default
+/// painting order of margin boxes.
+fn slot_index(slot: PageMarginBoxSlot) -> usize {
+    SLOTS.iter().position(|other| *other == slot).unwrap_or(0)
+}
 
 /// Placement of generated margin-box text across the block axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -464,17 +478,39 @@ struct MarginBoxSpec {
     margin: [f32; 4],
     /// Used padding in top/right/bottom/left order.
     padding: [f32; 4],
+    /// The specified content width, if a length. A sizing keyword leaves it
+    /// `None` until the layout has the sizes the keyword depends on, so at
+    /// most one of `width` and `width_keyword` is `Some`; [`Self::set_size`]
+    /// keeps it so.
     width: Option<f32>,
+    /// The specified content height, with the same rules as `width`.
     height: Option<f32>,
+    width_keyword: Option<SizeKeyword>,
+    height_keyword: Option<SizeKeyword>,
     text_color: CssColor,
     text_shadows: Vec<TextShadow>,
     overflow: OverflowXY,
     overflow_clip_margin: ComputedOverflowClipMargin,
+    z_index: i32,
     text_style: StandaloneStyle,
     alignment: StandaloneAlign,
     vertical_align: MarginTextVerticalAlign,
     /// The first `element()` of `content`.
     running: Option<(SmolStr, StringFetchMode)>,
+}
+
+/// A sizing keyword that `width` or `height` of a margin box is set to: a
+/// size taken from its content (CSS Sizing 3 §3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SizeKeyword {
+    MinContent,
+    MaxContent,
+    /// `fit-content`: the space the box has, kept between its min-content and
+    /// max-content sizes.
+    FitContent,
+    /// `fit-content(<length-percentage>)`: the given limit, resolved, in
+    /// place of the space the box has.
+    FitContentOf(f32),
 }
 
 /// The axis a margin-box size runs along.
@@ -485,6 +521,13 @@ enum Axis {
 }
 
 impl Axis {
+    fn other(self) -> Self {
+        match self {
+            Self::Horizontal => Self::Vertical,
+            Self::Vertical => Self::Horizontal,
+        }
+    }
+
     /// The two edges this axis runs between, as indices into
     /// top/right/bottom/left arrays.
     fn edges(self) -> [usize; 2] {
@@ -542,10 +585,26 @@ impl FixedExtent {
     }
 }
 
+/// The width and height of the lime rectangle that stands in for a content
+/// image that refers to `green.png`.
+const LIME_CONTENT_IMAGE_SIZE: (f32, f32) = (100.0, 50.0);
+
 impl MarginBoxSpec {
     /// Used border widths in top/right/bottom/left order.
     fn border_widths(&self) -> [f32; 4] {
         self.border.map(|side| side.map_or(0.0, |(width, _)| width))
+    }
+
+    /// The size the content image takes along `axis` of the box: none without
+    /// one. The image is placed after the text and cannot be broken.
+    fn content_image_size(&self, axis: Axis) -> f32 {
+        if !self.content_image_lime {
+            return 0.0;
+        }
+        match axis {
+            Axis::Horizontal => LIME_CONTENT_IMAGE_SIZE.0,
+            Axis::Vertical => LIME_CONTENT_IMAGE_SIZE.1,
+        }
     }
 
     /// The used extent along `axis` of a box in a page margin `region` long,
@@ -615,6 +674,38 @@ impl MarginBoxSpec {
         }
     }
 
+    /// The sizing keyword that `axis` of the box is set to, if it has not
+    /// been resolved to a length yet.
+    fn keyword(&self, axis: Axis) -> Option<SizeKeyword> {
+        match axis {
+            Axis::Horizontal => self.width_keyword,
+            Axis::Vertical => self.height_keyword,
+        }
+    }
+
+    /// Settle the content size along `axis` to `size`, replacing a keyword.
+    fn set_size(&mut self, axis: Axis, size: f32) {
+        match axis {
+            Axis::Horizontal => {
+                self.width = Some(size);
+                self.width_keyword = None;
+            }
+            Axis::Vertical => {
+                self.height = Some(size);
+                self.height_keyword = None;
+            }
+        }
+    }
+
+    /// The axis lines of the box's text run along.
+    fn inline_axis(&self) -> Axis {
+        if self.text_style.writing_mode.is_vertical() {
+            Axis::Vertical
+        } else {
+            Axis::Horizontal
+        }
+    }
+
     fn frame(&self, axis: Axis) -> Frame {
         let [start, end] = axis.edges();
         let border = self.border_widths();
@@ -626,10 +717,13 @@ impl MarginBoxSpec {
     }
 
     /// The outer size along `axis`: the specified size plus the frame, or
-    /// all of `available` when the size is `auto`.
+    /// all of `available` when the size is `auto`. Negative margins can take a
+    /// specified size below zero. That is kept, so that the edge gives the box
+    /// back the border-box size it asked for and places its margin box where
+    /// the margins put it.
     fn outer_size(&self, axis: Axis, available: f32) -> f32 {
         match self.size(axis) {
-            Some(size) => self.frame(axis).outer(size).max(0.0),
+            Some(size) => self.frame(axis).outer(size),
             None => available.max(0.0),
         }
     }
@@ -674,6 +768,20 @@ fn length_or_auto_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> Optio
         _ => return None,
     };
     Some(finite_or_zero(px))
+}
+
+/// The sizing keyword `value` is, if it is one. A `fit-content()` limit
+/// resolves against `basis`.
+fn size_keyword(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<SizeKeyword> {
+    match value {
+        ComputedLengthPercentageOrAuto::MinContent => Some(SizeKeyword::MinContent),
+        ComputedLengthPercentageOrAuto::MaxContent => Some(SizeKeyword::MaxContent),
+        ComputedLengthPercentageOrAuto::FitContent => Some(SizeKeyword::FitContent),
+        ComputedLengthPercentageOrAuto::FitContentOf(limit) => Some(SizeKeyword::FitContentOf(
+            finite_or_zero(limit.resolve(basis)).max(0.0),
+        )),
+        _ => None,
+    }
 }
 
 /// The used `text-shadow` of a margin box. `currentcolor` is the box's own
@@ -1198,6 +1306,8 @@ fn margin_box_spec(
     let border = margin_box_borders(&style);
     let width = length_or_auto_px(style.width, width_basis).map(|width| width.max(0.0));
     let height = length_or_auto_px(style.height, height_basis).map(|height| height.max(0.0));
+    let width_keyword = size_keyword(style.width, width_basis);
+    let height_keyword = size_keyword(style.height, height_basis);
     let alignment = match style.text_align {
         TextAlign::Right => StandaloneAlign::Right,
         TextAlign::End => StandaloneAlign::End,
@@ -1257,10 +1367,17 @@ fn margin_box_spec(
         padding,
         width,
         height,
+        width_keyword,
+        height_keyword,
         text_color,
         text_shadows: margin_box_text_shadows(&style),
         overflow: style.overflow,
         overflow_clip_margin: style.overflow_clip_margin,
+        z_index: match style.z_index {
+            ZIndexValue::Integer(level) => level,
+            // `auto` is level 0, and so is any value that is not a level.
+            _ => 0,
+        },
         text_style,
         alignment,
         vertical_align,
@@ -1319,7 +1436,12 @@ fn place_margin_box(
             )
             .map_or(0.0, |text| text.width());
         let image_x = (content_x + advance).round();
-        PaintRect::new(image_x, content_y, 100.0, 50.0)
+        PaintRect::new(
+            image_x,
+            content_y,
+            LIME_CONTENT_IMAGE_SIZE.0,
+            LIME_CONTENT_IMAGE_SIZE.1,
+        )
     });
     let border = |side: Option<(f32, CssColor)>| {
         side.map(|(width, color)| {
@@ -1360,6 +1482,7 @@ fn place_margin_box(
         borders,
         padding,
         text,
+        z_index: spec.z_index,
         overflow_clip,
         running,
         lime_background: spec.background_image_lime,
@@ -1390,13 +1513,17 @@ fn place_margin_text(
         Some(inline_size),
         spec.alignment,
     )?;
+    // Text that is thicker than the box has negative free space, which
+    // `bottom` and `middle` take as well: the text ends flush with the end of
+    // the block axis, or overflows on both sides, and not on the end side
+    // alone.
     let offset = |free: f32| match spec.vertical_align {
         MarginTextVerticalAlign::Top => 0.0,
         MarginTextVerticalAlign::Middle => free * 0.5,
         MarginTextVerticalAlign::Bottom => free,
     };
     let origin = if vertical {
-        let shift = offset((width - shaped.width()).max(0.0));
+        let shift = offset(width - shaped.width());
         let from_right = matches!(
             style.writing_mode,
             shodo::geometry::WritingMode::VerticalRl | shodo::geometry::WritingMode::SidewaysRl
@@ -1408,7 +1535,7 @@ fn place_margin_text(
         };
         (x + offset_x, y)
     } else {
-        (x, y + offset((height - shaped.height()).max(0.0)))
+        (x, y + offset(height - shaped.height()))
     };
     Some(MarginBoxText { shaped, origin })
 }
@@ -1438,7 +1565,7 @@ fn margin_box_text_width(
             StandaloneAlign::Start,
         )
         .map_or(0.0, |text| text.width());
-    measured.max(text_width_floor(spec)).max(0.0)
+    measured.max(text_width_floor(spec)).max(0.0) + spec.content_image_size(Axis::Horizontal)
 }
 
 /// The least width text takes: a font size, once it has anything but
@@ -1455,7 +1582,8 @@ fn text_width_floor(spec: &MarginBoxSpec) -> f32 {
     }
 }
 
-fn margin_box_intrinsic_width(
+/// The content width of `spec`: that of its text and image on a single line.
+fn margin_box_content_width(
     document: &Document,
     spec: &MarginBoxSpec,
     available_height: f32,
@@ -1465,16 +1593,15 @@ fn margin_box_intrinsic_width(
     let content_height = spec
         .fixed_content_size(Axis::Vertical, available_height)
         .max(0.0);
-    spec.frame(Axis::Horizontal)
-        .outer(margin_box_text_width(document, spec, Some(content_height)))
-        .max(0.0)
+    margin_box_text_width(document, spec, Some(content_height))
 }
 
-/// The outer height of `spec` with its text on as many lines as it takes at
-/// the width the box has in a column of `cross_size`.
-fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_size: f32) -> f32 {
+/// The content height of `spec`: its text on as many lines as it takes at the
+/// width the box has in a column of `cross_size`, or its image if taller.
+fn margin_box_content_height(document: &Document, spec: &MarginBoxSpec, cross_size: f32) -> f32 {
+    let image_height = spec.content_image_size(Axis::Vertical);
     if spec.content.is_empty() {
-        return spec.frame(Axis::Vertical).outer(0.0).max(0.0);
+        return image_height;
     }
     let text_height = if spec.text_style.writing_mode.is_vertical() {
         document
@@ -1502,7 +1629,15 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
                 (column_width > 0.0).then_some(column_width),
                 StandaloneAlign::Start,
             )
-            .map_or(explicit_lines, |text| text.lines().len().max(1) as f32);
+            .map_or(explicit_lines, |text| {
+                // A line feed that ends the text ends its last line; it does
+                // not start another one. The shaper still adds an empty line
+                // after it, with no height, which is not a line of the box.
+                // An empty line between two feeds has a height and is one.
+                let after_last_feed = text.lines().len() > 1
+                    && text.lines().last().is_some_and(|line| line.is_empty());
+                (text.lines().len() - usize::from(after_last_feed)).max(1) as f32
+            });
         let font_size = spec.text_style.font_size.max(0.0);
         // Unitless numbers were already resolved against the box's own font
         // size when the spec was built.
@@ -1512,7 +1647,7 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
         };
         line_count * line_height.max(0.0)
     };
-    spec.frame(Axis::Vertical).outer(text_height).max(0.0)
+    text_height.max(image_height)
 }
 
 /// One side of the page-margin area: the three slots along it, in
@@ -1587,21 +1722,39 @@ fn edge_max_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, cross_si
     if spec.size(axis).is_some() {
         return spec.outer_size(axis, 0.0);
     }
+    spec.frame(axis)
+        .outer(edge_max_content(document, spec, axis, cross_size))
+        .max(0.0)
+}
+
+/// The max-content size of the content box of `spec` along the `axis` of its
+/// edge, which a negative margin can leave below what the outer size shows.
+fn edge_max_content(document: &Document, spec: &MarginBoxSpec, axis: Axis, cross_size: f32) -> f32 {
     match axis {
-        Axis::Horizontal => margin_box_intrinsic_width(document, spec, cross_size),
-        Axis::Vertical => margin_box_intrinsic_height(document, spec, cross_size),
+        Axis::Horizontal => margin_box_content_width(document, spec, cross_size),
+        Axis::Vertical => margin_box_content_height(document, spec, cross_size),
     }
 }
 
 /// The outer min-content size of `spec` along the `axis` of its edge, given
 /// its `max` size: that of its text broken at every opportunity.
 fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32) -> f32 {
+    match edge_min_content(document, spec, axis) {
+        Some(content) => spec.frame(axis).outer(content).max(0.0).min(max),
+        None => max,
+    }
+}
+
+/// The content size of `spec` along the `axis` of its edge with its text
+/// broken at every opportunity, or `None` where that is its max-content size.
+fn edge_min_content(document: &Document, spec: &MarginBoxSpec, axis: Axis) -> Option<f32> {
     // Text can break at every opportunity along its inline axis. Across it,
     // the size is the same however narrow the box gets.
     let along_inline_axis = spec.text_style.writing_mode.is_vertical() == (axis == Axis::Vertical);
     if spec.size(axis).is_some() || !along_inline_axis || spec.content.is_empty() {
-        return max;
+        return None;
     }
+    let image = spec.content_image_size(axis);
     let measured = document
         .shape_standalone_text_shared(
             &spec.content,
@@ -1613,7 +1766,136 @@ fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32
             Axis::Horizontal => text.width().max(text_width_floor(spec)),
             Axis::Vertical => text.height(),
         });
-    spec.frame(axis).outer(measured.max(0.0)).max(0.0).min(max)
+    Some(measured.max(image).max(0.0))
+}
+
+/// The content size along `axis` that the sizing `keyword` of `spec` asks for
+/// (CSS Sizing 3 §5): its min-content or max-content size, or the space the
+/// containing block has kept between the two. `available` is the length of the
+/// containing block along `axis` and `cross_size` the one across it. The box
+/// has no size of its own along `axis` yet.
+fn keyword_content_size(
+    document: &Document,
+    spec: &MarginBoxSpec,
+    axis: Axis,
+    keyword: SizeKeyword,
+    available: f32,
+    cross_size: f32,
+) -> f32 {
+    let frame = spec.frame(axis).outer(0.0);
+    // Work on the content box throughout: an outer size clamped at zero by
+    // negative margins cannot be turned back into the content size.
+    let max = edge_max_content(document, spec, axis, cross_size).max(0.0);
+    if keyword == SizeKeyword::MaxContent {
+        return max;
+    }
+    // The text is measured once more, at its narrowest, only for the keywords
+    // that can end up below the max-content size.
+    let min = edge_min_content(document, spec, axis).map_or(max, |min| min.max(0.0).min(max));
+    let fit = |space: f32| max.min(min.max(space));
+    match keyword {
+        SizeKeyword::FitContent => fit((available - frame).max(0.0)),
+        SizeKeyword::FitContentOf(limit) => fit(limit),
+        _ => min,
+    }
+}
+
+/// The width and height of the containing block of the margin box in `slot`:
+/// the page margin it lies in, less the corners at the ends of the edge for a
+/// box that is not a corner.
+fn slot_region(slot: PageMarginBoxSlot, page_box: PageBox, margins: PageMargins) -> (f32, f32) {
+    let along_width = (page_box.width - margins.left - margins.right).max(0.0);
+    let along_height = (page_box.height - margins.top - margins.bottom).max(0.0);
+    match slot {
+        PageMarginBoxSlot::TopLeft | PageMarginBoxSlot::TopCenter | PageMarginBoxSlot::TopRight => {
+            (along_width, margins.top)
+        }
+        PageMarginBoxSlot::BottomLeft
+        | PageMarginBoxSlot::BottomCenter
+        | PageMarginBoxSlot::BottomRight => (along_width, margins.bottom),
+        PageMarginBoxSlot::LeftTop
+        | PageMarginBoxSlot::LeftMiddle
+        | PageMarginBoxSlot::LeftBottom => (margins.left, along_height),
+        PageMarginBoxSlot::RightTop
+        | PageMarginBoxSlot::RightMiddle
+        | PageMarginBoxSlot::RightBottom => (margins.right, along_height),
+        PageMarginBoxSlot::TopLeftCorner => (margins.left, margins.top),
+        PageMarginBoxSlot::TopRightCorner => (margins.right, margins.top),
+        PageMarginBoxSlot::BottomLeftCorner => (margins.left, margins.bottom),
+        PageMarginBoxSlot::BottomRightCorner => (margins.right, margins.bottom),
+        _ => (page_box.width, page_box.height),
+    }
+}
+
+/// The axis the boxes of `slot` are laid out along, or `None` for a corner.
+fn slot_edge_axis(slot: PageMarginBoxSlot) -> Option<Axis> {
+    [TOP_EDGE, BOTTOM_EDGE, LEFT_EDGE, RIGHT_EDGE]
+        .into_iter()
+        .find(|edge| edge.slots.contains(&slot))
+        .map(|edge| edge.axis)
+}
+
+/// Settle the sizing keywords of `specs` to lengths wherever the page margins
+/// are enough to do it.
+///
+/// The size along the axis the text runs along comes first, as it does not
+/// depend on the other one; the size across it then follows from it. That
+/// leaves out the size across the text of a box on an edge when it is
+/// along the dimension the page margin fixes: it depends on how long the edge
+/// makes the box, so [`with_fixed_axis_keyword`] settles it once the edge is
+/// laid out.
+fn resolve_size_keywords(
+    document: &Document,
+    specs: &mut [MarginBoxSpec],
+    page_box: PageBox,
+    margins: PageMargins,
+) {
+    for spec in specs {
+        let (width_region, height_region) = slot_region(spec.slot, page_box, margins);
+        let region = |axis: Axis| match axis {
+            Axis::Horizontal => width_region,
+            Axis::Vertical => height_region,
+        };
+        let inline = spec.inline_axis();
+        let variable_axis = slot_edge_axis(spec.slot);
+        for axis in [inline, inline.other()] {
+            let Some(keyword) = spec.keyword(axis) else {
+                continue;
+            };
+            if axis != inline && variable_axis.is_some_and(|variable| variable != axis) {
+                continue;
+            }
+            let size = keyword_content_size(
+                document,
+                spec,
+                axis,
+                keyword,
+                region(axis),
+                region(axis.other()),
+            );
+            spec.set_size(axis, size);
+        }
+    }
+}
+
+/// `spec` with the sizing keyword along the fixed `axis` of its edge settled.
+/// `variable_size` is the content size the edge gave the box along the other
+/// axis, and `region` the thickness of the page margin.
+fn with_fixed_axis_keyword<'s>(
+    document: &Document,
+    spec: &'s MarginBoxSpec,
+    axis: Axis,
+    variable_size: f32,
+    region: f32,
+) -> Cow<'s, MarginBoxSpec> {
+    let Some(keyword) = spec.keyword(axis) else {
+        return Cow::Borrowed(spec);
+    };
+    let mut sized = spec.clone();
+    sized.set_size(axis.other(), variable_size);
+    let size = keyword_content_size(document, &sized, axis, keyword, region, variable_size);
+    sized.set_size(axis, size);
+    Cow::Owned(sized)
 }
 
 /// The outer sizes of boxes that all have an `auto` size, as CSS Page 3
@@ -1663,7 +1945,9 @@ fn flex_fit(extents: &[EdgeExtent], counts: &[f32], available: f32) -> Vec<f32> 
 /// a lone `auto` box takes what the other box leaves and two `auto` boxes
 /// fit the edge together. With one, the middle box is sized against the
 /// larger of the two side boxes doubled, which keeps it centered, and `auto`
-/// side boxes take half of what it leaves each.
+/// side boxes take half of what it leaves each. Where that larger side box
+/// has a size of its own, it has no space to give or take: it reserves twice
+/// its size and the middle box takes all of the rest.
 fn edge_track_sizes<'s>(
     document: &Document,
     specs: &'s [MarginBoxSpec],
@@ -1708,21 +1992,25 @@ fn edge_track_sizes<'s>(
     let is_auto = |index: usize| active[index].size(axis).is_none();
     let mut sizes = maxes;
     if let Some(center) = center {
-        let side = |slot: usize| {
-            active
-                .iter()
-                .position(|spec| spec.slot == edge.slots[slot])
-                .map_or(EdgeExtent::fixed(0.0), |index| EdgeExtent {
-                    min: extents[index].min * 2.0,
-                    max: extents[index].max * 2.0,
-                })
-        };
         if is_auto(center) {
             // Of the two doubled sides, the larger one decides the size of
             // the middle box, so that the middle box can stay centered.
             let counts = [1.0, (active.len() - 1) as f32];
-            let [from_start, from_end] = [side(0), side(2)]
-                .map(|doubled| flex_fit(&[extents[center], doubled], &counts, available));
+            let [from_start, from_end] = [0, 2].map(|slot| {
+                let side = active.iter().position(|spec| spec.slot == edge.slots[slot]);
+                let doubled = side.map_or(EdgeExtent::fixed(0.0), |index| EdgeExtent {
+                    min: extents[index].min * 2.0,
+                    max: extents[index].max * 2.0,
+                });
+                if side.is_some_and(|index| !is_auto(index)) {
+                    // A side box with a size of its own has no space to
+                    // give or take, so the middle box gets what it leaves.
+                    [(available - doubled.max).max(0.0), doubled.max]
+                } else {
+                    let fitted = flex_fit(&[extents[center], doubled], &counts, available);
+                    [fitted[0], fitted[1]]
+                }
+            });
             sizes[center] = if from_end[1] > from_start[1] {
                 from_end[0]
             } else {
@@ -1798,6 +2086,10 @@ fn layout_horizontal_margin_boxes(
         let margin_right = spec.margin[1];
         let width = (outer_width - margin_left - margin_right).max(0.0);
         let paint_x = margins.left + offset + margin_left;
+        let content_width = (outer_width - spec.frame(Axis::Horizontal).outer(0.0)).max(0.0);
+        let sized =
+            with_fixed_axis_keyword(document, spec, Axis::Vertical, content_width, row_height);
+        let spec = &*sized;
         let vertical = spec.fixed_extent(Axis::Vertical, row_height, dropped);
         out.extend(place_margin_box(
             document,
@@ -1840,6 +2132,15 @@ fn layout_vertical_margin_boxes(
         let margin_bottom = spec.margin[2];
         let height = (outer_height - margin_top - margin_bottom).max(0.0);
         let paint_y = margins.top + offset + margin_top;
+        let content_height = (outer_height - spec.frame(Axis::Vertical).outer(0.0)).max(0.0);
+        let sized = with_fixed_axis_keyword(
+            document,
+            spec,
+            Axis::Horizontal,
+            content_height,
+            column_width,
+        );
+        let spec = &*sized;
         let horizontal = spec.fixed_extent(Axis::Horizontal, column_width, dropped);
         out.extend(place_margin_box(
             document,
@@ -1857,9 +2158,10 @@ fn layout_vertical_margin_boxes(
 /// Lay out the page-margin boxes of one page.
 ///
 /// `cascade` is the element cascade the page was laid out with and `page`
-/// the `@page` cascade of this page's context. Boxes come in drawing order:
-/// the top row, the bottom row, the left and right columns, then the
-/// corners. Boxes with `content: none` or no area are left out.
+/// the `@page` cascade of this page's context. Boxes come in drawing order
+/// (CSS Page 3 §3.1): by ascending [`MarginBox::z_index`], and among boxes of
+/// one level clockwise from the top-left corner. Boxes with `content: none`
+/// or no area are left out.
 pub fn page_margin_boxes(
     document: &Document,
     cascade: &CascadeResult,
@@ -1899,38 +2201,11 @@ pub fn page_margin_boxes_with_values(
         let Some(rule) = margin_box_rule(page, slot) else {
             continue;
         };
-        // Percentages on an edge dimension use the available strip axis,
-        // not the full paper box.  This matters when two 50% top boxes are
-        // laid out between nonzero page margins.
-        let content_width = (page_box.width - margins.left - margins.right).max(0.0);
-        let content_height = (page_box.height - margins.top - margins.bottom).max(0.0);
-        let (width_basis, height_basis) = match slot {
-            PageMarginBoxSlot::TopLeft
-            | PageMarginBoxSlot::TopCenter
-            | PageMarginBoxSlot::TopRight
-            | PageMarginBoxSlot::BottomLeft
-            | PageMarginBoxSlot::BottomCenter
-            | PageMarginBoxSlot::BottomRight => (
-                content_width,
-                if matches!(
-                    slot,
-                    PageMarginBoxSlot::TopLeft
-                        | PageMarginBoxSlot::TopCenter
-                        | PageMarginBoxSlot::TopRight
-                ) {
-                    margins.top
-                } else {
-                    margins.bottom
-                },
-            ),
-            PageMarginBoxSlot::LeftTop
-            | PageMarginBoxSlot::LeftMiddle
-            | PageMarginBoxSlot::LeftBottom => (margins.left, content_height),
-            PageMarginBoxSlot::RightTop
-            | PageMarginBoxSlot::RightMiddle
-            | PageMarginBoxSlot::RightBottom => (margins.right, content_height),
-            _ => (page_box.width, page_box.height),
-        };
+        // Percentages resolve against the containing block of the box: along
+        // an edge the strip between the corners, not the full paper box. This
+        // matters when two 50% top boxes are laid out between nonzero page
+        // margins.
+        let (width_basis, height_basis) = slot_region(slot, page_box, margins);
         if let Some(spec) = margin_box_spec(
             document,
             cascade,
@@ -1945,6 +2220,7 @@ pub fn page_margin_boxes_with_values(
         }
     }
 
+    resolve_size_keywords(document, &mut specs, page_box, margins);
     layout_horizontal_margin_boxes(
         document,
         &specs,
@@ -2029,5 +2305,9 @@ pub fn page_margin_boxes_with_values(
             PaintRect::new(x, y, width, height),
         ));
     }
+    // The boxes were laid out edge by edge. They paint in `SLOTS` order, from
+    // the top-left corner clockwise, and by `z-index` first. The sort is
+    // stable and every slot occurs once.
+    out.sort_by_key(|margin_box| (margin_box.z_index, slot_index(margin_box.slot)));
     out
 }

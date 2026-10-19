@@ -264,11 +264,6 @@ fn layout_context(
         &mut flow,
         height - metrics.inset.bottom - natural_end,
     );
-    let positioned_overflow = if inputs.run_mode == RunMode::PerformLayout {
-        positioned::layout(tree, node, &flow.positioned, metrics, size)
-    } else {
-        Rect::ZERO
-    };
     let mut overflow = flow.overflow.union(flow.float_overflow);
     if style.direction == taffy::Direction::Rtl {
         let origin = width - metrics.border.right;
@@ -288,7 +283,6 @@ fn layout_context(
     overflow.top = overflow.top.min(0.0);
     overflow.right = overflow.right.max(0.0);
     overflow.bottom = overflow.bottom.max(0.0);
-    overflow = overflow.union(positioned_overflow);
     if style.overflow.x.is_scroll_container() || style.overflow.y.is_scroll_container() {
         let end_padding = if style.direction == taffy::Direction::Rtl {
             metrics.padding.left
@@ -301,8 +295,9 @@ fn layout_context(
             .max(height - metrics.border.vertical_axis_sum() - metrics.scrollbar.height);
     }
     LayoutOutput {
-        oof_candidates: taffy::OofCandidates::NONE,
-        oof_positioning_area: None,
+        oof_candidates: flow.oof_candidates,
+        oof_positioning_area: (inputs.run_mode == RunMode::PerformLayout)
+            .then(|| positioned::positioning_area(metrics, size)),
         size,
         scrollable_overflow_rect: overflow,
         baselines: flow.baselines,

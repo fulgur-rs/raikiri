@@ -1,5 +1,6 @@
 use super::super::*;
 use crate::parse_html_with_resources;
+use raikiri_traits::LayoutError;
 
 fn parse(html: &str) -> HtmlDocument {
     parse_html_with_resources(html.as_bytes(), &RenderResources::new()).expect("parse")
@@ -2261,4 +2262,29 @@ fn pipeline_clears_floats_after_a_reordered_container_in_pagination_order() {
         assert_eq!(reordered, in_source_order, "{display}");
         assert!(reordered[2] >= 350.0, "{display}: {reordered:?}");
     }
+}
+
+#[test]
+fn page_geometry_that_did_not_settle_is_an_error() {
+    use super::super::page_layout::require_settled;
+    assert!(require_settled(true).is_ok());
+    assert!(matches!(
+        require_settled(false),
+        Err(RenderError::PageGeometryDidNotConverge { .. })
+    ));
+}
+
+#[test]
+fn more_pages_than_the_limit_is_an_error() {
+    use super::super::page_layout::require_within_page_limit;
+    assert!(require_within_page_limit(None, u64::MAX).is_ok());
+    assert!(require_within_page_limit(Some(2), 2).is_ok());
+    assert!(matches!(
+        require_within_page_limit(Some(2), 3),
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            actual: 3,
+        })
+    ));
 }

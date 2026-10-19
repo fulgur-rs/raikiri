@@ -34,15 +34,16 @@
 
 use raikiri_style::ComputedBorder;
 use raikiri_style::property::{
-    BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, Sides, TableLayoutValue,
-    VerticalAlign, WritingMode,
+    BorderCollapseValue, BorderStyle, CaptionSideValue, DisplayValue, PositionValue, Sides,
+    TableLayoutValue, VerticalAlign, WritingMode,
 };
 use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
 use taffy::tree::{RunMode, SizingMode};
 use taffy::{
-    AvailableSpace, Layout as TaffyLayout, LayoutInput, LayoutOutput, LayoutPartialTree,
-    LengthPercentage, NodeId, Point, Rect, Size,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CoreStyle, Layout as TaffyLayout,
+    LayoutInput, LayoutOutput, LayoutPartialTree, LengthPercentage, NodeId, OofCandidate,
+    OofCandidates, OofPositioningArea, Point, Position, Rect, Size,
 };
 
 use crate::document::Document;
@@ -194,7 +195,7 @@ fn layout_table_caption(
     table_idx: usize,
     parent_width: f32,
     parent_height: Option<f32>,
-) -> Option<Size<f32>> {
+) -> Option<(Size<f32>, OofCandidates)> {
     let caption_id = doc.nodes[table_idx]
         .children
         .iter()
@@ -318,10 +319,31 @@ fn layout_table_caption(
         },
     };
     doc.store_unrounded_layout(caption_id, &layout);
-    Some(Size {
-        width: output.size.width + margin_left + margin_right,
-        height: output.size.height + margin_top + margin_bottom,
-    })
+    Some((
+        Size {
+            width: output.size.width + margin_left + margin_right,
+            height: output.size.height + margin_top + margin_bottom,
+        },
+        output.oof_candidates,
+    ))
+}
+
+fn translate_table_caption_candidates(
+    doc: &Document,
+    table_idx: usize,
+    candidates: &mut OofCandidates,
+) {
+    if candidates.is_empty() {
+        return;
+    }
+    if let Some(caption) = doc.nodes[table_idx]
+        .children
+        .iter()
+        .copied()
+        .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption)
+    {
+        candidates.translate(doc.nodes[caption].unrounded_layout.location);
+    }
 }
 
 fn position_table_caption(
@@ -441,6 +463,7 @@ fn compute_table_layout_checked(
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
     let mut grid = build_table_grid(doc, table_idx)?;
+    let mut oof_candidates = OofCandidates::new();
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let cell_index =
@@ -506,7 +529,13 @@ fn compute_table_layout_checked(
             .as_ref()
             .zip(borders_in_place)
             .map(|(shown, (border_width, in_place))| {
-                ColumnsInPlace::new(doc, &grid, shown, border_width, in_place)
+                ColumnsInPlace::new(doc, &grid, shown, border_width, in_place).with_row_overlaps(
+                    doc,
+                    &grid,
+                    &collapsed_rows,
+                    &table_border,
+                    inputs.parent_size.width,
+                )
             });
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
@@ -548,6 +577,9 @@ fn compute_table_layout_checked(
     // "Visibility-collapse rendering"). Their lines come from the rows that
     // remain: the rows around a collapsed run meet at their resolved line,
     // and a run at either end of the table leaves no line behind.
+    let kept_rows: Vec<usize> = (0..collapsed_rows.len())
+        .filter(|&row| !collapsed_rows[row])
+        .collect();
     let collapsed = match (cell_index.as_ref(), shown.as_ref(), shown_index.as_ref()) {
         (None, ..) => CollapsedLines::separate(&table_border),
         (Some(index), None, _) => {
@@ -561,15 +593,15 @@ fn compute_table_layout_checked(
                 &table_border,
                 inputs.parent_size.width,
             );
-            let kept_rows: Vec<usize> = (0..collapsed_rows.len())
-                .filter(|&row| !collapsed_rows[row])
-                .collect();
             let kept_cols: Vec<usize> = (0..collapsed_cols.len())
                 .filter(|&column| !collapsed_cols[column])
                 .collect();
             let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
             for (line, rows) in lines.row_overlaps.iter().zip(kept_rows.windows(2)) {
                 row_overlaps[rows[0]] = *line;
+            }
+            if let Some(columns) = columns_in_place.as_ref() {
+                columns.raise_row_overlaps(&kept_rows, &mut row_overlaps);
             }
             let mut col_overlaps = vec![0.0; usize::from(grid.n_cols) - 1];
             for (line, columns) in lines.col_overlaps.iter().zip(kept_cols.windows(2)) {
@@ -582,14 +614,20 @@ fn compute_table_layout_checked(
             }
         }
         // Nothing shows, so no cell border meets the table's own.
-        (Some(_), Some(_), None) => CollapsedLines {
-            col_overlaps: vec![0.0; usize::from(grid.n_cols) - 1],
-            row_overlaps: vec![0.0; grid.rows.len() - 1],
-            outer_left: table_border.left,
-            outer_right: table_border.right,
-            outer_top: table_border.top,
-            outer_bottom: table_border.bottom,
-        },
+        (Some(_), Some(_), None) => {
+            let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
+            if let Some(columns) = columns_in_place.as_ref() {
+                columns.raise_row_overlaps(&kept_rows, &mut row_overlaps);
+            }
+            CollapsedLines {
+                col_overlaps: vec![0.0; usize::from(grid.n_cols) - 1],
+                row_overlaps,
+                outer_left: table_border.left,
+                outer_right: table_border.right,
+                outer_top: table_border.top,
+                outer_bottom: table_border.bottom,
+            }
+        }
     };
     let border_spacing = if collapse {
         (0.0, 0.0)
@@ -655,7 +693,7 @@ fn compute_table_layout_checked(
         if vertical_writing {
             height = height.max(caption_inline_minimum);
         }
-        let caption_size = layout_table_caption(
+        let (caption_size, mut caption_candidates) = layout_table_caption(
             doc,
             table_idx,
             if specified_w.is_some() || effective_known.width.is_some() {
@@ -668,7 +706,9 @@ fn compute_table_layout_checked(
             } else {
                 inputs.parent_size.height
             },
-        );
+        )
+        .map(|(size, candidates)| (Some(size), candidates))
+        .unwrap_or_else(|| (None, OofCandidates::new()));
         if !vertical_writing && let Some(size) = caption_size {
             width = width.max(size.width);
         }
@@ -679,7 +719,14 @@ fn compute_table_layout_checked(
             caption_size,
             inputs.run_mode,
         );
-        return Ok(LayoutOutput::from_outer_size(wrapper_size));
+        translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
+        return Ok(table_layout_output(
+            doc,
+            table_idx,
+            wrapper_size,
+            caption_candidates,
+            inputs.run_mode,
+        ));
     }
 
     // Overlap totals up front: tracks are sized in pre-overlap space
@@ -999,7 +1046,7 @@ fn compute_table_layout_checked(
         },
     };
 
-    let caption_size = layout_table_caption(
+    let (caption_size, mut caption_candidates) = layout_table_caption(
         doc,
         table_idx,
         final_size.width,
@@ -1008,9 +1055,13 @@ fn compute_table_layout_checked(
         } else {
             inputs.parent_size.height
         },
-    );
+    )
+    .map(|(size, candidates)| (Some(size), candidates))
+    .unwrap_or_else(|| (None, OofCandidates::new()));
     let (wrapper_size, grid_origin) =
         position_table_caption(doc, table_idx, final_size, caption_size, inputs.run_mode);
+    translate_table_caption_candidates(doc, table_idx, &mut caption_candidates);
+    oof_candidates.append(&mut caption_candidates);
     if inputs.run_mode == RunMode::ComputeSize {
         return Ok(LayoutOutput::from_outer_size(wrapper_size));
     }
@@ -1059,11 +1110,19 @@ fn compute_table_layout_checked(
     place_cells(
         doc,
         &mut grid,
-        (&column_widths, &col_gaps, &collapsed_cols),
-        (&row_heights, &row_gaps, &collapsed_rows),
-        (&col_origins, &row_origins),
-        border_spacing,
-        vertical_writing,
+        CellPlacementTracks {
+            column_widths: &column_widths,
+            column_gaps: &col_gaps,
+            collapsed_columns: &collapsed_cols,
+            row_heights: &row_heights,
+            row_gaps: &row_gaps,
+            collapsed_rows: &collapsed_rows,
+            column_origins: &col_origins,
+            row_origins: &row_origins,
+            row_spacing: border_spacing.1,
+            vertical_writing,
+        },
+        &mut oof_candidates,
     )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
     // The first row the table still shows carries its baseline.
     let baseline_row = collapsed_rows
@@ -1116,42 +1175,239 @@ fn compute_table_layout_checked(
             border_spacing.1,
         );
     }
-    position_source_table_parts(
+    let projected = projects_source_parts(doc, table_idx, &grid);
+    let part_claimants = table_part_claimants(doc, table_idx, &oof_candidates);
+    let parts = (projected || !part_claimants.is_empty()).then(|| {
+        source_part_boxes(
+            doc,
+            table_idx,
+            &grid,
+            &column_widths,
+            &row_heights,
+            (&col_origins, &row_origins),
+            vertical_writing,
+        )
+    });
+    if let Some(parts) = &parts {
+        dispatch_table_part_oof(doc, &part_claimants, parts, projected, &mut oof_candidates);
+    }
+    position_source_table_parts(doc, table_idx, &grid, parts.filter(|_| projected));
+    Ok(table_layout_output(
         doc,
         table_idx,
-        &grid,
-        &column_widths,
-        &row_heights,
-        (&col_origins, &row_origins),
-        vertical_writing,
-    );
-    Ok(LayoutOutput::from_outer_size(wrapper_size))
+        wrapper_size,
+        oof_candidates,
+        inputs.run_mode,
+    ))
+}
+
+fn table_layout_output(
+    doc: &Document,
+    table: usize,
+    size: Size<f32>,
+    mut candidates: OofCandidates,
+    run_mode: RunMode,
+) -> LayoutOutput {
+    let mut output = LayoutOutput::from_outer_size(size);
+    if run_mode != RunMode::PerformLayout {
+        return output;
+    }
+    append_direct_table_oof_candidates(doc, table, &mut candidates);
+    if candidates.is_empty() {
+        return output;
+    }
+    let style = &doc.layout_node_with_style(table).unwrap().style;
+    let border = style
+        .border
+        .resolve_or_zero(Some(size.width), crate::taffy_impl::resolve_calc);
+    let gutter_x = if style.overflow.y.is_scroll_container() {
+        style.scrollbar_width
+    } else {
+        0.0
+    };
+    let gutter_y = if style.overflow.x.is_scroll_container() {
+        style.scrollbar_width
+    } else {
+        0.0
+    };
+    let rtl_gutter = if style.direction == taffy::Direction::Rtl {
+        gutter_x
+    } else {
+        0.0
+    };
+    output.oof_candidates = candidates;
+    output.oof_positioning_area = Some(OofPositioningArea {
+        size: Size {
+            width: (size.width - border.left - border.right - gutter_x).max(0.0),
+            height: (size.height - border.top - border.bottom - gutter_y).max(0.0),
+        },
+        offset: Point {
+            x: border.left + rtl_gutter,
+            y: border.top,
+        },
+    });
+    output
+}
+
+fn append_direct_table_oof_candidates(
+    doc: &Document,
+    table: usize,
+    candidates: &mut OofCandidates,
+) {
+    for (order, &child) in doc.nodes[table].children.iter().enumerate() {
+        if !doc.nodes[child].is_in_document()
+            || doc.nodes[child].taffy_position() != Position::Absolute
+            // The table layout has always placed absolute captions at its
+            // local origin; preserve that legacy geometry while dispatching
+            // fixed captions against the page area.
+            || doc.nodes[child].display() == DisplayValue::TableCaption
+                && doc.nodes[child].position() == &PositionValue::Absolute
+        {
+            continue;
+        }
+        let position = if doc.nodes[child].position() == &PositionValue::Fixed {
+            Position::Fixed
+        } else {
+            Position::Absolute
+        };
+        candidates.push(OofCandidate {
+            node: NodeId::from(child),
+            order: order as u32,
+            position,
+            static_position: Point {
+                x: AxisStaticPosition::from_edge(0.0, AxisStaticEdge::Start),
+                y: AxisStaticPosition::from_edge(0.0, AxisStaticEdge::Start),
+            },
+        });
+    }
+}
+
+/// Whether the source rows and groups of `table` get parent-relative boxes.
+///
+/// Pagination needs parent-relative source boxes even when all cells are
+/// explicit. Single-page callers retain their table-coordinate grid. The
+/// parts of an anonymous table are DOM children of its parent, which places
+/// them through their own boxes.
+fn projects_source_parts(doc: &LayoutSession<'_>, table: usize, grid: &TableGrid) -> bool {
+    doc.table_objects.project_explicit_parts
+        || doc.is_anonymous_table(table)
+        || grid
+            .cells
+            .iter()
+            .any(|cell| doc.is_anonymous_cell(cell.node_id))
+}
+
+/// The rows and row groups of `table` that are the containing block of an
+/// out-of-flow box in `candidates`, innermost first.
+///
+/// Taffy lays a table's cells out itself, so a row or row group that is a
+/// containing block through `position`, a transform or a filter never sees
+/// the boxes whose containing block it is.
+fn table_part_claimants(
+    doc: &LayoutSession<'_>,
+    table: usize,
+    candidates: &OofCandidates,
+) -> Vec<usize> {
+    let boundary = doc.table_parts_boundary(table);
+    let mut seen = std::collections::HashSet::new();
+    let mut claimants: Vec<usize> = Vec::new();
+    for candidate in candidates {
+        for id in doc
+            .ancestors(usize::from(candidate.node))
+            .take_while(|&id| id != boundary)
+        {
+            if is_source_table_part(doc, id)
+                && seen.insert(id)
+                && doc
+                    .get_core_container_style(NodeId::from(id))
+                    .is_containing_block()
+                    != taffy::ContainingBlockClaims::NONE
+            {
+                claimants.push(id);
+            }
+        }
+    }
+    claimants.sort_by_cached_key(|&id| std::cmp::Reverse(doc.ancestors(id).count()));
+    claimants
+}
+
+/// Lay out the candidates whose containing block is one of `claimants`,
+/// rows and row groups, against the padding box that part has in `parts`.
+/// What a part does not claim stays in `candidates`.
+///
+/// The candidates and the boxes laid out are in table coordinates until the
+/// parts are projected, and relative to the part after that.
+fn dispatch_table_part_oof(
+    doc: &mut LayoutSession<'_>,
+    claimants: &[usize],
+    parts: &std::collections::HashMap<usize, TaffyLayout>,
+    projected: bool,
+    candidates: &mut OofCandidates,
+) {
+    if claimants.is_empty() {
+        return;
+    }
+    let mut pending = candidates.take();
+    for &part in claimants {
+        // A row of a nested table is in the claimants of the outer table
+        // when it does not claim a box that passes through it, and the outer
+        // table has no box for it.
+        let Some(rect) = parts.get(&part).copied() else {
+            continue;
+        };
+        let mut inside = OofCandidates::new();
+        let mut outside = OofCandidates::new();
+        for &candidate in &pending {
+            if doc.is_ancestor_or_self(part, usize::from(candidate.node)) {
+                inside.push(candidate);
+            } else {
+                outside.push(candidate);
+            }
+        }
+        pending = outside;
+        // The location of the part's box in the frame its children are
+        // placed relative to.
+        let frame = if projected {
+            rect.location
+        } else {
+            Point::ZERO
+        };
+        inside.translate(Point {
+            x: -frame.x,
+            y: -frame.y,
+        });
+        let area = OofPositioningArea {
+            size: rect.size,
+            offset: Point {
+                x: rect.location.x - frame.x,
+                y: rect.location.y - frame.y,
+            },
+        };
+        let mut result = crate::taffy_impl::layout_container_candidates(
+            doc,
+            NodeId::from(part),
+            inside.as_slice(),
+            area,
+        );
+        result.unclaimed.translate(frame);
+        pending.append(&mut result.unclaimed);
+    }
+    *candidates = pending;
 }
 
 /// Give source rows and groups used boxes, while cell placement remains
 /// measured in table coordinates until the final parent-relative projection.
+/// `parts` are the boxes of the rows and row groups in table coordinates, or
+/// `None` where the table keeps them unprojected.
 fn position_source_table_parts(
     doc: &mut LayoutSession<'_>,
     table: usize,
     grid: &TableGrid,
-    columns: &[f32],
-    rows: &[f32],
-    origins: (&[f32], &[f32]),
-    vertical: bool,
+    parts: Option<std::collections::HashMap<usize, TaffyLayout>>,
 ) {
-    // Pagination needs parent-relative source boxes even when all cells are
-    // explicit. Single-page callers retain their table-coordinate grid.
-    // The parts of an anonymous table are DOM children of its parent, which
-    // places them through their own boxes.
-    if !doc.table_objects.project_explicit_parts
-        && !doc.is_anonymous_table(table)
-        && !grid
-            .cells
-            .iter()
-            .any(|cell| doc.is_anonymous_cell(cell.node_id))
-    {
+    let Some(parts) = parts else {
         return;
-    }
+    };
     let boundary = doc.table_parts_boundary(table);
     // A part the grid does not place, such as an empty row group, must not
     // keep a box from an earlier pass as its table-relative box.
@@ -1161,57 +1417,6 @@ fn position_source_table_parts(
         .to_vec()
     {
         doc.nodes[part].unrounded_layout = TaffyLayout::new();
-    }
-    let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
-    let (col_x, row_y) = origins;
-    let width = col_x
-        .get(columns.len().saturating_sub(1))
-        .zip(columns.last())
-        .map_or(0.0, |(x, width)| {
-            x + width - col_x.first().copied().unwrap_or(0.0)
-        });
-    let mut vertical_rows: std::collections::HashMap<usize, TaffyLayout> = Default::default();
-    if vertical {
-        for cell in &grid.cells {
-            let layout = cell
-                .resolved
-                .expect("cells were positioned before source parts");
-            vertical_rows
-                .entry(usize::from(cell.row))
-                .and_modify(|row| extend_part_bounds(row, &layout))
-                .or_insert(layout);
-        }
-    }
-    for (index, &marker) in grid.rows.iter().enumerate() {
-        let mut rect = TaffyLayout::new();
-        rect.location = Point {
-            x: col_x.first().copied().unwrap_or(0.0),
-            y: row_y[index],
-        };
-        rect.size = Size {
-            width,
-            height: rows[index],
-        };
-        if let Some(layout) = vertical_rows.get(&index) {
-            rect = *layout;
-        }
-        for id in doc
-            .inclusive_ancestors(doc.ifc_source_owner(marker))
-            .take_while(|&id| id != boundary)
-        {
-            if matches!(
-                doc.nodes[id].display(),
-                DisplayValue::TableRow
-                    | DisplayValue::TableRowGroup
-                    | DisplayValue::TableHeaderGroup
-                    | DisplayValue::TableFooterGroup
-            ) {
-                parts
-                    .entry(id)
-                    .and_modify(|part| extend_part_bounds(part, &rect))
-                    .or_insert(rect);
-            }
-        }
     }
     if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
         for &id in parts.keys() {
@@ -1315,6 +1520,76 @@ fn position_source_table_parts(
         }
     }
     doc.place_anonymous_table_parts(table);
+}
+
+/// The boxes of the rows and row groups of `table` in table coordinates:
+/// each part spans the rows of the cells it holds.
+fn source_part_boxes(
+    doc: &Document,
+    table: usize,
+    grid: &TableGrid,
+    columns: &[f32],
+    rows: &[f32],
+    origins: (&[f32], &[f32]),
+    vertical: bool,
+) -> std::collections::HashMap<usize, TaffyLayout> {
+    let boundary = doc.table_parts_boundary(table);
+    let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    let (col_x, row_y) = origins;
+    let width = col_x
+        .get(columns.len().saturating_sub(1))
+        .zip(columns.last())
+        .map_or(0.0, |(x, width)| {
+            x + width - col_x.first().copied().unwrap_or(0.0)
+        });
+    let mut vertical_rows: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    if vertical {
+        for cell in &grid.cells {
+            let layout = cell
+                .resolved
+                .expect("cells were positioned before source parts");
+            vertical_rows
+                .entry(usize::from(cell.row))
+                .and_modify(|row| extend_part_bounds(row, &layout))
+                .or_insert(layout);
+        }
+    }
+    for (index, &marker) in grid.rows.iter().enumerate() {
+        let mut rect = TaffyLayout::new();
+        rect.location = Point {
+            x: col_x.first().copied().unwrap_or(0.0),
+            y: row_y[index],
+        };
+        rect.size = Size {
+            width,
+            height: rows[index],
+        };
+        if let Some(layout) = vertical_rows.get(&index) {
+            rect = *layout;
+        }
+        for id in doc
+            .inclusive_ancestors(doc.ifc_source_owner(marker))
+            .take_while(|&id| id != boundary)
+        {
+            if is_source_table_part(doc, id) {
+                parts
+                    .entry(id)
+                    .and_modify(|part| extend_part_bounds(part, &rect))
+                    .or_insert(rect);
+            }
+        }
+    }
+    parts
+}
+
+fn is_source_table_part(doc: &Document, id: usize) -> bool {
+    matches!(
+        doc.nodes[id].display(),
+        DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+    )
 }
 
 fn extend_part_bounds(part: &mut TaffyLayout, other: &TaffyLayout) {
@@ -2673,18 +2948,37 @@ fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
         })
 }
 
+struct CellPlacementTracks<'a> {
+    column_widths: &'a [f32],
+    column_gaps: &'a [f32],
+    collapsed_columns: &'a [bool],
+    row_heights: &'a [f32],
+    row_gaps: &'a [f32],
+    collapsed_rows: &'a [bool],
+    column_origins: &'a [f32],
+    row_origins: &'a [f32],
+    row_spacing: f32,
+    vertical_writing: bool,
+}
+
 fn place_cells(
     doc: &mut LayoutSession<'_>,
     grid: &mut TableGrid,
-    col_tracks: (&[f32], &[f32], &[bool]),
-    row_tracks: (&[f32], &[f32], &[bool]),
-    origins: (&[f32], &[f32]),
-    spacing: (f32, f32),
-    vertical_writing: bool,
+    tracks: CellPlacementTracks<'_>,
+    oof_candidates: &mut OofCandidates,
 ) -> Result<(), raikiri_traits::LayoutError> {
-    let (column_widths, col_gaps, collapsed_cols) = col_tracks;
-    let (row_heights, row_gaps, collapsed_rows) = row_tracks;
-    let (col_x, row_y) = origins;
+    let CellPlacementTracks {
+        column_widths,
+        column_gaps: col_gaps,
+        collapsed_columns: collapsed_cols,
+        row_heights,
+        row_gaps,
+        collapsed_rows,
+        column_origins: col_x,
+        row_origins: row_y,
+        row_spacing,
+        vertical_writing,
+    } = tracks;
     // A cell moved past collapsed rows aligns with the row it now starts in.
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
@@ -2740,15 +3034,17 @@ fn place_cells(
                 .iter()
                 .filter(|gap| **gap != 0.0)
                 .count() as f32
-                * spacing.1;
+                * row_spacing;
         // Final layout for cell contents with definite size. A cell whose
         // content does not depend on its height keeps its row-pass lines.
         let reused = cell
             .row_pass
             .filter(|pass| pass.width == cell_width)
             .map(|pass| pass.scrollable_overflow_rect);
-        let scrollable_overflow_rect = reused.unwrap_or_else(|| {
-            doc.compute_child_layout(
+        let (scrollable_overflow_rect, mut child_candidates) = if let Some(rect) = reused {
+            (rect, OofCandidates::new())
+        } else {
+            let output = doc.compute_child_layout(
                 NodeId::from(cell.node_id),
                 LayoutInput {
                     run_mode: RunMode::PerformLayout,
@@ -2772,9 +3068,14 @@ fn place_cells(
                     },
                     vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
                 },
-            )
-            .scrollable_overflow_rect
+            );
+            (output.scrollable_overflow_rect, output.oof_candidates)
+        };
+        child_candidates.translate(Point {
+            x: cell_x,
+            y: cell_y,
         });
+        oof_candidates.append(&mut child_candidates);
         // A cell laid out by the inline engine has no child layouts: its
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.
@@ -3757,11 +4058,16 @@ struct BorderState {
 struct ColumnsInPlace {
     /// [`CollapsedLines::inline_border_width`] with every column in place.
     border_width: f32,
+    /// [`CollapsedLines::row_overlaps`] of the cells with the borders `in_place`
+    /// gives them, between each pair of consecutive rows that are not
+    /// collapsed. The rows keep the heights the cells of a collapsed column
+    /// gave them, and those cells share their row lines, which the grid that
+    /// remains does not overlap.
+    row_overlaps: Vec<f32>,
     /// The borders the cells are measured with: the inline sides they have
-    /// with every column in place, and the block sides the rest of the layout
-    /// counts, which are those of the grid that remains. A row line is shared
-    /// by two rows only as far as that grid overlaps them, so a border that
-    /// only a collapsed column gave the rows would count twice.
+    /// with every column in place, and for the cells that remain the block
+    /// sides the rest of the layout counts, which are those of the grid that
+    /// remains.
     in_place: BorderState,
     /// The borders with the collapsed columns left out.
     remaining: BorderState,
@@ -3788,24 +4094,60 @@ impl ColumnsInPlace {
             .zip(&remaining.cells)
             .map(|((cell, mut border, painted), kept)| {
                 // The cells of the collapsed columns are not part of the grid
-                // that remains, which resolves nothing for them.
-                let block = if remains.contains(&cell) {
-                    kept.1
-                } else {
-                    authored_border(doc, cell)
-                };
-                border.top = block.top;
-                border.bottom = block.bottom;
+                // that remains, which resolves nothing for them: they keep the
+                // block sides they resolved to, and the row lines they share
+                // are in `row_overlaps`.
+                if remains.contains(&cell) {
+                    border.top = kept.1.top;
+                    border.bottom = kept.1.bottom;
+                }
                 (cell, border, painted)
             })
             .collect();
         Self {
             border_width,
+            row_overlaps: Vec::new(),
             in_place: BorderState {
                 cells,
                 rows: in_place.rows,
             },
             remaining,
+        }
+    }
+
+    /// Set the overlaps between the rows that are not in `collapsed_rows`
+    /// from the borders the cells are measured with: a cell that remains
+    /// keeps the block borders of the grid that remains, so it shares with the
+    /// cells of a collapsed column only the line it has itself. Overlapping by
+    /// the line the cells would share with every column in place would take
+    /// more from a row than the cell was measured with.
+    fn with_row_overlaps(
+        mut self,
+        doc: &mut Document,
+        grid: &TableGrid,
+        collapsed_rows: &[bool],
+        table_border: &Rect<f32>,
+        basis: Option<f32>,
+    ) -> Self {
+        let rows_shown = without_collapsed_rows(grid, collapsed_rows);
+        if rows_shown.rows.is_empty() {
+            return self;
+        }
+        apply_borders(doc, &self.in_place);
+        let index = CellIndex::new(&rows_shown);
+        self.row_overlaps =
+            compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis).row_overlaps;
+        apply_borders(doc, &self.remaining);
+        self
+    }
+
+    /// Raise the overlap after each row of `row_overlaps` to the line the cells
+    /// of the collapsed columns share there, between the rows in `kept_rows`.
+    /// The rows keep the heights those cells gave them, so they keep the lines
+    /// the cells share as well.
+    fn raise_row_overlaps(&self, kept_rows: &[usize], row_overlaps: &mut [f32]) {
+        for (line, rows) in self.row_overlaps.iter().zip(kept_rows.windows(2)) {
+            row_overlaps[rows[0]] = row_overlaps[rows[0]].max(*line);
         }
     }
 
@@ -3923,11 +4265,10 @@ fn border_width_with_columns_in_place(
     let index = CellIndex::new(&rows_shown);
     reset_collapsed_borders(doc, grid);
     resolve_collapsed_borders(doc, &rows_shown, &index, table_idx);
-    let width = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis)
-        .inline_border_width();
+    let lines = compute_collapsed_lines(doc, &rows_shown, &index, table_border, basis);
     let in_place = snapshot_borders(doc, grid);
     reset_collapsed_borders(doc, shown);
-    (width, in_place)
+    (lines.inline_border_width(), in_place)
 }
 
 fn compute_collapsed_lines(

@@ -55,6 +55,7 @@ use crate::property::{
     WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
+use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc};
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 use std::sync::Arc;
@@ -1378,6 +1379,46 @@ fn margin_box_inherits_the_monospace_keyword_page_font_size() {
     let style = page.margin_box_style(&rule, None);
     assert_eq!(style.font_size.0, 6.5);
     assert_eq!(style.padding.top.resolve(0.0), 13.0);
+}
+
+#[test]
+fn a_margin_box_keeps_the_block_size_keywords() {
+    // A margin box fills its page margin for `height: auto`, so it has to see
+    // the keywords that size it to its content, which an element computes to
+    // `auto`.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { @top-left { content: 'x'; height: max-content } \
+         @top-center { content: 'x'; height: fit-content(2em); font-size: 10px } \
+         @top-right { content: 'x'; block-size: min-content } \
+         @bottom-left { content: 'x' } }",
+        Origin::Author,
+    );
+    let page = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&ComputedValues::initial()),
+    );
+    let height = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        page.margin_box_style(&rule, None).height
+    };
+    assert_eq!(
+        height(PageMarginBoxSlot::TopLeft),
+        ComputedLengthPercentageOrAuto::MaxContent
+    );
+    assert_eq!(
+        height(PageMarginBoxSlot::TopCenter),
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Px(20.0))
+    );
+    assert_eq!(
+        height(PageMarginBoxSlot::TopRight),
+        ComputedLengthPercentageOrAuto::MinContent
+    );
+    assert_eq!(
+        height(PageMarginBoxSlot::BottomLeft),
+        ComputedLengthPercentageOrAuto::Auto
+    );
 }
 
 #[test]
@@ -8431,13 +8472,13 @@ fn page_upright_text_orientation_maps_inline_sides_as_ltr() {
     );
 }
 
-/// Margin boxes inherit the page context's computed `direction`, not the
-/// `ltr` that upright text forces on the page's own vertical flow.
+/// A horizontal margin box inherits the page context's computed `direction`,
+/// not the `ltr` that upright text forces on the page's own vertical flow.
 #[test]
 fn margin_box_inherits_the_page_computed_direction_under_upright_text() {
     let margin = page(
         "@page { writing-mode: vertical-rl; text-orientation: upright; direction: rtl; \
-         @top-left { content: 'X'; margin-inline-start: 1px } }",
+         @top-left { content: 'X'; writing-mode: horizontal-tb; margin-inline-start: 1px } }",
         &ComputedValues::initial(),
     )
     .cascade_margin_box(PageMarginBoxSlot::TopLeft)
@@ -8448,6 +8489,142 @@ fn margin_box_inherits_the_page_computed_direction_under_upright_text() {
             .iter()
             .any(|declaration| declaration.value == PropertyValue::MarginRight(px_margin(1.0)))
     );
+}
+
+/// The physical margins a margin box in the top-left slot declares after
+/// the flow-relative ones moved to their sides, as `[top, right, bottom,
+/// left]` with `None` for a side left undeclared.
+fn margin_box_margins(css: &str) -> [Option<f32>; 4] {
+    let margin = page(css, &ComputedValues::initial())
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap();
+    let side = |key: PropertyKey| {
+        margin
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.value {
+                PropertyValue::MarginTop(crate::property::LengthOrAuto::Length(Length::Px(px)))
+                | PropertyValue::MarginRight(crate::property::LengthOrAuto::Length(Length::Px(
+                    px,
+                )))
+                | PropertyValue::MarginBottom(crate::property::LengthOrAuto::Length(Length::Px(
+                    px,
+                )))
+                | PropertyValue::MarginLeft(crate::property::LengthOrAuto::Length(Length::Px(
+                    px,
+                ))) if declaration.value.key() == key => Some(*px),
+                _ => None,
+            })
+    };
+    [
+        side(PropertyKey::MarginTop),
+        side(PropertyKey::MarginRight),
+        side(PropertyKey::MarginBottom),
+        side(PropertyKey::MarginLeft),
+    ]
+}
+
+/// A margin box maps flow-relative margins through its own writing mode: its
+/// block start is the right side in `vertical-rl` and its inline start the
+/// top (CSS Logical Properties 1 §4).
+#[test]
+fn margin_box_logical_margins_follow_the_margin_boxs_own_writing_mode() {
+    assert_eq!(
+        margin_box_margins(
+            "@page { @top-left { content: 'X'; writing-mode: vertical-rl; \
+             margin-block-start: 1px; margin-block-end: 2px; \
+             margin-inline-start: 3px; margin-inline-end: 4px } }"
+        ),
+        [Some(3.0), Some(1.0), Some(4.0), Some(2.0)]
+    );
+    assert_eq!(
+        margin_box_margins(
+            "@page { @top-left { content: 'X'; writing-mode: vertical-lr; \
+             margin-block-start: 1px; margin-inline-start: 3px } }"
+        ),
+        [Some(3.0), None, None, Some(1.0)]
+    );
+    // Horizontal text keeps the mapping margin boxes always had.
+    assert_eq!(
+        margin_box_margins(
+            "@page { @top-left { content: 'X'; \
+             margin-block-start: 1px; margin-inline-start: 3px } }"
+        ),
+        [Some(1.0), None, None, Some(3.0)]
+    );
+}
+
+/// A margin box inherits its writing mode from the page context, and
+/// declares its own over it.
+#[test]
+fn margin_box_logical_margins_follow_the_page_contexts_writing_mode() {
+    let inherited = "@page { writing-mode: vertical-rl; @top-left { content: 'X'; \
+                     margin-block-start: 1px; margin-inline-start: 3px } }";
+    assert_eq!(
+        margin_box_margins(inherited),
+        [Some(3.0), Some(1.0), None, None]
+    );
+    let own = "@page { writing-mode: vertical-rl; @top-left { content: 'X'; \
+               writing-mode: horizontal-tb; \
+               margin-block-start: 1px; margin-inline-start: 3px } }";
+    assert_eq!(margin_box_margins(own), [Some(1.0), None, None, Some(3.0)]);
+    // A `writing-mode` that does not resolve leaves the page context's.
+    let invalid = "@page { writing-mode: vertical-rl; @top-left { content: 'X'; \
+                   writing-mode: var(--missing); margin-block-start: 1px } }";
+    assert_eq!(margin_box_margins(invalid), [None, Some(1.0), None, None]);
+}
+
+/// `text-orientation: upright` makes the used direction of a vertical margin
+/// box `ltr`, so its inline start stays the top under `direction: rtl`.
+#[test]
+fn margin_box_upright_text_maps_inline_sides_as_ltr() {
+    assert_eq!(
+        margin_box_margins(
+            "@page { @top-left { content: 'X'; writing-mode: vertical-rl; \
+             text-orientation: upright; direction: rtl; margin-inline-start: 1px } }"
+        ),
+        [Some(1.0), None, None, None]
+    );
+    assert_eq!(
+        margin_box_margins(
+            "@page { @top-left { content: 'X'; writing-mode: vertical-rl; \
+             direction: rtl; margin-inline-start: 1px } }"
+        ),
+        [None, None, Some(1.0), None]
+    );
+}
+
+/// The logical sizes of a margin box land on `width` and `height` under its
+/// own writing mode, and compete with the physical ones for that side.
+#[test]
+fn margin_box_logical_sizes_follow_the_margin_boxs_own_writing_mode() {
+    let size = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        let style = result.margin_box_style(&rule, None);
+        (style.width, style.height)
+    };
+    let (width, height) = size(
+        "@page { @top-left { content: 'X'; writing-mode: vertical-rl; \
+         block-size: 10px; inline-size: 20px } }",
+    );
+    assert_eq!(width, ComputedLengthPercentageOrAuto::Px(10.0));
+    assert_eq!(height, ComputedLengthPercentageOrAuto::Px(20.0));
+    // The later of the logical and the physical size wins.
+    let (width, height) = size(
+        "@page { writing-mode: vertical-rl; @top-left { content: 'X'; \
+         height: 5px; inline-size: 20px } }",
+    );
+    assert_eq!(width, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(height, ComputedLengthPercentageOrAuto::Px(20.0));
+    let (width, height) = size(
+        "@page { writing-mode: vertical-rl; @top-left { content: 'X'; \
+         writing-mode: horizontal-tb; block-size: 10px; inline-size: 20px } }",
+    );
+    assert_eq!(width, ComputedLengthPercentageOrAuto::Px(20.0));
+    assert_eq!(height, ComputedLengthPercentageOrAuto::Px(10.0));
 }
 
 #[test]
@@ -8523,4 +8700,54 @@ fn page_image_visitor_reaches_the_border_image() {
         result.border_image().map(|image| image.source),
         Some(BackgroundImage::Url("https://base.test/b.png".into()))
     );
+}
+
+/// A `writing-mode` or `direction` rolled back to an earlier layer decides
+/// the mapping of the flow-relative margins the same way it decides the
+/// computed style of the margin box.
+#[test]
+fn margin_box_logical_margins_agree_with_a_rolled_back_flow() {
+    let css = "@layer a { @page { @top-left { content: 'X'; writing-mode: vertical-rl; \
+               direction: rtl } } } \
+               @layer b { @page { @top-left { writing-mode: revert-layer; \
+               direction: revert-layer; margin-inline-start: 1px } } }";
+    let result = page(css, &ComputedValues::initial());
+    let rule = result
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap();
+    let style = result.margin_box_style(&rule, None);
+    assert_eq!(style.cssom_writing_mode, WritingMode::VerticalRl);
+    assert_eq!(style.direction, Direction::Rtl);
+    // The inline start of `vertical-rl` under `rtl` is the bottom.
+    assert_eq!(margin_box_margins(css), [None, None, Some(1.0), None]);
+}
+
+/// `all: revert-layer` rolls a margin box's `writing-mode` back to the
+/// layer below, and `direction`, which `all` does not reset, stays as the
+/// rolled-back layer declared it, so the flow-relative margins follow the
+/// computed style (CSS Cascade 5 §6.4.1, CSS Logical Properties 1 §4).
+#[test]
+fn margin_box_logical_margins_agree_with_a_flow_rolled_back_by_all() {
+    let css = "@layer a { @page { @top-left { content: 'X'; writing-mode: vertical-rl } } } \
+               @layer b { @page { @top-left { writing-mode: horizontal-tb; \
+               direction: rtl; all: revert-layer; margin-inline-start: 1px } } }";
+    let result = page(css, &ComputedValues::initial());
+    let rule = result
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap();
+    let style = result.margin_box_style(&rule, None);
+    assert_eq!(style.cssom_writing_mode, WritingMode::VerticalRl);
+    assert_eq!(style.direction, Direction::Rtl);
+    // The inline start of `vertical-rl` under `rtl` is the bottom.
+    assert_eq!(margin_box_margins(css), [None, None, Some(1.0), None]);
+}
+
+/// A flow property declared after `all: revert-layer` in the same layer
+/// survives the rollback and decides the mapping.
+#[test]
+fn margin_box_logical_margins_follow_a_flow_declared_after_all_revert_layer() {
+    let css = "@layer a { @page { @top-left { content: 'X'; writing-mode: vertical-rl } } } \
+               @layer b { @page { @top-left { all: revert-layer; \
+               writing-mode: horizontal-tb; margin-block-start: 1px } } }";
+    assert_eq!(margin_box_margins(css), [Some(1.0), None, None, None]);
 }

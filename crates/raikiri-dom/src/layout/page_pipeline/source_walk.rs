@@ -220,7 +220,7 @@ struct SourceWalk<'a> {
 impl<'a> SourceWalk<'a> {
     fn visit(
         &mut self,
-        visit: ProjectionVisit,
+        mut visit: ProjectionVisit,
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         let (document, cascade, fragments) =
@@ -236,6 +236,17 @@ impl<'a> SourceWalk<'a> {
             return Ok(());
         };
         let layout = node.unrounded_layout;
+        if !visit.is_fragment_visit
+            && let Some(origin) = document.layout_origin_of(node_id)
+        {
+            let parent_origin = document
+                .layout_parent_of(node_id)
+                .and_then(|parent| document.layout_origin_of(parent));
+            let parent_x = parent_origin.map_or(0.0, |parent| parent.x);
+            let parent_y = parent_origin.map_or(0.0, |parent| parent.y);
+            visit.parent_origin.0 += origin.x - parent_x - layout.location.x;
+            visit.parent_origin.1 += origin.y - parent_y - layout.location.y;
+        }
         if self.enter_fragments(&visit, node_id, (layout.location.x, layout.location.y)) {
             return Ok(());
         }
@@ -394,13 +405,11 @@ impl<'a> SourceWalk<'a> {
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         let document = self.document;
-        let column = visit
-            .fragment
-            .map(|index| self.fragments.fragments[index].fragmentainer);
         let roots = std::iter::once((placed.id, placed.node))
             .filter(|(_, node)| node.is_ifc_root())
             .chain(document.anonymous_table_cells(placed.id));
         for (root_id, root_node) in roots {
+            let column = self.paragraph_column(root_node, visit);
             let root_layout = root_node.unrounded_layout;
             let (root_x, root_y) = if root_id == placed.id {
                 (placed.area.x, placed.area.y)
@@ -514,6 +523,14 @@ impl<'a> SourceWalk<'a> {
         }
     }
 
+    /// The column of the paragraph of `node` that this visit draws, when it
+    /// went through a fragment that selects one.
+    fn paragraph_column(&self, node: &Node, visit: &ProjectionVisit) -> Option<usize> {
+        visit
+            .fragment
+            .and_then(|index| node.paragraph_column_of_fragment(&self.fragments.fragments[index]))
+    }
+
     /// Queue the children of an element for a visit.
     fn push_children(
         &mut self,
@@ -523,12 +540,12 @@ impl<'a> SourceWalk<'a> {
     ) {
         let (node, node_id) = (placed.node, placed.id);
         let paragraph_column = if node.is_ifc_root() {
-            visit.fragment.and_then(|index| {
+            self.paragraph_column(node, visit).and_then(|column| {
                 self.paragraphs
                     .cache
                     .get(&node_id)
                     .filter(|prepared| prepared.children.is_some())
-                    .map(|_| (node_id, self.fragments.fragments[index].fragmentainer))
+                    .map(|_| (node_id, column))
             })
         } else {
             visit.paragraph_column

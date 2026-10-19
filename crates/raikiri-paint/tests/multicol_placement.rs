@@ -1596,3 +1596,439 @@ fn atomic_inlines_of_a_paragraph_in_a_right_to_left_wrapper_follow_their_lines()
         ),
     );
 }
+
+/// `body` in `depth` plain wrapper blocks inside a column container.
+fn in_wrappers(body: &str, depth: usize) -> String {
+    let mut html = body.to_string();
+    for _ in 0..depth {
+        html = format!("<div>{html}</div>");
+    }
+    html
+}
+
+/// The number of pixels `body` leaves inked.
+fn ink(body: &str, css: &str) -> usize {
+    raster(body, css)
+        .chunks_exact(4)
+        .filter(|pixel| pixel[..3] != [255, 255, 255])
+        .count()
+}
+
+#[test]
+fn a_paragraph_in_wrappers_of_a_balanced_container_breaks_between_its_lines() {
+    for depth in 1..=2 {
+        compare(
+            &format!(
+                "<div class=mc>{}</div><p>E</p>",
+                in_wrappers("<p>A<br>B<br>C<br>D</p>", depth)
+            ),
+            "",
+            "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_in_a_wrapper_of_a_balanced_container_fills_three_columns() {
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D<br>F<br>G</p></div></div>",
+        ".mc{width:160px;column-count:3}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:120px;top:0'>F<br>G</div>",
+    );
+}
+
+#[test]
+fn an_uneven_paragraph_in_a_wrapper_of_a_balanced_container_keeps_the_longer_first_column() {
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D<br>F</p></div></div><p>E</p>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D<br>F</div><div style='position:absolute;left:0;top:60px'>E</div>",
+    );
+}
+
+#[test]
+fn widows_of_a_paragraph_in_a_wrapper_of_a_balanced_container_pull_lines_to_the_last_column() {
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D<br>F</p></div></div><p>E</p>",
+        ".mc{widows:3}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D<br>F</div><div style='position:absolute;left:0;top:60px'>E</div>",
+    );
+}
+
+#[test]
+fn a_paragraph_in_a_wrapper_of_a_balanced_right_to_left_container_starts_at_the_right() {
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{direction:rtl}",
+        "<div dir=rtl style='position:absolute;left:60px;top:0;width:40px'>A<br>B</div><div dir=rtl style='position:absolute;left:0;top:0;width:40px'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn wrapped_words_of_a_paragraph_in_a_wrapper_of_a_balanced_container_follow_their_lines() {
+    compare(
+        "<div class=mc><div><p>AA BB CC DD</p></div></div><p>E</p>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>AA<br>BB</div><div style='position:absolute;left:60px;top:0'>CC<br>DD</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn atomic_inlines_of_a_paragraph_in_a_wrapper_of_a_balanced_container_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for depth in 1..=2 {
+        compare(
+            &format!(
+                "<div class=mc>{}</div><p>E</p>",
+                in_wrappers(&format!("<p>A{red}<br>B<br>{blue}C<br>D</p>"), depth)
+            ),
+            "",
+            &format!(
+                "<div style='position:absolute;left:0;top:0'>A{red}<br>B</div><div style='position:absolute;left:60px;top:0'>{blue}C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_background_in_a_wrapper_of_a_balanced_container_covers_both_column_fragments() {
+    let paragraph = "<p style='background:yellow'>A<br>B<br>C<br>D</p>";
+    compare_bodies(
+        &format!("<div class=mc>{}</div><p>E</p>", in_wrappers(paragraph, 1)),
+        &format!("<div class=mc>{paragraph}</div><p>E</p>"),
+        "",
+    );
+}
+
+#[test]
+fn column_rules_run_beside_a_paragraph_in_a_wrapper_around_a_spanning_box() {
+    // Each side of the spanning box balances its own paragraph; the rule
+    // belongs to the columns the lines occupy.
+    let spanner = "<h1 style='column-span:all;margin:0;font-size:20px'>S</h1>";
+    let (first, second) = ("<p>A<br>B<br>C<br>D</p>", "<p>F<br>G<br>H<br>I</p>");
+    compare_bodies(
+        &format!(
+            "<div class=mc>{}{spanner}{}</div><p>E</p>",
+            in_wrappers(first, 1),
+            in_wrappers(second, 1)
+        ),
+        &format!("<div class=mc>{first}{spanner}{second}</div><p>E</p>"),
+        ".mc{column-rule:4px solid red}",
+    );
+}
+
+#[test]
+fn a_clipping_wrapper_of_a_balanced_container_keeps_every_line_visible() {
+    // The later column of a paragraph lies outside the box of its wrapper, so
+    // a wrapper that clips would hide it.
+    let plain = ink(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        "",
+    );
+    for overflow in ["hidden", "clip", "auto"] {
+        assert_eq!(
+            ink(
+                &format!(
+                    "<div class=mc><div style='overflow:{overflow}'><p>A<br>B<br>C<br>D</p></div></div><p>E</p>"
+                ),
+                ""
+            ),
+            plain,
+            "{overflow}"
+        );
+    }
+    // The paragraph itself clips at the column it is drawn in.
+    assert_eq!(
+        ink(
+            "<div class=mc><div><p style='overflow:hidden'>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+            ""
+        ),
+        plain
+    );
+}
+
+/// Whether every black glyph of `body` has `background` beside it, at its
+/// right edge. The glyphs are narrower than the columns.
+fn glyphs_have_the_background_beside_them(body: &str, background: [u8; 3]) -> bool {
+    let pixels = raster(body, "");
+    let at = |x: usize, y: usize| {
+        let start = (y * 180 + x) * 4;
+        [pixels[start], pixels[start + 1], pixels[start + 2]]
+    };
+    let glyphs = (0..160)
+        .flat_map(|y| (0..180).map(move |x| (x, y)))
+        .filter(|&(x, y)| at(x, y) == [0, 0, 0])
+        .count();
+    glyphs > 0
+        && (0..160).all(|y| {
+            (0..179).all(|x| {
+                at(x, y) != [0, 0, 0] || at(x + 1, y) == [0, 0, 0] || at(x + 1, y) == background
+            })
+        })
+}
+
+#[test]
+fn a_first_wrapper_that_paints_its_own_box_does_not_leave_a_later_column_bare() {
+    // The wrapper that is the container's child has one box, in the first
+    // column, so its paragraph keeps to the strategy that its box covers.
+    for style in [
+        "background:yellow",
+        "background-image:linear-gradient(yellow,yellow)",
+    ] {
+        let body =
+            format!("<div class=mc><div style='{style}'><p>A<br>B<br>C<br>D</p></div></div>");
+        assert!(
+            glyphs_have_the_background_beside_them(&body, [255, 255, 0]),
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn a_background_below_the_first_wrapper_covers_each_column_of_the_paragraph() {
+    let (paragraph, painted) = (
+        "<p style='background:yellow'>A<br>B<br>C<br>D</p>",
+        "<div style='background:yellow'><p>A<br>B<br>C<br>D</p></div>",
+    );
+    assert!(glyphs_have_the_background_beside_them(
+        &format!("<div class=mc>{}</div>", in_wrappers(painted, 1)),
+        [255, 255, 0]
+    ));
+    compare_bodies(
+        &format!("<div class=mc>{}</div><p>E</p>", in_wrappers(painted, 1)),
+        &format!("<div class=mc>{paragraph}</div><p>E</p>"),
+        "",
+    );
+}
+
+#[test]
+fn a_size_contained_wrapper_keeps_the_height_of_an_empty_box() {
+    // Its content gives it no height, so the balanced height of the paragraph
+    // is not its height either.
+    let paragraph = "<p>A<br>B<br>C<br>D</p>";
+    compare_bodies(
+        &format!("<div class=mc><div style='contain:size'>{paragraph}</div></div><p>E</p>"),
+        &format!("<div class=mc><div style='height:0'>{paragraph}</div></div><p>E</p>"),
+        "",
+    );
+    // Containing only the inline size leaves the height to the content.
+    compare_bodies(
+        &format!("<div class=mc><div style='contain:inline-size'>{paragraph}</div></div><p>E</p>"),
+        &format!("<div class=mc><div>{paragraph}</div></div><p>E</p>"),
+        "",
+    );
+}
+
+#[test]
+fn a_column_spanning_paragraph_below_a_wrapper_keeps_its_full_width() {
+    // A box that spans every column is not split over them.
+    compare(
+        "<div class=mc><div><p style='column-span:all'>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        "",
+        "<div style='position:absolute;left:0;top:0;width:100px'>A<br>B<br>C<br>D</div><div style='position:absolute;left:0;top:80px'>E</div>",
+    );
+}
+
+#[test]
+fn a_relative_wrapper_moves_each_column_of_its_paragraph_once() {
+    compare(
+        "<div class=mc><div style='position:relative;top:3px'><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        "",
+        "<div style='position:absolute;left:0;top:3px'>A<br>B</div><div style='position:absolute;left:60px;top:3px'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn the_shadow_of_a_wrapper_is_not_cut_at_the_column_of_its_paragraph() {
+    // A slice of a wrapper cannot draw the shadow of its whole box. The
+    // columns are 40 pixels wide and the shadow reaches 44.
+    let shadowed = "<div style='box-shadow:4px 4px 0 red'><p>A<br>B<br>C<br>D</p></div>";
+    for wrappers in 1..=2 {
+        let pixels = raster(
+            &format!(
+                "<div class=mc>{}</div>",
+                in_wrappers(shadowed, wrappers - 1)
+            ),
+            "",
+        );
+        let beyond_the_column = (0..160).any(|y| {
+            (41..44).any(|x| {
+                let start = (y * 180 + x) * 4;
+                pixels[start..start + 3] == [255, 0, 0]
+            })
+        });
+        assert!(beyond_the_column, "{wrappers} wrappers");
+    }
+}
+
+/// Every page of `body` laid out in pages of 180x160 pixels.
+fn pages(body: &str) -> Vec<Vec<u8>> {
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let html = format!(
+        "<!doctype html><style>@page{{size:180px 160px;margin:0}}body{{margin:0;background:white;font:20px/20px Ahem}}p{{margin:0}}.mc{{width:100px;column-count:2;column-gap:20px;orphans:1;widows:1}}</style>{body}"
+    );
+    let parsed = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(document) = layout(
+        &parsed,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("completed layout")
+    };
+    let count = document.page_count();
+    (0..count)
+        .map(|index| {
+            let (document, cascade, page_box, origin_y) =
+                document.page(index).unwrap().paint_inputs();
+            let mut scene = Scene::new();
+            raikiri_paint::paint_single_page_with_origin_and_page(
+                &mut scene, document, cascade, page_box, origin_y, index, count, false,
+            )
+            .unwrap();
+            anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+                |out| out.append_scene(scene, Affine::IDENTITY),
+                180,
+                160,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_paragraph_in_wrappers_of_a_balanced_container_flows_over_pages_like_one_of_its_own() {
+    // Each line has its own color, so a line lost, repeated or moved to
+    // another page shows. A container taller than a page continues on the
+    // next one, and no page is left empty.
+    let lines: String = (0..30)
+        .map(|line| {
+            format!(
+                "<span style='color:hsl({},100%,50%)'>L</span><br>",
+                line * 12
+            )
+        })
+        .collect();
+    let direct = pages(&format!("<div class=mc><p>{lines}</p></div><p>X</p>"));
+    assert_eq!(direct.len(), 2);
+    for depth in 1..=2 {
+        let wrapped = pages(&format!(
+            "<div class=mc>{}</div><p>X</p>",
+            in_wrappers(&format!("<p>{lines}</p>"), depth)
+        ));
+        assert!(wrapped == direct, "{depth} wrappers");
+    }
+}
+
+/// A column container 170px wide with two 80px columns and a fixed height,
+/// holding `inner`.
+fn in_fixed_outer(height: u32, inner: &str) -> String {
+    format!(
+        "<div style='width:170px;height:{height}px;column-count:2;column-gap:10px;column-fill:auto'>{inner}</div>"
+    )
+}
+
+#[test]
+fn a_balanced_nested_container_that_fits_an_outer_column_paints_one_box() {
+    // Six lines balance into two columns of three, which fit the first
+    // column of the outer container exactly. The box belongs to that column
+    // alone; the second outer column holds nothing of it.
+    compare(
+        &in_fixed_outer(
+            60,
+            "<div style='column-count:2;column-gap:10px;background:green'>A<br>B<br>C<br>D<br>E<br>F</div>",
+        ),
+        "",
+        "<div style='position:absolute;left:0;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:45px;top:0'>D<br>E<br>F</div>",
+    );
+}
+
+#[test]
+fn a_bordered_nested_container_that_fits_an_outer_column_paints_its_border_once() {
+    compare(
+        &in_fixed_outer(
+            70,
+            "<div style='column-count:2;column-gap:10px;border:2px solid red;background:green'>A<br>B<br>C<br>D<br>E<br>F</div>",
+        ),
+        "",
+        "<div style='position:absolute;left:0;top:0;width:76px;height:60px;border:2px solid red;background:green'></div><div style='position:absolute;left:2px;top:2px'>A<br>B<br>C</div><div style='position:absolute;left:45px;top:2px'>D<br>E<br>F</div>",
+    );
+}
+
+#[test]
+fn a_balanced_nested_container_in_a_later_outer_column_paints_one_box() {
+    // The container starts the second outer column, so the first one holds
+    // nothing of it.
+    compare(
+        &in_fixed_outer(
+            60,
+            "<div style='height:60px'></div><div style='column-count:2;column-gap:10px;background:green'>A<br>B<br>C<br>D<br>E<br>F</div>",
+        ),
+        "",
+        "<div style='position:absolute;left:90px;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:90px;top:0'>A<br>B<br>C</div><div style='position:absolute;left:135px;top:0'>D<br>E<br>F</div>",
+    );
+}
+
+#[test]
+fn a_nested_container_in_an_auto_height_container_paints_all_of_its_columns() {
+    // Every column of the inner container's own text is drawn, not only the
+    // first, whatever the outer container's height.
+    for outer in ["", "height:100px;"] {
+        compare(
+            &format!(
+                "<div style='width:170px;{outer}column-count:2;column-gap:10px;column-fill:auto'><div style='column-count:2;column-gap:10px;background:green'>A<br>B<br>C<br>D<br>E<br>F</div></div>"
+            ),
+            "",
+            "<div style='position:absolute;left:0;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:45px;top:0'>D<br>E<br>F</div>",
+        );
+    }
+}
+
+#[test]
+fn atomic_inlines_of_a_nested_container_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for outer in ["", "height:100px;", "height:60px;"] {
+        compare(
+            &format!(
+                "<div style='width:170px;{outer}column-count:2;column-gap:10px;column-fill:auto'><div style='column-count:2;column-gap:10px;background:green'>A{red}<br>B<br>{blue}C<br>D<br>E<br>F</div></div>"
+            ),
+            "",
+            &format!(
+                "<div style='position:absolute;left:0;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:0;top:0'>A{red}<br>B<br>{blue}C</div><div style='position:absolute;left:45px;top:0'>D<br>E<br>F</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_nested_container_paints_like_the_same_container_on_its_own() {
+    // Placed in a column of another container, the box and the lines of each
+    // of its own columns are where they are without the outer container.
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for direction in ["", "direction:rtl;"] {
+        for text in [
+            "A B C D E F G H I J K L".to_string(),
+            format!("A{red}<br>B<br>{blue}C<br>D<br>E<br>F"),
+        ] {
+            let inner = format!(
+                "<div style='{direction}border:3px solid red;padding:2px;column-count:2;column-gap:10px;background:green;width:80px;box-sizing:border-box'>{text}</div>"
+            );
+            for outer in ["", "height:120px;"] {
+                compare_bodies(
+                    &format!(
+                        "<div style='width:170px;{outer}column-count:2;column-gap:10px;column-fill:auto'>{inner}</div>"
+                    ),
+                    &inner,
+                    "",
+                );
+            }
+        }
+    }
+}

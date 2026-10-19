@@ -189,10 +189,13 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         padding: [0.0; 4],
         width: Some(100.0),
         height: None,
+        width_keyword: None,
+        height_keyword: None,
         text_color: CssColor::BLACK,
         text_shadows: Vec::new(),
         overflow: OverflowXY::both(OverflowValue::Visible),
         overflow_clip_margin: raikiri_style::resolve::ComputedOverflowClipMargin::INITIAL,
+        z_index: 0,
         text_style: text_style(16.0, &[]),
         alignment: StandaloneAlign::Start,
         vertical_align: MarginTextVerticalAlign::Top,
@@ -293,7 +296,7 @@ fn vertical_margin_box_intrinsics_use_physical_axes() {
     spec.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
     spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
     assert_eq!(margin_box_text_width(&doc, &spec, None), 20.0);
-    assert_eq!(margin_box_intrinsic_height(&doc, &spec, 40.0), 30.0);
+    assert_eq!(edge_max_size(&doc, &spec, Axis::Vertical, 40.0), 30.0);
 }
 
 #[test]
@@ -749,6 +752,7 @@ fn margin_box_text_is_debuggable_and_borders_clamp_to_the_box() {
 
 mod fixed_dimension_tests;
 mod layout_tests;
+mod paint_order_tests;
 
 #[test]
 fn a_deferred_page_count_marks_its_placeholder() {
@@ -805,6 +809,51 @@ fn a_deferred_page_count_marks_its_placeholder() {
             glyph.slot
         );
     }
+}
+
+#[test]
+fn a_deferred_placeholder_that_ends_the_text_with_a_line_feed_keeps_its_range() {
+    // The line feed that ends text is not a line of its own, but this one
+    // belongs to the placeholder, which the slot's range has to keep covering.
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style feed { system: cyclic; symbols: '\\A' } \
+         @page { margin: 40px; \
+           @top-left { content: 'p' counter(pages, feed); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 9, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "p\n");
+    assert_eq!(head.deferred[0].range, 1..2);
+
+    // The text is one line, not two, when the box is sized to it: the left
+    // column is shared in the same way as with a plain 'p'.
+    let rects_of = |top: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@counter-style feed {{ system: cyclic; symbols: '\\A' }} \
+             @page {{ margin: 40px; font-family: Ahem; font-size: 10px; \
+               @left-top {{ content: {top}; white-space: pre }} \
+               @left-bottom {{ content: 'c' }} }}"
+        ));
+        page_margin_boxes(
+            &doc,
+            &cascade,
+            &cascade.page,
+            small_page(),
+            MarginBoxPageContext::new(0, 9, false).with_deferred_page_count(),
+        )
+        .iter()
+        .map(|margin_box| (margin_box.slot, margin_box.rect))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(rects_of("'p' counter(pages, feed)"), rects_of("'p'"));
 }
 
 #[test]

@@ -4,6 +4,7 @@ use anyrender::recording::RenderCommand;
 use raikiri_dom::Document;
 use raikiri_style::property::ContentComponent;
 use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
+use raikiri_traits::PaintRect;
 use taffy::Style;
 
 mod gradient_tests;
@@ -991,19 +992,60 @@ fn canvas_fixture(page_css: Option<&str>, body_style: Option<&str>) -> (Document
     (document, cascade)
 }
 
+/// Lay out and paint the margin boxes of a single-page document, as the
+/// page painter does for its first page.
+fn paint_margin_boxes_of_first_page(
+    scene: &mut Scene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let margin_boxes = layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None);
+    paint_page_margin_boxes(
+        &crate::walk::ImageBrushCache::default(),
+        scene,
+        &margin_boxes,
+        page_box,
+        None,
+        warnings,
+    );
+}
+
+/// Paint the page background and the canvas background of one page, which
+/// the page painter separates by the margin boxes behind the canvas.
+fn paint_page_and_canvas_background(
+    scene: &mut Scene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    paint_page_background(
+        &crate::walk::ImageBrushCache::default(),
+        scene,
+        document,
+        cascade,
+        page_box,
+        None,
+        warnings,
+    );
+    paint_canvas_background(
+        &crate::walk::ImageBrushCache::default(),
+        scene,
+        document,
+        cascade,
+        page_box,
+        None,
+        None,
+        warnings,
+    );
+}
+
 fn fill_count(document: &Document, cascade: &CascadeResult) -> usize {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_canvas_background(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        document,
-        cascade,
-        PageBox::A4,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_page_and_canvas_background(&mut scene, document, cascade, PageBox::A4, &mut warnings);
     assert!(warnings.is_empty());
     scene
         .commands
@@ -2373,6 +2415,68 @@ fn background_rounded_corners_clip_url_images() {
             (actual - expected).abs() < 0.001,
             "rounded clip bounds {bounds:?} must match painting area"
         );
+    }
+}
+
+#[test]
+fn background_clipped_to_an_area_the_borders_leave_empty_paints_nothing() {
+    let mut authored = Border::new();
+    authored.width = Length::Px(15.0);
+    authored.style = BorderStyle::Solid;
+    authored.color = BorderColor::Resolved(CssColor::BLACK);
+    let side = resolve_border(
+        authored,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::new(ComputedLength(16.0)),
+    );
+    let border = raikiri_style::property::Sides {
+        top: side,
+        right: side,
+        bottom: side,
+        left: side,
+    };
+    let padding = taffy::Rect {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    };
+    // Borders of 15px leave no padding box in a 20px box.
+    for clip in [
+        raikiri_style::property::VisualBox::PaddingBox,
+        raikiri_style::property::VisualBox::ContentBox,
+    ] {
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            20.0,
+            20.0,
+            0.0,
+            0.0,
+            CssColor {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
+            &[{
+                let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+                layer.clip = clip;
+                layer
+            }],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            BackgroundEnv::default(),
+            None,
+            &mut warnings,
+        );
+        assert_eq!(background_fill_count(&scene), 0);
+        assert!(warnings.is_empty());
     }
 }
 
@@ -4220,19 +4324,7 @@ fn visible_margin_box_overflow_keeps_text_shadow_bounds() {
 
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        page_box,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, page_box, &mut warnings);
     assert!(warnings.is_empty());
     assert!(
         !scene
@@ -4309,19 +4401,7 @@ fn aligned_margin_box_text_shadows_include_positioned_glyphs() {
 
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        page_box,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, page_box, &mut warnings);
     assert!(warnings.is_empty());
 
     let glyph_x = scene
@@ -4662,19 +4742,7 @@ fn a_vertical_margin_box_is_drawn_down_its_column() {
     let cascade = cascade(&doc, &rules).unwrap();
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        PageBox::A4,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, PageBox::A4, &mut warnings);
     assert!(warnings.is_empty());
     let glyphs: Vec<_> = scene
         .commands
@@ -4704,19 +4772,7 @@ fn margin_box_text_shadows_are_drawn_below_the_text() {
     let cascade = cascade(&doc, &rules).unwrap();
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_page_margin_boxes(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &doc,
-        &cascade,
-        PageBox::A4,
-        0,
-        1,
-        false,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_margin_boxes_of_first_page(&mut scene, &doc, &cascade, PageBox::A4, &mut warnings);
     assert!(warnings.is_empty());
     let runs: Vec<_> = scene
         .commands

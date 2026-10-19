@@ -82,7 +82,13 @@ fn parse_dimension(name: &str, raw: &str) -> Option<PropertyValue> {
             {
                 LengthOrAuto::Length(length)
             }
-            PropertyValue::Deferred(_) if parser.expect_exhausted().is_ok() => return Some(value),
+            // A `var()` reference substitutes at computed-value time; a CSS-wide
+            // keyword is not a length and leaves the attribute unspecified.
+            PropertyValue::Deferred(ref marker)
+                if marker.css_wide_keyword().is_none() && parser.expect_exhausted().is_ok() =>
+            {
+                return Some(value);
+            }
             _ => return None,
         }
     };

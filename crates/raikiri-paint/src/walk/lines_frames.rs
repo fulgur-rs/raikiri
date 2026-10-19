@@ -10,66 +10,71 @@ use super::{
 };
 use crate::ifc_text::{HeldLines, IfcPosition};
 use anyrender::PaintScene;
-use kurbo::Affine;
-use raikiri_dom::paint_rules;
+use kurbo::{Affine, Rect};
+use raikiri_dom::{Document, Node, paint_rules};
 use raikiri_traits::NodeKind;
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Paint the lines of the paragraph of an anonymous table cell.
     pub(super) fn anonymous_paragraph(&mut self, paragraph: AnonymousParagraphFrame<'w>) {
-        let AnonymousParagraphFrame {
-            key,
-            cell,
-            x,
-            y,
-            shift_y,
-            transform_x,
-            transform_y,
-            paint_offset_y,
-            fragmentainer,
-            inside_fixed,
-            decorations,
-            fixed_viewport,
-            defer: _,
-        } = paragraph;
-        let (document, cascade) = (self.document, self.cascade);
-        let layout = cell.unrounded_layout;
-        let probe = cell
-            .ifc_lines()
-            .and_then(|lines| {
-                lines
-                    .iter()
-                    .flat_map(|line| line.fragments())
-                    .find_map(|fragment| {
-                        let shodo::Fragment::GlyphRun(run) = fragment else {
-                            return None;
-                        };
-                        let owner = run.node()?.0 as usize;
-                        document
-                            .get_node(owner)
-                            .filter(|node| node.kind() == NodeKind::Text)
-                            .map(|_| owner)
-                    })
-            })
-            .unwrap_or(document.ifc_source_owner(key));
-        if !paint_rules::named_page_matches(document, cascade, probe, self.active_page_name)
-            || (!box_intersects_page(
-                y,
-                ifc_paint_extent(cell, &layout),
-                self.geometry.page_top,
-                self.geometry.page_bottom,
-            ) && !inside_fixed)
-        {
+        if !self.anonymous_paragraph_is_on_page(&paragraph) {
             return;
         }
-        let clip = self
-            .geometry
-            .text_page_clip(cascade, self.page_box, inside_fixed);
+        let clip =
+            self.geometry
+                .text_page_clip(self.cascade, self.page_box, paragraph.inside_fixed);
         if let Some(clip) = &clip {
             self.scene
                 .scene
                 .push_clip_layer(self.geometry.page_clip_transform, clip);
         }
+        self.paint_anonymous_cell_border(&paragraph);
+        self.trace_anonymous_paragraph(&paragraph);
+        self.draw_anonymous_lines(&paragraph);
+        if clip.is_some() {
+            self.scene.pop_layer();
+        }
+    }
+
+    /// Whether the paragraph of an anonymous table cell paints on the page:
+    /// its page name matches the active one, and its box meets the page or
+    /// sits inside a fixed box.
+    fn anonymous_paragraph_is_on_page(&self, paragraph: &AnonymousParagraphFrame<'w>) -> bool {
+        let AnonymousParagraphFrame {
+            key,
+            cell,
+            y,
+            inside_fixed,
+            ..
+        } = *paragraph;
+        let (document, cascade) = (self.document, self.cascade);
+        let layout = cell.unrounded_layout;
+        let probe = page_name_probe(document, cell, key);
+        paint_rules::named_page_matches(document, cascade, probe, self.active_page_name)
+            && (box_intersects_page(
+                y,
+                ifc_paint_extent(cell, &layout),
+                self.geometry.page_top,
+                self.geometry.page_bottom,
+            ) || inside_fixed)
+    }
+
+    /// Paint the collapsed border of an anonymous table cell that has one,
+    /// unless its owner hides its box or the cell is off the band of the
+    /// page.
+    fn paint_anonymous_cell_border(&mut self, paragraph: &AnonymousParagraphFrame<'w>) {
+        let AnonymousParagraphFrame {
+            key,
+            cell,
+            x,
+            y,
+            transform_x,
+            transform_y,
+            inside_fixed,
+            ..
+        } = *paragraph;
+        let (document, cascade) = (self.document, self.cascade);
+        let layout = cell.unrounded_layout;
         let owner = document.ifc_source_owner(key);
         let cell_on_band = inside_fixed
             || self.geometry.flow_band.is_none_or(|band| {
@@ -97,18 +102,48 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cascade.computed[owner].color,
             );
         }
+    }
+
+    /// Record that the paragraph of an anonymous table cell paints text, when
+    /// the paint is traced and at least one of its lines has a run.
+    fn trace_anonymous_paragraph(&mut self, paragraph: &AnonymousParagraphFrame<'w>) {
+        let AnonymousParagraphFrame {
+            key, fragmentainer, ..
+        } = *paragraph;
+        let (document, cascade) = (self.document, self.cascade);
         if let Some(events) = self.trace.as_deref_mut()
             && raikiri_dom::PositionedLines::new(document, cascade, key, fragmentainer)
                 .is_some_and(|lines| lines.lines().any(|line| !line.runs.is_empty()))
         {
             events.push(crate::PaintTraceEvent::Text(document.ifc_source_owner(key)));
         }
+    }
+
+    /// Draw the lines of the paragraph of an anonymous table cell inside its
+    /// content box.
+    fn draw_anonymous_lines(&mut self, paragraph: &AnonymousParagraphFrame<'w>) {
+        let AnonymousParagraphFrame {
+            key,
+            cell,
+            x,
+            y,
+            shift_y,
+            transform_x,
+            transform_y,
+            paint_offset_y,
+            fragmentainer,
+            inside_fixed,
+            ref decorations,
+            fixed_viewport,
+            ..
+        } = *paragraph;
+        let layout = cell.unrounded_layout;
         let paint_transform = self.scene.transform;
         crate::ifc_text::draw_ifc_lines_with_resources(
             self.image_cache,
             self.scene,
-            document,
-            cascade,
+            self.document,
+            self.cascade,
             key,
             IfcPosition {
                 x: x + self.geometry.page_offset_x
@@ -121,7 +156,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     + layout.padding.top,
                 shift_y,
             },
-            &decorations,
+            decorations,
             fragmentainer,
             self.custom_highlights,
             self.pixel_source,
@@ -134,9 +169,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_transform,
             fixed_viewport,
         );
-        if clip.is_some() {
-            self.scene.pop_layer();
-        }
     }
 
     /// Paint the lines of a paragraph, hold them for the boxes laid out beside
@@ -147,28 +179,56 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             inside_fixed,
             paint_transform,
             hold,
-            boxes_in_groups,
             ..
         } = frame;
-        let (document, cascade) = (self.document, self.cascade);
-        let early_start = self
-            .early_boxes
-            .iter()
-            .rposition(|&(root, _, _)| root != node_id)
-            .map_or(0, |index| index + 1);
-        let early: Vec<_> = self.early_boxes.drain(early_start..).collect();
+        let early = self.take_early_boxes(node_id);
         // Lines that are not held but have blocks inside them paint
         // around those blocks, which the clip of the lines does not
         // cover.
         let around_blocks = !hold && !early.is_empty();
         let text_clip = self
             .geometry
-            .text_page_clip(cascade, self.page_box, inside_fixed);
-        if let Some(clip) = text_clip.as_ref().filter(|_| !around_blocks) {
+            .text_page_clip(self.cascade, self.page_box, inside_fixed);
+        // The lines of a paragraph with blocks inside them are clipped one
+        // part at a time.
+        let clipped = text_clip.is_some() && !around_blocks;
+        if let Some(clip) = text_clip.as_ref().filter(|_| clipped) {
             self.scene
                 .scene
                 .push_clip_layer(self.geometry.page_clip_transform, clip);
         }
+        self.trace_lines_text(node_id);
+        let saved_transform = self.scene.transform;
+        self.scene.transform = paint_transform;
+        if hold {
+            self.hold_lines(&frame, early);
+        } else if around_blocks {
+            self.paint_lines_around_blocks(&frame, early, text_clip);
+        } else {
+            self.finish_lines_in_place(&frame, text_clip);
+        }
+        self.scene.transform = saved_transform;
+        if clipped {
+            self.scene.pop_layer();
+        }
+    }
+
+    /// Take the boxes recorded before the lines of the paragraph `node_id`,
+    /// which place them.
+    fn take_early_boxes(&mut self, node_id: usize) -> Vec<(usize, usize, anyrender::Scene)> {
+        let early_start = self
+            .early_boxes
+            .iter()
+            .rposition(|&(root, _, _)| root != node_id)
+            .map_or(0, |index| index + 1);
+        self.early_boxes.drain(early_start..).collect()
+    }
+
+    /// Record that the paragraph `node_id` paints text, when the paint is
+    /// traced and some of the text is not left to the end of the layer. The
+    /// paragraph is no longer one whose text was traced below its blocks.
+    fn trace_lines_text(&mut self, node_id: usize) {
+        let (document, cascade) = (self.document, self.cascade);
         // A paragraph whose lines carry no visible text (only
         // atomic inlines and whitespace) is not traced as text,
         // as its whitespace-only text nodes have no fragments. The
@@ -189,82 +249,96 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         {
             t.push(crate::PaintTraceEvent::Text(node_id));
         }
-        let saved_transform = self.scene.transform;
-        self.scene.transform = paint_transform;
-        if hold {
-            let lines = self.record_lines(&frame);
-            match lines {
-                Some(mut lines) if boxes_in_groups || lines.has_groups() => {
-                    for (_, id, content) in early {
-                        if paint_rules::paints_before_paragraph_lines(
-                            document, cascade, node_id, id,
-                        ) {
-                            lines.place_block(content);
-                        } else {
-                            lines.place_box(id, content);
-                        }
+    }
+
+    /// Hold the lines of the paragraph of `frame` for the boxes laid out
+    /// beside them when it has groups to keep open, and paint them in place
+    /// otherwise. `early` are the boxes recorded before the lines.
+    fn hold_lines(&mut self, frame: &LinesFrame, early: Vec<(usize, usize, anyrender::Scene)>) {
+        let (document, cascade) = (self.document, self.cascade);
+        let node_id = frame.node_id;
+        let lines = self.record_lines(frame);
+        match lines {
+            Some(mut lines) if frame.boxes_in_groups || lines.has_groups() => {
+                for (_, id, content) in early {
+                    if paint_rules::paints_before_paragraph_lines(document, cascade, node_id, id) {
+                        lines.place_block(content);
+                    } else {
+                        lines.place_box(id, content);
                     }
-                    self.held_lines.push(lines);
                 }
-                // Without groups the boxes paint in place: the early
-                // ones below the lines, the others after them.
-                lines => {
-                    for (_, _, content) in early {
-                        self.scene.scene.append_scene(content, Affine::IDENTITY);
-                    }
-                    if let Some(lines) = lines {
-                        lines.finish(self.scene);
-                    }
+                self.held_lines.push(lines);
+            }
+            // Without groups the boxes paint in place: the early
+            // ones below the lines, the others after them.
+            lines => {
+                for (_, _, content) in early {
+                    self.scene.scene.append_scene(content, Affine::IDENTITY);
+                }
+                if let Some(lines) = lines {
+                    lines.finish(self.scene);
                 }
             }
-        } else if around_blocks {
-            // The content positioned below the blocks paints first,
-            // then the blocks, then the rest of the lines (CSS 2.1
-            // Appendix E steps 3, 4 and 7).
-            let (below, _, above, left) = self
-                .record_lines(&frame)
-                .map(|lines| lines.finish_leaving_groups(leaves_groups(&self.deferral_scopes)))
-                .unwrap_or_default();
-            leave_groups(
-                document,
-                &mut self.deferral_scopes,
-                &mut self.left_groups,
-                node_id,
-                left,
-                text_clip.map(|clip| (self.geometry.page_clip_transform, clip)),
-            );
-            for (content, blocks) in [(below, early), (above, Vec::new())] {
-                if let Some(clip) = &text_clip {
-                    self.scene
-                        .scene
-                        .push_clip_layer(self.geometry.page_clip_transform, clip);
-                }
-                self.scene.append_scene(content, Affine::IDENTITY);
-                if text_clip.is_some() {
-                    self.scene.pop_layer();
-                }
-                for (_, _, block) in blocks {
-                    self.scene.scene.append_scene(block, Affine::IDENTITY);
-                }
+        }
+    }
+
+    /// Paint the lines of the paragraph of `frame` around the blocks `early`
+    /// inside it. `text_clip` is the clip of its lines, if any.
+    fn paint_lines_around_blocks(
+        &mut self,
+        frame: &LinesFrame,
+        early: Vec<(usize, usize, anyrender::Scene)>,
+        text_clip: Option<Rect>,
+    ) {
+        // The content positioned below the blocks paints first,
+        // then the blocks, then the rest of the lines (CSS 2.1
+        // Appendix E steps 3, 4 and 7).
+        let (below, _, above, left) = self
+            .record_lines(frame)
+            .map(|lines| lines.finish_leaving_groups(leaves_groups(&self.deferral_scopes)))
+            .unwrap_or_default();
+        leave_groups(
+            self.document,
+            &mut self.deferral_scopes,
+            &mut self.left_groups,
+            frame.node_id,
+            left,
+            text_clip.map(|clip| (self.geometry.page_clip_transform, clip)),
+        );
+        for (content, blocks) in [(below, early), (above, Vec::new())] {
+            if let Some(clip) = &text_clip {
+                self.scene
+                    .scene
+                    .push_clip_layer(self.geometry.page_clip_transform, clip);
             }
-        } else if let Some(lines) = self.record_lines(&frame) {
+            self.scene.append_scene(content, Affine::IDENTITY);
+            if text_clip.is_some() {
+                self.scene.pop_layer();
+            }
+            for (_, _, block) in blocks {
+                self.scene.scene.append_scene(block, Affine::IDENTITY);
+            }
+        }
+    }
+
+    /// Paint the lines of the paragraph of `frame`, which holds no block of
+    /// its own, leaving their groups to the end of the layer when it allows.
+    /// `text_clip` is the clip of its lines, if any.
+    fn finish_lines_in_place(&mut self, frame: &LinesFrame, text_clip: Option<Rect>) {
+        if let Some(lines) = self.record_lines(frame) {
             if leaves_groups(&self.deferral_scopes) {
                 let left = finish_lines_leaving_groups(self.scene, lines);
                 leave_groups(
-                    document,
+                    self.document,
                     &mut self.deferral_scopes,
                     &mut self.left_groups,
-                    node_id,
+                    frame.node_id,
                     left,
                     text_clip.map(|clip| (self.geometry.page_clip_transform, clip)),
                 );
             } else {
                 lines.finish(self.scene);
             }
-        }
-        self.scene.transform = saved_transform;
-        if text_clip.is_some() && !around_blocks {
-            self.scene.pop_layer();
         }
     }
 
@@ -295,4 +369,28 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             frame.fixed_viewport,
         )
     }
+}
+
+/// The node whose page name decides whether the paragraph `key` of the
+/// anonymous table cell `cell` paints on the active page: the owner of its
+/// first glyph run that sits in a text node, or the source owner of the
+/// paragraph when it has none.
+fn page_name_probe(document: &Document, cell: &Node, key: usize) -> usize {
+    cell.ifc_lines()
+        .and_then(|lines| {
+            lines
+                .iter()
+                .flat_map(|line| line.fragments())
+                .find_map(|fragment| {
+                    let shodo::Fragment::GlyphRun(run) = fragment else {
+                        return None;
+                    };
+                    let owner = run.node()?.0 as usize;
+                    document
+                        .get_node(owner)
+                        .filter(|node| node.kind() == NodeKind::Text)
+                        .map(|_| owner)
+                })
+        })
+        .unwrap_or(document.ifc_source_owner(key))
 }

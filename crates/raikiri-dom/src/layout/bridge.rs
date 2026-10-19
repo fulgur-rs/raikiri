@@ -1,6 +1,7 @@
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::node::{FormattingContext, Node};
+use crate::taffy_impl::content_limits::ContentLimits;
 use raikiri_style::property::{BoxDecorationBreak, ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 
@@ -265,11 +266,15 @@ fn apply_computed_to_style_in_session_inner(
             });
         doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial)
             || super::fixed::has_applied_transform(doc, idx, cv);
+        doc.nodes[idx].paints_background_color = cv.background_color.a > 0;
         doc.nodes[idx].clones_box_decorations =
             cv.box_decoration_break == BoxDecorationBreak::Clone;
+        doc.nodes[idx].claims_absolute_oof =
+            super::fixed::establishes_absolute_containing_block(doc, idx, cv);
+        doc.nodes[idx].claims_fixed_oof =
+            super::fixed::establishes_fixed_containing_block(doc, idx, cv);
         doc.nodes[idx].contains_absolute_boxes =
-            super::fixed::establishes_absolute_containing_block(doc, idx, cv)
-                && !super::fixed::establishes_fixed_containing_block(doc, idx, cv);
+            doc.nodes[idx].claims_absolute_oof && !doc.nodes[idx].claims_fixed_oof;
         doc.nodes[idx].fixed_position = cv.position == PositionValue::Fixed;
         bridge_size(doc, idx, cv);
         // Replaced elements keep their natural size where an auto width or
@@ -387,6 +392,8 @@ fn apply_computed_to_style_in_session_inner(
             &mut calc_values,
             &mut doc.context.layout_warnings,
         );
+        doc.nodes[idx].content_limits =
+            bridge_content_limits(cv, &mut calc_values, &mut doc.context.layout_warnings);
         bridge_border(&mut style, cv, &mut doc.context.layout_warnings);
         bridge_box_sizing(&mut style, cv);
         bridge_flex(
@@ -481,6 +488,12 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .aspect_ratio = None;
+        }
+        if is_stretched_by_keyword_width(doc, cascade, idx) {
+            doc.layout_node_with_style_mut(idx)
+                .unwrap()
+                .style
+                .align_self = Some(TaffyAlignItems::FLEX_START);
         }
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
@@ -670,8 +683,10 @@ fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes
 /// The computed values the layout of element `idx` reads: `vertical_sized` when
 /// a vertical box takes its sizes from its logical properties, else the
 /// cascade's own. A `max-content` or `fit-content` size a box is not sized by
-/// (see [`sized_by_content_keyword`]) is `auto` here. A vertical box takes its
-/// inline size from `height`.
+/// (see [`sized_by_content_keyword`]) is `auto` here, and so is a `min-*` or
+/// `max-*` size that is a sizing keyword the box does not honor (see
+/// [`honors_content_limits`]). A vertical box takes its inline size from
+/// `height`.
 fn layout_values<'a>(
     doc: &Document,
     cascade: &'a CascadeResult,
@@ -689,17 +704,142 @@ fn layout_values<'a>(
     };
     let width = content_keyword(cv.width);
     let height = vertical_sized.is_some() && content_keyword(cv.height);
-    if !(width || height) || sized_by_content_keyword(doc, cascade, idx, cv) {
+    let limited = [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
+        .into_iter()
+        .any(is_sizing_keyword);
+    let ignore_logical_min_block = cv.min_block_size.is_some_and(is_sizing_keyword)
+        && (is_supported_flex_grid_item(doc, cascade, idx, cv)
+            || is_supported_flex_grid_container(doc, idx, cv));
+    let plain_sizes = (width || height) && !sized_by_content_keyword(doc, cascade, idx, cv);
+    let plain_limits = limited && !honors_content_limits(doc, cascade, idx, cv);
+    if !(plain_sizes || plain_limits || ignore_logical_min_block) {
         return std::borrow::Cow::Borrowed(cv);
     }
     let mut plain = cv.clone();
-    if width {
+    if plain_sizes && width {
         plain.width = ComputedLengthPercentageOrAuto::Auto;
     }
-    if height {
+    if plain_sizes && height {
         plain.height = ComputedLengthPercentageOrAuto::Auto;
     }
+    if plain_limits {
+        for size in [
+            &mut plain.min_width,
+            &mut plain.max_width,
+            &mut plain.min_height,
+            &mut plain.max_height,
+        ] {
+            if is_sizing_keyword(*size) {
+                *size = ComputedLengthPercentageOrAuto::Auto;
+            }
+        }
+    }
+    if ignore_logical_min_block {
+        // Supported flex/grid boxes use horizontal writing modes, so the
+        // computed logical block minimum occupies the physical min-height.
+        // Ignore it without dropping unrelated physical width constraints.
+        plain.min_height = ComputedLengthPercentageOrAuto::Auto;
+    }
     std::borrow::Cow::Owned(plain)
+}
+
+/// Whether `size` is one of the intrinsic sizing keywords.
+fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
+    matches!(
+        size,
+        ComputedLengthPercentageOrAuto::MinContent
+            | ComputedLengthPercentageOrAuto::MaxContent
+            | ComputedLengthPercentageOrAuto::FitContent
+            | ComputedLengthPercentageOrAuto::FitContentOf(_)
+    )
+}
+
+/// Whether element `idx`, whose computed values are `cv`, uses an intrinsic
+/// sizing keyword in `min-width`, `max-width`, `min-height` or `max-height`
+/// (CSS Sizing 3 §4 and §5).
+///
+/// A normal-flow block, float, and inline-block use these constraints when
+/// their sizing algorithms clamp their used sizes. An absolutely positioned
+/// box also uses them; its constraints are resolved before Taffy reads its
+/// insets and sizes. A flex/grid item uses them because its parent algorithm
+/// reads the item's min/max constraints before laying it out. Other boxes size
+/// themselves as if there were no such minimum or maximum:
+/// - a box in a multicol flow is fragmented across the columns, so its
+///   automatic height is not the height of one fragment;
+/// - table containers and items, replaced items, and inline-level boxes
+///   other than inline-blocks measure themselves by algorithms of their own;
+/// - a vertical box swaps the axes a keyword refers to.
+fn honors_content_limits(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    cv: &ComputedValues,
+) -> bool {
+    if is_supported_flex_grid_item(doc, cascade, idx, cv) {
+        return true;
+    }
+    if is_supported_flex_grid_container(doc, idx, cv) {
+        return true;
+    }
+    let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+    let block_sized = matches!(
+        cv.display,
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    );
+    let non_block_sized = cv.display == DisplayValue::InlineBlock || cv.float != FloatValue::None;
+    let table = matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable);
+    if table
+        || (!block_sized && !non_block_sized && !out_of_flow)
+        || cv.multicol_flow
+        || lays_out_vertically(cascade, idx)
+        || !sized_by_content_keyword(doc, cascade, idx, cv)
+    {
+        return false;
+    }
+    out_of_flow || !is_flex_or_grid_item(doc, cascade, idx)
+}
+
+/// Whether `idx` is an in-flow flex/grid container whose own intrinsic min/max
+/// constraints this bridge can preserve.
+fn is_supported_flex_grid_container(doc: &Document, idx: usize, cv: &ComputedValues) -> bool {
+    cv.display.is_flex_or_grid_container()
+        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        && cv.float == FloatValue::None
+        && !cv.multicol_flow
+        && !uses_vertical_writing_mode(cv)
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+}
+
+/// Whether `idx` participates as a flex/grid item whose intrinsic min/max
+/// constraints this bridge can preserve. Other item types remain on their
+/// existing size paths.
+fn is_supported_flex_grid_item(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+    cv: &ComputedValues,
+) -> bool {
+    !matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+        && !matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable)
+        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        && !cv.multicol_flow
+        && !uses_vertical_writing_mode(cv)
+        && !crate::paint_rules::is_replaced_element(doc, idx)
+        && layout_container(doc, cascade, idx).is_some_and(|container| {
+            cascade.computed[container]
+                .display
+                .is_flex_or_grid_container()
+        })
+}
+
+fn uses_vertical_writing_mode(cv: &ComputedValues) -> bool {
+    matches!(
+        cv.cssom_writing_mode,
+        WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr
+    )
 }
 
 /// Whether the width of element `idx` is a sizing keyword its layout sizes the
@@ -726,14 +866,17 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// Whether the layout of element `idx`, whose computed values are `cv`, sizes
 /// it by a `max-content` or `fit-content` size (CSS Sizing 3 §3.1.1).
 ///
-/// A box in a block formatting context and an absolutely positioned box are;
-/// so are flex, grid and table containers the block algorithm measures. The
-/// others keep sizing themselves as if the size were `auto`:
+/// A box in a block formatting context, an absolutely positioned box and a flex
+/// or grid item are; so are flex, grid and table containers the block algorithm
+/// measures. The others keep sizing themselves as if the size were `auto`:
 /// - a replaced element takes its natural size, and an `auto` size is what
 ///   transfers its aspect ratio;
 /// - a multicol container has no intrinsic inline size yet;
-/// - a flex or grid item is sized by the Taffy algorithm, which reads such a
-///   keyword as `auto` yet no longer stretches the item.
+/// - a vertical flex or grid item takes its inline size from the height, which
+///   the container's algorithm sizes along its physical axes;
+/// - a flex or grid item with a `min-width` or `max-width` is measured by Taffy
+///   at the keyword size before that size is clamped, so the lines of its
+///   content break at a width the box does not keep.
 fn sized_by_content_keyword(
     doc: &Document,
     cascade: &CascadeResult,
@@ -748,11 +891,39 @@ fn sized_by_content_keyword(
     if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
         return true;
     }
-    // A `display: contents` ancestor has no box: its parent is the container.
-    let container = std::iter::successors(doc.parent_of(idx), |&id| doc.parent_of(id))
-        .map(|id| cascade.computed[id].display)
-        .find(|display| *display != DisplayValue::Contents);
-    !container.is_some_and(|display| display.is_flex_or_grid_container())
+    // Only a `min-width` that is not `auto` or zero clamps the keyword.
+    let unclamped = matches!(cv.max_width, ComputedLengthPercentageOrAuto::Auto)
+        && (matches!(cv.min_width, ComputedLengthPercentageOrAuto::Auto)
+            || is_zero_length(cv.min_width));
+    !is_flex_or_grid_item(doc, cascade, idx) || (unclamped && !lays_out_vertically(cascade, idx))
+}
+
+/// Whether `size` is zero whatever it refers to: a zero length, a zero
+/// percentage, or a `calc()` whose terms are both zero.
+fn is_zero_length(size: ComputedLengthPercentageOrAuto) -> bool {
+    match size {
+        ComputedLengthPercentageOrAuto::Px(px) => matches!(px, 0.0),
+        ComputedLengthPercentageOrAuto::Percent(percent) => matches!(percent, 0.0),
+        ComputedLengthPercentageOrAuto::Calc(calc) => {
+            matches!((calc.percent, calc.px), (0.0, 0.0))
+        }
+        _ => false,
+    }
+}
+
+/// Whether the box of element `idx` is an item of a flex or grid container:
+/// the element that contains it lays its boxes out by the flex or grid
+/// algorithm.
+fn is_flex_or_grid_item(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    layout_container(doc, cascade, idx)
+        .is_some_and(|id| cascade.computed[id].display.is_flex_or_grid_container())
+}
+
+/// The element whose box contains the box of element `idx`: its nearest
+/// ancestor that is not `display: contents`, which has no box of its own.
+fn layout_container(doc: &Document, cascade: &CascadeResult, idx: usize) -> Option<usize> {
+    std::iter::successors(doc.parent_of(idx), |&id| doc.parent_of(id))
+        .find(|&id| cascade.computed[id].display != DisplayValue::Contents)
 }
 
 /// Whether a box of `display` lays its content out by an algorithm of its
@@ -1007,6 +1178,37 @@ fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues)
         .unwrap()
         .style
         .size = Size { width, height };
+}
+
+/// Whether item `idx` of a column flex container has a `width` that is a sizing
+/// keyword although the container's alignment would stretch it.
+///
+/// Only an `auto` cross size stretches (CSS Flexbox 1 §9.4 step 11). Taffy
+/// settles that when it places the item, yet it measures the item's height at
+/// the stretched width first, so a keyword width that is narrower or wider than
+/// the container leaves the height of another line count. Aligning the item at
+/// the start of the cross axis measures it at its own width. Taffy places a
+/// stretched item that it does not stretch exactly like a `flex-start` one, so
+/// nothing else moves.
+fn is_stretched_by_keyword_width(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> bool {
+    use taffy::AlignItemsKeyword;
+    let style = &doc.layout_node_with_style(idx).unwrap().style;
+    if !style.size.width.is_sizing_keyword()
+        || style.size.width.is_stretch()
+        || lays_out_vertically(cascade, idx)
+    {
+        return false;
+    }
+    doc.column_flex_container_of(idx).is_some_and(|container| {
+        matches!(
+            style.align_self.unwrap_or(container.align_items).keyword,
+            AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+        )
+    })
 }
 
 /// Whether in-flow replaced grid item `idx` with auto width and height is
@@ -1935,6 +2137,33 @@ pub(crate) fn computed_length_percentage_to_taffy_length_percentage(
     }
 }
 
+/// The `min-*` and `max-*` sizes of `cv` that are intrinsic sizing keywords
+/// as the keyword [`Dimension`]s of the `width` bridge, which Taffy's min and
+/// max size cannot hold ([`bridge_min_max_size`] leaves them `auto`).
+fn bridge_content_limits(
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    diag: &mut Vec<LayoutWarn>,
+) -> ContentLimits {
+    let mut keyword = |size, site| {
+        if is_sizing_keyword(size) {
+            computed_length_percentage_or_auto_to_taffy_dimension(calc_values, size, site, diag)
+        } else {
+            Dimension::auto()
+        }
+    };
+    ContentLimits {
+        min: Size {
+            width: keyword(cv.min_width, "min-width"),
+            height: keyword(cv.min_height, "min-height"),
+        },
+        max: Size {
+            width: keyword(cv.max_width, "max-width"),
+            height: keyword(cv.max_height, "max-height"),
+        },
+    }
+}
+
 /// [`ComputedLengthPercentageOrAuto`] → [`taffy::Dimension`] bridge
 /// (for width / height).
 ///
@@ -2006,8 +2235,9 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
         ComputedLengthPercentageOrAuto::Percent(p) => {
             LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
         }
-        // Min/max sizes never parse the sizing keywords yet; treat them as no
-        // constraint.
+        // Taffy's min and max sizes cannot hold a sizing keyword; layout
+        // resolves the keyword from the box's content limits instead, so
+        // Taffy sees no constraint.
         ComputedLengthPercentageOrAuto::Auto
         | ComputedLengthPercentageOrAuto::MinContent
         | ComputedLengthPercentageOrAuto::MaxContent

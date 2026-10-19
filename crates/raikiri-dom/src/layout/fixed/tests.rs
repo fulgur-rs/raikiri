@@ -458,6 +458,19 @@ fn a_right_to_left_static_position_keeps_the_right_edge() {
 }
 
 #[test]
+fn right_to_left_overconstrained_auto_margins_honor_the_right_inset() {
+    let (doc, fixed) = laid_out_in(
+        "direction:rtl",
+        "",
+        "",
+        "position:fixed;left:500px;right:400px;top:0;width:100px;height:10px;margin:auto",
+    );
+    // The horizontal insets exceed the page width by 200px. In RTL the
+    // right inset wins, so the box starts at 800 - 400 - 100 = 300px.
+    assert_eq!(absolute_rect(&doc, fixed), (300.0, 0.0, 100.0, 10.0));
+}
+
+#[test]
 fn a_transformed_body_contains_fixed_boxes() {
     let (doc, fixed) = laid_out_in(
         "transform:translateX(1px)",
@@ -539,61 +552,6 @@ fn absolute_boxes_are_placed_against_a_positioned_ancestor_other_than_the_parent
 }
 
 #[test]
-fn shared_selection_preserves_a_positioned_immediate_parent_target() {
-    let (doc, abs) = laid_out(
-        "",
-        "position:relative;height:40px",
-        "position:absolute;left:3px;top:4px;width:10px;height:10px",
-    );
-    let parent = doc.parent_of(abs).expect("the absolute box has a parent");
-    assert_eq!(doc.taffy_parent_of(abs), Some(parent));
-
-    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
-    let (absolute, fixed) =
-        crate::layout::oof_containing_block::select_descendant_containing_blocks(
-            &doc,
-            parent,
-            &cascade.computed[parent],
-            crate::layout::oof_containing_block::ContainingBlockSelection::Page,
-            crate::layout::oof_containing_block::ContainingBlockSelection::Page,
-        );
-
-    assert_eq!(
-        absolute,
-        crate::layout::oof_containing_block::ContainingBlockSelection::Box { id: parent }
-    );
-    assert_eq!(
-        fixed,
-        crate::layout::oof_containing_block::ContainingBlockSelection::Page
-    );
-}
-
-#[test]
-fn shared_root_selection_keeps_an_absolute_ancestor_outside_the_root() {
-    let (doc, abs) = laid_out_in(
-        "",
-        "position:relative",
-        "",
-        "position:absolute;left:3px;top:4px;width:10px;height:10px",
-    );
-    let root = doc.parent_of(abs).expect("the absolute box has a root");
-    let outer = doc.parent_of(root).expect("the root has an outer ancestor");
-    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
-
-    assert_eq!(
-        crate::layout::oof_containing_block::select_root_containing_blocks(&doc, &cascade, root),
-        (
-            crate::layout::oof_containing_block::ContainingBlockSelection::Kept {
-                reason: crate::layout::oof_containing_block::KeptReason::AncestorOutsideRoot {
-                    id: outer,
-                },
-            },
-            crate::layout::oof_containing_block::ContainingBlockSelection::Page,
-        )
-    );
-}
-
-#[test]
 fn fixed_boxes_are_placed_against_a_transformed_ancestor_other_than_the_parent() {
     let (doc, fixed) = laid_out(
         "transform:translateX(0px);margin-left:30px;width:200px;height:100px;border:2px solid",
@@ -601,6 +559,17 @@ fn fixed_boxes_are_placed_against_a_transformed_ancestor_other_than_the_parent()
         "position:fixed;right:0;bottom:0;width:10px;height:10px",
     );
     assert_eq!(absolute_rect(&doc, fixed), (222.0, 142.0, 10.0, 10.0));
+    let containing_block = doc.parent_of(doc.parent_of(fixed).unwrap()).unwrap();
+    let (fixed_x, fixed_y, _, _) = absolute_rect(&doc, fixed);
+    let (cb_x, cb_y, _, _) = absolute_rect(&doc, containing_block);
+    assert_eq!(
+        doc.nodes[fixed].unrounded_layout.location,
+        taffy::Point {
+            x: fixed_x - cb_x,
+            y: fixed_y - cb_y,
+        },
+        "location must use the containing block as its coordinate owner: {containing_block}"
+    );
 }
 
 #[test]
@@ -850,20 +819,32 @@ fn static_positions_keep_the_flex_alignment_of_the_parent() {
         "position:fixed;width:50%;height:10px",
     );
     assert_eq!(absolute_rect(&doc, fixed), (-100.0, 50.0, 400.0, 10.0));
-    // A distributed alignment falls back to start once the box overflows.
+    // A distributed alignment still centers the overflowing box on the main
+    // axis, where the box is treated as the sole flex item.
     let (doc, fixed) = laid_out(
         "margin-left:100px;width:200px",
         "display:flex;justify-content:space-around",
         "position:fixed;width:50%;height:10px",
     );
-    assert_eq!(absolute_rect(&doc, fixed), (100.0, 50.0, 400.0, 10.0));
-    // So does a safe alignment.
-    let (doc, fixed) = laid_out(
-        "margin-left:100px;width:200px",
-        "display:flex;justify-content:safe center",
-        "position:fixed;width:50%;height:10px",
-    );
-    assert_eq!(absolute_rect(&doc, fixed), (100.0, 50.0, 400.0, 10.0));
+    assert_eq!(absolute_rect(&doc, fixed), (0.0, 50.0, 400.0, 10.0));
+    // So does `space-evenly`, while `space-between` and `stretch` stay at
+    // the start.
+    for (justify, x) in [
+        ("space-evenly", 0.0),
+        ("space-between", 100.0),
+        ("stretch", 100.0),
+    ] {
+        let (doc, fixed) = laid_out(
+            "margin-left:100px;width:200px",
+            &format!("display:flex;justify-content:{justify}"),
+            "position:fixed;width:50%;height:10px",
+        );
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (x, 50.0, 400.0, 10.0),
+            "{justify}"
+        );
+    }
     // The default start alignment keeps the left edge.
     let (doc, fixed) = laid_out(
         "margin-left:100px;width:200px",
@@ -927,132 +908,6 @@ fn laid_out_with_words(fixed_css: &str) -> (Document, usize) {
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     (doc, fixed)
-}
-
-#[test]
-fn sizing_keywords_resolve_against_the_containing_block() {
-    let width = |style: Dimension| match resolve_sizing_keyword(style, 300.0, 800.0) {
-        Some(KeywordSize::Measure(AvailableSpace::Definite(width))) => Some(("measure", width)),
-        Some(KeywordSize::Measure(AvailableSpace::MinContent)) => Some(("min", 0.0)),
-        Some(KeywordSize::Measure(AvailableSpace::MaxContent)) => Some(("max", 0.0)),
-        Some(KeywordSize::Exact(width)) => Some(("exact", width)),
-        None => None,
-    };
-    assert_eq!(width(Dimension::min_content()), Some(("min", 0.0)));
-    assert_eq!(width(Dimension::max_content()), Some(("max", 0.0)));
-    assert_eq!(
-        width(Dimension::fit_content_px(120.0)),
-        Some(("measure", 120.0))
-    );
-    assert_eq!(
-        width(Dimension::fit_content_percent(0.25)),
-        Some(("measure", 200.0))
-    );
-    let mut arena = Vec::new();
-    let calc = crate::taffy_impl::push_calc(
-        &mut arena,
-        raikiri_style::property::CalcLengthPercentage {
-            percent: 25.0,
-            px: -50.0,
-        },
-        true,
-    );
-    // 25% of the 800px basis less 50px.
-    assert_eq!(
-        width(Dimension::fit_content_calc(calc)),
-        Some(("measure", 150.0))
-    );
-    assert_eq!(width(Dimension::fit_content()), Some(("measure", 300.0)));
-    assert_eq!(width(Dimension::stretch()), Some(("exact", 300.0)));
-    assert_eq!(width(Dimension::length(10.0)), None);
-    assert_eq!(width(Dimension::auto()), None);
-}
-
-#[test]
-fn sizing_keywords_measure_the_box_in_each_axis() {
-    let (mut doc, fixed) = laid_out_with_words("position:absolute;left:5px;top:6px;font:10px Ahem");
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
-    let area = Size {
-        width: 800.0,
-        height: 600.0,
-    };
-    let inset = Rect {
-        left: Some(5.0),
-        right: None,
-        top: Some(6.0),
-        bottom: None,
-    };
-    let margin = Rect {
-        left: Some(0.0),
-        right: Some(0.0),
-        top: Some(0.0),
-        bottom: Some(0.0),
-    };
-    let mut resolve = |width: Dimension, height: Dimension, known: Size<Option<f32>>| {
-        let mut known = known;
-        session
-            .layout_node_with_style_mut(fixed)
-            .unwrap()
-            .style
-            .size = Size { width, height };
-        resolve_sizing_keywords(
-            &mut session,
-            fixed,
-            &mut known,
-            Size { width, height },
-            area,
-            inset,
-            margin,
-        );
-        known
-    };
-    // Both axes measured together: the min-content width of one word and
-    // one 10px line per word.
-    assert_eq!(
-        resolve(
-            Dimension::min_content(),
-            Dimension::max_content(),
-            Size::NONE
-        ),
-        Size {
-            width: Some(100.0),
-            height: Some(100.0),
-        }
-    );
-    // `fit-content` measures the box in the 795px stretch size.
-    assert_eq!(
-        resolve(
-            Dimension::fit_content(),
-            Dimension::length(10.0),
-            Size::NONE
-        )
-        .width,
-        Some(795.0)
-    );
-    // A stretched width and a measured height wrap at the stretch size.
-    assert_eq!(
-        resolve(Dimension::stretch(), Dimension::max_content(), Size::NONE),
-        Size {
-            width: Some(795.0),
-            height: Some(20.0),
-        }
-    );
-    assert_eq!(
-        resolve(Dimension::auto(), Dimension::stretch(), Size::NONE),
-        Size {
-            width: None,
-            height: Some(594.0),
-        }
-    );
-    // Known sizes are kept.
-    let known = Size {
-        width: Some(300.0),
-        height: Some(40.0),
-    };
-    assert_eq!(
-        resolve(Dimension::min_content(), Dimension::min_content(), known),
-        known
-    );
 }
 
 #[test]
@@ -1412,4 +1267,43 @@ fn auto_margins_of_absolute_boxes_in_paragraphs_follow_the_axes_of_the_root() {
         "left:50%;right:50%;width:100px;top:0;height:10px;margin:auto",
     );
     assert_eq!(absolute_rect(&doc, abs).0, 0.0);
+}
+
+#[test]
+fn overflowing_absolute_boxes_keep_the_main_axis_alignment_of_a_flex_container() {
+    // The 8x6 box overflows the 4x2 content box at (3, 52), as a sole flex
+    // item centered by `space-around` and `space-evenly`, and at the start
+    // for `space-between` and `stretch`.
+    for (justify, x) in [
+        ("space-between", 3.0),
+        ("space-around", 1.0),
+        ("space-evenly", 1.0),
+        ("stretch", 3.0),
+    ] {
+        let (doc, abspos) = laid_out(
+            "",
+            &format!(
+                "display:flex;width:4px;height:2px;padding:1px 2px;border:1px solid;\
+                 justify-content:{justify}"
+            ),
+            "position:absolute;width:8px;height:6px",
+        );
+        assert_eq!(
+            absolute_rect(&doc, abspos),
+            (x, 52.0, 8.0, 6.0),
+            "{justify}"
+        );
+    }
+    // In a column the main axis is vertical.
+    for (justify, y) in [("space-around", 50.0), ("space-between", 52.0)] {
+        let (doc, abspos) = laid_out(
+            "",
+            &format!(
+                "display:flex;flex-direction:column;width:4px;height:2px;padding:1px 2px;\
+                 border:1px solid;justify-content:{justify}"
+            ),
+            "position:absolute;width:8px;height:6px",
+        );
+        assert_eq!(absolute_rect(&doc, abspos), (3.0, y, 8.0, 6.0), "{justify}");
+    }
 }

@@ -449,8 +449,13 @@ pub fn build_page_scene_for_page_named(
             let child_fixed_cb = inside_fixed_cb
                 || (element_box && raikiri_dom::establishes_fixed_containing_block(dom, idx, cv));
             let layout = node.unrounded_layout;
-            let abs_x = parent_abs_x + layout.location.x;
-            let abs_y = parent_abs_y + layout.location.y;
+            let (abs_x, abs_y) = dom
+                .layout_origin_of(idx)
+                .map(|origin| (origin.x, origin.y))
+                .unwrap_or((
+                    parent_abs_x + layout.location.x,
+                    parent_abs_y + layout.location.y,
+                ));
             // Descendants keep the wrapper origin; only the table's own
             // border box and style snapshot exclude the caption area.
             let border_box = node.table_grid_box().map_or(

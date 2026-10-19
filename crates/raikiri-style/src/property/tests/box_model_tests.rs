@@ -1131,7 +1131,7 @@ fn margin_side_accepts_absolute_unit() {
 fn margin_side_rejects_bogus_ident() {
     // Drop identifiers outside the `<length-percentage> | auto` grammar.
     assert_eq!(parse("fill-available", "margin-top"), None);
-    assert_eq!(parse("initial", "margin-top"), None);
+    assert_eq!(parse("bogus", "margin-top"), None);
 }
 
 #[test]
@@ -2073,10 +2073,14 @@ fn width_and_inline_size_keep_the_min_content_keyword() {
         parse("MIN-CONTENT", "inline-size"),
         Some(PropertyValue::InlineSize(LengthOrAuto::MinContent))
     );
-    // Height and the min/max sizes still fold the keyword into `auto`.
+    // Height and block-size keep it as well.
     assert_eq!(
         parse("min-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::MinContent))
+    );
+    assert_eq!(
+        parse("min-content", "block-size"),
+        Some(PropertyValue::BlockSize(LengthOrAuto::MinContent))
     );
 }
 
@@ -2091,10 +2095,13 @@ fn width_and_inline_size_keep_the_max_content_keyword() {
         parse("MAX-CONTENT", "inline-size"),
         Some(PropertyValue::InlineSize(LengthOrAuto::MaxContent))
     );
-    // Height and the min/max sizes still fold the keyword into `auto`.
     assert_eq!(
         parse("max-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::MaxContent))
+    );
+    assert_eq!(
+        parse("max-content", "block-size"),
+        Some(PropertyValue::BlockSize(LengthOrAuto::MaxContent))
     );
 }
 
@@ -2110,7 +2117,7 @@ fn width_and_inline_size_keep_the_fit_content_keyword() {
     );
     assert_eq!(
         parse("fit-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::FitContent))
     );
 }
 
@@ -2202,6 +2209,66 @@ fn width_drops_a_fit_content_function_with_a_negative_limit() {
             LengthPercentageOrCalc::Length(Length::Px(0.0))
         )))
     );
+}
+
+#[test]
+fn min_and_max_sizes_keep_the_sizing_keywords() {
+    // CSS Sizing 3 §4 and §5: `min-*` is `auto | <box-size>` and `max-*` is
+    // `none | <box-size>`, so the sizing keywords of `width` are values of both.
+    for (property, wrap) in [
+        (
+            "min-width",
+            PropertyValue::MinWidth as fn(LengthOrAuto) -> PropertyValue,
+        ),
+        ("min-height", PropertyValue::MinHeight),
+        ("min-block-size", PropertyValue::MinBlockSize),
+        ("max-width", PropertyValue::MaxWidth),
+        ("max-height", PropertyValue::MaxHeight),
+    ] {
+        assert_eq!(
+            parse("min-content", property),
+            Some(wrap(LengthOrAuto::MinContent)),
+            "{property}"
+        );
+        assert_eq!(
+            parse("MAX-CONTENT", property),
+            Some(wrap(LengthOrAuto::MaxContent)),
+            "{property}"
+        );
+        assert_eq!(
+            parse("Fit-Content", property),
+            Some(wrap(LengthOrAuto::FitContent)),
+            "{property}"
+        );
+        assert_eq!(
+            parse("fit-content(25%)", property),
+            Some(wrap(LengthOrAuto::FitContentOf(
+                LengthPercentageOrCalc::Length(Length::Percent(25.0))
+            ))),
+            "{property}"
+        );
+        // A negative limit leaves the range of `<length-percentage [0,∞]>`.
+        assert_eq!(parse("fit-content(-5px)", property), None, "{property}");
+        assert_eq!(parse("fit-content()", property), None, "{property}");
+    }
+}
+
+#[test]
+fn min_and_max_sizes_keep_their_own_no_constraint_keyword() {
+    // `auto` is the initial minimum size and `none` the initial maximum size;
+    // each is invalid for the other. Both stand for "no constraint".
+    assert_eq!(
+        parse("auto", "min-width"),
+        Some(PropertyValue::MinWidth(LengthOrAuto::Auto))
+    );
+    assert_eq!(
+        parse("none", "max-height"),
+        Some(PropertyValue::MaxHeight(LengthOrAuto::Auto))
+    );
+    assert_eq!(parse("none", "min-width"), None);
+    assert_eq!(parse("auto", "max-width"), None);
+    assert_eq!(parse("auto", "max-height"), None);
+    assert_eq!(parse("none", "min-block-size"), None);
 }
 
 #[test]
@@ -2730,34 +2797,95 @@ fn height_rejects_negative_percentage() {
 }
 
 #[test]
-fn height_rejects_unsupported_sizing_keyword() {
+fn height_keeps_the_sizing_keywords() {
+    let limit = |length| LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(length));
     assert_eq!(
         parse("min-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::MinContent))
     );
     assert_eq!(
-        parse("max-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
-    );
-    assert_eq!(
-        parse("fit-content(50%)", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        parse("MAX-CONTENT", "height"),
+        Some(PropertyValue::Height(LengthOrAuto::MaxContent))
     );
     assert_eq!(
         parse("fit-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::FitContent))
     );
+    assert_eq!(
+        parse("fit-content(50%)", "height"),
+        Some(PropertyValue::Height(limit(Length::Percent(50.0))))
+    );
+    assert_eq!(
+        parse("fit-content(2em)", "block-size"),
+        Some(PropertyValue::BlockSize(limit(Length::Em(2.0))))
+    );
+    // The limit of fit-content() is not negative.
+    assert_eq!(parse("fit-content(-1px)", "height"), None);
 }
 
 #[test]
-fn height_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet; silently drop them.
-    // Canonical reference: the "CSS-wide keyword" section of the PropertyValue doc.
-    assert_eq!(parse("inherit", "height"), None);
-    assert_eq!(parse("initial", "height"), None);
-    assert_eq!(parse("unset", "height"), None);
-    assert_eq!(parse("revert", "height"), None);
-    assert_eq!(parse("revert-layer", "height"), None);
+fn box_properties_retain_css_wide_keywords_for_defaulting() {
+    // Margin, padding, offset and size properties, and the shorthands of the
+    // first three, keep a lone CSS-wide keyword as a deferred marker for the
+    // cascade. The marker carries the property's own key, so a shorthand's is
+    // expanded into its longhands there.
+    for (name, key) in [
+        ("margin", PropertyKey::Margin),
+        ("margin-top", PropertyKey::MarginTop),
+        ("margin-right", PropertyKey::MarginRight),
+        ("margin-bottom", PropertyKey::MarginBottom),
+        ("margin-left", PropertyKey::MarginLeft),
+        ("margin-inline", PropertyKey::MarginInline),
+        ("margin-block", PropertyKey::MarginBlock),
+        ("margin-inline-start", PropertyKey::MarginLeft),
+        ("margin-block-end", PropertyKey::MarginBottom),
+        ("padding", PropertyKey::Padding),
+        ("padding-top", PropertyKey::PaddingTop),
+        ("padding-right", PropertyKey::PaddingRight),
+        ("padding-bottom", PropertyKey::PaddingBottom),
+        ("padding-left", PropertyKey::PaddingLeft),
+        ("padding-inline", PropertyKey::PaddingInline),
+        ("padding-block", PropertyKey::PaddingBlock),
+        ("padding-inline-end", PropertyKey::PaddingRight),
+        ("inset", PropertyKey::Inset),
+        ("inset-inline", PropertyKey::InsetInline),
+        ("inset-block", PropertyKey::InsetBlock),
+        ("inset-block-start", PropertyKey::Top),
+        ("top", PropertyKey::Top),
+        ("right", PropertyKey::Right),
+        ("bottom", PropertyKey::Bottom),
+        ("left", PropertyKey::Left),
+        ("width", PropertyKey::Width),
+        ("height", PropertyKey::Height),
+        ("min-width", PropertyKey::MinWidth),
+        ("min-height", PropertyKey::MinHeight),
+        ("max-width", PropertyKey::MaxWidth),
+        ("max-height", PropertyKey::MaxHeight),
+    ] {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
+                panic!("expected a CSS-wide defaulting marker for `{name}: {keyword}`");
+            };
+            assert_eq!(value.key, key, "{name}: {keyword}");
+            assert_eq!(value.value.as_str(), keyword, "{name}: {keyword}");
+            assert_eq!(
+                value.css_wide_keyword(),
+                CssWideKeyword::from_css_ident(keyword),
+                "{name}: {keyword}"
+            );
+        }
+    }
+}
+
+#[test]
+fn box_properties_still_reject_other_keywords() {
+    // `fill-available` is no CSS-wide keyword, and the logical size
+    // longhands keep dropping the keywords for now.
+    assert_eq!(parse("fill-available", "height"), None);
+    assert_eq!(parse("fill-available", "padding-top"), None);
+    for name in ["inline-size", "block-size", "min-block-size"] {
+        assert_eq!(parse("inherit", name), None, "{name}");
+    }
 }
 
 #[test]

@@ -2899,18 +2899,18 @@ fn positioned_captions_do_not_expand_or_shift_the_table_flow_box() {
                 (0.0, 0.0, 40.0, 20.0)
             );
             assert_eq!(
-                (
-                    caption_box.location.x,
-                    caption_box.location.y,
-                    caption_box.size.width,
-                    caption_box.size.height
-                ),
-                // A fixed caption is placed against the page area: its insets
-                // less the table's offset.
+                (caption_box.size.width, caption_box.size.height),
+                (100.0, 10.0)
+            );
+            let caption_origin = doc
+                .layout_origin_of(caption)
+                .expect("positioned caption has an owner-aware origin");
+            assert_eq!(
+                (caption_origin.x, caption_origin.y),
                 if position == "fixed" {
-                    (52.0, -6.0, 100.0, 10.0)
+                    (60.0, 3.0)
                 } else {
-                    (0.0, 0.0, 100.0, 10.0)
+                    (8.0, 9.0)
                 },
                 "{position}/{side}"
             );

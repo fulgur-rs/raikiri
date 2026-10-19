@@ -18,18 +18,18 @@ use kurbo::{Affine, Arc, BezPath, Point, Rect, Vec2};
 use peniko::color::{
     AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Lab, Lch, LinearSrgb, Oklab, Oklch, Srgb,
 };
-use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
+use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient};
 use raikiri_dom::image_geometry::{
-    DeviceGrid, VisibleArea, background_image_dimensions, background_tiles,
-    border_image_geometry_within, position_offset, rounded_background_tile_size,
+    DeviceGrid, VisibleArea, background_image_dimensions, background_tiles, position_offset,
+    rounded_background_tile_size,
 };
 use raikiri_dom::{CounterSnapshots, Document, StandaloneAlign};
 use raikiri_style::property::{
-    AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor,
-    BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, ConicGradient, CssColor, CssPosition,
-    CssPositionOffset, DisplayValue, Gradient, GradientStopColor, HueInterpolationMethod, Length,
-    LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor, OutlineStyle, PositionValue,
-    PropertyKey, PropertyValue, Sides, TextShadowColor, UnboundedColor, VerticalAlign, VisualBox,
+    AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor, BorderStyle,
+    ConicGradient, CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient,
+    GradientStopColor, HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace,
+    ObjectFit, OutlineColor, OutlineStyle, PositionValue, PropertyKey, PropertyValue, Sides,
+    TextShadowColor, UnboundedColor, VerticalAlign, VisualBox,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -39,26 +39,40 @@ use raikiri_style::{
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
-    PaintRect, RenderWarning, WarningKind,
+    RenderWarning, WarningKind,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
+mod background_image;
+mod border_image;
 mod box_layers;
 mod box_paint;
 mod child_frames;
+mod element_background;
+mod element_border;
 mod element_box;
 mod frames;
 mod gradient;
 mod image_brush;
+mod inline_box;
+mod inline_svg;
 mod lines_frames;
+mod margin_box;
 mod page_geometry;
 mod paint_walk;
 mod visit;
 mod visit_element;
 mod visit_text;
 pub(crate) use image_brush::ImageBrushCache;
+pub(crate) use inline_box::paint_inline_box;
 
+use background_image::ImageLayer;
+use border_image::BorderImage;
+use element_background::ElementBackgroundLayer;
+use element_border::ElementBorder;
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
+use inline_svg::InlineSvg;
+use margin_box::paint_margin_box;
 use page_geometry::PageGeometry;
 use paint_walk::PaintWalk;
 
@@ -77,51 +91,45 @@ pub(crate) fn paint_blank_paper(scene: &mut impl PaintScene, page_box: PageBox) 
     );
 }
 
-/// Canvas background fill site — CSS Backgrounds 3 §2.11 canvas propagation.
+/// Fill a rectangle with a flat color.
+fn fill_rect(scene: &mut impl PaintScene, color: peniko::Color, rect: kurbo::Rect) {
+    scene.fill(
+        peniko::Fill::NonZero,
+        kurbo::Affine::IDENTITY,
+        color,
+        None,
+        &rect,
+    );
+}
+
+/// The paper as a rectangle in page coordinates.
+fn paper_rect(page_box: PageBox) -> kurbo::Rect {
+    kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64)
+}
+
+/// Paint the page background: the color and images of the `@page` box, which
+/// cover the paper. It is the bottom of everything a page shows, margin boxes
+/// included (CSS Page 3 §3.1).
 ///
-/// Page backgrounds cover the paper.  When the page has a non-zero margin,
-/// the html/body canvas background is painted only in the page content area;
-/// this is the geometry that makes `@page { margin: 5px }` visibly different
-/// from a zero-margin page.  With zero page margins the canvas background
-/// covers the whole paper.
-///
-/// The canvas images are sized and positioned against the root element's
-/// box (§2.11.2), which runs through every page as one surface:
-/// `root` is the root element's box on this page, which sits higher on each
-/// later page, so a later page continues the tiles of the earlier ones and
-/// shows a `no-repeat` image only where the root's box reaches it.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_canvas_background(
+/// The paper is always covered, even when the page background is
+/// transparent; the UA canvas default is white in that case. The page and
+/// the propagated canvas background (see [`paint_canvas_background`]) stay
+/// separate layers: a canvas color may be translucent, and selecting it with
+/// `or` would discard the opaque page color instead of compositing over it.
+pub(crate) fn paint_page_background(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    root: Option<&raikiri_dom::RootBox>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
     let page_color = page_background_color(cascade, pixel_source);
-    let canvas_color = canvas_background_color(document, cascade, pixel_source);
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let white = peniko::Color::from_rgba8(255, 255, 255, 255);
 
-    fn fill_rect(scene: &mut impl PaintScene, color: peniko::Color, rect: kurbo::Rect) {
-        scene.fill(
-            peniko::Fill::NonZero,
-            kurbo::Affine::IDENTITY,
-            color,
-            None,
-            &rect,
-        );
-    }
-
-    // The paper is always covered, even when the page background is
-    // transparent; the UA canvas default is white in that case. The page
-    // and propagated canvas backgrounds stay separate layers: a canvas
-    // color may be translucent, and selecting it with `or` would discard
-    // the opaque page color instead of compositing over it.
-    let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
+    let page_rect = paper_rect(page_box);
     fill_rect(scene, page_color.unwrap_or(white), page_rect);
     // The page background covers the paper, but `background-origin` places it
     // in the page box, whose border edge lies inside the page margins. The
@@ -143,8 +151,37 @@ pub(crate) fn paint_canvas_background(
         pixel_source,
         warnings,
     );
+}
+
+/// Canvas background fill site — CSS Backgrounds 3 §2.11 canvas propagation.
+///
+/// When the page has a non-zero margin, the html/body canvas background is
+/// painted only in the page content area; this is the geometry that makes
+/// `@page { margin: 5px }` visibly different from a zero-margin page.  With
+/// zero page margins the canvas background covers the whole paper.
+///
+/// The canvas images are sized and positioned against the root element's
+/// box (§2.11.2), which runs through every page as one surface:
+/// `root` is the root element's box on this page, which sits higher on each
+/// later page, so a later page continues the tiles of the earlier ones and
+/// shows a `no-repeat` image only where the root's box reaches it.
+///
+/// The page background (see [`paint_page_background`]) goes below it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_canvas_background(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    root: Option<&raikiri_dom::RootBox>,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let canvas_color = canvas_background_color(document, cascade, pixel_source);
+    let margins = raikiri_dom::page_margins(cascade, page_box);
     let canvas_rect = if margins.is_zero() {
-        page_rect
+        paper_rect(page_box)
     } else {
         kurbo::Rect::new(
             margins.left as f64,
@@ -1600,239 +1637,10 @@ fn paint_list_marker_with_snapshots(
     );
 }
 
-/// Paint one laid-out page-margin box: background color, background image,
-/// borders, then its text and shadows clipped when its overflow clips.
-fn paint_margin_box(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    margin_box: &raikiri_dom::MarginBox,
-    page_box: &PageBox,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-) {
-    let PaintRect {
-        x,
-        y,
-        width,
-        height,
-        ..
-    } = margin_box.rect;
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-    let rect = Rect::new(x as f64, y as f64, (x + width) as f64, (y + height) as f64);
-    let borders = margin_box.border_widths();
-    // Margin-box paint/position areas honor `background-origin`/`background-clip`
-    // like elements (border box is `rect`). Unsupported `text`/`border-area`
-    // clips warn and skip the color or image instead of silently omitting pixels.
-    let border = (
-        borders.left as f64,
-        borders.top as f64,
-        borders.right as f64,
-        borders.bottom as f64,
-    );
-    let padding = (
-        margin_box.padding.left as f64,
-        margin_box.padding.top as f64,
-        margin_box.padding.right as f64,
-        margin_box.padding.bottom as f64,
-    );
-    if let Some(color) = margin_box.background_color {
-        // The bottom layer's clip also clips the color (CSS Backgrounds 3 §2.1).
-        match clip_inset_rect(rect, margin_box.background_clip, border, padding) {
-            Some(painting) => {
-                if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
-                    scene.fill(
-                        Fill::NonZero,
-                        Affine::IDENTITY,
-                        css_color(color),
-                        None,
-                        &painting,
-                    );
-                }
-            }
-            // `border-area` paints the color in the border ring only, as
-            // the element path does.
-            None if margin_box.background_clip == VisualBox::BorderArea => {
-                let inner = Rect::new(
-                    rect.x0 + border.0,
-                    rect.y0 + border.1,
-                    rect.x1 - border.2,
-                    rect.y1 - border.3,
-                );
-                let mut ring = kurbo::Shape::to_path(&rect, 0.1);
-                if inner.x1 > inner.x0 && inner.y1 > inner.y0 {
-                    ring.extend(kurbo::Shape::path_elements(&inner, 0.1));
-                }
-                scene.fill(
-                    Fill::EvenOdd,
-                    Affine::IDENTITY,
-                    css_color(color),
-                    None,
-                    &ring,
-                );
-            }
-            None => warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: None,
-                },
-                node_id: None,
-                details:
-                    "margin-box background-clip has an unsupported visual box; the color was skipped"
-                        .into(),
-            }),
-        }
-    }
-    // The layout already dropped the layers under the painted ones.
-    warn_unpainted_background_layers(margin_box.background_layer_count, warnings);
-    if let Some(source) = pixel_source.filter(|_| !margin_box.background_layers.is_empty()) {
-        // CSS Backgrounds 3 §2.1: the first layer is on top.
-        for image in margin_box.background_layers.iter().rev() {
-            let Some(url) = image_cache.image_url(&image.url) else {
-                continue;
-            };
-            let positioning =
-                origin_inset_rect(rect, image.origin, border, padding, Some(&url), warnings);
-            match clip_inset_rect(rect, image.clip, border, padding) {
-                Some(painting) => {
-                    if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
-                        paint_background_from_source(
-                            image_cache,
-                            scene,
-                            &url,
-                            positioning,
-                            painting,
-                            &image.size,
-                            &image.position,
-                            &image.repeat,
-                            None,
-                            source,
-                            warnings,
-                        );
-                    }
-                }
-                None => {
-                    warnings.push(RenderWarning {
-                        kind: WarningKind::ResourceFallback {
-                            kind: raikiri_traits::ResourceKind::Image,
-                            url: Some(redacted_image_url(&url)),
-                        },
-                        node_id: None,
-                        details:
-                            "margin-box background-clip has an unsupported visual box; the image was skipped"
-                                .into(),
-                    });
-                }
-            }
-        }
-    } else if margin_box.lime_background {
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            Color::from_rgba8(0, 255, 0, 255),
-            None,
-            &rect,
-        );
-    }
-    for (side, border) in margin_box.borders.iter().enumerate() {
-        let Some(border) = border else {
-            continue;
-        };
-        let border_width = border.width;
-        let border_rect = match side {
-            0 => Rect::new(
-                x as f64,
-                y as f64,
-                (x + width) as f64,
-                (y + border_width) as f64,
-            ),
-            1 => Rect::new(
-                (x + width - border_width) as f64,
-                y as f64,
-                (x + width) as f64,
-                (y + height) as f64,
-            ),
-            2 => Rect::new(
-                x as f64,
-                (y + height - border_width) as f64,
-                (x + width) as f64,
-                (y + height) as f64,
-            ),
-            _ => Rect::new(
-                x as f64,
-                y as f64,
-                (x + border_width) as f64,
-                (y + height) as f64,
-            ),
-        };
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            css_color(border.color),
-            None,
-            &border_rect,
-        );
-    }
-    // Text and its shadows overflow the box unless `overflow` clips them
-    // (CSS Overflow 3 §3: the initial `visible` does not clip).
-    let clipped = margin_box.overflow_clip.is_some_and(|clip| {
-        push_overflow_clip(
-            &mut crate::transform::TransformScene {
-                scene: &mut *scene,
-                transform: Affine::IDENTITY,
-            },
-            clip,
-            page_box,
-        );
-        true
-    });
-    if let Some(text) = &margin_box.text {
-        let (text_x, text_y) = text.origin();
-        let shaped = text.shaped();
-        let container = shaped.container();
-        let text_bounds = Rect::new(
-            f64::from(text_x),
-            f64::from(text_y),
-            f64::from(text_x + shaped.width().max(container.width)),
-            f64::from(text_y + shaped.height().max(container.height)),
-        );
-        crate::standalone_text::draw_shadows(
-            scene,
-            shaped,
-            text_x,
-            text_y,
-            &margin_box.text_shadows,
-            text_bounds,
-        );
-        crate::standalone_text::draw(scene, shaped, text_x, text_y, css_color(margin_box.color));
-    }
-    if let Some(image) = margin_box.lime_content_image {
-        let image_rect = Rect::new(
-            image.x as f64,
-            image.y as f64,
-            (image.x + image.width) as f64,
-            (image.y + image.height) as f64,
-        );
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            Color::from_rgba8(0, 255, 0, 255),
-            None,
-            &image_rect,
-        );
-    }
-    if clipped {
-        scene.pop_layer();
-    }
-}
-
-/// Paint the page-margin boxes laid out by [`raikiri_dom::page_margin_boxes`]
-/// for the page context in `cascade.page`.
+/// Lay out the page-margin boxes of a page for the page context in
+/// `cascade.page`, in drawing order (see [`raikiri_dom::page_margin_boxes`]).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_page_margin_boxes(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
+pub(crate) fn layout_page_margin_boxes(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
@@ -1840,18 +1648,35 @@ pub(crate) fn paint_page_margin_boxes(
     page_count: u32,
     page_is_left: bool,
     paired_page_increment: Option<i32>,
+) -> Vec<raikiri_dom::MarginBox> {
+    let context = raikiri_dom::MarginBoxPageContext::new(page_index, page_count, page_is_left)
+        .with_paired_page_increment(paired_page_increment);
+    raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
+}
+
+/// Split margin boxes in drawing order into the ones that go behind the
+/// document canvas, which have a negative `z-index`, and the ones that go in
+/// front of the document contents (CSS Page 3 §3.1).
+pub(crate) fn split_margin_boxes_by_layer(
+    margin_boxes: &[raikiri_dom::MarginBox],
+) -> (&[raikiri_dom::MarginBox], &[raikiri_dom::MarginBox]) {
+    margin_boxes.split_at(margin_boxes.partition_point(|margin_box| margin_box.z_index < 0))
+}
+
+/// Paint page-margin boxes, in the order given.
+pub(crate) fn paint_page_margin_boxes(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    margin_boxes: &[raikiri_dom::MarginBox],
+    page_box: PageBox,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
-    let context = raikiri_dom::MarginBoxPageContext::new(page_index, page_count, page_is_left)
-        .with_paired_page_increment(paired_page_increment);
-    for margin_box in
-        raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
-    {
+    for margin_box in margin_boxes {
         paint_margin_box(
             image_cache,
             scene,
-            &margin_box,
+            margin_box,
             &page_box,
             pixel_source,
             warnings,
@@ -2566,162 +2391,6 @@ fn paint_canvas(
     true
 }
 
-#[allow(clippy::too_many_arguments)]
-fn paint_inline_svg(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    cv: &ComputedValues,
-    node_id: usize,
-    border_box_width: f32,
-    border_box_height: f32,
-    abs_x: f32,
-    abs_y: f32,
-    padding: &taffy::Rect<f32>,
-    warnings: &mut Vec<RenderWarning>,
-) -> bool {
-    let bl = cv.border.left.width().px();
-    let bt = cv.border.top.width().px();
-    let br = cv.border.right.width().px();
-    let bb = cv.border.bottom.width().px();
-    let content_x = (abs_x + bl + padding.left) as f64;
-    let content_y = (abs_y + bt + padding.top) as f64;
-    let content_w = (border_box_width - bl - br - padding.left - padding.right).max(0.0);
-    let content_h = (border_box_height - bt - bb - padding.top - padding.bottom).max(0.0);
-    let opacity = cv.opacity;
-    if opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
-        return true;
-    }
-    let visible = !raikiri_dom::paint_rules::hides_own_box(cv);
-
-    let source = document.serialize_svg_subtree(node_id).ok().flatten();
-    // The declarations the page's stylesheets give to the descendants, which
-    // the serialized source does not carry. A subtree whose declarations
-    // outgrow the size bound is drawn unstyled, as it always was.
-    let descendants =
-        raikiri_dom::inline_svg_style::inline_svg_element_declarations(document, cascade, node_id)
-            .unwrap_or_default();
-    // A root that is not visible shows only the descendants that set
-    // `visibility` themselves, so a source that never mentions it paints
-    // nothing.
-    if !visible
-        && source
-            .as_deref()
-            .is_none_or(|source| !source.contains("visibility"))
-        && descendants
-            .iter()
-            .all(|descendant| !descendant.declarations.contains("visibility"))
-    {
-        return true;
-    }
-    let svg = source.and_then(|source| {
-        let svg = raikiri_svg::SvgDocument::parse(source.as_bytes()).ok()?;
-        let elements: Vec<_> = descendants
-            .iter()
-            .map(|descendant| raikiri_svg::SvgElementStyle {
-                element_index: descendant.element_index,
-                declarations: &descendant.declarations,
-            })
-            .collect();
-        let inherited_color = [cv.color.r, cv.color.g, cv.color.b, cv.color.a];
-        svg.rasterize_at_css_pixel_scale_with_resolved_styles(
-            raikiri_svg::SvgViewport {
-                width: content_w,
-                height: content_h,
-            },
-            raikiri_svg::SvgRootStyle {
-                inherited_color,
-                // The host opacity remains the SVG root's inherited value
-                // while the rasterizer removes its group alpha. The outer
-                // paint group applies it with backgrounds and borders.
-                opacity,
-                neutralize_root_opacity: cascade
-                    .opacity_specified
-                    .get(node_id)
-                    .copied()
-                    .unwrap_or(false),
-                host_controls_root_background: cascade
-                    .background_color_specified
-                    .get(node_id)
-                    .copied()
-                    .unwrap_or(false),
-                visible,
-            },
-            raikiri_svg::SvgResolvedStyles {
-                root_color: inherited_color,
-                font: raikiri_svg::SvgRootFont {
-                    size: cv.font_size.0,
-                    weight: cv.font_weight,
-                    style: cv.font_style.as_css_str(),
-                    family: &raikiri_dom::inline_svg_style::svg_font_family(cv),
-                },
-                elements: &elements,
-            },
-            None,
-        )
-        .ok()
-    });
-    let Some(decoded) = svg else {
-        // Nothing was expected to show from a root that is not visible.
-        if visible {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: None,
-                },
-                node_id: Some(NodeId::new(node_id as u64)),
-                details: "inline SVG could not be parsed or rasterized".to_owned(),
-            });
-        }
-        return true;
-    };
-
-    let raster_w = decoded.width as f64;
-    let raster_h = decoded.height as f64;
-    if raster_w <= 0.0 || raster_h <= 0.0 {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: None,
-            },
-            node_id: Some(NodeId::new(node_id as u64)),
-            details: "inline SVG produced an empty raster size".to_owned(),
-        });
-        return true;
-    }
-    // A root that is not visible draws only the descendants that are
-    // visible themselves, so most of these paint nothing at all.
-    if !visible && decoded.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0) {
-        return true;
-    }
-    let image_data = peniko::ImageData {
-        data: peniko::Blob::from(decoded.rgba),
-        format: peniko::ImageFormat::Rgba8,
-        alpha_type: peniko::ImageAlphaType::Alpha,
-        width: decoded.width,
-        height: decoded.height,
-    };
-    let brush = peniko::ImageBrush::new(image_data);
-    let clip = Rect::new(
-        content_x,
-        content_y,
-        content_x + f64::from(content_w),
-        content_y + f64::from(content_h),
-    );
-    scene.push_clip_layer(Affine::IDENTITY, &clip);
-    scene.fill(
-        peniko::Fill::NonZero,
-        // SVG pixels retain the CSS pixel grid. The buffer is rounded up,
-        // while the clip above keeps the exact fractional viewport extent.
-        Affine::translate((content_x, content_y)),
-        brush.as_ref(),
-        None,
-        &Rect::new(0.0, 0.0, raster_w, raster_h),
-    );
-    scene.pop_layer();
-    true
-}
-
 /// Whether the borders cover the outer edge of the background, so the
 /// background can be pulled in from that edge without leaving a gap.
 ///
@@ -2848,9 +2517,8 @@ fn paint_element_background_layers(
                  image: &BackgroundImage,
                  image_color_fallback: bool,
                  warnings: &mut Vec<RenderWarning>| {
-        paint_element_background_slice(
+        ElementBackgroundLayer {
             image_cache,
-            scene,
             width,
             height,
             abs_x,
@@ -2858,25 +2526,25 @@ fn paint_element_background_layers(
             bg,
             image,
             current_color,
-            layer.clip,
-            layer.origin,
+            clip: layer.clip,
+            origin: layer.origin,
             border_radius,
             border,
             padding,
-            BackgroundEnv {
+            env: BackgroundEnv {
                 fixed_viewport: env.fixed_viewport.filter(|_| {
                     layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed
                 }),
                 ..env
             },
-            &layer.size,
-            &layer.position,
-            &layer.repeat,
+            size: &layer.size,
+            position: &layer.position,
+            repeat: &layer.repeat,
             pixel_source,
-            warnings,
             image_slice,
             image_color_fallback,
-        );
+        }
+        .paint(scene, warnings);
     };
     if let [layer] = layers {
         paint(scene, bg, layer, &layer.image, true, warnings);
@@ -2902,390 +2570,6 @@ fn paint_element_background_layers(
                 warnings,
             );
         }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn paint_element_background_slice(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    width: f32,
-    height: f32,
-    abs_x: f32,
-    abs_y: f32,
-    bg: CssColor,
-    bg_image: &BackgroundImage,
-    current_color: CssColor,
-    clip: VisualBox,
-    origin: VisualBox,
-    border_radius: &ComputedBorderRadius,
-    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &taffy::Rect<f32>,
-    env: BackgroundEnv,
-    background_size: &ComputedBackgroundSize,
-    background_position: &ComputedCssPosition,
-    background_repeat: &raikiri_style::property::BackgroundRepeat,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-    image_slice: Option<Rect>,
-    image_color_fallback: bool,
-) {
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-    let background_url = match bg_image {
-        BackgroundImage::Url(raw_url) => image_cache.resolve_url(raw_url),
-        _ => None,
-    };
-    // Without the image-derived fallback, the color is painted as declared.
-    let effective = if image_color_fallback {
-        background_color_with_image_source(bg, bg_image, current_color, pixel_source)
-    } else {
-        (bg.a != 0).then_some(bg)
-    };
-    // A gradient paints even when its first stop is transparent.
-    let has_gradient = matches!(bg_image, BackgroundImage::Gradient(_));
-    if effective.is_none() && background_url.is_none() && !has_gradient {
-        return;
-    }
-    let effective = effective.unwrap_or(CssColor {
-        r: 0,
-        g: 0,
-        b: 0,
-        a: 0,
-    });
-    if effective.a == 0 && background_url.is_none() && !has_gradient {
-        return;
-    }
-    // background-clip: text trims to glyph shapes (CSS Backgrounds 4 section 2.6).
-    // Glyph-path clipping is not implemented; warn and skip so the gap is
-    // visible instead of silently mispainting an opaque rect. `border-area
-    // text` clips to the union of the border area and the glyphs and needs
-    // the same glyph clipping.
-    if matches!(clip, VisualBox::Text | VisualBox::BorderAreaText) {
-        if effective.a != 0 || background_url.is_some() || has_gradient {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: background_url
-                        .as_ref()
-                        .map(redacted_image_url),
-                },
-                node_id: None,
-                details:
-                    "background-clip: text for CSS backgrounds is not yet implemented; the background was skipped"
-                        .into(),
-            });
-        }
-        return;
-    }
-    // Border-box geometry from taffy layout. `border-radius` percentages
-    // resolve against this box before any origin/clip inset is applied.
-    let (bx0, by0, bx1, by1) = (
-        (abs_x as f64).round(),
-        (abs_y as f64).round(),
-        ((abs_x + width) as f64).round(),
-        ((abs_y + height) as f64).round(),
-    );
-    let radius_reference = (bx1 - bx0, by1 - by0);
-    let bl = border.left.width().px() as f64;
-    let bt = border.top.width().px() as f64;
-    let br = border.right.width().px() as f64;
-    let bb = border.bottom.width().px() as f64;
-    let pl = padding.left as f64;
-    let pt = padding.top as f64;
-    let pr = padding.right as f64;
-    let pb = padding.bottom as f64;
-    let color = Color::from_rgba8(effective.r, effective.g, effective.b, effective.a);
-    // When an opaque background and all border sides use the same color, the
-    // visible union is the border-box curve. Painting that union once avoids
-    // a one-pixel seam where an inner clipped fill meets its border ring. A
-    // gradient is not one color, so it keeps its own clip.
-    let border_box_union = matches!(clip, VisualBox::PaddingBox | VisualBox::ContentBox)
-        && effective.a != 0
-        && !has_gradient
-        && [&border.top, &border.right, &border.bottom, &border.left]
-            .iter()
-            .all(|side| {
-                side.style() == BorderStyle::Solid
-                    && side.width().px() > 0.0
-                    && matches!(side.color, BorderColor::Resolved(c) if c == effective)
-            });
-    // A rounded border-box background is pulled in from the border edge when
-    // the border hides that edge, so the anti-aliased corner pixels do not
-    // blend the background into the border's fringe. The inset is half the
-    // border width, or a sixth when a double border has a gap to keep covered
-    // (the shrink Chrome applies to avoid background bleed). Positioning is
-    // unaffected: only the painted area shrinks.
-    let bleed_inset = (env.border_hides_edge
-        && matches!(clip, VisualBox::BorderBox)
-        && used_border_radii(border_radius, radius_reference.0, radius_reference.1)
-            .iter()
-            .flatten()
-            .any(|value| *value > 0.0))
-    .then(|| {
-        let double = [&border.top, &border.right, &border.bottom, &border.left]
-            .iter()
-            .any(|side| side.style() == BorderStyle::Double);
-        if double { 1.0 / 6.0 } else { 0.5 }
-    });
-    let clip = if border_box_union {
-        VisualBox::BorderBox
-    } else {
-        clip
-    };
-    // Positioning area from `background-origin` (CSS Backgrounds 3 section 2.8).
-    // It follows the layout box rather than the snapped painting box, so a
-    // centered or sized image lands where the unsnapped geometry puts it;
-    // the tile is snapped to device pixels when it is drawn.
-    // `border-area`/`text` are not valid origins; warn and fall back to the
-    // spec initial `padding-box` instead of silently mispositioning.
-    let (ux0, uy0, ux1, uy1) = (
-        abs_x as f64,
-        abs_y as f64,
-        (abs_x + width) as f64,
-        (abs_y + height) as f64,
-    );
-    let (px0, py0, px1, py1) = match origin {
-        VisualBox::BorderBox => (ux0, uy0, ux1, uy1),
-        VisualBox::PaddingBox => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
-        VisualBox::ContentBox => (ux0 + bl + pl, uy0 + bt + pt, ux1 - br - pr, uy1 - bb - pb),
-        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
-            warnings.push(RenderWarning {
-                kind: WarningKind::ResourceFallback {
-                    kind: raikiri_traits::ResourceKind::Image,
-                    url: background_url.as_ref().map(redacted_image_url),
-                },
-                node_id: None,
-                details:
-                    "background-origin has an unsupported visual box; using padding-box positioning"
-                        .into(),
-            });
-            (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb)
-        }
-        // cov:ignore: defensive fallback for future `VisualBox` variants
-        _ => (ux0 + bl, uy0 + bt, ux1 - br, uy1 - bb),
-    };
-    // A `fixed` layer is positioned in the page area whatever its origin
-    // (CSS Backgrounds 3 section 2.5) and still painted in its clip box.
-    let positioning = env
-        .fixed_viewport
-        .unwrap_or_else(|| Rect::new(px0, py0, px1, py1));
-    // Painting area from `background-clip` (CSS Backgrounds 3 section 2.7).
-    // Width/height is border-box size from taffy layout.
-    let mut radius_inset = (0.0, 0.0, 0.0, 0.0);
-    let painting = match clip {
-        VisualBox::BorderArea => {
-            // Border area is the border box minus the padding box (outer ring).
-            // Paint color as 4 strips so inner padding/content stays transparent.
-            // URL images in the ring need per-strip tiling that is not yet
-            // implemented; warn and skip the image instead of silently omitting it.
-            let inner_x0 = bx0 + bl;
-            let inner_y0 = by0 + bt;
-            let inner_x1 = bx1 - br;
-            let inner_y1 = by1 - bb;
-            if inner_x1 <= inner_x0
-                || inner_y1 <= inner_y0
-                || (bl == 0.0 && bt == 0.0 && br == 0.0 && bb == 0.0)
-            {
-                // Zero borders make the ring equivalent to the border box.
-                // Fall through to the standard border-box path below so URL
-                // images paint normally instead of being skipped.
-                radius_inset = (0.0, 0.0, 0.0, 0.0);
-                Rect::new(bx0, by0, bx1, by1)
-            } else {
-                // The border area is where the borders draw, with their
-                // styles and radii (CSS Backgrounds 4 §2.6). Draw the borders
-                // opaque as a mask, then composite the background, painted
-                // over the whole border box, into it.
-                let border_box = Rect::new(bx0, by0, bx1, by1);
-                scene.push_layer(Mix::Normal, 1.0, Affine::IDENTITY, &border_box, None, None);
-                let mut mask = *border;
-                for side in [
-                    &mut mask.top,
-                    &mut mask.right,
-                    &mut mask.bottom,
-                    &mut mask.left,
-                ] {
-                    side.color = BorderColor::Resolved(CssColor::BLACK);
-                }
-                paint_element_border_rounded(
-                    scene,
-                    width,
-                    height,
-                    abs_x,
-                    abs_y,
-                    &mask,
-                    current_color,
-                    border_radius,
-                );
-                scene.push_layer(
-                    peniko::BlendMode::new(Mix::Normal, peniko::Compose::SrcIn),
-                    1.0,
-                    Affine::IDENTITY,
-                    &border_box,
-                    None,
-                    None,
-                );
-                paint_element_background_slice(
-                    image_cache,
-                    scene,
-                    width,
-                    height,
-                    abs_x,
-                    abs_y,
-                    bg,
-                    bg_image,
-                    current_color,
-                    VisualBox::BorderBox,
-                    origin,
-                    // The mask already carries the corners; clipping the
-                    // background to them again would square their coverage.
-                    &ComputedBorderRadius::all(ComputedLength(0.0)),
-                    border,
-                    padding,
-                    // The mask already limits the background to the border
-                    // ring, so there is no edge to keep clear of the image.
-                    BackgroundEnv {
-                        border_hides_edge: false,
-                        ..env
-                    },
-                    background_size,
-                    background_position,
-                    background_repeat,
-                    pixel_source,
-                    warnings,
-                    image_slice,
-                    image_color_fallback,
-                );
-                scene.pop_layer();
-                scene.pop_layer();
-                return;
-            }
-        }
-        VisualBox::PaddingBox => {
-            radius_inset = (bl, bt, br, bb);
-            Rect::new(
-                (bx0 + bl).round(),
-                (by0 + bt).round(),
-                (bx1 - br).round(),
-                (by1 - bb).round(),
-            )
-        }
-        VisualBox::ContentBox => {
-            radius_inset = (bl + pl, bt + pt, br + pr, bb + pb);
-            Rect::new(
-                (bx0 + bl + pl).round(),
-                (by0 + bt + pt).round(),
-                (bx1 - br - pr).round(),
-                (by1 - bb - pb).round(),
-            )
-        }
-        VisualBox::BorderBox => match bleed_inset {
-            Some(fraction) => {
-                radius_inset = (bl * fraction, bt * fraction, br * fraction, bb * fraction);
-                Rect::new(
-                    bx0 + radius_inset.0,
-                    by0 + radius_inset.1,
-                    bx1 - radius_inset.2,
-                    by1 - radius_inset.3,
-                )
-            }
-            None => Rect::new(bx0, by0, bx1, by1),
-        },
-        // `text` returns above; this arm is unreachable but keeps the match
-        // exhaustive for future `VisualBox` variants.
-        // cov:ignore: unreachable text arm; early return above handles text
-        VisualBox::Text | VisualBox::BorderAreaText => Rect::new(bx0, by0, bx1, by1),
-        // cov:ignore: defensive fallback for future `VisualBox` variants
-        _ => Rect::new(bx0, by0, bx1, by1),
-    };
-    // Guard against negative or inverted rect after inset (e.g. border larger than box)
-    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
-        return;
-    }
-    let rounded = rounded_background_path(
-        painting.x0,
-        painting.y0,
-        painting.x1,
-        painting.y1,
-        border_radius,
-        radius_inset,
-        radius_reference,
-    );
-    // A rounded box clips its color and its image or gradient to the curve
-    // together (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
-    // Clipped one by one, the antialiased edge would cover the color twice,
-    // once for the color and once more for the image over it, and show more of
-    // it past the curve. Square painting areas and color-only boxes skip the
-    // layer.
-    if let BackgroundImage::Gradient(gradient) = bg_image {
-        if let Some(curve) = rounded.as_ref() {
-            scene.push_clip_layer(Affine::IDENTITY, curve);
-        }
-        if bg.a != 0 {
-            let base = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
-            scene.fill(Fill::NonZero, Affine::IDENTITY, base, None, &painting);
-        }
-        if let Gradient::Conic(conic) = &**gradient {
-            paint_conic_gradient(scene, conic, positioning, painting, current_color);
-        } else {
-            gradient::paint_gradient_layer(
-                scene,
-                gradient,
-                positioning,
-                image_slice.map_or(painting, |slice| painting.intersect(slice)),
-                background_size,
-                background_position,
-                background_repeat,
-                current_color,
-            );
-        }
-        if rounded.is_some() {
-            scene.pop_layer();
-        }
-        return;
-    }
-    let image = background_url.as_ref().zip(pixel_source);
-    let grouped = rounded.as_ref().filter(|_| image.is_some());
-    if let Some(curve) = grouped {
-        scene.push_clip_layer(Affine::IDENTITY, curve);
-    }
-    if effective.a != 0 {
-        if grouped.is_some() {
-            // The layer clips this fill to the curve.
-            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
-        } else {
-            fill_rounded_background(
-                scene,
-                color,
-                painting.x0,
-                painting.y0,
-                painting.x1,
-                painting.y1,
-                border_radius,
-                radius_inset,
-                radius_reference,
-            );
-        }
-    }
-    if let Some((url, source)) = image {
-        paint_background_from_source(
-            image_cache,
-            scene,
-            url,
-            positioning,
-            image_slice.map_or(painting, |slice| painting.intersect(slice)),
-            background_size,
-            background_position,
-            background_repeat,
-            env.device_grid,
-            source,
-            warnings,
-        );
-    }
-    if grouped.is_some() {
-        scene.pop_layer();
     }
 }
 
@@ -3420,131 +2704,17 @@ fn paint_background_image(
     repeat: &raikiri_style::property::BackgroundRepeat,
     device_grid: Option<DeviceGrid>,
 ) {
-    if decoded.width == 0 || decoded.height == 0 {
-        return;
-    }
-    let Some(tiles) = background_tiles(
-        (
-            positioning.x0,
-            positioning.y0,
-            positioning.width(),
-            positioning.height(),
-        ),
-        (
-            painting.x0,
-            painting.y0,
-            painting.width(),
-            painting.height(),
-        ),
-        (image_w, image_h),
+    ImageLayer {
+        image_cache,
+        decoded,
+        positioning,
+        painting,
+        image: (image_w, image_h),
         position,
         repeat,
-    ) else {
-        return;
-    };
-    let brush = image_cache.whole(decoded);
-    let (image_px_w, image_px_h) = (f64::from(decoded.width), f64::from(decoded.height));
-    let tile_shape = Rect::new(0.0, 0.0, image_px_w, image_px_h);
-    // A `repeat` or `round` axis places tiles edge to edge, so one fill with
-    // the image repeating along that axis covers it without a seam between
-    // tiles, however small they are. A `space` or `no-repeat` axis keeps one
-    // fill per tile, which leaves its gaps and clips the tile to its edges.
-    let continuous = |keyword: raikiri_style::property::BackgroundRepeatKeyword| {
-        matches!(
-            keyword,
-            raikiri_style::property::BackgroundRepeatKeyword::Repeat
-                | raikiri_style::property::BackgroundRepeatKeyword::Round
-        )
-    };
-    let (continuous_x, continuous_y) = (continuous(repeat.x), continuous(repeat.y));
-    let xs = axis_tile_spans(
-        &tiles.x,
-        tiles.width,
-        repeat.x,
-        (
-            positioning.x0
-                + position_offset(position.horizontal, positioning.width() - tiles.width),
-            painting.x0,
-        ),
-        device_grid.map(|grid| (grid.scale_x, grid.offset_x)),
-    );
-    let ys = axis_tile_spans(
-        &tiles.y,
-        tiles.height,
-        repeat.y,
-        (
-            positioning.y0
-                + position_offset(position.vertical, positioning.height() - tiles.height),
-            painting.y0,
-        ),
-        device_grid.map(|grid| (grid.scale_y, grid.offset_y)),
-    );
-    // `background_tiles` returns a tile in each axis, so the fallbacks never apply.
-    let (origin_x, tile_w) = xs.first().copied().unwrap_or((painting.x0, tiles.width));
-    let (origin_y, tile_h) = ys.first().copied().unwrap_or((painting.y0, tiles.height));
-    let mut pattern = brush.clone();
-    if continuous_x {
-        pattern.sampler.x_extend = PenikoExtend::Repeat;
+        device_grid,
     }
-    if continuous_y {
-        pattern.sampler.y_extend = PenikoExtend::Repeat;
-    }
-    scene.push_clip_layer(Affine::IDENTITY, &painting);
-    match (continuous_x, continuous_y) {
-        (true, true) => scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            pattern.as_ref(),
-            Some(
-                Affine::translate((origin_x, origin_y))
-                    * Affine::scale_non_uniform(tile_w / image_px_w, tile_h / image_px_h),
-            ),
-            &painting,
-        ),
-        (true, false) => {
-            for (tile_y, height) in &ys {
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    pattern.as_ref(),
-                    Some(
-                        Affine::translate((origin_x, *tile_y))
-                            * Affine::scale_non_uniform(tile_w / image_px_w, height / image_px_h),
-                    ),
-                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + height),
-                );
-            }
-        }
-        (false, true) => {
-            for (tile_x, width) in &xs {
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    pattern.as_ref(),
-                    Some(
-                        Affine::translate((*tile_x, origin_y))
-                            * Affine::scale_non_uniform(width / image_px_w, tile_h / image_px_h),
-                    ),
-                    &Rect::new(*tile_x, painting.y0, *tile_x + width, painting.y1),
-                );
-            }
-        }
-        (false, false) => {
-            for (tile_y, height) in &ys {
-                for (tile_x, width) in &xs {
-                    scene.fill(
-                        Fill::NonZero,
-                        Affine::translate((*tile_x, *tile_y))
-                            * Affine::scale_non_uniform(width / image_px_w, height / image_px_h),
-                        brush.as_ref(),
-                        None,
-                        &tile_shape,
-                    );
-                }
-            }
-        }
-    }
-    scene.pop_layer();
+    .paint(scene);
 }
 
 /// [`tile_spans`] for one axis of a layer, where `placed` is the start of the
@@ -3672,232 +2842,16 @@ pub(crate) fn paint_element_border_image(
     warnings: &mut Vec<RenderWarning>,
     transform: Affine,
 ) -> bool {
-    paint_border_image_within(
+    BorderImage::new(
         image_cache,
-        scene,
         (width, height),
         (abs_x, abs_y),
         cv,
         image,
         border,
-        pixel_source,
-        warnings,
         transform,
-        VisibleArea::UNBOUNDED,
     )
-}
-
-/// [`paint_element_border_image`] that emits only the parts and tiles
-/// crossing the horizontal and vertical ranges `visible`, for a caller that
-/// clips the image to that area anyway.
-#[allow(clippy::too_many_arguments)]
-fn paint_border_image_within(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    (width, height): (f32, f32),
-    (abs_x, abs_y): (f32, f32),
-    cv: &ComputedValues,
-    image: &ComputedBorderImage,
-    border: &Sides<raikiri_style::resolve::ComputedBorder>,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-    transform: Affine,
-    visible: VisibleArea,
-) -> bool {
-    let crosses = |x: f64, width: f64| x <= visible.x.1 && x + width >= visible.x.0;
-    let crosses_y = |y: f64, height: f64| y <= visible.y.1 && y + height >= visible.y.0;
-    let border_box = (
-        f64::from(abs_x),
-        f64::from(abs_y),
-        f64::from(width),
-        f64::from(height),
-    );
-    let widths = Sides {
-        top: f64::from(border.top.width().px()),
-        right: f64::from(border.right.width().px()),
-        bottom: f64::from(border.bottom.width().px()),
-        left: f64::from(border.left.width().px()),
-    };
-    let grid = image_cache.device_grid(transform);
-    let geometry =
-        |natural| border_image_geometry_within(border_box, widths, image, natural, grid, visible);
-    match &image.source {
-        BackgroundImage::Url(raw_url) => {
-            let Some((url, pixel_source)) = image_cache.image_url(raw_url).zip(pixel_source) else {
-                return false;
-            };
-            let Some(natural) = pixel_source.intrinsic_size(&url) else {
-                return false;
-            };
-            let Some(geometry) = geometry(Some(natural)) else {
-                // A displayable image that draws nothing still replaces the
-                // border styles.
-                return true;
-            };
-            let (image_w, image_h) = geometry.image_size;
-            // Rasterize a vector image at the scale its parts are drawn at,
-            // as backgrounds rasterize at their used size. Each part counts
-            // with its smaller axis scale, the one across a stretched edge,
-            // so stretching a thin slice along a long edge does not ask for
-            // a raster of the whole page. A raster image keeps its natural
-            // pixels whatever size is asked for.
-            let scale = geometry
-                .parts
-                .iter()
-                .map(|part| {
-                    let (_, _, src_w, src_h) = part.source;
-                    (part.tile_width / src_w).min(part.tile_height / src_h)
-                })
-                .filter(|scale| scale.is_finite() && *scale > 0.0)
-                .fold(None, |max: Option<f64>, scale| {
-                    Some(max.map_or(scale, |max| max.max(scale)))
-                })
-                .unwrap_or(1.0);
-            let size = ImageRasterSize {
-                width: (image_w * scale) as f32,
-                height: (image_h * scale) as f32,
-            };
-            // A buffer shorter than its size says draws nothing, so it
-            // falls back like an image that could not be rasterized.
-            let decoded = pixel_source
-                .get_decoded_at_size(&url, size, None)
-                .filter(|decoded| {
-                    decoded.width > 0
-                        && decoded.height > 0
-                        && (decoded.width as usize)
-                            .checked_mul(decoded.height as usize)
-                            .and_then(|pixels| pixels.checked_mul(4))
-                            .is_some_and(|len| decoded.rgba.len() >= len)
-                });
-            let Some(decoded) = decoded else {
-                warnings.push(RenderWarning {
-                    kind: WarningKind::ResourceFallback {
-                        kind: raikiri_traits::ResourceKind::Image,
-                        url: Some(redacted_image_url(&url)),
-                    },
-                    node_id: None,
-                    details:
-                        "CSS border image could not be rasterized; the border styles were painted instead"
-                            .into(),
-                });
-                return false;
-            };
-            // Decoded pixels per image unit.
-            let scale_x = f64::from(decoded.width) / image_w;
-            let scale_y = f64::from(decoded.height) / image_h;
-            let crops: Vec<_> = geometry
-                .parts
-                .iter()
-                .map(|part| {
-                    let (src_x, src_y, src_w, src_h) = part.source;
-                    pixel_crop(
-                        &decoded,
-                        (src_x * scale_x, src_y * scale_y),
-                        ((src_x + src_w) * scale_x, (src_y + src_h) * scale_y),
-                    )
-                })
-                .collect();
-            let mut unique: Vec<PixelCrop> = crops.iter().flatten().copied().collect();
-            unique.sort_unstable();
-            unique.dedup();
-            let cropped_pixels: u64 = unique.iter().map(|crop| crop.pixels()).sum();
-            // Each part normally samples its own pixels, so filtering at the
-            // slice lines does not bleed in the neighbouring slice. When the
-            // slices overlap, the copies would hold more pixels than the
-            // image, so every part samples one shared copy instead.
-            let shared = (cropped_pixels > u64::from(decoded.width) * u64::from(decoded.height))
-                .then(|| image_cache.whole(&decoded));
-            for (part, crop) in geometry.parts.iter().zip(crops) {
-                let (src_x, src_y, src_w, src_h) = part.source;
-                let (area_x, area_y, area_w, area_h) = part.area;
-                let Some(crop) = crop else {
-                    continue;
-                };
-                if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
-                    continue;
-                }
-                let (brush, pixels) = if let Some(averaged) =
-                    averaged_part_brush(image_cache, &decoded, part, crop, (scale_x, scale_y), grid)
-                {
-                    averaged
-                } else if let Some(brush) = &shared {
-                    // Whole decoded pixels to image coordinates.
-                    let pixels = Affine::scale_non_uniform(1.0 / scale_x, 1.0 / scale_y);
-                    (brush.clone(), pixels)
-                } else {
-                    let Some(brush) = image_cache.crop(&decoded, crop) else {
-                        continue;
-                    };
-                    // Cropped pixels to image coordinates.
-                    let pixels = Affine::translate((src_x, src_y))
-                        * Affine::scale_non_uniform(
-                            src_w / f64::from(crop.width()),
-                            src_h / f64::from(crop.height()),
-                        );
-                    (brush, pixels)
-                };
-                let source = Rect::new(src_x, src_y, src_x + src_w, src_y + src_h);
-                scene.push_clip_layer(
-                    Affine::IDENTITY,
-                    &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
-                );
-                let scale =
-                    Affine::scale_non_uniform(part.tile_width / src_w, part.tile_height / src_h)
-                        * Affine::translate((-src_x, -src_y));
-                for tile_y in &part.y {
-                    for tile_x in &part.x {
-                        scene.fill(
-                            Fill::NonZero,
-                            Affine::translate((*tile_x, *tile_y)) * scale,
-                            brush.as_ref(),
-                            Some(pixels),
-                            &source,
-                        );
-                    }
-                }
-                scene.pop_layer();
-            }
-            true
-        }
-        BackgroundImage::Gradient(gradient) => {
-            let Some(geometry) = geometry(None) else {
-                return true;
-            };
-            let Some(color) = gradient_first_color(gradient, cv.color) else {
-                return true;
-            };
-            // Fill each tile, so `space` keeps its gaps transparent.
-            for part in &geometry.parts {
-                let (area_x, area_y, area_w, area_h) = part.area;
-                if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
-                    continue;
-                }
-                scene.push_clip_layer(
-                    Affine::IDENTITY,
-                    &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
-                );
-                for tile_y in &part.y {
-                    for tile_x in &part.x {
-                        scene.fill(
-                            Fill::NonZero,
-                            Affine::IDENTITY,
-                            css_color(color),
-                            None,
-                            &Rect::new(
-                                *tile_x,
-                                *tile_y,
-                                tile_x + part.tile_width,
-                                tile_y + part.tile_height,
-                            ),
-                        );
-                    }
-                }
-                scene.pop_layer();
-            }
-            true
-        }
-        _ => false,
-    }
+    .paint(scene, pixel_source, warnings)
 }
 
 /// A rectangle of whole decoded pixels, as `[x0, x1) × [y0, y1)`.
@@ -4303,370 +3257,6 @@ impl InlineProgression {
     }
 }
 
-/// Paint the shadows, background, borders and outline of one piece of an
-/// inline element, the way the element visit paints a box. `x` and `y` are
-/// the page position of the paragraph's content box; `progression` gives the
-/// axis the element's pieces run along; `transform` is what the piece is
-/// painted through inside the root element's transform; `fixed_viewport` is
-/// the page area its `fixed` background layers are positioned in, and `None`
-/// positions them like `scroll` ones.
-///
-/// A side whose edge the piece does not carry (the element continues on
-/// another line there) has no border, padding or corner radius: the box is
-/// sliced (CSS Fragmentation 3 `box-decoration-break: slice`). The padding is
-/// what the piece leaves around its content box once the border is taken off.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_inline_box(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    cv: &ComputedValues,
-    piece: &raikiri_dom::InlineBoxPiece,
-    background_slice: Option<&crate::ifc_text::BackgroundSlice>,
-    progression: InlineProgression,
-    transformed: bool,
-    x: f32,
-    y: f32,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-    transform: Affine,
-    fixed_viewport: Option<Rect>,
-) {
-    let outer = piece.border_box;
-    let content = piece.content_box;
-    // With `box-decoration-break: clone` every fragment is drawn as a whole
-    // box (CSS Fragmentation 3 §5.4): the inline layout gives each fragment
-    // both edges, and its background is laid out over its own box.
-    let clone = cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone;
-    let background_slice = background_slice.filter(|_| !clone);
-    // The edges at the low (left or top) and high (right or bottom) ends of
-    // the axis. The start edge is at the low end when the element's own
-    // direction is left to right, whatever the paragraph's direction.
-    let (low_edge, high_edge) = if progression.reversed {
-        (piece.has_end_edge, piece.has_start_edge)
-    } else {
-        (piece.has_start_edge, piece.has_end_edge)
-    };
-    let mut border = cv.border;
-    let square = raikiri_style::property::CornerRadius::circular(
-        raikiri_style::resolve::ComputedLengthPercentageOrCalc::Px(0.0),
-    );
-    // The same rule as the element visit: radii only for a box that draws a
-    // border or a background, and never under a filter or an applied
-    // transform. `transformed` is false for a non-replaced inline box, which
-    // is not transformable (CSS Transforms 1 §3), whatever its `transform`.
-    let has_background_image = cv.has_background_image();
-    let joined_radius = |border: &Sides<raikiri_style::resolve::ComputedBorder>| {
-        let has_border = [&border.top, &border.right, &border.bottom, &border.left]
-            .iter()
-            .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
-        paintable_border_radius(
-            &cv.border_radius,
-            (has_border || cv.background_color.a > 0 || has_background_image)
-                && !transformed
-                && cv.filter.is_empty(),
-        )
-    };
-    let full_radius = joined_radius(&cv.border);
-    if progression.vertical {
-        if !low_edge {
-            border.top = border.top.without_line();
-        }
-        if !high_edge {
-            border.bottom = border.bottom.without_line();
-        }
-    } else {
-        if !low_edge {
-            border.left = border.left.without_line();
-        }
-        if !high_edge {
-            border.right = border.right.without_line();
-        }
-    }
-    let mut radius = joined_radius(&border);
-    if !low_edge {
-        if progression.vertical {
-            radius.top_left = square;
-            radius.top_right = square;
-        } else {
-            radius.top_left = square;
-            radius.bottom_left = square;
-        }
-    }
-    if !high_edge {
-        if progression.vertical {
-            radius.bottom_left = square;
-            radius.bottom_right = square;
-        } else {
-            radius.top_right = square;
-            radius.bottom_right = square;
-        }
-    }
-    let padding = taffy::Rect {
-        left: (content.x - outer.x - border.left.width().px()).max(0.0),
-        right: ((outer.x + outer.width) - (content.x + content.width) - border.right.width().px())
-            .max(0.0),
-        top: (content.y - outer.y - border.top.width().px()).max(0.0),
-        bottom: ((outer.y + outer.height)
-            - (content.y + content.height)
-            - border.bottom.width().px())
-        .max(0.0),
-    };
-    let abs_x = x + outer.x;
-    let abs_y = y + outer.y;
-    let (piece_start, piece_size) = progression.span(outer);
-    // The page coordinates of the piece's ends along the axis and across it.
-    let along_origin = if progression.vertical { y } else { x };
-    let piece_along = (
-        f64::from(along_origin + piece_start),
-        f64::from(along_origin + piece_start + piece_size),
-    );
-    let piece_across = if progression.vertical {
-        (f64::from(abs_x), f64::from(abs_x + outer.width))
-    } else {
-        (f64::from(abs_y), f64::from(abs_y + outer.height))
-    };
-    // A joined box that reaches past this piece along the axis.
-    let joined =
-        background_slice.filter(|slice| progression.span(slice.outer) != (piece_start, piece_size));
-    let shadow_slice = joined.filter(|_| !cv.box_shadow.is_empty());
-    if let Some(slice) = shadow_slice {
-        // Only artificial inline edges clip a sliced shadow. Its real outer
-        // edges and its block-axis overflow remain visible.
-        let (mut overflow_x, mut overflow_y) = (1.0_f32, 1.0_f32);
-        for shadow in cv.box_shadow.iter() {
-            let spread = shadow.spread_radius.px().abs();
-            let blur = shadow.blur_radius.px().max(0.0) * 4.0;
-            overflow_x = overflow_x.max(shadow.offset_x.px().abs() + spread + blur + 1.0);
-            overflow_y = overflow_y.max(shadow.offset_y.px().abs() + spread + blur + 1.0);
-        }
-        let (overflow_along, overflow_across) = if progression.vertical {
-            (f64::from(overflow_y), f64::from(overflow_x))
-        } else {
-            (f64::from(overflow_x), f64::from(overflow_y))
-        };
-        let (slice_start, slice_size) = progression.span(slice.outer);
-        let low = if slice_start < piece_start {
-            piece_along.0
-        } else {
-            f64::from(along_origin + slice_start) - overflow_along
-        };
-        let high = if slice_start + slice_size > piece_start + piece_size {
-            piece_along.1
-        } else {
-            f64::from(along_origin + slice_start + slice_size) + overflow_along
-        };
-        scene.push_clip_layer(
-            Affine::IDENTITY,
-            &progression.rect(
-                (low, high),
-                (
-                    piece_across.0 - overflow_across,
-                    piece_across.1 + overflow_across,
-                ),
-            ),
-        );
-        let joined_box = progression.with_span(outer, (slice_start, slice_size));
-        paint_element_box_shadows(
-            scene,
-            joined_box.width,
-            joined_box.height,
-            x + joined_box.x,
-            y + joined_box.y,
-            &full_radius,
-            &cv.box_shadow,
-            cv.color,
-        );
-        scene.pop_layer();
-    } else {
-        paint_element_box_shadows(
-            scene,
-            outer.width,
-            outer.height,
-            abs_x,
-            abs_y,
-            &radius,
-            &cv.box_shadow,
-            cv.color,
-        );
-    }
-    let piece_rect = Rect::new(
-        f64::from(abs_x),
-        f64::from(abs_y),
-        f64::from(abs_x + outer.width),
-        f64::from(abs_y + outer.height),
-    );
-    // A typographic pseudo split across source owners has one background
-    // positioning area. Slice that image before applying each owner's offset;
-    // fragment sizes across the axis remain local when their inherited fonts
-    // differ.
-    let slice = joined.filter(|_| has_background_image);
-    let mut background_outer = outer;
-    let mut background_padding = padding;
-    if let Some(slice) = slice {
-        background_outer = progression.with_span(outer, progression.span(slice.outer));
-        if progression.vertical {
-            background_padding.top =
-                (slice.content.y - slice.outer.y - cv.border.top.width().px()).max(0.0);
-            background_padding.bottom = ((slice.outer.y + slice.outer.height)
-                - (slice.content.y + slice.content.height)
-                - cv.border.bottom.width().px())
-            .max(0.0);
-        } else {
-            background_padding.left =
-                (slice.content.x - slice.outer.x - cv.border.left.width().px()).max(0.0);
-            background_padding.right = ((slice.outer.x + slice.outer.width)
-                - (slice.content.x + slice.content.width)
-                - cv.border.right.width().px())
-            .max(0.0);
-        }
-        scene.push_clip_layer(Affine::IDENTITY, &piece_rect);
-    }
-    paint_element_background_layers(
-        image_cache,
-        scene,
-        (
-            background_outer.width,
-            background_outer.height,
-            x + background_outer.x,
-            y + background_outer.y,
-        ),
-        cv.background_color,
-        cv.background_layers(),
-        cv.color,
-        if slice.is_some() {
-            &full_radius
-        } else {
-            &radius
-        },
-        if slice.is_some() { &cv.border } else { &border },
-        &background_padding,
-        BackgroundEnv {
-            device_grid: image_cache.device_grid(transform),
-            fixed_viewport,
-            ..BackgroundEnv::default()
-        },
-        pixel_source,
-        warnings,
-        slice.map(|_| piece_rect),
-    );
-    if slice.is_some() {
-        scene.pop_layer();
-    }
-    // With `box-decoration-break: slice` the border image is laid out once
-    // over the joined box and clipped to this fragment (CSS Fragmentation 3
-    // §5.4). Without a joined box, the fragment shows it on the edges it
-    // keeps.
-    let border_image_drawn = if let Some(joined) = joined {
-        // Only the cuts between fragments clip the image; the outset beyond
-        // the box's own edges stays visible (CSS Backgrounds 3 §6.4). The
-        // image itself bounds what is drawn past those edges.
-        const UNBOUNDED: f64 = 1.0e7;
-        let low = if low_edge { -UNBOUNDED } else { piece_along.0 };
-        let high = if high_edge { UNBOUNDED } else { piece_along.1 };
-        scene.push_clip_layer(
-            Affine::IDENTITY,
-            &progression.rect((low, high), (-UNBOUNDED, UNBOUNDED)),
-        );
-        let joined_box = progression.with_span(outer, progression.span(joined.outer));
-        let drawn = paint_border_image_within(
-            image_cache,
-            scene,
-            (joined_box.width, joined_box.height),
-            (x + joined_box.x, y + joined_box.y),
-            cv,
-            &cv.border_image,
-            &cv.border,
-            pixel_source,
-            warnings,
-            transform,
-            if progression.vertical {
-                VisibleArea {
-                    x: VisibleArea::UNBOUNDED.x,
-                    y: (low, high),
-                }
-            } else {
-                VisibleArea {
-                    x: (low, high),
-                    y: VisibleArea::UNBOUNDED.y,
-                }
-            },
-        );
-        scene.pop_layer();
-        drawn
-    } else {
-        // A cut between line fragments shows no image: its widths and outset
-        // are taken as zero there, whatever form `border-image-width` takes.
-        let cut;
-        let image =
-            if (low_edge && high_edge) || matches!(cv.border_image.source, BackgroundImage::None) {
-                &cv.border_image
-            } else {
-                let mut image = cv.border_image.clone();
-                let (low_width, low_outset, high_width, high_outset) = if progression.vertical {
-                    (
-                        &mut image.width.top,
-                        &mut image.outset.top,
-                        &mut image.width.bottom,
-                        &mut image.outset.bottom,
-                    )
-                } else {
-                    (
-                        &mut image.width.left,
-                        &mut image.outset.left,
-                        &mut image.width.right,
-                        &mut image.outset.right,
-                    )
-                };
-                if !low_edge {
-                    *low_width = BorderImageWidthSide::Number(0.0);
-                    *low_outset = BorderImageOutsetSide::Number(0.0);
-                }
-                if !high_edge {
-                    *high_width = BorderImageWidthSide::Number(0.0);
-                    *high_outset = BorderImageOutsetSide::Number(0.0);
-                }
-                cut = image;
-                &cut
-            };
-        paint_element_border_image(
-            image_cache,
-            scene,
-            outer.width,
-            outer.height,
-            abs_x,
-            abs_y,
-            cv,
-            image,
-            &border,
-            pixel_source,
-            warnings,
-            transform,
-        )
-    };
-    if !border_image_drawn {
-        paint_element_border_rounded(
-            scene,
-            outer.width,
-            outer.height,
-            abs_x,
-            abs_y,
-            &border,
-            cv.color,
-            &radius,
-        );
-    }
-    paint_element_outline(
-        scene,
-        outer.width,
-        outer.height,
-        abs_x,
-        abs_y,
-        &cv.outline,
-        cv.outline_offset,
-        cv.color,
-    );
-}
-
 /// Fill a background using the same elliptical curve as its image clip.
 #[allow(clippy::too_many_arguments)]
 fn fill_rounded_background(
@@ -4959,132 +3549,16 @@ fn paint_element_border_with_top(
     current_color: CssColor,
     paint_top: bool,
 ) {
-    if width <= 0.0 || height <= 0.0 {
-        return;
-    }
-
-    let x0 = (abs_x as f64).round();
-    let y0 = (abs_y as f64).round();
-    let x1 = ((abs_x + width) as f64).round();
-    let y1 = ((abs_y + height) as f64).round();
-    let bl = border.left.width().px() as f64;
-    let bt = border.top.width().px() as f64;
-    let br = border.right.width().px() as f64;
-    let bb = border.bottom.width().px() as f64;
-    if bl <= 0.0 && bt <= 0.0 && br <= 0.0 && bb <= 0.0 {
-        return;
-    }
-    let resolve = |b: &raikiri_style::resolve::ComputedBorder| -> Option<Color> {
-        if matches!(b.style(), BorderStyle::None | BorderStyle::Hidden) {
-            return None;
-        }
-        let w = b.width().px();
-        if w <= 0.0 {
-            return None;
-        }
-        let c = match b.color {
-            raikiri_style::property::BorderColor::CurrentColor => current_color,
-            raikiri_style::property::BorderColor::Resolved(col) => col,
-            _ => current_color,
-        };
-        if c.a == 0 {
-            return None;
-        }
-        Some(Color::from_rgba8(c.r, c.g, c.b, c.a))
-    };
-    let c_left = resolve(&border.left);
-    let c_top = resolve(&border.top);
-    let c_right = resolve(&border.right);
-    let c_bottom = resolve(&border.bottom);
-    let inner_y0 = if paint_top { (y0 + bt).round() } else { y0 };
-    let inner_y1 = (y1 - bb).round();
-    // Left and right strips only need a vertical span. When the content
-    // width collapses to zero (a border-only quadrant where left plus right
-    // exactly fill the border box, as in the conic reference files), the
-    // full inner box is empty but both side strips still cover their rects.
-    let inner_height_valid = inner_y1 > inner_y0;
-    // One side strip: `solid` (and unhandled styles) fill the whole
-    // strip; `double` draws outer + inner thirds per CSS Backgrounds 3
-    // §5.6 ("two parallel solid lines"), leaving the middle third
-    // transparent. Below 3px the thirds vanish, so small doubles fall
-    // back to solid (matches browser clamping behavior closely enough
-    // for reftest purposes).
-    let mut strip = |x_a: f64,
-                     y_a: f64,
-                     x_b: f64,
-                     y_b: f64,
-                     w: f64,
-                     horizontal: bool,
-                     col: Color,
-                     double: bool| {
-        if !double || w < 3.0 {
-            let r = Rect::new(x_a, y_a, x_b, y_b);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
-            return;
-        }
-        let third = w / 3.0;
-        if horizontal {
-            let r1 = Rect::new(x_a, y_a, x_b, y_a + third);
-            let r2 = Rect::new(x_a, y_b - third, x_b, y_b);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r2);
-        } else {
-            let r1 = Rect::new(x_a, y_a, x_a + third, y_b);
-            let r2 = Rect::new(x_b - third, y_a, x_b, y_b);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r2);
-        }
-    };
-    let is_double = |b: &raikiri_style::resolve::ComputedBorder| b.style() == BorderStyle::Double;
-    if paint_top
-        && bt > 0.0
-        && let Some(col) = c_top
-    {
-        strip(x0, y0, x1, y0 + bt, bt, true, col, is_double(&border.top));
-    }
-    if bb > 0.0
-        && let Some(col) = c_bottom
-    {
-        strip(
-            x0,
-            y1 - bb,
-            x1,
-            y1,
-            bb,
-            true,
-            col,
-            is_double(&border.bottom),
-        );
-    }
-    if bl > 0.0
-        && inner_height_valid
-        && let Some(col) = c_left
-    {
-        strip(
-            x0,
-            inner_y0,
-            x0 + bl,
-            inner_y1,
-            bl,
-            false,
-            col,
-            is_double(&border.left),
-        );
-    }
-    if br > 0.0
-        && inner_height_valid
-        && let Some(col) = c_right
-    {
-        strip(
-            x1 - br,
-            inner_y0,
-            x1,
-            inner_y1,
-            br,
-            false,
-            col,
-            is_double(&border.right),
-        );
+    if let Some(border) = ElementBorder::new(
+        width,
+        height,
+        abs_x,
+        abs_y,
+        border,
+        current_color,
+        paint_top,
+    ) {
+        border.paint(scene);
     }
 }
 

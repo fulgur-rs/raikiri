@@ -257,6 +257,7 @@ pub(crate) fn place_lines(
         width: first_width.unwrap_or(0.0),
         height: lines.iter().map(|line| line.block_size()).sum(),
         lines: std::sync::Arc::new(lines),
+        oof_candidates: taffy::OofCandidates::new(),
         beside_floats: false,
         escaping_margin: taffy::CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
@@ -266,6 +267,7 @@ pub(crate) fn place_lines(
         fragmentainer_line_ranges: None,
         unfragmented_tail_column: None,
         placed_blocks: Vec::new(),
+        forced_breaks: Vec::new(),
     }
 }
 

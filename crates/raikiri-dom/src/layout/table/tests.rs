@@ -10,6 +10,7 @@ use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 mod anonymous_table_tests;
 mod cell_index_tests;
+mod part_containing_block_tests;
 mod rowspan_tests;
 mod visibility_collapse_column_tests;
 mod visibility_collapse_tests;
@@ -64,15 +65,25 @@ fn place_cells_in_session(
 ) -> Result<(), raikiri_traits::LayoutError> {
     let gaps = vec![spacing.0; column_widths.len()];
     let collapsed = vec![false; column_widths.len()];
+    let (row_heights, row_gaps, collapsed_rows) = row_tracks;
     with_layout_session(document, |session| {
+        let mut oof_candidates = taffy::OofCandidates::new();
         super::place_cells(
             session,
             grid,
-            (column_widths, &gaps, &collapsed),
-            row_tracks,
-            origins,
-            spacing,
-            vertical_writing,
+            super::CellPlacementTracks {
+                column_widths,
+                column_gaps: &gaps,
+                collapsed_columns: &collapsed,
+                row_heights,
+                row_gaps,
+                collapsed_rows,
+                column_origins: origins.0,
+                row_origins: origins.1,
+                row_spacing: spacing.1,
+                vertical_writing,
+            },
+            &mut oof_candidates,
         )
     })
 }
@@ -2659,6 +2670,119 @@ fn vertical_table_cell_alignment_accounts_for_scrollbar_width() {
 
     assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 80.0);
     assert_eq!(doc.nodes[child].unrounded_layout.location.x, 65.0);
+}
+
+#[test]
+fn table_oof_candidates_use_the_rtl_border_and_scrollbar_area() {
+    let mut doc = Document::new();
+    let table = doc.append_element(
+        Some(0),
+        "table",
+        Style {
+            scrollbar_width: 10.0,
+            ..Style::default()
+        },
+        Some("display:table;direction:rtl;border:2px solid;overflow-x:scroll;overflow-y:scroll"),
+    );
+    let fixed = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("position:fixed;width:10px;height:10px"),
+    );
+    let absolute = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("position:absolute;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+
+    let output = super::table_layout_output(
+        &doc,
+        table,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+        taffy::OofCandidates::new(),
+        taffy::RunMode::PerformLayout,
+    );
+
+    let area = output.oof_positioning_area.unwrap();
+    assert_eq!(
+        area.size,
+        Size {
+            width: 86.0,
+            height: 86.0
+        }
+    );
+    assert_eq!(area.offset, taffy::Point { x: 12.0, y: 2.0 });
+    let candidates = output.oof_candidates.as_slice();
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].node, taffy::NodeId::from(fixed));
+    assert_eq!(candidates[0].position, taffy::Position::Fixed);
+    assert_eq!(candidates[0].order, 0);
+    assert_eq!(candidates[1].node, taffy::NodeId::from(absolute));
+    assert_eq!(candidates[1].position, taffy::Position::Absolute);
+    assert_eq!(candidates[1].order, 1);
+}
+
+#[test]
+fn in_flow_caption_bubbles_uncontained_fixed_candidates() {
+    let mut doc = Document::new();
+    let table = doc.append_element(
+        Some(0),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px;height:50px"),
+    );
+    let caption = doc.append_element(
+        Some(table),
+        "caption",
+        Style::default(),
+        Some("display:table-caption;width:20px;height:10px;margin-left:17px"),
+    );
+    let fixed = doc.append_element(
+        Some(caption),
+        "div",
+        Style::default(),
+        Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+
+    let mut inputs = column_probe_input();
+    inputs.known_dimensions = Size {
+        width: Some(100.0),
+        height: Some(50.0),
+    };
+    inputs.known_dimensions_are_definite = taffy::geometry::Size {
+        width: true,
+        height: true,
+    };
+    inputs.parent_size = Size {
+        width: Some(100.0),
+        height: Some(100.0),
+    };
+    inputs.available_space = Size {
+        width: AvailableSpace::Definite(100.0),
+        height: AvailableSpace::Definite(100.0),
+    };
+    let output = with_layout_session(&mut doc, |session| {
+        compute_table_layout_in_session(session, taffy::NodeId::from(table), inputs)
+    });
+
+    let candidate = output
+        .oof_candidates
+        .as_slice()
+        .iter()
+        .find(|candidate| candidate.node == taffy::NodeId::from(fixed))
+        .expect("fixed descendant bubbles out of the in-flow caption");
+    assert_eq!(candidate.static_position.x.area.start, 17.0);
 }
 
 #[test]

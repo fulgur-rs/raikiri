@@ -121,7 +121,23 @@ pub(super) fn realign_inline_level_abspos_static_positions(
             // then not known here, so the floats are not consulted.
             let vertical_static = matches!(child.top, ComputedLengthPercentageOrAuto::Auto)
                 && matches!(child.bottom, ComputedLengthPercentageOrAuto::Auto);
-            let line_y = child_layout.location.y - child_layout.margin.top;
+            let (owner_origin, static_origin) = document
+                .oof_coordinates
+                .get(&child_id)
+                .map(|coordinate| {
+                    (
+                        document
+                            .layout_origin_of(coordinate.owner)
+                            .unwrap_or(taffy::Point::ZERO),
+                        document
+                            .layout_origin_of(coordinate.static_owner)
+                            .unwrap_or(taffy::Point::ZERO),
+                    )
+                })
+                .unwrap_or((taffy::Point::ZERO, taffy::Point::ZERO));
+            let line_y = child_layout.location.y + owner_origin.y
+                - static_origin.y
+                - child_layout.margin.top;
             let (mut left, mut right) = (content_left, content_right);
             for (float, float_layout) in floats.iter().filter(|_| vertical_static) {
                 let top = float_layout.location.y - float_layout.margin.top;
@@ -155,9 +171,10 @@ pub(super) fn realign_inline_level_abspos_static_positions(
             } else {
                 start + margin_left
             };
-            let dx = x - child_layout.location.x;
+            let owner_local_x = x + static_origin.x - owner_origin.x;
+            let dx = owner_local_x - child_layout.location.x;
             if dx != 0.0 {
-                document.nodes[child_id].unrounded_layout.location.x = x;
+                document.nodes[child_id].unrounded_layout.location.x = owner_local_x;
                 keep_placed_fixed_descendants(document, cascade, child_id, dx);
             }
         }
@@ -196,6 +213,7 @@ fn keep_placed_fixed_descendants(
     while let Some(id) = stack.pop() {
         let cv = &cascade.computed[id];
         if matches!(document.nodes[id].position(), PositionValue::Fixed)
+            && !document.oof_coordinates.contains_key(&id)
             && !(matches!(cv.left, ComputedLengthPercentageOrAuto::Auto)
                 && matches!(cv.right, ComputedLengthPercentageOrAuto::Auto))
         {

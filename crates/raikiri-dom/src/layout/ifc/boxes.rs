@@ -2,7 +2,9 @@
 
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
+use super::generated_atomics::logical_box;
 use super::generated_blocks;
+use super::geometry::IfcAxes;
 use super::inline_boxes::{for_each_atomic, placed};
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
@@ -20,8 +22,9 @@ use shodo::{
 use std::collections::{HashMap, HashSet};
 use taffy::util::ResolveOrZero;
 use taffy::{
-    AvailableSpace, Clear, CollapsibleMarginSet, FloatDirection, LayoutInput, LayoutPartialTree,
-    Line, RequestedAxis, RunMode, Size, SizingMode,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Clear, CollapsibleMarginSet,
+    FloatDirection, LayoutInput, LayoutPartialTree, Line, OofCandidate, OofCandidates,
+    OofPositioningArea, Point, Position, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -90,6 +93,7 @@ struct FragmentedFloatOutput<'a> {
     adjoins_top_margin: bool,
     fragmentainer: Option<usize>,
     placements: &'a mut Vec<IfcBoxFragment>,
+    oof_candidates: &'a mut OofCandidates,
 }
 
 /// Resolve what the root's percentages refer to before its lines are laid
@@ -151,6 +155,7 @@ pub(crate) fn layout_with_boxes_in(
         return IfcLines {
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
+            oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -161,6 +166,7 @@ pub(crate) fn layout_with_boxes_in(
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
             unfragmented_tail_column: None,
             placed_blocks: Vec::new(),
+            forced_breaks: Vec::new(),
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -353,6 +359,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         return IfcLines {
             width: geometry.width,
             lines: std::sync::Arc::new(Vec::new()),
+            oof_candidates: OofCandidates::new(),
             height: 0.0,
             beside_floats: false,
             escaping_margin: CollapsibleMarginSet::ZERO,
@@ -363,6 +370,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             fragmentainer_line_ranges: Some(Vec::new()),
             unfragmented_tail_column: None,
             placed_blocks: Vec::new(),
+            forced_breaks: Vec::new(),
         };
     };
 
@@ -375,6 +383,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut fragmentainer_line_ranges = Vec::new();
     let mut unfragmented_tail_column = None;
     let mut atomic_outputs = Vec::new();
+    let mut oof_candidates = OofCandidates::new();
     let mut max_height = 0.0_f32;
     let mut beside_floats = false;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
@@ -448,7 +457,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
                 height,
             );
         }
-        let outcome = run_boxes_segment(
+        let mut outcome = run_boxes_segment(
             tree,
             &root,
             column_geometry,
@@ -507,6 +516,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         }
         fragment_box_placements.extend(carried_placements);
         fragment_box_placements.extend(outcome.lines.fragment_box_placements);
+        oof_candidates.append(&mut outcome.lines.oof_candidates);
         atomic_outputs.extend(outcome.atomic_outputs);
         let column_lines = std::sync::Arc::try_unwrap(outcome.lines.lines)
             .unwrap_or_else(|_| unreachable!("column lines have a single owner"));
@@ -523,9 +533,10 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     if perform {
         truncate_for_text_overflow(tree, &root, &mut lines, geometry.width);
     }
-    let result = IfcLines {
+    let mut result = IfcLines {
         width: geometry.width,
         lines: lines.clone(),
+        oof_candidates,
         height: max_height,
         beside_floats,
         escaping_margin,
@@ -536,9 +547,12 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         fragmentainer_line_ranges: Some(fragmentainer_line_ranges),
         unfragmented_tail_column,
         placed_blocks: Vec::new(),
+        forced_breaks: Vec::new(),
     };
     if perform {
-        place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
+        let mut atomic_candidates =
+            place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
+        result.oof_candidates.append(&mut atomic_candidates);
         hide_truncated_atomics(tree, &lines, &atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, &root);
         super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry);
@@ -667,13 +681,14 @@ fn run_boxes(
     );
     if perform {
         truncate_for_text_overflow(tree, root, &mut outcome.lines.lines, geometry.width);
-        place_atomics(
+        let mut atomic_candidates = place_atomics(
             tree,
             &outcome.lines.lines,
             &outcome.atomic_outputs,
             geometry,
             root.rtl,
         );
+        outcome.lines.oof_candidates.append(&mut atomic_candidates);
         hide_truncated_atomics(tree, &outcome.lines.lines, &outcome.atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, root);
         super::records::record_inline_boxes(tree, idx, root, &outcome.lines.lines, &geometry);
@@ -746,13 +761,16 @@ fn run_boxes_segment(
     let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
     let mut fragment_box_placements = Vec::new();
+    let mut oof_candidates = OofCandidates::new();
     let mut continuation = None;
     // `open_block` is the block-level `::before` or `::after` whose lines
     // are being laid out: its start token was met and its end token was not.
     // The tokens come in document order; the cursor is the block of the next.
     let mut block_cursor = 0;
-    // The boxes of the generated blocks closed so far.
+    // The boxes of the generated blocks closed so far, and the forced page
+    // breaks they ask for.
     let mut placed_blocks = Vec::new();
+    let mut forced_breaks = Vec::new();
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
     // The next line follows a forced break or a block: the engine treats it
     // as such for `text-indent: each-line`.
@@ -960,6 +978,7 @@ fn run_boxes_segment(
                                 adjoins_top_margin: false,
                                 fragmentainer,
                                 placements: &mut fragment_box_placements,
+                                oof_candidates: &mut oof_candidates,
                             },
                         ));
                     }
@@ -988,6 +1007,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            oof_candidates: &mut oof_candidates,
                         },
                     ));
                 }
@@ -1027,6 +1047,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            oof_candidates: &mut oof_candidates,
                         },
                     ));
                 }
@@ -1047,6 +1068,7 @@ fn run_boxes_segment(
                             adjoins_top_margin: top_margin_escapes && leading_margin_open,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
+                            oof_candidates: &mut oof_candidates,
                         },
                     ));
                 }
@@ -1082,12 +1104,18 @@ fn run_boxes_segment(
                             }
                             generated_blocks::Token::End(block) => {
                                 block_cursor += 1;
-                                if let Some(open) = open_block.take()
-                                    && let Some(placed) = generated_blocks::close(block, open, flow)
-                                {
-                                    leading_margin_open = false;
-                                    ctx.commit_strut();
-                                    placed_blocks.push(placed);
+                                if let Some(open) = open_block.take() {
+                                    let placed = generated_blocks::close(block, open, flow);
+                                    forced_breaks.extend(block.forced_breaks(
+                                        &open,
+                                        placed.as_ref(),
+                                        lines.len(),
+                                    ));
+                                    if let Some(placed) = placed {
+                                        leading_margin_open = false;
+                                        ctx.commit_strut();
+                                        placed_blocks.push(placed);
+                                    }
                                 }
                             }
                         }
@@ -1106,7 +1134,7 @@ fn run_boxes_segment(
                     && y == 0.0
                     && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
-                let block = layout_block_child(
+                let mut block = layout_block_child(
                     tree,
                     ctx,
                     node.0 as usize,
@@ -1116,6 +1144,7 @@ fn run_boxes_segment(
                     perform,
                     top_margin_escapes && starts_paragraph,
                 );
+                oof_candidates.append(&mut block.oof_candidates);
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
                         leading_block_margin = Some(margin);
@@ -1189,6 +1218,7 @@ fn run_boxes_segment(
                     adjoins_top_margin: false,
                     fragmentainer,
                     placements: &mut fragment_box_placements,
+                    oof_candidates: &mut oof_candidates,
                 },
             );
         }
@@ -1220,6 +1250,7 @@ fn run_boxes_segment(
             width,
             height,
             lines: std::sync::Arc::new(lines),
+            oof_candidates,
             beside_floats: beside,
             escaping_margin,
             leading_block_margin,
@@ -1229,6 +1260,7 @@ fn run_boxes_segment(
             fragmentainer_line_ranges: None,
             unfragmented_tail_column: None,
             placed_blocks,
+            forced_breaks,
         },
         continuation,
         atomic_outputs: atomics.outputs,
@@ -1250,9 +1282,12 @@ fn commit_fragmented_float(
         adjoins_top_margin,
         fragmentainer,
         placements,
+        oof_candidates,
     } = output;
     let node = float.node;
-    let top = commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
+    let (top, mut child_candidates) =
+        commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
+    oof_candidates.append(&mut child_candidates);
     if perform && let Some(fragmentainer) = fragmentainer {
         let layout = tree.nodes[node].unrounded_layout;
         placements.push(IfcBoxFragment {
@@ -1315,22 +1350,28 @@ fn relative_offset_of(
 }
 
 /// The nearest ancestor of `node` inside the paragraph rooted at `idx` (or at
-/// `owner`, the source owner of an anonymous cell's content) that is a
-/// containing block for absolutely positioned boxes through its `position`:
-/// only a non-atomic inline element can be one there, as an atomic inline
-/// lays its own children out.
+/// `owner`, the source owner of an anonymous cell's content) that is the
+/// containing block of `node`: for an absolutely positioned box one that is
+/// positioned or establishes the containing block of fixed boxes, for a fixed
+/// box the latter only. Only a non-atomic inline element can be one there, as
+/// an atomic inline lays its own children out.
 fn positioned_inline_ancestor(
     tree: &Document,
     idx: usize,
     owner: usize,
     node: usize,
 ) -> Option<usize> {
+    let fixed = tree.nodes[node].position() == &PositionValue::Fixed;
     tree.ancestors(node)
         .take_while(|&id| id != idx && id != owner)
         .find(|&id| {
             let ancestor = &tree.nodes[id];
             ancestor.display() != DisplayValue::Contents
-                && ancestor.position() != &PositionValue::Static
+                && if fixed {
+                    ancestor.claims_fixed_oof
+                } else {
+                    ancestor.claims_absolute_oof || ancestor.position() != &PositionValue::Static
+                }
         })
 }
 
@@ -1600,20 +1641,24 @@ pub(crate) fn measure_atomics(
         // no longer fitting it). Round the margin box as a whole and give the
         // border box what is left after the rounded margins.
         let snap = |value: f32| (value * 64.0).round() / 64.0;
-        let outer = snap(output.size.width + margin.left + margin.right);
-        let inline_size = (outer - snap(margin.left) - snap(margin.right)).max(0.0);
+        // The lines of a vertical paragraph run along the box's height. A
+        // horizontal paragraph takes the line-left margin as the inline-start
+        // one whatever its direction.
+        let (inline_size, block_size, margins) = logical_box(
+            (output.size.width, output.size.height),
+            (margin.top, margin.right, margin.bottom, margin.left),
+            root.writing_mode,
+            root.rtl && root.writing_mode != WritingMode::HorizontalTb,
+        );
+        let outer = snap(inline_size + margins.inline_start + margins.inline_end);
+        let inline_size = (outer - snap(margins.inline_start) - snap(margins.inline_end)).max(0.0);
         sizes.insert(
             id,
             AtomicSize {
                 inline_size,
-                block_size: output.size.height,
+                block_size,
                 baseline,
-                margins: shodo::node::Sides {
-                    inline_start: margin.left,
-                    inline_end: margin.right,
-                    block_start: margin.top,
-                    block_end: margin.bottom,
-                },
+                margins,
             },
         );
         outputs.push((node, output));
@@ -1623,6 +1668,8 @@ pub(crate) fn measure_atomics(
 
 /// What laying out a block child gives the line loop.
 struct BlockChild {
+    /// Out-of-flow candidates from this child's subtree, translated into the root's coordinates.
+    oof_candidates: OofCandidates,
     /// Top of the block's border box, from the content-box top.
     top: f32,
     /// Where the content after the block starts, before `pending`: the
@@ -1643,6 +1690,15 @@ struct BlockChild {
     top_margin: Option<CollapsibleMarginSet>,
     /// No content or formatting boundary separates the margins through it.
     collapses_through: bool,
+}
+
+fn translated_child_oof_candidates(
+    output: &taffy::LayoutOutput,
+    location: taffy::Point<f32>,
+) -> OofCandidates {
+    let mut candidates = output.oof_candidates.clone();
+    candidates.translate(location);
+    candidates
 }
 
 /// Lay a block child out below the offset `y`, as wide as the content box
@@ -1678,8 +1734,19 @@ fn layout_block_child(
     }
     let mut margin = resolved_margins(tree, node, geometry.width);
     let stretch = (geometry.width - margin.left - margin.right).max(0.0);
-    let width = own_inline_width(tree, node, &geometry).map_or(stretch, |own| own.at(stretch));
-    let width = clamp_block_width(tree, node, geometry.width, width);
+    // The child shares this root's context, which is prepared for the width
+    // its keyword `min-width` and `max-width` leave it.
+    let width = crate::taffy_impl::content_limits::with_width_limits(
+        tree,
+        node,
+        parent_size_of(&geometry),
+        stretch,
+        |tree| {
+            let width =
+                own_inline_width(tree, node, &geometry).map_or(stretch, |own| own.at(stretch));
+            clamp_block_width(tree, node, geometry.width, width)
+        },
+    );
     // `auto` side margins share the room the block leaves (CSS 2.1 10.3.3),
     // as in taffy's block algorithm: both auto centre the block, one auto
     // takes all of it.
@@ -1814,6 +1881,7 @@ fn layout_block_child(
         break (output, floats_bottom, top, after, has_clearance, top_set);
     };
     ctx.add_child_floated_content_height_contribution(geometry.top_edge + guess + floats_bottom);
+    let mut child_candidates = OofCandidates::new();
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.
@@ -1828,9 +1896,11 @@ fn layout_block_child(
             x: geometry.edges.0 + margin.left + dx,
             y: geometry.top_edge + top + dy,
         };
+        child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
     BlockChild {
+        oof_candidates: child_candidates,
         top,
         next_y: after.0,
         pending: after.1,
@@ -1943,15 +2013,18 @@ fn layout_vertical_block_child(
             block_size: output.size.width,
         },
     );
+    let mut child_candidates = OofCandidates::new();
     if perform {
         let (dx, dy) = relative_inset(tree, node, basis, relative_height(&geometry), geometry.axes);
         let location = taffy::Point {
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
         };
+        child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, inline_basis);
     }
     BlockChild {
+        oof_candidates: child_candidates,
         top: block_start,
         next_y: block_start + output.size.width,
         pending: CollapsibleMarginSet::from_margin(block_end_margin),
@@ -2106,6 +2179,7 @@ fn layout_formatting_context_child(
     } else {
         position.y - geometry.top_edge
     };
+    let mut child_candidates = OofCandidates::new();
     if perform {
         let (dx, dy) = relative_inset(
             tree,
@@ -2118,9 +2192,11 @@ fn layout_formatting_context_child(
             x: position.x + extra_left + dx,
             y: geometry.top_edge + top + dy,
         };
+        child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
     BlockChild {
+        oof_candidates: child_candidates,
         top,
         next_y: top + output.size.height,
         pending: CollapsibleMarginSet::from_margin(margin.bottom),
@@ -2443,9 +2519,10 @@ fn place_atomics(
     outputs: &[(usize, taffy::LayoutOutput)],
     geometry: FlowGeometry,
     rtl: bool,
-) {
+) -> OofCandidates {
+    let mut candidates = OofCandidates::new();
     if outputs.is_empty() {
-        return;
+        return candidates;
     }
     let mut outputs_by_node = HashMap::with_capacity(outputs.len());
     for (node, output) in outputs {
@@ -2473,20 +2550,27 @@ fn place_atomics(
             );
             // An atomic in a ruby annotation is placed with its annotation.
             let rect = placed(atomic.border_rect, line_top, placement);
-            // A right-to-left line runs from the right edge: its inline axis
-            // is mirrored inside the content box.
-            let start = if rtl {
-                geometry.width - (rect.inline_start + rect.inline_size)
-            } else {
-                rect.inline_start
-            };
+            // The rectangle is logical: its inline axis runs along the line
+            // and its block axis across the lines, which a vertical paragraph
+            // draws down and from the right (or left) edge. A right-to-left
+            // line runs from the far edge, so its inline axis is mirrored
+            // inside the content box.
+            let mut size = geometry.content_size;
+            if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+                size.width = geometry.width;
+            }
+            let direction = if rtl { Direction::Rtl } else { Direction::Ltr };
+            let physical = IfcAxes::new(geometry.axes.writing_mode(), direction).rect(size, rect);
             let location = taffy::Point {
-                x: geometry.edges.0 + start + dx,
-                y: geometry.top_edge + rect.block_start + dy,
+                x: geometry.edges.0 + physical.x + dx,
+                y: geometry.top_edge + physical.y + dy,
             };
+            let mut child_candidates = translated_child_oof_candidates(output, location);
+            candidates.append(&mut child_candidates);
             commit_child_layout(tree, node, output, location, geometry.width);
         }
     });
+    candidates
 }
 
 /// Move the atomic inlines of lines that were split into columns to the
@@ -2560,7 +2644,7 @@ fn relative_inset(
     node: usize,
     basis: f32,
     height: Option<f32>,
-    axes: super::geometry::IfcAxes,
+    axes: IfcAxes,
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.layout_node_with_style(node).unwrap().style;
@@ -2622,7 +2706,8 @@ pub(crate) fn commit_float(
     geometry: FlowGeometry,
     perform: bool,
     adjoins_top_margin: bool,
-) -> f32 {
+) -> (f32, OofCandidates) {
+    let mut oof_candidates = OofCandidates::new();
     // The context measures block offsets from the border-box top.
     let position = ctx.place_floated_box(
         float.margin_box,
@@ -2636,9 +2721,11 @@ pub(crate) fn commit_float(
             x: position.x + float.margin.left,
             y: position.y + float.margin.top,
         };
+        let mut child_candidates = translated_child_oof_candidates(&float.output, location);
+        oof_candidates.append(&mut child_candidates);
         commit_child_layout(tree, float.node, &float.output, location, geometry.width);
     }
-    position.y - geometry.top_edge
+    (position.y - geometry.top_edge, oof_candidates)
 }
 
 /// Store the final layout of a child that the ifc root laid out itself.
@@ -2694,9 +2781,14 @@ struct PaddingBox {
 /// An absolutely positioned box inside a positioned inline element is placed
 /// against that element instead: the bounding box of the padding boxes of its
 /// pieces on the lines, moved by its offset (CSS 2.1 10.1). An inline element
-/// that is a containing block only through `filter` or `will-change` is left
-/// to the root.
-pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border_box: Size<f32>) {
+/// that is a containing block through `filter` or `will-change` is one for
+/// fixed boxes as well.
+pub(crate) fn place_out_of_flow(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    border_box: Size<f32>,
+    output: &mut taffy::LayoutOutput,
+) {
     use taffy::util::MaybeResolve;
     let Some(root) = tree.nodes[idx].ifc.as_ref() else {
         return;
@@ -2707,7 +2799,7 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
         .filter(|b| b.kind == IfcBoxKind::OutOfFlow)
         .map(|b| b.node)
         .collect();
-    if positioned.is_empty() {
+    if positioned.is_empty() && output.oof_candidates.is_empty() {
         return;
     }
     let rtl = root.rtl;
@@ -2731,16 +2823,28 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
         width: (border_box.width - border.left - border.right).max(0.0),
         height: (border_box.height - border.top - border.bottom).max(0.0),
     };
+    if positioned.is_empty() {
+        output.oof_positioning_area = Some(OofPositioningArea {
+            size: Size {
+                width: root_cb.width,
+                height: root_cb.height,
+            },
+            offset: Point {
+                x: root_cb.x,
+                y: root_cb.y,
+            },
+        });
+        return;
+    }
     let content_left = border.left + padding.left;
     let content_top = border.top + padding.top;
     let owner = tree.ifc_source_owner(idx);
     // The pieces of the inline elements on the lines, made when a box needs
     // them.
     let mut pieces = None;
+    let mut candidates = taffy::OofCandidates::new();
     for node in positioned {
-        let cb = (tree.nodes[node].position() == &PositionValue::Absolute)
-            .then(|| positioned_inline_ancestor(tree, idx, owner, node))
-            .flatten()
+        let inline_cb = positioned_inline_ancestor(tree, idx, owner, node)
             .and_then(|inline| {
                 let pieces = pieces.get_or_insert_with(|| {
                     let content = shodo::geometry::PhysicalSize {
@@ -2771,8 +2875,7 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
                     y: content_top + inline.y + dy,
                     ..inline
                 }
-            })
-            .unwrap_or(root_cb);
+            });
         let anchor = lines.lines.iter().enumerate().find_map(|(index, line)| {
             line.fragments().find_map(|fragment| match fragment {
                 shodo::Fragment::OutOfFlowAnchor(anchor) if anchor.node.0 as usize == node => {
@@ -2798,6 +2901,23 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
                 }
             }
             None => (content_left, content_top + lines.height),
+        };
+        let Some(cb) = inline_cb else {
+            let position = if tree.nodes[node].position() == &PositionValue::Fixed {
+                Position::Fixed
+            } else {
+                Position::Absolute
+            };
+            candidates.push(OofCandidate {
+                node: taffy::NodeId::from(node),
+                order: tree.nodes[node].unrounded_layout.order,
+                position,
+                static_position: Point {
+                    x: AxisStaticPosition::from_edge(static_x, AxisStaticEdge::Start),
+                    y: AxisStaticPosition::from_edge(static_y, AxisStaticEdge::Start),
+                },
+            });
+            continue;
         };
         let child = &tree.layout_node_with_style(node).unwrap().style;
         // Two auto margins share the free space between the insets equally.
@@ -2839,27 +2959,31 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
         let available =
             (cb.width - margin.left - margin.right - left.unwrap_or(0.0) - right.unwrap_or(0.0))
                 .max(0.0);
-        let output = tree.compute_child_layout(
-            taffy::NodeId::from(node),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::ContentSize,
-                axis: RequestedAxis::Both,
-                known_dimensions: Size { width, height },
-                known_dimensions_are_definite: Size {
-                    width: true,
-                    height: true,
-                },
-                parent_size: Size {
-                    width: Some(cb.width),
-                    height: Some(cb.height),
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(available),
-                    height: AvailableSpace::MaxContent,
-                },
-                vertical_margins_are_collapsible: Line::FALSE,
+        let node_id = taffy::NodeId::from(node);
+        let inputs = LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::ContentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size { width, height },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
             },
+            parent_size: Size {
+                width: Some(cb.width),
+                height: Some(cb.height),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(available),
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let output = crate::taffy_impl::content_limits::with_oof_child_content_limits(
+            tree,
+            node_id,
+            inputs,
+            |tree, node_id, inputs| tree.compute_child_layout(node_id, inputs),
         );
         let x = match (left, right) {
             (Some(left), Some(right)) if auto_horizontal_margins => {
@@ -2892,6 +3016,21 @@ pub(crate) fn place_out_of_flow(tree: &mut LayoutSession<'_>, idx: usize, border
             (None, None) => static_y + margin.top,
         };
         commit_child_layout(tree, node, &output, taffy::Point { x, y }, cb.width);
+    }
+    if !candidates.is_empty() {
+        output.oof_candidates.append(&mut candidates);
+    }
+    if !output.oof_candidates.is_empty() {
+        output.oof_positioning_area = Some(OofPositioningArea {
+            size: Size {
+                width: root_cb.width,
+                height: root_cb.height,
+            },
+            offset: Point {
+                x: root_cb.x,
+                y: root_cb.y,
+            },
+        });
     }
 }
 

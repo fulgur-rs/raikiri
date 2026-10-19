@@ -155,6 +155,8 @@ pub(crate) struct IfcLines {
     pub(crate) width: f32,
     /// Shared, so cloning a root or a document does not copy them.
     pub(crate) lines: Arc<Vec<Line>>,
+    /// Out-of-flow candidates bubbled from in-flow child layouts.
+    pub(crate) oof_candidates: taffy::OofCandidates,
     /// Sum of the line advances.
     pub(crate) height: f32,
     /// True when some line was laid out beside a float (its space was
@@ -184,6 +186,9 @@ pub(crate) struct IfcLines {
     /// The block-level `::before` and `::after` boxes the lines were laid
     /// out in, in document order. A fragmenting layout records none.
     pub(crate) placed_blocks: Vec<super::generated_blocks::PlacedBlock>,
+    /// The forced page breaks the generated blocks ask for, in the order their
+    /// end tokens were met. A fragmenting layout records none.
+    pub(crate) forced_breaks: Vec<super::generated_blocks::ForcedBreak>,
 }
 
 /// Placement of an IFC-owned box accepted in one fragmentainer.

@@ -557,6 +557,87 @@ fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() 
     assert!(!first(&open.after(1).continued(40.0), 0));
 }
 
+/// The forced breaks of `css`'s box after `lines_before` lines, given
+/// `lines` lines laid out at its end and the border-box top of its placement.
+fn forced_breaks_of(
+    css: &str,
+    lines_before: usize,
+    lines: usize,
+    placed_at: Option<f32>,
+) -> Vec<ForcedBreak> {
+    let block = block(css);
+    let mut bfc = crate::taffy_impl::block_flow::context::BlockFormattingContext::new();
+    let ctx = bfc.root_block_context();
+    let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
+    let open = OpenBlock {
+        lines_before,
+        ..open(&block, flow(&mut y, &mut pending, &mut leading, &ctx))
+    };
+    let rect = |y| BoxRect {
+        x: 0.0,
+        y,
+        width: 100.0,
+        height: 20.0,
+    };
+    let placed = placed_at.map(|top| PlacedBlock {
+        node: 1,
+        border_box: rect(top),
+        content_box: rect(top),
+        first_line: lines_before,
+        end_line: lines,
+    });
+    block.forced_breaks(&open, placed.as_ref(), lines).collect()
+}
+
+#[test]
+fn a_box_asks_for_the_forced_breaks_before_and_after_it() {
+    assert_eq!(
+        forced_breaks_of(
+            "break-before:page;break-after:always;margin-top:7px",
+            3,
+            5,
+            Some(61.0)
+        ),
+        [
+            ForcedBreak {
+                line: 3,
+                value: BreakBetween::Page,
+                box_top: Some(61.0),
+                gap: 7.0,
+            },
+            ForcedBreak {
+                line: 5,
+                value: BreakBetween::Always,
+                box_top: None,
+                gap: 0.0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_box_at_the_start_of_its_paragraph_has_no_line_to_break_before() {
+    let breaks = forced_breaks_of("break-before:page;break-after:page", 0, 2, None);
+    assert_eq!(breaks.len(), 1);
+    assert_eq!((breaks[0].line, breaks[0].value), (2, BreakBetween::Page));
+}
+
+#[test]
+fn only_page_and_always_breaks_are_forced() {
+    for value in ["auto", "avoid", "avoid-page", "column", "left"] {
+        assert!(
+            forced_breaks_of(
+                &format!("break-before:{value};break-after:{value}"),
+                1,
+                2,
+                None
+            )
+            .is_empty(),
+            "{value}"
+        );
+    }
+}
+
 #[test]
 fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
     let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
@@ -932,4 +1013,83 @@ fn a_float_adjoining_the_margins_above_a_formatting_root_block_moves_with_them()
             "margin-top: {margin}"
         );
     }
+}
+
+/// The border box of a block `::after` styled `css` after `floats`, in a
+/// 100px paragraph.
+fn block_after_floats(css: &str, floats: &[&str]) -> BoxRect {
+    let (_, blocks) = placed_after_floats(
+        &format!("div::after {{ content: 'XXX'; display: flow-root; {css} }}"),
+        TEN_PX,
+        floats,
+        "",
+    );
+    let [block] = blocks.as_slice() else {
+        panic!("one placed block: {blocks:?}")
+    };
+    block.border_box
+}
+
+/// A 70x10 float at the left and a 40x30 one at the right that sits below it,
+/// as they do not fit side by side: 30px of room from y = 0, 60px from y = 10.
+const FLOATS_70X10_AND_40X30: [&str; 2] = [
+    "float: left; width: 70px; height: 10px",
+    "float: right; width: 40px; height: 30px",
+];
+
+#[test]
+fn a_formatting_root_block_taller_than_its_gap_moves_below_the_float_it_would_overlap() {
+    // 20px fit in the 30px beside the first float, but the box goes on for
+    // 30px and the right float starts after 10.
+    assert_eq!(
+        block_after_floats("width: 20px; height: 30px", &FLOATS_70X10_AND_40X30),
+        rect(0.0, 10.0, 20.0, 30.0)
+    );
+    // A box no taller than that gap stays beside the first float.
+    assert_eq!(
+        block_after_floats("width: 20px; height: 10px", &FLOATS_70X10_AND_40X30),
+        rect(70.0, 0.0, 20.0, 10.0)
+    );
+    // The height counts with its padding and border, and `min-height` and
+    // `max-height` bound it.
+    assert_eq!(
+        block_after_floats(
+            "width: 20px; height: 5px; padding: 0 0 6px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 20.0, 11.0)
+    );
+    assert_eq!(
+        block_after_floats(
+            "width: 20px; height: 5px; min-height: 30px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 20.0, 30.0)
+    );
+    assert_eq!(
+        block_after_floats(
+            "width: 20px; height: 30px; max-height: 10px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(70.0, 0.0, 20.0, 10.0)
+    );
+}
+
+#[test]
+fn a_formatting_root_block_of_auto_width_narrows_to_the_room_every_band_it_reaches_shares() {
+    // Bands 80px wide from y = 0 and 50px wide from y = 10. A box 15px tall
+    // reaches both, so it takes the 50px they share.
+    let floats = [
+        "float: left; width: 20px; height: 10px",
+        "float: left; clear: left; width: 50px; height: 10px",
+    ];
+    assert_eq!(
+        block_after_floats("height: 15px", &floats),
+        rect(50.0, 0.0, 50.0, 15.0)
+    );
+    // Only 10px tall, it stays in the first band.
+    assert_eq!(
+        block_after_floats("height: 10px", &floats),
+        rect(20.0, 0.0, 80.0, 10.0)
+    );
 }

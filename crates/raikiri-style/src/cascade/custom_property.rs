@@ -393,6 +393,28 @@ fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
     })
 }
 
+/// The property name of a margin, padding or offset longhand key.
+fn box_side_longhand_name(key: PropertyKey) -> Option<&'static str> {
+    const NAMES: [(PropertyKey, &str); 12] = [
+        (PropertyKey::MarginTop, "margin-top"),
+        (PropertyKey::MarginRight, "margin-right"),
+        (PropertyKey::MarginBottom, "margin-bottom"),
+        (PropertyKey::MarginLeft, "margin-left"),
+        (PropertyKey::PaddingTop, "padding-top"),
+        (PropertyKey::PaddingRight, "padding-right"),
+        (PropertyKey::PaddingBottom, "padding-bottom"),
+        (PropertyKey::PaddingLeft, "padding-left"),
+        (PropertyKey::Top, "top"),
+        (PropertyKey::Right, "right"),
+        (PropertyKey::Bottom, "bottom"),
+        (PropertyKey::Left, "left"),
+    ];
+    NAMES
+        .iter()
+        .find(|(candidate, _)| *candidate == key)
+        .map(|&(_, name)| name)
+}
+
 /// The property name of a border-image longhand key.
 fn border_image_longhand_name(key: PropertyKey) -> Option<&'static str> {
     Some(match key {
@@ -470,6 +492,20 @@ pub(crate) fn project_deferred_value(
         && marker.property.as_str() == "border-image"
         && marker.css_wide_keyword().is_some()
         && let Some(property) = border_image_longhand_name(key)
+    {
+        let mut marker = marker.clone();
+        marker.key = key;
+        marker.property = property.into();
+        return Some(PropertyValue::Deferred(marker));
+    }
+    // A CSS-wide keyword written for a margin, padding or inset shorthand
+    // sets each of its longhands to that keyword.
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.key != key
+        && marker.css_wide_keyword().is_some()
+        && let crate::rule::KeyClass::Shorthand { longhands } = crate::rule::classify(marker.key)
+        && longhands.contains(&key)
+        && let Some(property) = box_side_longhand_name(key)
     {
         let mut marker = marker.clone();
         marker.key = key;

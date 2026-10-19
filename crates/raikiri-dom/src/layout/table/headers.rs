@@ -296,15 +296,10 @@ impl Document {
 }
 
 fn absolute_position(document: &Document, node: usize) -> (f32, f32) {
-    let mut position = (0.0, 0.0);
-    let mut current = Some(node);
-    while let Some(id) = current {
-        let layout = document.nodes[id].unrounded_layout;
-        position.0 += layout.location.x;
-        position.1 += layout.location.y;
-        current = document.layout_parent_of(id);
-    }
-    position
+    let origin = document
+        .layout_origin_of(node)
+        .expect("valid layout node has an origin");
+    (origin.x, origin.y)
 }
 
 pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {

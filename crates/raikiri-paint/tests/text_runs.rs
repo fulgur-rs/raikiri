@@ -836,6 +836,37 @@ fn nested_column_paragraphs_match_paint() {
 }
 
 #[test]
+fn the_own_text_of_a_nested_column_container_matches_paint() {
+    // The text sits in the inner container itself, so each of its lines
+    // belongs to one of the inner columns whichever outer column the
+    // container is placed in.
+    for outer in ["", "height: 60px; column-fill: auto;"] {
+        let result = lay_out(
+            &format!(
+                "<p>kept</p><div style=\"columns: 2; {outer}\"><div id=\"n\" style=\"columns: 2\">{}</div></div>",
+                vec!["word"; 30].join(" ")
+            ),
+            "",
+        );
+        assert!(
+            !result
+                .warnings()
+                .iter()
+                .any(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+        );
+        assert!(assert_runs_match_paint(&result) > 0);
+        let nested = text_nodes(&result.pages().next().expect("page"), "n");
+        let words: usize = result
+            .pages()
+            .flat_map(|page| page.text_runs())
+            .filter(|run| matches!(run.source, RunSource::Text(node) if nested.contains(&node)))
+            .map(|run| run.text.split_whitespace().count())
+            .sum();
+        assert_eq!(words, 30, "every word is reported once ({outer})");
+    }
+}
+
+#[test]
 fn a_nested_container_continued_in_later_outer_columns_matches_paint() {
     let result = lay_out(
         &format!(

@@ -159,7 +159,13 @@ fn content_overflow_end(
         // Layout places some boxes without their relative offset, which
         // the painter adds to the box and its subtree.
         let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
-        let y = parent_y + node.unrounded_layout.location.y + paint_offset;
+        // OOF locations are relative to their containing-block owner, which
+        // may differ from the DOM parent used by this traversal.
+        let y = if document.oof_coordinates.contains_key(&node_id) {
+            current_abs_y(document, node_id) + paint_offset
+        } else {
+            parent_y + node.unrounded_layout.location.y + paint_offset
+        };
         let bottom = if node_id == body_id {
             block_border_box_end(
                 document,
@@ -1158,26 +1164,25 @@ fn layout_single_page_with_table_projection(
         width: AvailableSpace::Definite(content_width),
         height: AvailableSpace::Definite(content_height),
     };
-    taffy::compute_root_layout(document, TaffyNodeId::from(icb), available_space);
+    document.begin_oof_layout();
+    crate::taffy_impl::compute_root_layout_with_content_limits(
+        document,
+        TaffyNodeId::from(icb),
+        available_space,
+    );
     take_layout_failure(document)?;
-    // Step 5a: post-layout corrections taffy does not make: the containing
-    // block of nested fixed boxes and auto-height ancestors of floats. Grid
-    // abspos static positions are aligned within the grid dispatch.
-    // Taffy places fixed boxes against their parents, not the page area,
-    // their containing block.
-    let page_area = taffy::Size {
-        width: content_width,
-        height: content_height,
-    };
-    document.fixed_page_area = Some((content_width, content_height));
-    super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
-    let root = super::initial_containing_block::root_element(document).unwrap_or(body_id);
-    place_fixed_boxes_in_page_area(document, cascade, root, page_area);
-    // Laying those boxes out again can fail a table or exhaust the
-    // fragment budget like the root layout above.
-    take_layout_failure(document)?;
-    // Again for the boxes inside fixed boxes that relayout put back; the
-    // pass is idempotent, so the boxes placed above stay where they are.
+    super::fixed::correct_root_oof_auto_margins(
+        document,
+        icb,
+        taffy::Size {
+            width: content_width,
+            height: content_height,
+        },
+    );
+    super::fixed::correct_root_flex_static_positions(document);
+    document.finalize_oof_layout();
+    // Inline-level boxes in block flow keep the hypothetical inline static
+    // position from CSS 2.1; inline paragraphs place their own OOF anchors.
     super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
@@ -1841,6 +1846,113 @@ fn widows_break_on_last_page(
         && bottom(total_lines - 1) - top(line) <= page_origins.step_at(last_page) + 0.001)
         .then(|| (line, page_origins.origin(last_page) - top(line), last_page))
         .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0)
+}
+
+/// A forced page break between two lines of a paragraph, and where the
+/// content that follows it starts the next page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ForcedLineBreak {
+    /// The first line after the break.
+    line: usize,
+    /// How far above that line the content that starts the next page begins:
+    /// the border-box top of a box that the break is before.
+    lead: f32,
+    /// The margin that stays above that content, at the top of the next page.
+    gap: f32,
+}
+
+/// The forced page breaks that the block-level `::before` and `::after` of
+/// the paragraph `root` ask for between its lines, in line order. A
+/// `break-*: always` counts only where it breaks pages.
+fn forced_line_breaks(document: &Document, root: usize) -> Vec<ForcedLineBreak> {
+    let lines = document
+        .ifc_layout_node(root)
+        .and_then(|node| node.ifc.as_ref())
+        .and_then(|ifc| ifc.lines.as_ref());
+    let mut breaks: Vec<_> = lines
+        .into_iter()
+        .flat_map(|lines| {
+            lines
+                .forced_breaks
+                .iter()
+                .filter(|forced| page_break_is_forced(document, root, forced.value))
+                .filter_map(move |forced| {
+                    let lead = match forced.box_top {
+                        Some(top) => lines.lines.get(forced.line)?.block_offset() - top,
+                        None => 0.0,
+                    };
+                    Some(ForcedLineBreak {
+                        line: forced.line,
+                        lead: lead.max(0.0),
+                        gap: forced.gap,
+                    })
+                })
+        })
+        .collect();
+    merge_forced_line_breaks(&mut breaks);
+    breaks
+}
+
+/// Puts `breaks` in line order, and the breaks before the same line into one
+/// that keeps the larger lead and gap.
+fn merge_forced_line_breaks(breaks: &mut Vec<ForcedLineBreak>) {
+    breaks.sort_by_key(|forced| forced.line);
+    breaks.dedup_by(|later, earlier| {
+        let same_line = later.line == earlier.line;
+        if same_line {
+            earlier.lead = earlier.lead.max(later.lead);
+            earlier.gap = earlier.gap.max(later.gap);
+        }
+        same_line
+    });
+}
+
+/// The moves that forced page breaks between the lines of a paragraph ask
+/// for, in line order: each moves the line after its break, and the lines
+/// after that, down so that what the break is before starts the next page,
+/// below the margin `gap` it keeps there. `breaks` are as for
+/// [`forced_line_breaks`], and `line_metrics` and `effective_y` as for
+/// [`widows_break_on_next_page`]. A break that has no line on either side
+/// stays at the edge of the paragraph, and a page edge that already falls
+/// before what the break is before is the break.
+fn forced_line_moves(
+    breaks: &[ForcedLineBreak],
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    page_origins: &PageOrigins,
+) -> Vec<LineBreakMove> {
+    let mut moved = 0.0;
+    let mut moves = Vec::new();
+    for &ForcedLineBreak { line, lead, gap } in breaks {
+        if line == 0 || line >= line_metrics.len() {
+            continue;
+        }
+        let top = |line: usize| effective_y + line_metrics[line].0 + moved;
+        let bottom = |line: usize| effective_y + line_metrics[line].1 + moved;
+        // Each line belongs to the page that holds its center (see
+        // `line_center_on_page`).
+        let page_of =
+            |line: usize| page_origins.page_index_for_y((top(line) + bottom(line)) * 0.5 + 0.001);
+        // What starts the next page is a box above the line when there is
+        // one, even if the line itself is already on the next page.
+        let starts = top(line) - lead;
+        let previous = page_of(line - 1);
+        let starts_page = if lead > 0.0 {
+            page_origins.page_index_for_y(starts + 0.001)
+        } else {
+            page_of(line)
+        };
+        if starts_page > previous {
+            continue;
+        }
+        let page = previous.saturating_add(1);
+        let shift = page_origins.origin(page) + gap - starts;
+        if shift.is_finite() && shift > 0.0 {
+            moves.push((line, shift, page));
+            moved += shift;
+        }
+    }
+    moves
 }
 
 /// Moves line `line` of the paragraph `root` and every line after it down by
@@ -3284,8 +3396,7 @@ fn paginate_flow(
     let page_step_at = |page_index: u32| page_origins.step_at(page_index);
     let page_origin = |page_index: u32| page_origins.origin(page_index);
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
-    let leading_margins_moved =
-        leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
+    leading_margins::truncate_flow(document, cascade, body_id, &page_origins, control)?;
     let root_flow_offset = 0.0;
 
     // Page heights are known here, after source layout has established each
@@ -3458,13 +3569,6 @@ fn paginate_flow(
     document.table_objects.headers = std::mem::take(&mut state.table_headers);
 
     state.reach_overflow_pages(document, &env, content_height)?;
-
-    // Truncating margins can move an ancestor of a fixed box. Restore only
-    // its block position, preserving the already-corrected subtree layout.
-    if state.sibling_margins.moved_boxes || leading_margins_moved {
-        let root = super::initial_containing_block::root_element(document).unwrap_or(body_id);
-        super::fixed::restore_fixed_box_block_positions(document, cascade, root, content_height);
-    }
 
     scale_percent_widths(
         document,
@@ -3942,6 +4046,9 @@ impl AvoidedBreaks {
 // materialized relative to an already-shifted ancestor instead of being
 // shifted twice.
 fn current_abs_y(document: &Document, node_id: usize) -> f32 {
+    if let Some(origin) = document.layout_origin_of(node_id) {
+        return origin.y;
+    } // cov:ignore: callers supply existing layout keys; missing keys would panic in the fallback's arena indexing.
     let mut id = document.ifc_source_owner(node_id);
     let mut y = if id != node_id {
         document

@@ -572,16 +572,7 @@ fn canvas_background_paints_a_propagated_body_gradient() {
     page_box.height = 40.0;
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_canvas_background(
-        &ImageBrushCache::default(),
-        &mut scene,
-        &document,
-        &cascade,
-        page_box,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_page_and_canvas_background(&mut scene, &document, &cascade, page_box, &mut warnings);
     assert!(warnings.is_empty());
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
@@ -607,16 +598,7 @@ fn canvas_gradient_ignores_background_clip() {
         page_box.height = 40.0;
         let mut scene = Scene::new();
         let mut warnings = Vec::new();
-        paint_canvas_background(
-            &ImageBrushCache::default(),
-            &mut scene,
-            &document,
-            &cascade,
-            page_box,
-            None,
-            None,
-            &mut warnings,
-        );
+        paint_page_and_canvas_background(&mut scene, &document, &cascade, page_box, &mut warnings);
         assert!(warnings.is_empty(), "{clip}: {warnings:?}");
         let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
             |out| out.append_scene(scene, Affine::IDENTITY),
@@ -678,16 +660,7 @@ fn page_box_paints_its_gradient_over_its_color() {
     page_box.height = 40.0;
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_canvas_background(
-        &ImageBrushCache::default(),
-        &mut scene,
-        &document,
-        &cascade,
-        page_box,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_page_and_canvas_background(&mut scene, &document, &cascade, page_box, &mut warnings);
     assert!(warnings.is_empty(), "{warnings:?}");
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
@@ -933,16 +906,7 @@ fn page_gradients_resolve_font_lengths_with_the_page_font() {
     page_box.height = 40.0;
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_canvas_background(
-        &ImageBrushCache::default(),
-        &mut scene,
-        &document,
-        &cascade,
-        page_box,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_page_and_canvas_background(&mut scene, &document, &cascade, page_box, &mut warnings);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         100,
@@ -966,16 +930,7 @@ fn page_gradients_inherit_current_color_from_the_root() {
     page_box.height = 20.0;
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_canvas_background(
-        &ImageBrushCache::default(),
-        &mut scene,
-        &document,
-        &cascade,
-        page_box,
-        None,
-        None,
-        &mut warnings,
-    );
+    paint_page_and_canvas_background(&mut scene, &document, &cascade, page_box, &mut warnings);
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         20,

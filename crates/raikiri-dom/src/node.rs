@@ -485,6 +485,9 @@ pub struct Node {
     /// as background images, rounded corners or shadows. Recomputed by the
     /// style bridge before every layout pass.
     pub(crate) paints_whole_box_effects: bool,
+    /// Whether the box fills its border box with a visible background color.
+    /// Recomputed by the style bridge before every layout pass.
+    pub(crate) paints_background_color: bool,
     /// Whether `box-decoration-break: clone` gives every fragment of this box
     /// its own block-start and block-end padding and border (CSS Fragmentation
     /// 3, 5.4). Recomputed by the style bridge before every layout pass.
@@ -517,12 +520,20 @@ pub struct Node {
     /// transform, filter or containment that would make it the containing
     /// block of fixed boxes as well. Bridged from the cascade.
     pub(crate) contains_absolute_boxes: bool,
+    /// Whether this box establishes a containing block for absolute boxes.
+    pub(crate) claims_absolute_oof: bool,
+    /// Whether this box establishes a containing block for fixed boxes.
+    pub(crate) claims_fixed_oof: bool,
     /// Whether this box is `position: fixed`, which Taffy lays out as
     /// absolutely positioned.
     pub(crate) fixed_position: bool,
     /// The physical axes in which size containment sizes this box as if it
     /// had no content (CSS Containment 2 §3.1, §3.2).
     pub(crate) size_containment: taffy::Size<bool>,
+    /// The `min-*` and `max-*` sizes of this box that are intrinsic sizing
+    /// keywords, which Taffy's style cannot hold; layout resolves them to
+    /// lengths when it lays the box out.
+    pub(crate) content_limits: crate::taffy_impl::content_limits::ContentLimits,
     /// The `text-group-align` of this box (CSS Text 4), which makes it the
     /// root of a group of the lines in its block formatting context.
     pub(crate) text_group_align: shodo::style::TextGroupAlign,
@@ -717,6 +728,7 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             paints_whole_box_effects: false,
+            paints_background_color: false,
             clones_box_decorations: false,
             multicol: None,
             column_span_all: false,
@@ -728,11 +740,14 @@ impl Node {
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
             contains_absolute_boxes: false,
+            claims_absolute_oof: false,
+            claims_fixed_oof: false,
             fixed_position: false,
             size_containment: taffy::Size {
                 width: false,
                 height: false,
             },
+            content_limits: crate::taffy_impl::content_limits::ContentLimits::NONE,
             text_group_align: shodo::style::TextGroupAlign::None,
             flex_edge_basis: None,
             order: 0,
@@ -1057,6 +1072,27 @@ impl Node {
     #[doc(hidden)]
     pub fn ifc_multicol_fragments(&self) -> Option<&[MulticolTextFragment]> {
         self.ifc.as_ref()?.multicol_fragments.as_deref()
+    }
+
+    /// The column of its paragraph that a visit of this box through `fragment`
+    /// draws, or `None` when the visit draws all of the paragraph.
+    ///
+    /// A column container that holds its own paragraph is placed in one
+    /// column of its parent, as one box. The line ranges of its paragraph name
+    /// the container's own columns and carry their own origins, so the column
+    /// of that placement must not select among them.
+    #[doc(hidden)]
+    pub fn paragraph_column_of_fragment(
+        &self,
+        fragment: &crate::fragment::LayoutFragment,
+    ) -> Option<usize> {
+        let in_own_columns = self.multicol.is_some()
+            && fragment.fragment_count == 1
+            && fragment.line_start.is_none()
+            && self.ifc.as_ref().is_some_and(|root| {
+                root.multicol_fragments.is_some() && !root.multicol_fragment_origins_recorded
+            });
+        (!in_own_columns).then_some(fragment.fragmentainer)
     }
 
     /// Content width the lines of an ifc root were broken at, and their total

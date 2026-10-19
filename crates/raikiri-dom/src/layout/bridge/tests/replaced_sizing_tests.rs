@@ -58,6 +58,24 @@ fn a_block_level_image_keeps_its_natural_width() {
 }
 
 #[test]
+fn an_empty_flex_or_grid_image_keeps_its_natural_size() {
+    let mut images = Vec::new();
+    let doc = laid_out(|doc, body| {
+        for display in ["flex", "grid"] {
+            images.push(doc.append_element(
+                Some(body),
+                "img",
+                Style::default(),
+                Some(format!("display:{display}").as_str()),
+            ));
+        }
+    });
+    for image in images {
+        assert_eq!(size(&doc, image), (25.0, 50.0));
+    }
+}
+
+#[test]
 fn a_decoded_image_keeps_its_own_natural_size_whatever_its_file_name() {
     let mut image = 0;
     let doc = laid_out(|doc, body| {
@@ -629,4 +647,104 @@ fn an_image_with_both_sides_authored_keeps_them_in_every_container() {
 #[test]
 fn a_percentage_max_height_without_a_definite_height_does_not_constrain_an_image() {
     assert_eq!(image_size("max-height:50%"), (25.0, 50.0));
+}
+
+#[test]
+fn a_percentage_height_of_an_image_ignores_the_content_height_of_an_absolute_box() {
+    // The height of the box follows from its content, so the percentage
+    // height of the image is `auto` (CSS 2.1 10.5), as in an inline block.
+    let (inline_block, inline_block_image) = image_in_box("display:inline-block", "height:100%");
+    assert_eq!(inline_block_image, (25.0, 50.0));
+    for box_css in [
+        "position:absolute",
+        "position:absolute;top:0",
+        "position:absolute;bottom:0",
+        "position:fixed",
+    ] {
+        let (parent, image) = image_in_box(box_css, "height:100%");
+        assert_eq!(image, (25.0, 50.0), "{box_css}");
+        assert_eq!(parent.1, inline_block.1, "{box_css}");
+    }
+}
+
+#[test]
+fn a_percentage_height_of_an_image_resolves_against_an_absolute_box_with_a_definite_height() {
+    // A `height` of its own, or both `top` and `bottom` in a container of a
+    // definite height, fix the height of the box.
+    for box_css in [
+        "position:absolute;height:100px",
+        "position:absolute;height:100px;top:0",
+        "position:absolute;height:50px;top:0;bottom:0",
+    ] {
+        let (_, image) = image_in_box(box_css, "height:100%");
+        let expected = if box_css.contains("height:50px") {
+            (25.0, 50.0)
+        } else {
+            (50.0, 100.0)
+        };
+        assert_eq!(image, expected, "{box_css}");
+    }
+    let (parent, image) = {
+        let (mut parent, mut image) = (0, 0);
+        let doc = laid_out(|doc, body| {
+            let container = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("position:relative;height:80px"),
+            );
+            parent = doc.append_element(
+                Some(container),
+                "div",
+                Style::default(),
+                Some("position:absolute;top:0;bottom:0"),
+            );
+            image = doc.append_element(Some(parent), "img", Style::default(), Some("height:100%"));
+        });
+        (size(&doc, parent), size(&doc, image))
+    };
+    assert_eq!(parent.1, 80.0);
+    assert_eq!(image, (40.0, 80.0));
+}
+
+#[test]
+fn a_percentage_height_of_an_image_resolves_against_an_absolute_box_pinned_by_its_min_and_max_height()
+ {
+    // A `min-height` that a `max-height` does not exceed fixes the height of
+    // the box whatever its content, although its `height` is `auto`.
+    for box_css in [
+        "position:absolute;min-height:100px;max-height:100px",
+        "position:absolute;min-height:100px;max-height:50px",
+        "position:fixed;min-height:100px;max-height:100px",
+    ] {
+        let (parent, image) = image_in_box(box_css, "height:100%");
+        assert_eq!(image, (50.0, 100.0), "{box_css}");
+        assert_eq!(parent.1, 100.0, "{box_css}");
+    }
+    // A range of heights leaves the height to the content.
+    let (_, image) = image_in_box(
+        "position:absolute;min-height:50px;max-height:100px",
+        "height:100%",
+    );
+    assert_eq!(image, (25.0, 50.0));
+}
+
+#[test]
+fn a_percentage_height_of_a_block_is_auto_in_an_absolute_box_that_sizes_to_its_content() {
+    let height = |box_css: &str| {
+        let (mut parent, mut child) = (0, 0);
+        let doc = laid_out(|doc, body| {
+            parent = doc.append_element(Some(body), "div", Style::default(), Some(box_css));
+            child = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("height:100%;min-height:10px"),
+            );
+        });
+        (size(&doc, parent).1, size(&doc, child).1)
+    };
+    assert_eq!(height("position:absolute"), (10.0, 10.0));
+    assert_eq!(height("position:absolute;height:30px"), (30.0, 30.0));
+    assert_eq!(height("display:inline-block"), (10.0, 10.0));
 }
