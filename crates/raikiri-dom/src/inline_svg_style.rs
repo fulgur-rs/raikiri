@@ -11,6 +11,8 @@ use raikiri_style::property::{FontFamilyKind, PropertyKey};
 use raikiri_style::{CascadeResult, ComputedValues, StyleNodeId};
 use raikiri_traits::NodeKind;
 
+const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+
 /// Upper bound on the declaration text the descendants of one SVG may add.
 const DECLARATION_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 
@@ -65,7 +67,11 @@ pub fn inline_svg_element_declarations(
             } else {
                 properties
             };
-            if (!properties.is_empty() || !relative_attributes.is_empty())
+            // An HTML element inside the SVG (under `foreignObject`) lists the
+            // painting properties its SVG descendants inherit, which the
+            // renderer has no use for.
+            if node.namespace_uri() == Some(SVG_NAMESPACE)
+                && (!properties.is_empty() || !relative_attributes.is_empty())
                 && let Some(style) = cascade.computed.get(node_id)
             {
                 elements.push(InlineSvgElementDeclarations {

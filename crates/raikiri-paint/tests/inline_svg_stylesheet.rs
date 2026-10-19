@@ -523,3 +523,67 @@ fn an_inherited_stroke_width_comes_from_the_nearest_ancestor_that_sets_it_by_att
         "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=8 /></svg>",
     );
 }
+
+#[test]
+fn an_html_ancestors_fill_reaches_the_svg() {
+    assert_paints_like(
+        "<div style='fill:blue'><svg width=20 height=20><rect width=20 height=20 /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn an_html_ancestors_dasharray_dashes_the_svg_stroke() {
+    assert_paints_like(
+        "<style>body{stroke-dasharray:4 4}</style><svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 /></svg>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='4 4' /></svg>",
+    );
+}
+
+#[test]
+fn an_html_ancestors_paint_yields_to_the_svgs_own_attribute() {
+    assert_paints_like(
+        "<div style='fill:red'><svg width=20 height=20><rect width=20 height=20 fill=blue /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_root_that_inherits_its_fill_takes_the_html_ancestors() {
+    assert_paints_like(
+        "<style>div{fill:blue}svg{fill:inherit}</style><div><svg width=20 height=20><rect width=20 height=20 /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn an_html_ancestors_font_relative_stroke_width_is_resolved_where_it_is_declared() {
+    assert_paints_like(
+        "<div style='font-size:20px;stroke:black;stroke-width:.25em'><svg width=50 height=20 style='font-size:10px'><path d='M0 10h50' fill=none /></svg></div>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
+    );
+}
+
+#[test]
+fn an_html_ancestors_paint_yields_to_the_roots_own_attribute() {
+    assert_paints_like(
+        "<div style='fill:red'><svg width=20 height=20 fill=blue><rect width=20 height=20 /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_roots_inherit_beats_its_own_attribute_and_takes_the_html_ancestors_paint() {
+    assert_paints_like(
+        "<div style='fill:red'><svg width=20 height=20 fill=blue style='fill:inherit'><rect width=20 height=20 /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=red /></svg>",
+    );
+}
+
+#[test]
+fn a_roots_current_color_fill_is_not_replaced_by_an_html_ancestors_fill() {
+    assert_paints_like(
+        "<div style='fill:red'><svg width=20 height=20 style='fill:currentColor;color:blue'><rect width=20 height=20 /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
