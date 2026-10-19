@@ -778,8 +778,19 @@ impl LayoutSession<'_> {
             }
             // An inline SVG root is replaced content: its children are drawn
             // by the SVG renderer, not laid out, so it is measured as a leaf.
-            let is_leaf =
-                tree.nodes[idx].children.is_empty() || tree.nodes[idx].is_inline_svg_root();
+            // Empty flex/grid containers still run their layout algorithms;
+            // explicit grid tracks contribute even when there are no items.
+            let item_is_replaced = tree
+                .layout_node_with_style(idx)
+                .unwrap()
+                .style
+                .item_is_replaced;
+            let is_leaf = (tree.nodes[idx].children.is_empty()
+                && (!matches!(
+                    formatting_context,
+                    FormattingContext::Flex | FormattingContext::Grid
+                ) || item_is_replaced))
+                || tree.nodes[idx].is_inline_svg_root();
             if empty && is_leaf {
                 // Replaced content with size containment has no natural size
                 // or aspect ratio.
@@ -2354,7 +2365,13 @@ fn flex_layout_sized(
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
     tree.context.flex_item_percent_bases.push((idx, basis));
-    let mut output = compute_flexbox_layout(tree, node_id, inputs);
+    let mut output = content_limits::with_item_content_limits(
+        tree,
+        node_id,
+        inputs,
+        basis,
+        |tree, node_id, inputs| compute_flexbox_layout(tree, node_id, inputs),
+    );
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);
     }
@@ -2463,7 +2480,18 @@ fn with_fit_content_width(
 /// Lay out the grid container `node_id` with taffy's grid algorithm.
 fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
-    let mut output = compute_grid_layout(tree, node_id, inputs);
+    let (size, inset, _) = tree.block_definite_size(idx, &inputs);
+    let parent_size = Size {
+        width: size.width.map(|width| (width - inset.width).max(0.0)),
+        height: size.height.map(|height| (height - inset.height).max(0.0)),
+    };
+    let mut output = content_limits::with_grid_item_content_limits(
+        tree,
+        node_id,
+        inputs,
+        parent_size,
+        |tree, node_id, inputs| compute_grid_layout(tree, node_id, inputs),
+    );
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);
     }

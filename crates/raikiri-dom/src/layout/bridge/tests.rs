@@ -2680,6 +2680,67 @@ fn a_block_in_normal_flow_records_its_keyword_min_and_max_sizes() {
 }
 
 #[test]
+fn a_flex_or_grid_container_records_its_keyword_min_and_max_sizes() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let css = "min-width:min-content;max-width:fit-content;\
+               min-height:max-content;max-height:fit-content(10px)";
+    for display in ["flex", "grid"] {
+        let child_css = format!("display:{display};{css}");
+        let [(limits, min, max)] =
+            bridged_content_limits(&[("display:block", "div", &child_css)])[..]
+        else {
+            panic!("one case");
+        };
+        assert_eq!(
+            limits,
+            ContentLimits {
+                min: taffy::Size {
+                    width: Dimension::min_content(),
+                    height: Dimension::max_content(),
+                },
+                max: taffy::Size {
+                    width: Dimension::fit_content(),
+                    height: Dimension::fit_content_px(10.0),
+                },
+            },
+            "display:{display}"
+        );
+        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+    }
+}
+
+#[test]
+fn a_flex_or_grid_item_records_its_keyword_min_and_max_sizes() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let css = "display:block;min-width:min-content;max-width:fit-content;\
+               min-height:max-content;max-height:fit-content(10px)";
+    for parent in ["display:flex", "display:grid"] {
+        let [(limits, min, max)] = bridged_content_limits(&[(parent, "div", css)])[..] else {
+            panic!("one case");
+        };
+        assert_eq!(
+            limits,
+            ContentLimits {
+                min: taffy::Size {
+                    width: Dimension::min_content(),
+                    height: Dimension::max_content(),
+                },
+                max: taffy::Size {
+                    width: Dimension::fit_content(),
+                    height: Dimension::fit_content_px(10.0),
+                },
+            },
+            "{parent}"
+        );
+        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+    }
+}
+
+#[test]
 fn a_size_that_is_no_keyword_is_no_content_limit() {
     use crate::taffy_impl::content_limits::ContentLimits;
 
@@ -2702,12 +2763,7 @@ fn a_box_a_content_limit_does_not_apply_to_records_none() {
     let keyword = "min-width:min-content;max-height:max-content";
     let block = format!("display:block;{keyword}");
     let cases: Vec<(&str, &str, String)> = vec![
-        // A flex or grid item, and the flex and grid containers and tables
-        // that size themselves.
-        ("display:flex", "div", block.clone()),
-        ("display:grid", "div", block.clone()),
-        ("display:block", "div", format!("display:flex;{keyword}")),
-        ("display:block", "div", format!("display:grid;{keyword}")),
+        // Tables that size themselves.
         ("display:block", "div", format!("display:table;{keyword}")),
         // An inline-level box.
         ("display:block", "span", format!("display:inline;{keyword}")),
@@ -2720,8 +2776,35 @@ fn a_box_a_content_limit_does_not_apply_to_records_none() {
         ("display:block", "div", format!("{block};position:absolute")),
         ("display:block", "div", format!("{block};position:fixed")),
         ("display:block", "div", format!("{block};float:left")),
+        (
+            "display:block",
+            "div",
+            format!("display:flex;{keyword};position:absolute"),
+        ),
+        (
+            "display:block",
+            "div",
+            format!("display:grid;{keyword};position:fixed"),
+        ),
+        (
+            "display:block",
+            "div",
+            format!("display:flex;{keyword};float:left"),
+        ),
+        (
+            "display:block",
+            "div",
+            format!("display:grid;{keyword};writing-mode:vertical-rl"),
+        ),
+        (
+            "display:flex",
+            "div",
+            format!("display:grid;{keyword};writing-mode:vertical-rl"),
+        ),
         // A replaced element, a multicol container and a box in its columns.
         ("display:block", "img", block.clone()),
+        ("display:block", "img", format!("display:flex;{keyword}")),
+        ("display:block", "img", format!("display:grid;{keyword}")),
         ("display:block", "div", format!("{block};column-count:2")),
         ("display:block;column-count:2", "div", block.clone()),
         // A vertical box writes on physical axes different from its parent.
@@ -2742,7 +2825,6 @@ fn a_box_a_content_limit_does_not_apply_to_records_none() {
 
 #[test]
 fn a_display_contents_parent_passes_its_own_container_to_the_content_limits() {
-    use crate::taffy_impl::content_limits::ContentLimits;
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -2767,7 +2849,10 @@ fn a_display_contents_parent_passes_its_own_container_to_the_content_limits() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
 
-    assert_eq!(doc.nodes[items[0]].content_limits, ContentLimits::NONE);
+    assert_eq!(
+        doc.nodes[items[0]].content_limits.min.width,
+        Dimension::max_content()
+    );
     assert_eq!(
         doc.nodes[items[1]].content_limits.min.width,
         Dimension::max_content()

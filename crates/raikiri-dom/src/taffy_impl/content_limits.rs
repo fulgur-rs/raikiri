@@ -75,8 +75,30 @@ fn applies(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool
         && !tree.context.content_limit_probes.contains(&idx)
         && matches!(
             context,
-            FormattingContext::Block | FormattingContext::Inline
+            FormattingContext::Block
+                | FormattingContext::Inline
+                | FormattingContext::Flex
+                | FormattingContext::Grid
         )
+}
+
+/// Whether `idx` has intrinsic min/max sizes that its flex/grid parent must
+/// resolve before the parent algorithm reads the child's style.
+fn applies_to_parent_item(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool {
+    *limits != ContentLimits::NONE && !tree.context.content_limit_probes.contains(&idx)
+}
+
+fn is_flex_grid_container(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    matches!(
+        tree.nodes[idx].formatting_context,
+        FormattingContext::Flex | FormattingContext::Grid
+    )
+}
+
+fn neutralize_all_sizes(style: &mut Style) {
+    style.size = Size::auto();
+    style.min_size = Size::auto();
+    style.max_size = Size::auto();
 }
 
 /// Run `f`, a layout that resolves keyword sizes, with the measures of the
@@ -214,6 +236,212 @@ pub(crate) fn with_width_limits<R>(
     let result = f(tree);
     saved.restore(tree.layout_style_for_key_mut(node).unwrap());
     result
+}
+
+/// Resolve intrinsic min/max constraints on the in-flow children of a
+/// flex/grid container before Taffy reads their styles to build item records.
+/// The resolved values stay installed while the parent algorithm lays out the
+/// children, then their styles and caches are restored.
+pub(super) fn with_item_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    parent_size: Size<Option<f32>>,
+    dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    with_item_content_limits_for_parent_sizes(tree, node_id, inputs, |_| parent_size, dispatch)
+}
+
+/// Resolve percentage fit-content limits on grid items against the grid area
+/// sizes from a preliminary track layout, then lay out the grid with those
+/// resolved limits installed.
+pub(super) fn with_grid_item_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    parent_size: Size<Option<f32>>,
+    mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let children = super::TaffyChildIter::new_for_session(tree, node_id).collect::<Vec<_>>();
+    let has_percentage_limit = children.iter().any(|&child| {
+        let idx = usize::from(child);
+        let limits = tree.nodes[idx].content_limits;
+        applies_to_parent_item(tree, idx, &limits) && has_percentage_fit_content(&limits)
+    });
+    if !has_percentage_limit {
+        return with_item_content_limits(tree, node_id, inputs, parent_size, dispatch);
+    }
+
+    let cache_indices = children
+        .iter()
+        .map(|&child| usize::from(child))
+        .filter(|&idx| {
+            let limits = tree.nodes[idx].content_limits;
+            applies_to_parent_item(tree, idx, &limits)
+        })
+        .collect::<Vec<_>>();
+    let saved_caches = cache_indices
+        .into_iter()
+        .map(|idx| {
+            (
+                idx,
+                std::mem::replace(&mut tree.nodes[idx].cache, Cache::new()),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    tree.context.grid_layout_info.remove(&usize::from(node_id));
+    let _ = dispatch(tree, node_id, inputs);
+    let area_bases = grid_item_area_bases(tree, node_id);
+    for &(idx, _) in &saved_caches {
+        tree.nodes[idx].cache = Cache::new();
+    }
+
+    let output = with_item_content_limits_for_parent_sizes(
+        tree,
+        node_id,
+        inputs,
+        |idx| area_bases.get(&idx).copied().unwrap_or(parent_size),
+        dispatch,
+    );
+    for (idx, cache) in saved_caches.into_iter().rev() {
+        tree.nodes[idx].cache = cache;
+    }
+    output
+}
+
+fn with_item_content_limits_for_parent_sizes(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    mut parent_size_for_item: impl FnMut(usize) -> Size<Option<f32>>,
+    mut dispatch: impl FnMut(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let has_item_limits = super::TaffyChildIter::new_for_session(tree, node_id)
+        .any(|child| tree.nodes[usize::from(child)].content_limits != ContentLimits::NONE);
+    if !has_item_limits {
+        return dispatch(tree, node_id, inputs);
+    }
+    let children = super::TaffyChildIter::new_for_session(tree, node_id).collect::<Vec<_>>();
+
+    scoped(tree, |tree| {
+        let mut prepared = Vec::new();
+        for child in children {
+            let idx = usize::from(child);
+            let limits = tree.nodes[idx].content_limits;
+            if !applies_to_parent_item(tree, idx, &limits) {
+                continue;
+            }
+            let parent_size = parent_size_for_item(idx);
+            let item_inputs = LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size::NONE,
+                known_dimensions_are_definite: Size {
+                    width: false,
+                    height: false,
+                },
+                parent_size,
+                available_space: Size {
+                    width: parent_size
+                        .width
+                        .map(AvailableSpace::Definite)
+                        .unwrap_or(inputs.available_space.width),
+                    height: parent_size
+                        .height
+                        .map(AvailableSpace::Definite)
+                        .unwrap_or(inputs.available_space.height),
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
+            };
+
+            let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
+            let width = if limits.has_width() {
+                width_bounds(tree, child, &limits, &item_inputs)
+            } else {
+                Bounds::default()
+            };
+            let width_adjustment =
+                box_sizing_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
+            width.install_width(
+                tree.layout_style_for_key_mut(idx).unwrap(),
+                width_adjustment,
+            );
+
+            if limits.has_height() {
+                let height = height_bounds(tree, child, &limits, &item_inputs, width);
+                let height_adjustment =
+                    box_sizing_height_adjustment(tree, idx, parent_size.width.unwrap_or(0.0));
+                height.install_height(
+                    tree.layout_style_for_key_mut(idx).unwrap(),
+                    height_adjustment,
+                );
+            }
+
+            let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
+            tree.context.content_limit_probes.push(idx);
+            prepared.push((idx, saved, cache));
+        }
+
+        let output = dispatch(tree, node_id, inputs);
+        for (idx, saved, cache) in prepared.into_iter().rev() {
+            tree.context.content_limit_probes.pop();
+            saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+            tree.nodes[idx].cache = cache;
+        }
+        output
+    })
+}
+
+fn has_percentage_fit_content(limits: &ContentLimits) -> bool {
+    [
+        limits.min.width,
+        limits.max.width,
+        limits.min.height,
+        limits.max.height,
+    ]
+    .into_iter()
+    .any(|dimension| {
+        matches!(
+            dimension.expand(),
+            ExpandedDimension::FitContentPercent(_) | ExpandedDimension::FitContentCalc(_)
+        ) && dimension.into_raw().uses_percentage()
+    })
+}
+
+fn grid_item_area_bases(
+    tree: &LayoutSession<'_>,
+    node_id: NodeId,
+) -> std::collections::HashMap<usize, Size<Option<f32>>> {
+    let parent = usize::from(node_id);
+    let Some(taffy::DetailedLayoutInfo::Grid(grid)) = tree.context.grid_layout_info.get(&parent)
+    else {
+        return std::collections::HashMap::new();
+    };
+    let children = super::TaffyChildIter::new_for_session(tree, node_id)
+        .filter(|&child| {
+            let style = tree
+                .layout_node_with_style(usize::from(child))
+                .unwrap()
+                .style;
+            style.display != taffy::Display::None && style.position != taffy::Position::Absolute
+        })
+        .collect::<Vec<_>>();
+    children
+        .into_iter()
+        .enumerate()
+        .filter_map(|(item_index, child)| {
+            let (_, area) = grid.item_grid_area(item_index)?;
+            Some((
+                usize::from(child),
+                Size {
+                    width: Some(area.width),
+                    height: Some(area.height),
+                },
+            ))
+        })
+        .collect()
 }
 
 /// The border-box bounds a keyword `min-*` and `max-*` size resolved to along
@@ -358,6 +586,7 @@ fn width_bounds(
     inputs: &LayoutInput,
 ) -> Bounds {
     let idx = usize::from(node_id);
+    let flex_grid_container = is_flex_grid_container(tree, idx);
     let mut measures: Option<(f32, f32)> = None;
     let mut measure_contents = |tree: &mut LayoutSession<'_>| {
         *measures.get_or_insert_with(|| {
@@ -380,9 +609,13 @@ fn width_bounds(
                 };
                 let key = MeasureKey::new(tree, idx, true, &along, Bounds::default());
                 probe(tree, node_id, key, along, |style| {
-                    style.size.width = Dimension::auto();
-                    style.min_size.width = LengthPercentageAuto::auto();
-                    style.max_size.width = LengthPercentageAuto::auto();
+                    if flex_grid_container {
+                        neutralize_all_sizes(style);
+                    } else {
+                        style.size.width = Dimension::auto();
+                        style.min_size.width = LengthPercentageAuto::auto();
+                        style.max_size.width = LengthPercentageAuto::auto();
+                    }
                 })
             };
             (
@@ -442,6 +675,10 @@ fn height_bounds(
     inputs: &LayoutInput,
     width: Bounds,
 ) -> Bounds {
+    let idx = usize::from(node_id);
+    let flex_grid_container = is_flex_grid_container(tree, idx);
+    let width_adjustment =
+        box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
     let mut along = *inputs;
     along.run_mode = RunMode::ComputeSize;
     along.axis = RequestedAxis::Both;
@@ -450,9 +687,16 @@ fn height_bounds(
     along.vertical_margins_are_collapsible = Line::FALSE;
     let key = MeasureKey::new(tree, usize::from(node_id), false, &along, width);
     let height = probe(tree, node_id, key, along, |style| {
-        style.size.height = Dimension::auto();
-        style.min_size.height = LengthPercentageAuto::auto();
-        style.max_size.height = LengthPercentageAuto::auto();
+        if flex_grid_container {
+            let preferred_width = style.size.width;
+            neutralize_all_sizes(style);
+            style.size.width = preferred_width;
+            width.install_width(style, width_adjustment);
+        } else {
+            style.size.height = Dimension::auto();
+            style.min_size.height = LengthPercentageAuto::auto();
+            style.max_size.height = LengthPercentageAuto::auto();
+        }
     });
     Bounds {
         min: (!limits.min.height.is_auto()).then_some(height),
