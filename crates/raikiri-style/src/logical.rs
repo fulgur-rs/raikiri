@@ -55,6 +55,7 @@ pub(crate) struct FlowMapping {
 
 impl FlowMapping {
     /// `horizontal-tb` with `direction: ltr`.
+    #[cfg(test)]
     pub(crate) const HORIZONTAL: Self = Self {
         writing_mode: WritingMode::HorizontalTb,
         direction: Direction::Ltr,
