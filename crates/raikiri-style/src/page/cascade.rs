@@ -97,6 +97,8 @@ struct MarginBoxInheritance {
     background_color_expression: Option<SmolStr>,
     font_size: ComputedLength,
     direction: Direction,
+    writing_mode: WritingMode,
+    text_orientation: TextOrientation,
     line_height: Option<ComputedLength>,
     custom_properties: Arc<CustomPropertyEnvironment>,
 }
@@ -109,6 +111,8 @@ impl Default for MarginBoxInheritance {
             background_color_expression: None,
             font_size: ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
             direction: Direction::Ltr,
+            writing_mode: WritingMode::HorizontalTb,
+            text_orientation: TextOrientation::Mixed,
             line_height: None,
             custom_properties: empty_custom_properties(),
         }
@@ -126,7 +130,10 @@ impl Default for MarginBoxInheritance {
 pub struct PageMarginBoxCascadeResult {
     /// The margin-box slot named by the nested at-rule.
     pub slot: PageMarginBoxSlot,
-    /// Declarations from this nested margin-box rule, in source order.
+    /// Declarations from this nested margin-box rule, in source order. The
+    /// flow-relative margins, paddings and sizes stay as written: which
+    /// physical side they land on depends on the writing mode of the margin
+    /// context, which only [`PageCascadeResult::cascade_margin_box`] knows.
     pub declarations: Vec<Declaration>,
     /// Enclosing `@page` rule source order.
     pub source_order: u32,
@@ -199,22 +206,32 @@ impl PageMarginBoxCascadeResult {
         let custom_properties =
             resolve_custom_property_environment(&inherited.custom_properties, &local_custom)
                 .effective;
-        // Margin boxes are laid out in `horizontal-tb`, so flow-relative
-        // margins and paddings follow the margin context's `direction` alone
-        // (CSS Logical Properties 1 §4). They move to their physical side
-        // before winners are picked so that they compete with the physical
-        // longhands for that side.
-        let flow = FlowMapping {
-            writing_mode: WritingMode::HorizontalTb,
-            direction: margin_box_direction(&declared, &custom_properties)
-                .unwrap_or(inherited.direction),
-        };
+        // Flow-relative margins, paddings and sizes follow the margin
+        // context's own writing mode and `direction`, or else the page
+        // context's (CSS Logical Properties 1 §4). They move to their
+        // physical side before winners are picked so that they compete with
+        // the physical longhands for that side.
+        let own_value = |key| margin_box_winning_value(&declared, &custom_properties, key);
+        let flow = used_flow_mapping(
+            match own_value(PropertyKey::WritingMode) {
+                Some(PropertyValue::WritingMode(mode)) => mode,
+                _ => inherited.writing_mode,
+            },
+            match own_value(PropertyKey::TextOrientation) {
+                Some(PropertyValue::TextOrientation(orientation)) => orientation,
+                _ => inherited.text_orientation,
+            },
+            match own_value(PropertyKey::Direction) {
+                Some(PropertyValue::Direction(direction)) => direction,
+                _ => inherited.direction,
+            },
+        );
         // A `var()` value is substituted first: a flow-relative shorthand's
         // value is split by the shorthand's own name.
         let mapped: Vec<Option<Declaration>> = declared
             .iter()
-            .map(|&(_, _, _, decl)| {
-                decl.logical.map(|side| {
+            .map(|&(_, _, _, decl)| match decl.logical {
+                Some(side) => {
                     let declared = match &decl.value {
                         PropertyValue::Deferred(deferred) => {
                             resolve_page_deferred_value(deferred, custom_properties.as_ref())
@@ -222,8 +239,19 @@ impl PageMarginBoxCascadeResult {
                         }
                         value => value.clone(),
                     };
-                    Declaration::with_side(flow.value(declared, side), decl.important, None)
-                })
+                    Some(Declaration::with_side(
+                        flow.value(declared, side),
+                        decl.important,
+                        None,
+                    ))
+                }
+                None => is_logical_size(&decl.value).then(|| {
+                    Declaration::with_side(
+                        preferred_size(decl.value.clone(), flow),
+                        decl.important,
+                        None,
+                    )
+                }),
             })
             .collect();
         let candidates: Vec<_> = declared
@@ -1076,17 +1104,19 @@ fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::Laye
     layers.priority(rule.layer, rule.origin, important)
 }
 
-/// The margin context's own `direction`: the winning `direction`
-/// declaration among `declared` (exempt from `all`, like the page context's),
-/// with `var()` substituted from `custom_properties`. `None` when no
-/// declaration resolves to a keyword.
-fn margin_box_direction(
+/// The value of the winning declaration of `key` among `declared`, for the
+/// margin context's own `writing-mode`, `text-orientation` and `direction`:
+/// the winner is picked from the declarations of the margin context alone
+/// (`direction` is exempt from `all`, like the page context's), with `var()`
+/// substituted from `custom_properties`. `None` when no declaration resolves.
+fn margin_box_winning_value(
     declared: &[(usize, usize, &PageMarginBoxCascadeResult, &Declaration)],
     custom_properties: &CustomPropertyEnvironment,
-) -> Option<Direction> {
+    key: PropertyKey,
+) -> Option<PropertyValue> {
     let (.., decl) = declared
         .iter()
-        .filter(|(.., decl)| decl.value.key() == PropertyKey::Direction)
+        .filter(|(.., decl)| decl.value.key() == key)
         .max_by_key(|&&(rule_index, decl_index, rule, decl)| {
             let layer = crate::layer::LayerPosition {
                 attached: false,
@@ -1101,16 +1131,32 @@ fn margin_box_direction(
                 decl_index,
             )
         })?;
-    let value = match &decl.value {
+    match &decl.value {
         PropertyValue::Deferred(deferred) => {
             resolve_page_deferred_value(deferred, custom_properties)
         }
         value => Some(value.clone()),
-    };
-    let Some(PropertyValue::Direction(direction)) = value else {
-        return None;
-    };
-    Some(direction)
+    }
+}
+
+/// The mapping of flow-relative sides for a box in `writing_mode` whose
+/// computed `text-orientation` and `direction` are given.
+/// `text-orientation: upright` makes the used direction `ltr` in the
+/// vertical typographic modes (CSS Writing Modes 4 §5.1).
+fn used_flow_mapping(
+    writing_mode: WritingMode,
+    text_orientation: TextOrientation,
+    direction: Direction,
+) -> FlowMapping {
+    let upright = text_orientation == TextOrientation::Upright
+        && matches!(
+            writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        );
+    FlowMapping {
+        writing_mode,
+        direction: if upright { Direction::Ltr } else { direction },
+    }
 }
 
 /// The writing mode and used direction of the page context: its own winning
@@ -1179,21 +1225,11 @@ fn page_flow_mapping(
         Some(PropertyValue::TextOrientation(orientation)) => orientation,
         _ => inherited.text_orientation,
     };
-    // `text-orientation: upright` makes the used direction `ltr` in the
-    // vertical typographic modes (CSS Writing Modes 4 §5.1).
-    let upright = text_orientation == TextOrientation::Upright
-        && matches!(
-            writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
-        );
-    FlowMapping {
-        writing_mode,
-        direction: match winner(PropertyKey::Direction) {
-            _ if upright => Direction::Ltr,
-            Some(PropertyValue::Direction(direction)) => direction,
-            _ => inherited.direction,
-        },
-    }
+    let direction = match winner(PropertyKey::Direction) {
+        Some(PropertyValue::Direction(direction)) => direction,
+        _ => inherited.direction,
+    };
+    used_flow_mapping(writing_mode, text_orientation, direction)
 }
 
 /// The page box's logical preferred sizes are its `width` / `height` under
@@ -1224,6 +1260,21 @@ fn preferred_size(value: PropertyValue, flow: FlowMapping) -> PropertyValue {
             PropertyValue::Deferred(deferred)
         }
         value => value,
+    }
+}
+
+/// Whether `value` is a logical preferred size, which moves to `width` or
+/// `height` with the writing mode (see [`preferred_size`]).
+fn is_logical_size(value: &PropertyValue) -> bool {
+    match value {
+        PropertyValue::InlineSize(_) | PropertyValue::BlockSize(_) => true,
+        PropertyValue::Deferred(deferred) => {
+            matches!(
+                deferred.key,
+                PropertyKey::InlineSize | PropertyKey::BlockSize
+            )
+        }
+        _ => false,
     }
 }
 
@@ -1403,12 +1454,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
                         .declarations
                         .iter()
                         .map(|decl| {
-                            Declaration::with_side(
-                                // Margin boxes are laid out in horizontal-tb.
-                                preferred_size(decl.value.clone(), FlowMapping::HORIZONTAL),
-                                decl.important,
-                                decl.logical,
-                            )
+                            Declaration::with_side(decl.value.clone(), decl.important, decl.logical)
                         })
                         .collect(),
                     source_order: rule.source_order,
@@ -1908,6 +1954,20 @@ pub(crate) fn cascade_page_with_normal_line_height(
         {
             Some(PropertyValue::Direction(direction)) => *direction,
             _ => inherited.direction,
+        },
+        writing_mode: match resolved
+            .get(&PropertyKey::WritingMode)
+            .map(ResolvedAgainstInherited::as_property_value)
+        {
+            Some(PropertyValue::WritingMode(mode)) => *mode,
+            _ => inherited.cssom_writing_mode,
+        },
+        text_orientation: match resolved
+            .get(&PropertyKey::TextOrientation)
+            .map(ResolvedAgainstInherited::as_property_value)
+        {
+            Some(PropertyValue::TextOrientation(orientation)) => *orientation,
+            _ => inherited.text_orientation,
         },
         line_height: own_line_height,
         custom_properties,

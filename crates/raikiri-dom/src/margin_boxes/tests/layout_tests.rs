@@ -1721,3 +1721,39 @@ fn percentages_of_a_corner_box_resolve_against_the_corner() {
         [(PageMarginBoxSlot::TopLeftCorner, [20.0, 30.0, 20.0, 10.0])]
     );
 }
+
+/// The flow-relative margins and sizes of a margin box follow its own
+/// writing mode: in `vertical-rl` its block start is the right side, its
+/// `block-size` the width and its `inline-size` the height.
+#[test]
+fn vertical_margin_box_flow_relative_properties_land_on_their_physical_sides() {
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @left-middle {{ content: 'x'; writing-mode: vertical-rl; \
+             block-size: 20px; inline-size: 30px; margin-block-start: 10px }} }}"
+    ));
+    // The 20px wide box keeps 10px to its right, so it ends 10px short of
+    // the page area and starts at x = 10 of the 40px page margin.
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::LeftMiddle, [10.0, 135.0, 20.0, 30.0])]
+    );
+    // The page context's vertical writing mode reaches the margin boxes,
+    // which declare their own over it.
+    for (own, expected) in [
+        ("", [10.0, 135.0, 20.0, 30.0]),
+        // The 10px top margin goes above the 20px height of the box.
+        ("writing-mode: horizontal-tb;", [10.0, 145.0, 30.0, 20.0]),
+    ] {
+        let boxes = boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} writing-mode: vertical-rl; \
+               @left-middle {{ content: 'x'; {own} \
+                 block-size: 20px; inline-size: 30px; margin-block-start: 10px }} }}"
+        ));
+        let [left] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        let rect = left.rect;
+        assert_eq!([rect.x, rect.y, rect.width, rect.height], expected, "{own}");
+    }
+}
