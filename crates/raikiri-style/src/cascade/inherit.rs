@@ -907,6 +907,18 @@ pub(crate) fn walk_from<D: StyleDom>(
         }
 
         if !node_svg_properties.is_empty() {
+            for property in &mut node_svg_properties {
+                if let Some(text) = property.expression.as_mut()
+                    && matches!(
+                        property.property,
+                        crate::property::PropertyKey::StrokeWidth
+                            | crate::property::PropertyKey::StrokeDasharray
+                            | crate::property::PropertyKey::StrokeDashoffset
+                    )
+                {
+                    *text = svg_lengths_in_px(text, computed.font_size.0);
+                }
+            }
             // Every element owns a copy of the text of its painting
             // declarations, so a long `url(#...)` paint counts once per element
             // it reaches.
@@ -1602,6 +1614,34 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
             key,
             Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility
         )
+}
+
+/// `text`, a validated list of SVG lengths, with its `em` and `ex` terms
+/// converted to px against the element's computed `font-size`.
+///
+/// A descendant that takes the value with `inherit` receives it as written,
+/// and an SVG renderer would resolve an `em` against the descendant's own
+/// font size. The computed value of a font-relative length is absolute
+/// (CSS Values 4 §6), so it is converted where it is declared. A percentage
+/// refers to the SVG viewport and an absolute unit needs no conversion.
+fn svg_lengths_in_px(text: &str, font_size_px: f32) -> String {
+    text.split(' ')
+        .map(|item| {
+            let (number, scale) = match (item.strip_suffix("em"), item.strip_suffix("ex")) {
+                (Some(number), _) => (number, 1.0),
+                (_, Some(number)) => (number, 0.5),
+                _ => return item.to_owned(),
+            };
+            match number.parse::<f32>() {
+                Ok(number) => {
+                    let px = (number * scale * font_size_px * 10_000.0).round() / 10_000.0;
+                    format!("{px}px")
+                }
+                Err(_) => item.to_owned(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn svg_property_expression(value: &PropertyValue) -> Option<String> {

@@ -11991,6 +11991,50 @@ fn every_painting_attribute_written_with_a_variable_is_exported_resolved() {
 }
 
 #[test]
+fn font_relative_stroke_lengths_are_exported_in_px_at_the_declaring_element() {
+    let properties = svg_rect_properties(
+        "rect { font-size: 20px; stroke-width: 2em; stroke-dasharray: 1em 4px 50% 2ex 3; \
+         stroke-dashoffset: -0.5em }",
+        &[],
+        None,
+    );
+    let text = |key| exported(&properties, key).and_then(|(_, text)| text);
+    assert_eq!(text(PropertyKey::StrokeWidth), Some("40px".into()));
+    assert_eq!(
+        text(PropertyKey::StrokeDasharray),
+        Some("20px 4px 50% 20px 3".into())
+    );
+    assert_eq!(text(PropertyKey::StrokeDashoffset), Some("-10px".into()));
+}
+
+#[test]
+fn font_relative_stroke_lengths_follow_the_inherited_font_size() {
+    let properties = svg_rect_properties(
+        "svg { font-size: 8px } rect { stroke-width: 1.5em }",
+        &[],
+        None,
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((false, Some("12px".into())))
+    );
+}
+
+#[test]
+fn stroke_lengths_without_font_relative_units_are_exported_as_written() {
+    let properties = svg_rect_properties(
+        "rect { font-size: 20px; stroke-width: 3; stroke-dasharray: 4px 25%; \
+         stroke-dashoffset: 2pt }",
+        &[],
+        None,
+    );
+    let text = |key| exported(&properties, key).and_then(|(_, text)| text);
+    assert_eq!(text(PropertyKey::StrokeWidth), Some("3".into()));
+    assert_eq!(text(PropertyKey::StrokeDasharray), Some("4px 25%".into()));
+    assert_eq!(text(PropertyKey::StrokeDashoffset), Some("2pt".into()));
+}
+
+#[test]
 fn revert_layer_rolls_a_paint_property_back_to_its_attribute() {
     let properties = svg_rect_properties(
         "@layer a, b; @layer b { rect { fill: revert-layer; stroke-width: revert-layer } }",
@@ -12076,7 +12120,7 @@ fn svg_painting_properties_take_the_css_wide_keywords() {
 #[test]
 fn svg_stroke_and_rule_properties_export_their_validated_text() {
     let properties = svg_rect_properties(
-        "rect { fill-rule: EVENODD; clip-rule: evenodd; stroke-linecap: Round; \
+        "rect { font-size: 10px; fill-rule: EVENODD; clip-rule: evenodd; stroke-linecap: Round; \
          stroke-linejoin: arcs; stroke-miterlimit: 2.50; stroke-dasharray: 4px,2 50%; \
          stroke-dashoffset: -1EM }",
         &[],
@@ -12089,7 +12133,8 @@ fn svg_stroke_and_rule_properties_export_their_validated_text() {
         (PropertyKey::StrokeLinejoin, "miter"),
         (PropertyKey::StrokeMiterlimit, "2.5"),
         (PropertyKey::StrokeDasharray, "4px 2 50%"),
-        (PropertyKey::StrokeDashoffset, "-1em"),
+        // A font-relative length is exported in px at the declaring element.
+        (PropertyKey::StrokeDashoffset, "-10px"),
     ] {
         assert_eq!(
             exported(&properties, key),

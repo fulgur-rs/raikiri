@@ -392,3 +392,20 @@ fn a_fill_attribute_variable_that_nothing_defines_inherits_the_parents_fill() {
         "<svg width=20 height=20><g fill=blue><rect width=20 height=20 /></g></svg>",
     );
 }
+
+#[test]
+fn an_inherited_dasharray_keeps_the_font_relative_lengths_of_the_parent() {
+    assert_paints_like(
+        "<style>g{font-size:20px;stroke:black;stroke-width:4px;stroke-dasharray:1em 1em}path{font-size:10px;stroke-dasharray:inherit}</style><svg width=50 height=20><g><path d='M0 10h50' fill=none /></g></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=4 stroke-dasharray='20 20' /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_keeps_the_font_relative_length_of_the_parent() {
+    assert_paints_like(
+        "<style>g{font-size:20px;stroke:black;stroke-width:.25em}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=20><g><path d='M0 10h50' fill=none /></g></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
+    );
+}
+
