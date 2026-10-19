@@ -2198,6 +2198,39 @@ fn auto_balance_preserves_spanners_in_the_multicol_formatting_context() {
 }
 
 #[test]
+fn auto_balance_keeps_empty_spanners_of_a_wrapper_out_of_the_stream() {
+    let spanners = |wrapper_css: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:100px;columns:3"),
+        );
+        let wrapper = doc.append_element(Some(parent), "div", Style::default(), Some(wrapper_css));
+        for css in [
+            "display:block;column-span:all;height:10px;margin-bottom:50px",
+            "display:block;column-span:all;height:10px;margin-top:80px",
+        ] {
+            doc.append_element(Some(wrapper), "div", Style::default(), Some(css));
+        }
+        layout_nested_flex_float_fixture(&mut doc);
+        (doc, parent)
+    };
+
+    // The margins of the two spanners collapse into the larger one.
+    let (doc, parent) = spanners("display:block");
+    assert!(lineless::supported_for_auto_balance(&doc, parent).is_none());
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+
+    // Below a flow root they are ordinary blocks of the columns.
+    let (doc, parent) = spanners("display:flow-root");
+    assert!(lineless::supported_for_auto_balance(&doc, parent).is_some());
+}
+
+#[test]
 fn auto_balance_applies_wrapper_edge_trimming_only_to_boundary_leaves() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

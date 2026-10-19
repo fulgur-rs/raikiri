@@ -294,6 +294,10 @@ fn wrapped_block_tree(
             continue;
         }
         if is_plain_block(tree, child) && !has_rendered_content(tree, child, false) {
+            // A spanner leaves the columns, so it is not a block of the stream.
+            if children_in_multicol_context && tree.nodes[child].column_span_all {
+                return None;
+            }
             children.push(WrappedBlockChild::Leaf(child));
             leaf_count += 1;
         } else {
