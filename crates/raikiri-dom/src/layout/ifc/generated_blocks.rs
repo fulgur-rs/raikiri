@@ -251,6 +251,35 @@ impl GeneratedBlock {
             || self.used_size(sizes, 0.0, block_edges, None) > 0.0
     }
 
+    /// The line options of the box's own lines, with the `text-indent`
+    /// resolved against its content width `content` (CSS Text 3 §8.1).
+    fn own_line_options(&self, content: f32) -> LineOptions {
+        let (mut options, indent) = self.own_lines;
+        options.text_indent.length = super::flow::resolve_indent(indent, content);
+        options
+    }
+
+    /// The box as `open` leaves it when its border box is `width` wide and it
+    /// avoids the floats, before any of its lines is laid out: the state its
+    /// lines are measured in.
+    fn measured(&self, flow: &Flow<'_, '_>, edges: &Sides<f32>, width: f32) -> OpenBlock {
+        let content = (width - edges.left - edges.right).max(0.0);
+        OpenBlock {
+            lines_before: 0,
+            content_top: None,
+            flow_top: 0.0,
+            top_set: CollapsibleMarginSet::ZERO,
+            starts_paragraph: false,
+            has_clearance: false,
+            consumed: 0.0,
+            inline: (edges.left, flow.width - width + edges.right),
+            rtl: flow.rtl,
+            own_options: self.own_line_options(content),
+            continues: false,
+            avoids_floats: true,
+        }
+    }
+
     /// The physical left and right insets of the box's lines from the
     /// paragraph's content box `width` wide: margin, border and padding.
     /// With a definite width, the margins take the room the box leaves
@@ -333,13 +362,15 @@ impl GeneratedBlock {
     /// fits and below them where it does not. `min_top` is the highest
     /// border-box top it may take, from the paragraph's content-box top;
     /// `margins` and `edges` are the box's margins and padding plus border.
-    /// `None` when no float reaches that far down.
+    /// `None` when no float reaches that far down. `lines_height` measures
+    /// the lines of a box with an `auto` height, as they are not laid out yet.
     fn beside_floats(
         &self,
         flow: &Flow<'_, '_>,
         margins: &Sides<f32>,
         edges: &Sides<f32>,
         min_top: f32,
+        lines_height: LinesHeight<'_>,
     ) -> Option<Beside> {
         let from = flow.top_edge + min_top;
         if !flow.ctx.has_active_floats(from) {
@@ -360,12 +391,21 @@ impl GeneratedBlock {
             }) + sides
         };
         let stretched = |stretch: f32| stretch.max(-(margins.left + margins.right));
-        // A height of its own is known before the lines are laid out, so the
-        // box must keep clear of every float it reaches. An `auto` height
-        // counts only its minimum, as the lines are not laid out yet.
-        let height = self.used_height(0.0, edges.top + edges.bottom, flow.definite_height)
-            + edges.top
-            + edges.bottom;
+        // The box must keep clear of every float its border box reaches. A
+        // height of its own is known before the lines are laid out; an `auto`
+        // height follows the lines the box has at that width; lines that
+        // cannot be measured on their own leave only its minimum height.
+        let own_height = length_or_auto(self.height, flow.definite_height).is_some();
+        let mut height = |width: f32| {
+            let content = if own_height {
+                0.0
+            } else {
+                lines_height(&self.measured(flow, edges, width)).unwrap_or(0.0)
+            };
+            self.used_height(content, edges.top + edges.bottom, flow.definite_height)
+                + edges.top
+                + edges.bottom
+        };
         let BoxSlot { slot, width } = flow.ctx.find_box_slot(
             from,
             [margins.left, margins.right],
@@ -373,7 +413,7 @@ impl GeneratedBlock {
             self.clear,
             |probe| match probe {
                 BoxProbe::Width { stretch } => border_width(stretched(stretch)),
-                BoxProbe::Height { .. } => height,
+                BoxProbe::Height { width } => height(width),
             },
         );
         let stretch = stretched(slot.stretch_width);
@@ -725,9 +765,19 @@ pub(crate) struct Flow<'a, 'b> {
     pub(crate) rtl: bool,
 }
 
+/// Measures the block size of the lines of a box with an `auto` height, in the
+/// state `open` would leave the box in at the width in question: `None` when
+/// they cannot be laid out on their own.
+pub(crate) type LinesHeight<'a> = &'a mut dyn FnMut(&OpenBlock) -> Option<f32>;
+
 /// Place the top of `block` at its start token: its top margin with the
 /// margins above it, its clearance, and its top border and padding.
-pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
+/// `lines_height` measures the lines of a box that goes among floats.
+pub(crate) fn open(
+    block: &GeneratedBlock,
+    flow: Flow<'_, '_>,
+    lines_height: LinesHeight<'_>,
+) -> OpenBlock {
     let margins = block.margins(flow.width);
     let edges = block.edges(flow.width);
     let top_set = flow.pending.collapse_with_margin(margins.top);
@@ -757,7 +807,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
     let top_bound = clearance.unwrap_or(if adjoining { *flow.y } else { hypothetical });
     let beside = block
         .formatting_root
-        .then(|| block.beside_floats(&flow, &margins, &edges, top_bound))
+        .then(|| block.beside_floats(&flow, &margins, &edges, top_bound, lines_height))
         .flatten();
     let cleared = clearance.is_some();
     let clearance = beside
@@ -803,14 +853,8 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         consumed: 0.0,
         inline,
         rtl: flow.rtl,
-        own_options: {
-            let (mut options, indent) = block.own_lines;
-            // A percentage `text-indent` refers to the box's own width
-            // (CSS Text 3 §8.1).
-            let content = (flow.width - inline.0 - inline.1).max(0.0);
-            options.text_indent.length = super::flow::resolve_indent(indent, content);
-            options
-        },
+        // A percentage `text-indent` refers to the box's own width.
+        own_options: block.own_line_options((flow.width - inline.0 - inline.1).max(0.0)),
         continues: false,
         avoids_floats: beside.is_some(),
     }

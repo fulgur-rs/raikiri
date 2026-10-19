@@ -4192,7 +4192,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 180;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 185;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -4917,6 +4917,11 @@ property_key_samples! {
     ColumnRuleColor => PropertyValue::ColumnRuleColor(BorderColor::Resolved(RED)),
     ColumnFill => PropertyValue::ColumnFill(ColumnFillValue::BalanceAll),
     TextGroupAlign => PropertyValue::TextGroupAlign(crate::property::TextGroupAlign::Center),
+    Fill => PropertyValue::Fill("blue".into()),
+    Stroke => PropertyValue::Stroke("blue".into()),
+    FillOpacity => PropertyValue::FillOpacity("0.5".into()),
+    StrokeOpacity => PropertyValue::StrokeOpacity("0.5".into()),
+    StrokeWidth => PropertyValue::StrokeWidth("2em".into()),
     ColumnSpan => PropertyValue::ColumnSpan(crate::property::ColumnSpanValue::All),
     BorderImageSource => PropertyValue::BorderImageSource(BackgroundImage::Url("frame.png".into())),
     BorderImageSlice => PropertyValue::BorderImageSlice(crate::property::BorderImageSlice::INITIAL),
@@ -5386,6 +5391,11 @@ property_value_variant_registry! {
     ColumnRuleColor,
     ColumnFill,
     TextGroupAlign,
+    Fill,
+    Stroke,
+    FillOpacity,
+    StrokeOpacity,
+    StrokeWidth,
     ColumnSpan,
     BorderImageSource,
     BorderImageSlice,
@@ -5755,6 +5765,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::ColumnCount(_)
             | PropertyValue::ColumnFill(_)
             | PropertyValue::TextGroupAlign(_)
+            // SVG presentation values are text; the page context keeps them as written.
+            | PropertyValue::Fill(_)
+            | PropertyValue::Stroke(_)
+            | PropertyValue::FillOpacity(_)
+            | PropertyValue::StrokeOpacity(_)
+            | PropertyValue::StrokeWidth(_)
             | PropertyValue::ColumnSpan(_)
             | PropertyValue::ColumnRuleStyle(_)
             | PropertyValue::ColumnRuleColor(_)
@@ -8734,4 +8750,132 @@ fn margin_box_logical_margins_follow_a_flow_declared_after_all_revert_layer() {
                @layer b { @page { @top-left { all: revert-layer; \
                writing-mode: horizontal-tb; margin-block-start: 1px } } }";
     assert_eq!(margin_box_margins(css), [Some(1.0), None, None, None]);
+}
+
+/// The `text-align` and `text-align-last` of the `@top-center` margin box
+/// (whose user agent default is `center`) declared as `declarations`, under a
+/// page context styled `@page { <page> }` over a root that is `justify`.
+fn top_center_text_align(page_css: &str, declarations: &str) -> (TextAlign, TextAlignLast) {
+    let root = ComputedValues {
+        text_align: TextAlign::Justify,
+        text_align_last: TextAlignLast::End,
+        ..ComputedValues::initial()
+    };
+    let result = page(
+        &format!("@page {{ {page_css} @top-center {{ content: 'x'; {declarations} }} }}"),
+        &root,
+    );
+    let rule = result
+        .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+        .expect("top-center margin box");
+    let style = result.margin_box_style(&rule, None);
+    (style.text_align, style.text_align_last)
+}
+
+#[test]
+fn margin_box_text_align_takes_the_css_wide_keywords() {
+    // `initial` beats the slot's `center`, and the other keywords that reach
+    // the page context's value do so rather than the slot's.
+    for (declarations, expected) in [
+        (
+            "text-align: initial; text-align-last: initial",
+            (TextAlign::Start, TextAlignLast::Auto),
+        ),
+        (
+            "text-align: inherit; text-align-last: inherit",
+            (TextAlign::Right, TextAlignLast::End),
+        ),
+        (
+            "text-align: unset; text-align-last: unset",
+            (TextAlign::Right, TextAlignLast::End),
+        ),
+        // `revert` rolls back to the user agent's default for the slot.
+        (
+            "text-align: revert; text-align-last: revert",
+            (TextAlign::Center, TextAlignLast::End),
+        ),
+        (
+            "text-align: revert-layer",
+            (TextAlign::Center, TextAlignLast::End),
+        ),
+        // The slot's defaults leave `text-align-last` alone, so rolling it
+        // back gives the inherited value.
+        (
+            "text-align-last: revert",
+            (TextAlign::Center, TextAlignLast::End),
+        ),
+        // The later declaration of the same box wins.
+        (
+            "text-align: initial; text-align: right",
+            (TextAlign::Right, TextAlignLast::End),
+        ),
+        (
+            "text-align: right; text-align: initial",
+            (TextAlign::Start, TextAlignLast::End),
+        ),
+    ] {
+        assert_eq!(
+            top_center_text_align("text-align: right;", declarations),
+            expected,
+            "{declarations}"
+        );
+    }
+    // Untouched, the box keeps its slot default.
+    assert_eq!(
+        top_center_text_align("text-align: right;", ""),
+        (TextAlign::Center, TextAlignLast::End)
+    );
+}
+
+#[test]
+fn page_context_text_align_takes_the_css_wide_keywords() {
+    let root = ComputedValues {
+        text_align: TextAlign::Justify,
+        text_align_last: TextAlignLast::End,
+        ..ComputedValues::initial()
+    };
+    for (declarations, expected) in [
+        (
+            "text-align: initial; text-align-last: initial",
+            (TextAlign::Start, TextAlignLast::Auto),
+        ),
+        (
+            "text-align: inherit; text-align-last: inherit",
+            (TextAlign::Justify, TextAlignLast::End),
+        ),
+        (
+            "text-align: unset; text-align-last: unset",
+            (TextAlign::Justify, TextAlignLast::End),
+        ),
+    ] {
+        let result = page(&format!("@page {{ {declarations} }}"), &root);
+        assert_eq!(
+            (
+                result.declarations().get(&PropertyKey::TextAlign),
+                result.declarations().get(&PropertyKey::TextAlignLast),
+            ),
+            (
+                Some(&PropertyValue::TextAlign(expected.0)),
+                Some(&PropertyValue::TextAlignLast(expected.1)),
+            ),
+            "{declarations}"
+        );
+    }
+    // Nothing underneath the author declaration, so `revert` and
+    // `revert-layer` leave no declaration and the context inherits the root's
+    // values.
+    for keyword in ["revert", "revert-layer"] {
+        let result = page(
+            &format!("@page {{ text-align: {keyword}; text-align-last: {keyword} }}"),
+            &root,
+        );
+        assert_eq!(
+            (
+                result.declarations().get(&PropertyKey::TextAlign),
+                result.declarations().get(&PropertyKey::TextAlignLast),
+            ),
+            (None, None),
+            "{keyword}"
+        );
+    }
 }

@@ -399,6 +399,35 @@ fn pseudo_element_values_and_svg_properties_count_as_output() {
     assert_last_output_fails(&svg.0, &svg.1, true);
 }
 
+#[test]
+fn a_painting_declaration_counts_its_text_for_every_element() {
+    let rects = 4;
+    let output = |fragment: &str, sibling_sharing: bool| {
+        let (doc, tree) = small_doc(
+            &format!("rect {{ fill: url(#{fragment}) }}"),
+            |doc, body| {
+                let svg = doc.push_element_with_namespace(body, "svg", SVG, &[]);
+                for _ in 0..rects {
+                    doc.push_element_with_namespace(svg, "rect", SVG, &[]);
+                }
+            },
+        );
+        walk_within(&doc, &tree, unlimited(), sibling_sharing)
+            .expect("the walk succeeds")
+            .counts
+            .output_bytes
+    };
+    let long = "a".repeat(1000);
+    for sibling_sharing in [true, false] {
+        // Each element owns its own copy of the 999 extra bytes of text.
+        assert_eq!(
+            output(&long, sibling_sharing) - output("a", sibling_sharing),
+            rects * 999,
+            "sibling sharing {sibling_sharing}"
+        );
+    }
+}
+
 fn retained_limit(bytes: u64) -> CascadeLimits {
     CascadeLimits {
         max_retained_bytes: Some(bytes),

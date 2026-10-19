@@ -2634,6 +2634,122 @@ fn descendant_overrides_replace_inline_and_presentation_properties_only() {
 }
 
 #[test]
+fn descendant_overrides_accept_the_painting_properties() {
+    let prepared = source_with_descendant_styles(
+        br##"<svg xmlns="http://www.w3.org/2000/svg"><rect fill="blue" stroke="green" stroke-width="9" fill-opacity=".1" stroke-opacity=".2" style="fill:lime!important;stroke-width:7" width="20" height="10"/></svg>"##,
+        &[super::SvgElementStyle {
+            element_index: 1,
+            declarations: "fill:rgba(255,0,0,1)!important;stroke:none!important;fill-opacity:.5!important;stroke-opacity:.25!important;stroke-width:3px!important",
+        }],
+    )
+    .unwrap();
+    let xml = roxmltree::Document::parse(&prepared).unwrap();
+    let rect = xml
+        .descendants()
+        .find(|node| node.has_tag_name("rect"))
+        .unwrap();
+    for attribute in [
+        "fill",
+        "stroke",
+        "stroke-width",
+        "fill-opacity",
+        "stroke-opacity",
+    ] {
+        assert_eq!(rect.attribute(attribute), None, "{attribute}");
+    }
+    let style = rect.attribute("style").unwrap();
+    for declaration in [
+        "fill:rgba(255,0,0,1)",
+        "stroke:none",
+        "fill-opacity:.5",
+        "stroke-opacity:.25",
+        "stroke-width:3px",
+    ] {
+        assert!(style.contains(declaration), "{declaration} in {style}");
+    }
+    assert!(!style.contains("lime"));
+    assert!(!style.contains("stroke-width:7"));
+}
+
+#[test]
+fn root_overrides_take_the_painting_properties_only() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" fill="red" stroke="green" width="20" height="10"><rect width="20" height="10"/></svg>"##;
+    let prepared = source_with_descendant_styles(
+        source,
+        &[super::SvgElementStyle {
+            element_index: 0,
+            declarations: "fill:rgba(0,0,255,1)!important;stroke-width:3px!important",
+        }],
+    )
+    .unwrap();
+    let xml = roxmltree::Document::parse(&prepared).unwrap();
+    let root = xml.root_element();
+    // The overridden attribute moves into the style; the other one stays.
+    assert_eq!(root.attribute("fill"), None);
+    assert_eq!(root.attribute("stroke"), Some("green"));
+    let style = root.attribute("style").unwrap();
+    assert!(style.contains("fill:rgba(0,0,255,1)"), "{style}");
+    assert!(style.contains("stroke-width:3px"), "{style}");
+    let rect = xml
+        .descendants()
+        .find(|node| node.has_tag_name("rect"))
+        .unwrap();
+    assert_eq!(rect.attribute("style"), None);
+
+    // Its color, font, visibility and opacity go through the root style.
+    for declarations in ["color:red", "opacity:.5", "display:none", "font-size:2px"] {
+        assert!(
+            matches!(
+                source_with_descendant_styles(
+                    source,
+                    &[super::SvgElementStyle {
+                        element_index: 0,
+                        declarations,
+                    }],
+                ),
+                Err(SvgError::InvalidDocument(_))
+            ),
+            "{declarations}"
+        );
+    }
+}
+
+#[test]
+fn a_root_fill_is_inherited_by_the_descendants_that_set_none() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' fill='red' width='20' height='10'><rect width='10' height='10'/><rect x='10' width='10' height='10' fill='lime'/></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let elements = [super::SvgElementStyle {
+        element_index: 0,
+        declarations: "fill:rgba(0,0,255,1)!important",
+    }];
+    let image = svg
+        .rasterize_at_css_pixel_scale_with_resolved_styles(
+            SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            super::SvgResolvedStyles {
+                root_color: [0, 0, 0, 255],
+                font: super::SvgRootFont {
+                    size: 12.0,
+                    family: "sans-serif",
+                    weight: 400.0,
+                    style: "normal",
+                },
+                elements: &elements,
+            },
+            None,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &image.rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(5, 5), &[0, 0, 255, 255], "inherited from the root");
+    assert_eq!(pixel(15, 5), &[0, 255, 0, 255], "its own attribute wins");
+}
+
+#[test]
 fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
     let source = br#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>"#;
     for styles in [
@@ -2654,7 +2770,7 @@ fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
         ],
         vec![super::SvgElementStyle {
             element_index: 1,
-            declarations: "fill:red",
+            declarations: "width:10px",
         }],
         vec![super::SvgElementStyle {
             element_index: 1,
@@ -2973,7 +3089,7 @@ fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_r
     };
     for root_style in [SvgRootStyle::default(), transparent, hidden] {
         assert!(matches!(
-            rasterize(root_style, "fill:red!important"),
+            rasterize(root_style, "width:10px!important"),
             Err(SvgError::InvalidDocument(_))
         ));
     }

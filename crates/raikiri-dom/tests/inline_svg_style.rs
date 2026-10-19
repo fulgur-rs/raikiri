@@ -59,7 +59,85 @@ fn declarations_are_listed_by_preorder_index_without_the_root() {
 }
 
 #[test]
+fn painting_properties_are_listed_as_declarations() {
+    let elements = declarations(
+        "<style>rect{fill:blue;stroke:url(#g) red;fill-opacity:25%}.w{stroke-width:2px}</style>\
+         <svg width=20 height=20><rect class=w /><g><rect /></g></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    let rect = "fill:rgba(0,0,255,1)!important;stroke:url(\"#g\") rgba(255,0,0,1)!important;fill-opacity:0.25!important;";
+    assert_eq!(
+        listed,
+        [
+            (1, format!("{rect}stroke-width:2px!important;").as_str()),
+            (3, rect),
+        ]
+    );
+}
+
+#[test]
+fn css_wide_painting_keywords_are_listed_as_declarations() {
+    let elements = declarations(
+        "<style>rect{fill:inherit;stroke:unset;stroke-width:initial}</style>\
+         <svg width=20 height=20><rect /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            1,
+            "fill:inherit!important;stroke:inherit!important;stroke-width:1!important;"
+        )]
+    );
+}
+
+#[test]
+fn a_rule_on_the_root_lists_only_its_painting_properties() {
+    let elements = declarations(
+        "<style>svg{color:red;opacity:.5;fill:blue;stroke-width:3px}</style>\
+         <svg width=20 height=20><rect /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            0,
+            "fill:rgba(0,0,255,1)!important;stroke-width:3px!important;"
+        )]
+    );
+}
+
+#[test]
 fn an_svg_without_matching_rules_lists_nothing() {
     let elements = declarations("<svg width=20 height=20><rect /></svg>");
     assert!(elements.is_empty());
+}
+
+#[test]
+fn revert_layer_lists_the_paint_attribute_it_rolls_back_to() {
+    let elements = declarations(
+        "<style>@layer a, b; @layer b {rect{fill:revert-layer;stroke:revert-layer}}</style>\
+         <svg width=20 height=20><rect fill=red /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    // The attribute is restored; with none, `stroke` falls back to inheriting.
+    assert_eq!(
+        listed,
+        [(
+            1,
+            "fill:rgba(255,0,0,1)!important;stroke:inherit!important;"
+        )]
+    );
 }

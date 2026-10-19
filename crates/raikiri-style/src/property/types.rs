@@ -4753,9 +4753,10 @@ impl HangingPunctuation {
 ///   a single field" convention used for margin (`Sides<T>`) and `content`
 ///   (`normal`/`none` → empty list). Splitting out the text-align-all and
 ///   text-align-last longhands (§6.2 / §6.3) is future work.
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped. The [`PropertyValue`] docs under "CSS-wide keywords"
-///   list all five and explain why.
+/// - **Implemented**: CSS-wide keywords stay deferred markers (see
+///   [`CssWideKeyword`]) that the cascade resolves: `initial` is `start`, and
+///   `inherit` and `unset` take the parent's computed value (the property is
+///   inherited).
 /// - **Implemented**: resolution of `match-parent` at computed-value time.
 ///   The spec (§6.1 `#valdef-text-align-match-parent`) says: "This value behaves
 ///   the same as inherit (computes to its parent's computed value) except that
@@ -4824,7 +4825,9 @@ pub enum TextAlign {
     /// it falls back to `start` (§6.1, verbatim).
     MatchParent,
     /// CSS-wide `inherit` for the inherited `text-align` property. It resolves
-    /// directly to the parent computed value before layout.
+    /// directly to the parent computed value before layout. The parser keeps a
+    /// declared `inherit` as a deferred CSS-wide marker instead; this value is
+    /// for callers that build the typed value themselves.
     Inherit,
     /// `-internal-center` in the HTML UA stylesheet. It resolves to `center`
     /// only when the parent's computed alignment is the initial `start`;
@@ -7784,10 +7787,11 @@ impl ContextualShorthand {
 }
 
 impl PropertyKey {
-    /// Whether `self` is a margin, padding, offset or physical size property,
-    /// or a shorthand of the first three, whose CSS-wide keywords the cascade
-    /// resolves from the parent's computed value or the initial value.
-    pub(crate) const fn takes_box_css_wide_keyword(self) -> bool {
+    /// Whether `self` is a margin, padding, offset, physical size or
+    /// `text-align` property, or a shorthand of the first three, whose
+    /// CSS-wide keywords the cascade resolves from the parent's computed value
+    /// or the initial value.
+    pub(crate) const fn takes_cascade_css_wide_keyword(self) -> bool {
         matches!(
             self,
             PropertyKey::Margin
@@ -7817,6 +7821,8 @@ impl PropertyKey {
                 | PropertyKey::MinHeight
                 | PropertyKey::MaxWidth
                 | PropertyKey::MaxHeight
+                | PropertyKey::TextAlign
+                | PropertyKey::TextAlignLast
         )
     }
 }
@@ -7858,7 +7864,12 @@ impl DeferredValue {
                 | PropertyKey::BorderImageRepeat
                 | PropertyKey::BoxDecorationBreak
                 | PropertyKey::TextShadow
-        ) && !self.key.takes_box_css_wide_keyword()
+                | PropertyKey::Fill
+                | PropertyKey::Stroke
+                | PropertyKey::FillOpacity
+                | PropertyKey::StrokeOpacity
+                | PropertyKey::StrokeWidth
+        ) && !self.key.takes_cascade_css_wide_keyword()
         {
             return None;
         }
@@ -9795,12 +9806,14 @@ pub enum FilterFunction {
 /// `border-right` shorthands, which accept all five keywords through
 /// [`CssWideKeyword`] (see that type's docs for resolution). The margin,
 /// padding and offset (`top` / `right` / `bottom` / `left` / `inset*`)
-/// properties, their shorthands, and the physical size properties (`width`,
-/// `height`, `min-*`, `max-*`) accept them too; the shorthands expand to
-/// per-side markers during the cascade. The logical size properties
-/// (`inline-size`, `block-size`, `min-inline-size`, ...) do not yet. The
-/// `all` shorthand additionally accepts literal `revert-layer` through
-/// [`PropertyValue::AllRevertLayer`]; its other CSS-wide values and `var()` form are not supported. Custom
+/// properties, their shorthands, the physical size properties (`width`,
+/// `height`, `min-*`, `max-*`), `text-align` and `text-align-last` accept them
+/// too; the shorthands expand to per-side markers during the cascade. The
+/// logical size properties (`inline-size`, `block-size`, `min-inline-size`,
+/// ...) and `text-align-all`, which has no computed field of its own, do not
+/// yet. The `all` shorthand additionally accepts literal `revert-layer`
+/// through [`PropertyValue::AllRevertLayer`]; its other CSS-wide values and
+/// `var()` form are not supported. Custom
 /// properties interpret literal `revert` and `revert-layer` during cascading;
 /// their other CSS-wide defaults are not supported.
 ///
@@ -9814,7 +9827,7 @@ pub enum FilterFunction {
 /// and three of those (`border-width`, `border-style`, and `box-sizing`) had no
 /// pinning tests. The canonical sources are this paragraph and the representative
 /// tests named `rejects_css_wide_keyword` (grep the crate to find all of them,
-/// including `text_align_rejects_css_wide_keyword`).
+/// including `direction_rejects_css_wide_keyword`).
 ///
 /// Grammars based on `<custom-ident>` (names in `counter-name` / `string-set` and
 /// arguments to `position: running()`) instead have **explicit** reject lists
@@ -11545,6 +11558,25 @@ pub enum PropertyValue {
     /// `text-group-align: none | start | end | left | right | center` —
     /// non-inherited, initial `none` (CSS Text 4).
     TextGroupAlign(TextGroupAlign),
+    /// `fill` — **inherited**, initial `black` (SVG 2 §13). The text is the
+    /// validated `<paint>` in the form an SVG renderer reads it. No
+    /// computed-style field holds it: the host cascade resolves it for the
+    /// descendants of an inline SVG only, and the SVG export is its sole
+    /// consumer (see [`crate::cascade::SvgStyleProperty`]).
+    Fill(Box<str>),
+    /// `stroke` — **inherited**, initial `none` (SVG 2 §13). Same shape as
+    /// [`PropertyValue::Fill`].
+    Stroke(Box<str>),
+    /// `fill-opacity` — **inherited**, initial `1` (SVG 2 §13). The text is the
+    /// number clamped to `[0, 1]`; same shape as [`PropertyValue::Fill`].
+    FillOpacity(Box<str>),
+    /// `stroke-opacity` — **inherited**, initial `1` (SVG 2 §13). Same shape as
+    /// [`PropertyValue::FillOpacity`].
+    StrokeOpacity(Box<str>),
+    /// `stroke-width` — **inherited**, initial `1` (SVG 2 §13). The text is a
+    /// non-negative number, percentage or length an SVG renderer resolves;
+    /// same shape as [`PropertyValue::Fill`].
+    StrokeWidth(Box<str>),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12163,6 +12195,13 @@ pub enum PropertyKey {
     BorderImage,
     // CSS Text 4 text-group-align; appended to preserve existing key slots.
     TextGroupAlign,
+    // SVG 2 painting properties carried by `PropertyValue::SvgPresentation`;
+    // appended to preserve existing key slots.
+    Fill,
+    Stroke,
+    FillOpacity,
+    StrokeOpacity,
+    StrokeWidth,
 }
 
 impl PropertyValue {
@@ -12415,6 +12454,11 @@ impl PropertyValue {
             PropertyValue::Transform(_) => PropertyKey::Transform,
             PropertyValue::TransformOrigin(..) => PropertyKey::TransformOrigin,
             PropertyValue::Filter(_) => PropertyKey::Filter,
+            PropertyValue::Fill(_) => PropertyKey::Fill,
+            PropertyValue::Stroke(_) => PropertyKey::Stroke,
+            PropertyValue::FillOpacity(_) => PropertyKey::FillOpacity,
+            PropertyValue::StrokeOpacity(_) => PropertyKey::StrokeOpacity,
+            PropertyValue::StrokeWidth(_) => PropertyKey::StrokeWidth,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
             PropertyValue::BorderSpacing(_) => PropertyKey::BorderSpacing,
@@ -13566,6 +13610,11 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "transform" => PropertyKey::Transform,
         "transform-origin" => PropertyKey::TransformOrigin,
         "filter" => PropertyKey::Filter,
+        "fill" => PropertyKey::Fill,
+        "stroke" => PropertyKey::Stroke,
+        "fill-opacity" => PropertyKey::FillOpacity,
+        "stroke-opacity" => PropertyKey::StrokeOpacity,
+        "stroke-width" => PropertyKey::StrokeWidth,
         _ => return None,
     })
 }

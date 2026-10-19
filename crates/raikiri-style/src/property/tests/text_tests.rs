@@ -753,17 +753,25 @@ fn text_align_rejects_unknown_keyword() {
 }
 
 #[test]
-fn text_align_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
-    // silently dropped. See PropertyValue's "CSS-wide keyword" section for the list.
-    assert_eq!(
-        parse("inherit", "text-align"),
-        Some(PropertyValue::TextAlign(TextAlign::Inherit))
-    );
-    assert_eq!(parse("initial", "text-align"), None);
-    assert_eq!(parse("unset", "text-align"), None);
-    assert_eq!(parse("revert", "text-align"), None);
-    assert_eq!(parse("revert-layer", "text-align"), None);
+fn text_align_retains_css_wide_keywords_for_defaulting() {
+    // The keyword stays a deferred marker for the cascade, which resolves it
+    // against the parent's value and the initial value (`start` / `auto`).
+    for (name, key) in [
+        ("text-align", PropertyKey::TextAlign),
+        ("text-align-last", PropertyKey::TextAlignLast),
+    ] {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
+                panic!("expected a CSS-wide defaulting marker for `{name}: {keyword}`");
+            };
+            assert_eq!(value.key, key, "{name}: {keyword}");
+            assert_eq!(
+                value.css_wide_keyword(),
+                CssWideKeyword::from_css_ident(keyword),
+                "{name}: {keyword}"
+            );
+        }
+    }
 }
 
 #[test]
