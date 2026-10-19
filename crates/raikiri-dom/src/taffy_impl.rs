@@ -1926,7 +1926,7 @@ struct FlexItemBounds {
 ///   `max-width` only, so an empty `flex: 1 0 100px` item would contribute
 ///   nothing. Each such bound is installed as the item's own bound.
 ///
-/// spec: https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
 fn with_flex_intrinsic_bounds<R>(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
