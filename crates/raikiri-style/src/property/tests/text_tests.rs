@@ -1475,14 +1475,26 @@ fn direction_rejects_unknown_keyword() {
 }
 
 #[test]
-fn direction_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
-    // silently dropped. See PropertyValue's "CSS-wide keyword" section for the list.
-    assert_eq!(parse("inherit", "direction"), None);
-    assert_eq!(parse("initial", "direction"), None);
-    assert_eq!(parse("unset", "direction"), None);
-    assert_eq!(parse("revert", "direction"), None);
-    assert_eq!(parse("revert-layer", "direction"), None);
+fn flow_properties_retain_css_wide_keywords_for_defaulting() {
+    // The keyword stays a deferred marker for the cascade, which resolves it
+    // against the parent's value and the initial value.
+    for (name, key) in [
+        ("direction", PropertyKey::Direction),
+        ("writing-mode", PropertyKey::WritingMode),
+        ("text-orientation", PropertyKey::TextOrientation),
+    ] {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
+                panic!("expected a CSS-wide defaulting marker for `{name}: {keyword}`");
+            };
+            assert_eq!(value.key, key, "{name}: {keyword}");
+            assert_eq!(
+                value.css_wide_keyword(),
+                CssWideKeyword::from_css_ident(keyword),
+                "{name}: {keyword}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1579,18 +1591,6 @@ fn writing_mode_rejects_unknown_keyword() {
     assert_eq!(parse("auto", "writing-mode"), None);
     // `ltr`/`rtl` are `direction`'s keywords, not `writing-mode`'s.
     assert_eq!(parse("ltr", "writing-mode"), None);
-}
-
-#[test]
-fn writing_mode_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
-    // silently dropped. See PropertyValue's "CSS-wide keyword" section for
-    // the canonical list and reason.
-    assert_eq!(parse("inherit", "writing-mode"), None);
-    assert_eq!(parse("initial", "writing-mode"), None);
-    assert_eq!(parse("unset", "writing-mode"), None);
-    assert_eq!(parse("revert", "writing-mode"), None);
-    assert_eq!(parse("revert-layer", "writing-mode"), None);
 }
 
 #[test]

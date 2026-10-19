@@ -14,8 +14,7 @@ use crate::error::CascadeError;
 use crate::logical::FlowMapping;
 use crate::media::MediaContext;
 use crate::property::{
-    CssWideKeyword, Direction, DisplayValue, FloatValue, PropertyKey, PropertyValue,
-    TextOrientation, WritingMode,
+    Direction, DisplayValue, FloatValue, PropertyKey, PropertyValue, TextOrientation, WritingMode,
 };
 use crate::rule::{Declaration, parse_declaration_block_within};
 
@@ -876,7 +875,7 @@ pub(crate) fn pick_winners(
                 continue;
             };
             let key = decls[existing.idx].slot(flow);
-            if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
+            if !key.is_reset_by_all() {
                 continue;
             }
             let selected = super::rollback::select_layered_winner(decls, |idx, candidate| {
@@ -897,11 +896,11 @@ pub(crate) fn pick_winners(
 /// winners decide them, falling back to the inherited values (CSS Logical
 /// Properties 1 §4: a flow-relative property maps "according to the
 /// element's own writing-mode and direction"). `resolve` gives the value of
-/// the winning declaration for a property, with `var()` substituted and
-/// `revert` / `revert-layer` rolled back; a winner that still is not a
-/// keyword (another CSS-wide keyword, or an invalid substitution) takes the
-/// inherited value too, except that `display` takes its initial value
-/// unless it is `inherit`.
+/// the winning declaration for a property, with `var()` substituted,
+/// `revert` / `revert-layer` rolled back and the other CSS-wide keywords
+/// resolved to the keyword they compute to; a winner that still is not a
+/// keyword (an invalid substitution) takes the inherited value too, except
+/// that `display` takes its initial value.
 ///
 /// The writing mode is the one block layout places the element's box in:
 /// flex, grid and table boxes and multicol
@@ -981,11 +980,6 @@ pub(crate) fn flow_mapping(
     // `vertical-rl` (CSS Ruby 1 §4.1), as its computed value says.
     let display = match winner(PropertyKey::Display, display) {
         Some(PropertyValue::Display(display)) => display,
-        Some(PropertyValue::Deferred(marker))
-            if marker.css_wide_keyword() == Some(CssWideKeyword::Inherit) =>
-        {
-            inherited.display
-        }
         _ => DisplayValue::Inline,
     };
     let float = match winner(PropertyKey::Float, float) {
