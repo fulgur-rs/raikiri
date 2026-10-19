@@ -223,6 +223,7 @@ fn overflow_clips_follow_each_column_group_and_leave_the_spanner_fullwidth() {
     );
     let page = document.page(0).unwrap();
     let runs = page.text_runs();
+    use raikiri_traits::PaintRect;
     let mut clips = Vec::new();
     let mut actual = Vec::new();
     for event in page.paint_order_for_text_runs(&runs) {
@@ -233,12 +234,22 @@ fn overflow_clips_follow_each_column_group_and_leave_the_spanner_fullwidth() {
             }
             PaintEvent::TextLine(line) => {
                 let run = runs.iter().find(|run| run.line == line).unwrap();
-                actual.push((run.text, clips.last().copied()));
+                // The area every clip in effect leaves. A column group's own
+                // clip is open along the inline axis.
+                let visible = clips.iter().copied().reduce(|a: PaintRect, b| {
+                    let (x, y) = (a.x.max(b.x), a.y.max(b.y));
+                    PaintRect::new(
+                        x,
+                        y,
+                        (a.x + a.width).min(b.x + b.width) - x,
+                        (a.y + a.height).min(b.y + b.height) - y,
+                    )
+                });
+                actual.push((run.text, visible));
             }
             _ => {}
         }
     }
-    use raikiri_traits::PaintRect;
     let left = Some(PaintRect::new(0.0, 0.0, 40.0, 40.0));
     let right = Some(PaintRect::new(60.0, 0.0, 40.0, 40.0));
     let bottom_left = Some(PaintRect::new(0.0, 60.0, 40.0, 40.0));
