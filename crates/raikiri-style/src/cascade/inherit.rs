@@ -517,6 +517,9 @@ pub(crate) fn walk_from<D: StyleDom>(
     // a Bloom filter over them, truncated and pushed in lockstep.
     let mut ancestor_path: Vec<StyleNodeId> = Vec::new();
     let mut ancestor_filter = AncestorFilter::new();
+    // Per element of `ancestor_path`, the nearest element up to it that
+    // declares each stroke length, kept in lockstep with the path.
+    let mut stroke_declarers: Vec<StrokeDeclarers> = Vec::new();
     let mut store = InputStore::new(options.share_retention_budget);
     // Scratch buffer for `apply_winners`, allocated **outside** the walk loop
     // and reused for every node. Two per-node `HashMap`s previously accounted
@@ -542,6 +545,7 @@ pub(crate) fn walk_from<D: StyleDom>(
         } = entry;
         ancestor_path.truncate(ancestors);
         ancestor_filter.truncate(ancestors);
+        stroke_declarers.truncate(ancestors);
         // Skip the entire subtree when is_in_document()==false: detached and
         // template descendants keep initial() instead of inheriting from their
         // parent (nodes under `<template style="color:red">` do not inherit
@@ -569,6 +573,8 @@ pub(crate) fn walk_from<D: StyleDom>(
             .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
         let mut node_svg_properties = Vec::new();
         let mut node_svg_relative_presentation_attributes = Vec::new();
+        // The stroke lengths a presentation attribute of the element sets.
+        let mut attribute_declared = [false; STROKE_LENGTHS.len()];
         let parent_computed =
             parent.map_or(parent_computed, |parent| &out.computed[parent.0 as usize]);
         let idx = id.0 as usize;
@@ -581,7 +587,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             // Whether the element's own candidates include `opacity` and
             // `background-color`, whichever declaration wins.
             if let (Some(candidates), _) = input.element(collector.shared()) {
-                for candidate in candidates.decls() {
+                for (position, candidate) in candidates.decls().iter().enumerate() {
                     match candidate.key() {
                         crate::property::PropertyKey::Opacity => out.opacity_specified[idx] = true,
                         crate::property::PropertyKey::BackgroundColor => {
@@ -589,10 +595,22 @@ pub(crate) fn walk_from<D: StyleDom>(
                         }
                         _ => {}
                     }
+                    if is_svg
+                        && candidate.precedence().ranked(0).rank
+                            == cascade_rank(
+                                crate::ruletree::Origin::AuthorPresentationalHint,
+                                false,
+                            )
+                        && let Some(slot) = stroke_length_slot(candidate.key())
+                        && !attribute_inherits(candidates.value(position))
+                    {
+                        attribute_declared[slot] = true;
+                    }
                 }
             }
             ancestor_path.push(id);
             ancestor_filter.push(&elem);
+            stroke_declarers.push(StrokeDeclarers::default());
         }
 
         let shared = collector.shared();
@@ -914,6 +932,27 @@ pub(crate) fn walk_from<D: StyleDom>(
             _ => store.give_back(input),
         }
 
+        if is_svg {
+            // The last slot is this element's.
+            let parent_declarers = stroke_declarers
+                .len()
+                .checked_sub(2)
+                .and_then(|parent| stroke_declarers.get(parent))
+                .copied()
+                .unwrap_or_default();
+            if share_source.is_none() {
+                absolutize_inherited_lengths(
+                    &mut node_svg_properties,
+                    parent_declarers,
+                    &out.svg_properties,
+                    &out.computed,
+                    computed.font_size.0,
+                );
+            }
+            if let Some(slot) = stroke_declarers.last_mut() {
+                *slot = parent_declarers.declared_by(&node_svg_properties, attribute_declared, id);
+            }
+        }
         if !node_svg_properties.is_empty() {
             // Every element owns a copy of the text of its painting
             // declarations, so a long `url(#...)` paint counts once per element
@@ -1532,10 +1571,17 @@ pub(crate) fn apply_winners(
                 _ => {}
             }
             // A painting attribute that wins is already in the SVG source; only a
-            // stylesheet declaration, or a rollback to the attribute, is exported.
+            // stylesheet declaration, a rollback to the attribute, or an
+            // attribute written with `var()` is exported. The SVG renderer
+            // cannot substitute a variable, so that attribute is exported
+            // with its resolved value.
             let winning_paint_hint = winner.rank
                 == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false)
-                && winner_key.is_svg_presentation();
+                && winner_key.is_svg_presentation()
+                && !matches!(
+                    candidates.value(winner.idx),
+                    PropertyValue::Deferred(deferred) if references_variable(&deferred.value)
+                );
             if winning_paint_hint
                 && svg_presentation_value_has_font_relative_length(value.as_ref())
                 && let Some(attributes) = svg_relative_presentation_attributes.as_deref_mut()
@@ -1611,6 +1657,13 @@ pub(crate) fn apply_winners(
     }
 }
 
+/// Whether the value text `raw` substitutes a custom property.
+fn references_variable(raw: &str) -> bool {
+    let mut references = Vec::new();
+    super::custom_property::collect_var_references(raw, &mut references).is_ok()
+        && !references.is_empty()
+}
+
 fn svg_color_is_current_color(source: &str) -> bool {
     let mut input = cssparser::ParserInput::new(source);
     let mut parser = cssparser::Parser::new(&mut input);
@@ -1633,6 +1686,128 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
             key,
             Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility
         )
+}
+
+/// The stroke length properties whose declaration an `inherit` has to find.
+const STROKE_LENGTHS: [crate::property::PropertyKey; 3] = [
+    crate::property::PropertyKey::StrokeWidth,
+    crate::property::PropertyKey::StrokeDasharray,
+    crate::property::PropertyKey::StrokeDashoffset,
+];
+
+/// Whether the presentation attribute value `value` takes the inherited
+/// value instead of declaring one.
+fn attribute_inherits(value: &PropertyValue) -> bool {
+    matches!(
+        value,
+        PropertyValue::Deferred(marker) if matches!(
+            marker.css_wide_keyword(),
+            Some(CssWideKeyword::Inherit | CssWideKeyword::Unset)
+        )
+    )
+}
+
+fn stroke_length_slot(key: crate::property::PropertyKey) -> Option<usize> {
+    STROKE_LENGTHS.iter().position(|length| *length == key)
+}
+
+/// For each of [`STROKE_LENGTHS`], the nearest element that declares it
+/// rather than inherits it.
+#[derive(Clone, Copy, Default)]
+struct StrokeDeclarers([Option<StyleNodeId>; STROKE_LENGTHS.len()]);
+
+impl StrokeDeclarers {
+    /// The declarers for element `id`, below elements whose declarers are
+    /// `self`. The element exports `properties`, and its presentation
+    /// attributes set the lengths in `attribute_declared`. A length it
+    /// inherits stays with the declarer above.
+    fn declared_by(
+        mut self,
+        properties: &[SvgStyleProperty],
+        attribute_declared: [bool; STROKE_LENGTHS.len()],
+        id: StyleNodeId,
+    ) -> Self {
+        for ((slot, key), by_attribute) in self
+            .0
+            .iter_mut()
+            .zip(STROKE_LENGTHS)
+            .zip(attribute_declared)
+        {
+            let exported = properties.iter().find(|property| property.property == key);
+            // An attribute that wins is not exported.
+            if exported.map_or(by_attribute, |property| !property.inherited) {
+                *slot = Some(id);
+            }
+        }
+        self
+    }
+}
+
+/// Gives a stroke length that an element takes with `inherit` the computed
+/// value of the ancestor that declares it, when the two font sizes differ.
+///
+/// An SVG renderer copies the ancestor's text to the element and resolves a
+/// font-relative length against the element's own font size, while the
+/// computed value of the ancestor is absolute (CSS Values 4 §6). Only this
+/// inheriting side is converted. A declaration stays as written, because a
+/// `<use>` instance resolves the declarations of the elements it instantiates
+/// against its own font size. A declaration by a presentation attribute is
+/// not exported with its text here: it only ends the search, and the length
+/// is resolved where the attribute sits.
+fn absolutize_inherited_lengths(
+    properties: &mut [SvgStyleProperty],
+    parent_declarers: StrokeDeclarers,
+    exported: &HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    computed: &[ComputedValues],
+    font_size_px: f32,
+) {
+    for property in properties.iter_mut().filter(|property| property.inherited) {
+        let Some(declarer) =
+            stroke_length_slot(property.property).and_then(|slot| parent_declarers.0[slot])
+        else {
+            continue;
+        };
+        let declared_font_size = computed.get(declarer.0 as usize).map(|c| c.font_size.0);
+        if let Some(declared_font_size) = declared_font_size
+            && declared_font_size != font_size_px
+            && let Some(entry) = exported.get(&declarer).and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.property == property.property && !entry.inherited)
+            })
+            && let Some(text) = entry.expression.as_deref()
+            && let Some(text) = svg_lengths_in_px(text, declared_font_size)
+        {
+            property.inherited = false;
+            property.expression = Some(text);
+        }
+    }
+}
+
+/// `text`, a validated list of SVG lengths, with its `em` and `ex` terms
+/// converted to px against `font_size_px`; `None` when it has no such term.
+/// `ex` is half an `em`, as for [`Length::Ex`]. A percentage refers to the
+/// SVG viewport and an absolute unit needs no conversion.
+fn svg_lengths_in_px(text: &str, font_size_px: f32) -> Option<String> {
+    if !text.contains("em") && !text.contains("ex") {
+        return None;
+    }
+    let font_size = f64::from(font_size_px);
+    let items = text.split(' ').map(|item| {
+        let (number, scale) = match (item.strip_suffix("em"), item.strip_suffix("ex")) {
+            (Some(number), _) => (number, 1.0),
+            (_, Some(number)) => (number, 0.5),
+            _ => return item.to_owned(),
+        };
+        match number.parse::<f64>() {
+            Ok(number) if (number * scale * font_size).is_finite() => {
+                let px = (number * scale * font_size * 1e6).round() / 1e6;
+                format!("{px}px")
+            }
+            _ => item.to_owned(),
+        }
+    });
+    Some(items.collect::<Vec<_>>().join(" "))
 }
 
 fn svg_property_expression(value: &PropertyValue) -> Option<String> {

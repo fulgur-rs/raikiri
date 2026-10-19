@@ -4,8 +4,9 @@
 use super::line_paint::LinePaint;
 use super::typographic::{Paragraph, TypographicPaint};
 use super::{
-    IfcPosition, RunDraw, ShadowMarks, ShadowRun, VerticalMarks, anyrender_glyph, draw_shadow,
-    emphasis_origin, normalized_coords, paint_box, physical_glyph_transform, run_transform,
+    IfcPosition, RunDraw, ShadowMarks, ShadowPiece, ShadowRun, VerticalMarks, anyrender_glyph,
+    draw_shadow, emphasis_origin, normalized_coords, paint_box, physical_glyph_transform,
+    run_transform,
 };
 use crate::text::{
     DecorationPhase, css_color_to_peniko, draw_resolved_decoration_phase, synthetic_embolden,
@@ -125,7 +126,8 @@ impl<'a> LinePaint<'a, '_> {
     /// Paint the text shadows of the runs of one box.
     ///
     /// Each shadow layer covers every run of the box before the next one up,
-    /// so the first declared shadow stays on top.
+    /// so the first declared shadow stays on top. The runs of a layer that
+    /// paint into one group with one blur radius are blurred together.
     fn paint_shadows(
         &self,
         paint: &mut TypographicPaint,
@@ -138,39 +140,50 @@ impl<'a> LinePaint<'a, '_> {
             .map(|draw| draw.style.text_shadow.len())
             .max()
             .unwrap_or(0);
-        for layer in (0..layers).rev() {
-            for (draw, font) in runs_with_fonts(segment) {
-                let Some(shadow) = draw.style.text_shadow.get(layer) else {
-                    continue;
-                };
+        if layers == 0 {
+            return;
+        }
+        let runs: Vec<_> = runs_with_fonts(segment)
+            .map(|(draw, font)| {
                 let coords = normalized_coords(&draw.run);
                 let glyph_transform = physical_glyph_transform(
                     &frame.converter,
                     draw.glyph_transform,
                     draw.run.skew(),
                 );
-                draw_shadow(
-                    paint.target(draw.group),
-                    &ShadowRun {
-                        draw,
-                        font: &font,
-                        coords: &coords,
-                        glyph_transform,
-                        document: self.paragraph.document,
-                        marks: self.shadow_marks(frame, draw),
-                        vertical: self.vertical,
-                        missing_glyph_boxes: !self.vertical && !draw.turned,
-                    },
-                    shadow,
-                    draw.style,
-                    run_transform(frame.transform, draw),
-                    IfcPosition {
-                        x: position.x + draw.offset.0,
-                        y: position.y + draw.offset.1,
-                        shift_y: position.shift_y,
-                    },
-                    self.size,
-                );
+                (draw, font, coords, glyph_transform)
+            })
+            .collect();
+        for layer in (0..layers).rev() {
+            let pieces: Vec<ShadowPiece<'_, '_>> = runs
+                .iter()
+                .filter_map(|(draw, font, coords, glyph_transform)| {
+                    let shadow = draw.style.text_shadow.get(layer)?;
+                    Some(ShadowPiece {
+                        run: ShadowRun {
+                            draw,
+                            font,
+                            coords,
+                            glyph_transform: *glyph_transform,
+                            document: self.paragraph.document,
+                            marks: self.shadow_marks(frame, draw),
+                            vertical: self.vertical,
+                            missing_glyph_boxes: !self.vertical && !draw.turned,
+                        },
+                        shadow,
+                        transform: run_transform(frame.transform, draw),
+                        position: IfcPosition {
+                            x: position.x + draw.offset.0,
+                            y: position.y + draw.offset.1,
+                            shift_y: position.shift_y,
+                        },
+                    })
+                })
+                .collect();
+            for together in
+                pieces.chunk_by(|a, b| a.run.draw.group == b.run.draw.group && a.blur() == b.blur())
+            {
+                draw_shadow(paint.target(together[0].run.draw.group), together);
             }
         }
     }

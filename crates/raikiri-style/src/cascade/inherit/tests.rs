@@ -11837,12 +11837,32 @@ fn svg_rect_properties(
     attributes: &[(&str, &str)],
     inline_style: Option<&str>,
 ) -> Vec<SvgStyleProperty> {
+    svg_rect_in(css, None, attributes, inline_style)
+}
+
+/// The exported properties of the `rect` of `css` applied to
+/// `<svg><g {group_attributes}><rect/></g></svg>`, or without the `g` when
+/// `group_attributes` is `None`.
+fn svg_rect_in(
+    css: &str,
+    group_attributes: Option<&[(&str, &str)]>,
+    attributes: &[(&str, &str)],
+    inline_style: Option<&str>,
+) -> Vec<SvgStyleProperty> {
     let mut doc = TestDoc::new();
     let style = doc.push_element(0, "style", None);
     doc.push_text(style, css);
-    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let mut parent = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    if let Some(group_attributes) = group_attributes {
+        parent = doc.push_element_with_namespace(
+            parent,
+            "g",
+            "http://www.w3.org/2000/svg",
+            group_attributes,
+        );
+    }
     let rect =
-        doc.push_element_with_namespace(svg, "rect", "http://www.w3.org/2000/svg", attributes);
+        doc.push_element_with_namespace(parent, "rect", "http://www.w3.org/2000/svg", attributes);
     doc.nodes[rect].inline_style = inline_style.map(str::to_owned);
     let tree = build_rule_tree(&doc);
     let result = cascade(&doc, &tree).unwrap();
@@ -11935,6 +11955,221 @@ fn an_svg_presentation_attribute_is_left_to_the_svg() {
     let properties = svg_rect_properties("", &[("fill", "red"), ("stroke-width", "3")], None);
     assert_eq!(exported(&properties, PropertyKey::Fill), None);
     assert_eq!(exported(&properties, PropertyKey::StrokeWidth), None);
+}
+
+#[test]
+fn a_painting_attribute_written_with_a_variable_is_exported_resolved() {
+    let fill = |css: &str, value: &str| {
+        exported(
+            &svg_rect_properties(css, &[("fill", value)], None),
+            PropertyKey::Fill,
+        )
+    };
+    let green = Some((false, Some("rgba(0,128,0,1)".into())));
+    assert_eq!(fill("rect { --c: green }", "var(--c)"), green);
+    // The variable may come from an ancestor.
+    assert_eq!(fill("svg { --c: green }", "var(--c)"), green);
+    // A fallback stands in for a variable nothing defines.
+    assert_eq!(
+        fill("", "var(--missing, red)"),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+    // A variable nothing defines makes the attribute invalid at computed-value
+    // time, so the property is unset and inherits.
+    assert_eq!(fill("", "var(--missing)"), Some((true, None)));
+    // A value the property rejects is invalid in the same way.
+    assert_eq!(fill("rect { --c: 12 }", "var(--c)"), Some((true, None)));
+    // An attribute without `var()` stays in the SVG source.
+    assert_eq!(fill("rect { --c: green }", "red"), None);
+    // A declaration still outranks the attribute.
+    assert_eq!(
+        fill("rect { --c: green; fill: blue }", "var(--c)"),
+        Some((false, Some("rgba(0,0,255,1)".into())))
+    );
+}
+
+#[test]
+fn every_painting_attribute_written_with_a_variable_is_exported_resolved() {
+    let properties = svg_rect_properties(
+        "rect { --n: 3; --d: 4 2 }",
+        &[
+            ("stroke-width", "var(--n)"),
+            ("stroke-dasharray", "var(--d)"),
+            ("fill-rule", "var(--missing, evenodd)"),
+        ],
+        None,
+    );
+    let text = |key| exported(&properties, key);
+    assert_eq!(
+        text(PropertyKey::StrokeWidth),
+        Some((false, Some("3".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeDasharray),
+        Some((false, Some("4 2".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::FillRule),
+        Some((false, Some("evenodd".into())))
+    );
+}
+
+#[test]
+fn a_declaration_keeps_its_font_relative_stroke_lengths_as_written() {
+    // A `<use>` instance resolves them against its own font size.
+    let properties = svg_rect_properties(
+        "rect { font-size: 20px; stroke-width: 2em; stroke-dasharray: 1em 4px 50% 2ex 3; \
+         stroke-dashoffset: -0.5em }",
+        &[],
+        None,
+    );
+    let text = |key| exported(&properties, key).and_then(|(_, text)| text);
+    assert_eq!(text(PropertyKey::StrokeWidth), Some("2em".into()));
+    assert_eq!(
+        text(PropertyKey::StrokeDasharray),
+        Some("1em 4px 50% 2ex 3".into())
+    );
+    assert_eq!(text(PropertyKey::StrokeDashoffset), Some("-0.5em".into()));
+}
+
+fn nested_rect_properties(css: &str) -> Vec<SvgStyleProperty> {
+    svg_rect_in(css, Some(&[]), &[], None)
+}
+
+#[test]
+fn a_descendant_that_inherits_with_another_font_size_takes_the_ancestors_px() {
+    let properties = nested_rect_properties(
+        "g { font-size: 20px; stroke-width: 2em; stroke-dasharray: 1em 4px 50% 2ex 3; \
+         stroke-dashoffset: -0.5em } \
+         rect { font-size: 10px; stroke-width: inherit; stroke-dasharray: unset; \
+         stroke-dashoffset: inherit }",
+    );
+    let text = |key| exported(&properties, key);
+    assert_eq!(
+        text(PropertyKey::StrokeWidth),
+        Some((false, Some("40px".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeDasharray),
+        Some((false, Some("20px 4px 50% 20px 3".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeDashoffset),
+        Some((false, Some("-10px".into())))
+    );
+}
+
+#[test]
+fn a_descendant_that_inherits_with_the_same_font_size_keeps_inherit() {
+    let properties = nested_rect_properties(
+        "g { font-size: 20px; stroke-width: 2em; stroke-dasharray: 4px 2px } \
+         rect { stroke-width: inherit; stroke-dasharray: inherit }",
+    );
+    // The same font size resolves the same text; a length without a
+    // font-relative term is the same in any case.
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((true, Some("inherit".into())))
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeDasharray),
+        Some((true, Some("inherit".into())))
+    );
+}
+
+#[test]
+fn an_inheriting_descendant_looks_past_an_ancestor_that_inherits() {
+    let properties = nested_rect_properties(
+        "svg { font-size: 30px; stroke-width: 1em } \
+         g { stroke-width: inherit } \
+         rect { font-size: 10px; stroke-width: inherit }",
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((false, Some("30px".into())))
+    );
+}
+
+#[test]
+fn an_ancestor_that_took_px_hands_them_on_with_inherit() {
+    let properties = nested_rect_properties(
+        "svg { font-size: 30px; stroke-width: 1em } \
+         g { font-size: 20px; stroke-width: inherit } \
+         rect { font-size: 10px; stroke-width: inherit }",
+    );
+    // `g` already carries `30px`, and a renderer copies that text.
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((true, Some("inherit".into())))
+    );
+}
+
+#[test]
+fn a_descendant_that_inherits_from_an_attribute_keeps_inherit() {
+    // The attribute is in the SVG source, so the renderer copies what the
+    // element carries and the declaration further up is not the one to take.
+    for value in ["3", "3em"] {
+        let properties = svg_rect_in(
+            "svg { font-size: 30px; stroke-width: 1em } g { font-size: 20px } \
+             rect { font-size: 10px; stroke-width: inherit }",
+            Some(&[("stroke-width", value)]),
+            &[],
+            None,
+        );
+        assert_eq!(
+            exported(&properties, PropertyKey::StrokeWidth),
+            Some((true, Some("inherit".into()))),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn an_attribute_that_inherits_does_not_declare_the_length() {
+    for value in ["inherit", "unset"] {
+        let properties = svg_rect_in(
+            "svg { font-size: 10px; stroke-width: 1em } g { font-size: 20px } \
+             rect { font-size: 30px; stroke-width: inherit }",
+            Some(&[("stroke-width", value)]),
+            &[],
+            None,
+        );
+        assert_eq!(
+            exported(&properties, PropertyKey::StrokeWidth),
+            Some((false, Some("10px".into()))),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn svg_lengths_in_px_leaves_what_it_cannot_convert_as_written() {
+    assert_eq!(svg_lengths_in_px("4px 3 50%", 10.0), None);
+    assert_eq!(svg_lengths_in_px("none", 10.0), None);
+    assert_eq!(
+        svg_lengths_in_px("1em 2ex 0.5em", 10.0).as_deref(),
+        Some("10px 10px 5px")
+    );
+    // An item whose product overflows, or that is no number, is kept.
+    assert_eq!(
+        svg_lengths_in_px("1e308em 1em", 10.0).as_deref(),
+        Some("1e308em 10px")
+    );
+    assert_eq!(svg_lengths_in_px("xem", 10.0).as_deref(), Some("xem"));
+}
+
+#[test]
+fn stroke_lengths_without_font_relative_units_are_exported_as_written() {
+    let properties = svg_rect_properties(
+        "rect { font-size: 20px; stroke-width: 3; stroke-dasharray: 4px 25%; \
+         stroke-dashoffset: 2pt }",
+        &[],
+        None,
+    );
+    let text = |key| exported(&properties, key).and_then(|(_, text)| text);
+    assert_eq!(text(PropertyKey::StrokeWidth), Some("3".into()));
+    assert_eq!(text(PropertyKey::StrokeDasharray), Some("4px 25%".into()));
+    assert_eq!(text(PropertyKey::StrokeDashoffset), Some("2pt".into()));
 }
 
 #[test]

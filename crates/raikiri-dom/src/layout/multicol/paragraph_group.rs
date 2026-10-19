@@ -505,6 +505,13 @@ pub(super) fn fill_rows(
     }
 }
 
+/// How far, in px, the clip of a paginated fragment reaches past the edges of
+/// its column along the inline axis. Fragmentation cuts along the block axis
+/// only, so what a fragment paints past the sides of its column, such as
+/// overflowing text and its shadows, outlines and ink, stays visible; this
+/// is far wider than any page.
+const INLINE_REACH: f32 = 1.0e5;
+
 pub(super) struct PagedFragment {
     pub(super) child: usize,
     pub(super) line_start: usize,
@@ -631,21 +638,24 @@ pub(super) fn paginate(
                     })?;
                 let x = context.origin_x + context.column_offset_x(column);
                 occupied.insert(column);
+                let rect = crate::fragment::FragmentRect {
+                    x: x + entries[index].2.margin.left,
+                    y: group_y + y,
+                    width: entries[index].2.size.width,
+                    height: box_height,
+                };
                 result.fragments.push(PagedFragment {
                     child: entries[index].0,
                     line_start: range.line_start,
                     line_end: range.line_end,
                     fragmentainer,
-                    rect: crate::fragment::FragmentRect {
-                        x: x + entries[index].2.margin.left,
-                        y: group_y + y,
-                        width: entries[index].2.size.width,
-                        height: box_height,
-                    },
+                    rect,
+                    // The clip cuts a fragment at the block edges of its
+                    // column and leaves the inline axis open.
                     clip: crate::fragment::FragmentRect {
-                        x,
+                        x: x - INLINE_REACH,
                         y: group_y,
-                        width: context.column_width,
+                        width: context.column_width + 2.0 * INLINE_REACH,
                         height,
                     },
                 });

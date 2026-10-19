@@ -250,6 +250,32 @@ fn inline_svg_export_carries_the_stylesheet_fill_of_the_root() {
 }
 
 #[test]
+fn inline_svg_export_resolves_a_variable_in_a_fill_attribute() {
+    let result = laid_out(
+        "<style>@page{size:100px 100px;margin:0}svg{display:block}</style><div style='--paint:blue'><svg width='20' height='20'><rect x='4' y='4' width='12' height='12' fill='var(--paint)'/></svg></div>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 20.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &image.rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(10, 10), &[0, 0, 255, 255], "the variable's color");
+}
+
+#[test]
 fn inline_svg_export_carries_stylesheet_fill_and_stroke() {
     let result = laid_out(
         "<style>@page{size:100px 100px;margin:0}svg{display:block}rect{fill:blue;stroke:lime;stroke-width:4px}</style><svg width='20' height='20'><rect x='4' y='4' width='12' height='12' fill='red' stroke='red'/></svg>",

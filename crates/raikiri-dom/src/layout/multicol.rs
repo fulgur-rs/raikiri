@@ -171,9 +171,19 @@ pub(crate) fn compute_multicol_layout(
         && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
     // nested container as well as an outermost one.
+    let balance_wrapped_blocks = available_height.is_none()
+        && style.column_fill != ColumnFillValue::Auto
+        && tree.context.fragmentation_stack.is_empty()
+        && inputs.known_dimensions.height.is_none();
     let lineless_children =
         (inputs.run_mode == RunMode::PerformLayout && !span_scope && style.horizontal)
-            .then(|| lineless::supported(tree, index, true))
+            .then(|| {
+                if balance_wrapped_blocks {
+                    lineless::supported_for_auto_balance(tree, index)
+                } else {
+                    lineless::supported(tree, index, true)
+                }
+            })
             .flatten();
     // A nested container whose children are sliced only because they hold
     // absolutely positioned boxes.
@@ -364,6 +374,7 @@ pub(crate) fn compute_multicol_layout(
                 lineless_definite,
                 lineless_maximum,
                 outer_height,
+                balance_wrapped_blocks,
             )
             .unwrap_or_else(|| {
                 if nested_fallback {
