@@ -221,6 +221,34 @@ fn outer_svg_dimension_hints_accept_both_axes_and_reject_intrinsic_keywords() {
 }
 
 #[test]
+fn outer_svg_dimension_hints_ignore_css_wide_keywords() {
+    use crate::resolve::ComputedLengthPercentageOrAuto as Dimension;
+    const NS: &str = "http://www.w3.org/2000/svg";
+
+    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some("width: 50px; height: 60px"));
+        let svg = doc.push_element_with_namespace(
+            parent,
+            "svg",
+            NS,
+            &[("width", keyword), ("height", keyword)],
+        );
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert_eq!(
+            result.computed[svg].width,
+            Dimension::Auto,
+            "width={keyword}"
+        );
+        assert_eq!(
+            result.computed[svg].height,
+            Dimension::Auto,
+            "height={keyword}"
+        );
+    }
+}
+
+#[test]
 fn comma_separated_selector_list_uses_max_specificity_across_matches() {
     // `match_complex_selector_list` tracks the *best* (highest)
     // specificity across every selector in a comma-separated list that
