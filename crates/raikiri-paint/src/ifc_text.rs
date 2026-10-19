@@ -901,8 +901,9 @@ fn shadow_ink_bounds(run: &ShadowRun<'_, '_>, origin: (f64, f64), pad: f64) -> R
     }
 }
 
-/// The box, from `origin`, that holds the ink of a horizontal run: its glyphs
-/// grown by `pad`, its decoration lines and its emphasis marks.
+/// The box, from the page point `(x, y)` the run's glyphs are placed from,
+/// that holds the ink of a horizontal run: its glyphs grown by `pad`, its
+/// decoration lines and its emphasis marks.
 fn horizontal_ink_bounds(run: &ShadowRun<'_, '_>, (x, y): (f64, f64), pad: f64) -> Rect {
     let glyphs = run
         .draw
