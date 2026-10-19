@@ -1131,7 +1131,7 @@ fn margin_side_accepts_absolute_unit() {
 fn margin_side_rejects_bogus_ident() {
     // Drop identifiers outside the `<length-percentage> | auto` grammar.
     assert_eq!(parse("fill-available", "margin-top"), None);
-    assert_eq!(parse("initial", "margin-top"), None);
+    assert_eq!(parse("bogus", "margin-top"), None);
 }
 
 #[test]
@@ -2824,14 +2824,68 @@ fn height_keeps_the_sizing_keywords() {
 }
 
 #[test]
-fn height_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet; silently drop them.
-    // Canonical reference: the "CSS-wide keyword" section of the PropertyValue doc.
-    assert_eq!(parse("inherit", "height"), None);
-    assert_eq!(parse("initial", "height"), None);
-    assert_eq!(parse("unset", "height"), None);
-    assert_eq!(parse("revert", "height"), None);
-    assert_eq!(parse("revert-layer", "height"), None);
+fn box_properties_retain_css_wide_keywords_for_defaulting() {
+    // Margin, padding, offset and size properties, and the shorthands of the
+    // first three, keep a lone CSS-wide keyword as a deferred marker for the
+    // cascade. The marker carries the property's own key, so a shorthand's is
+    // expanded into its longhands there.
+    for (name, key) in [
+        ("margin", PropertyKey::Margin),
+        ("margin-top", PropertyKey::MarginTop),
+        ("margin-right", PropertyKey::MarginRight),
+        ("margin-bottom", PropertyKey::MarginBottom),
+        ("margin-left", PropertyKey::MarginLeft),
+        ("margin-inline", PropertyKey::MarginInline),
+        ("margin-block", PropertyKey::MarginBlock),
+        ("margin-inline-start", PropertyKey::MarginLeft),
+        ("margin-block-end", PropertyKey::MarginBottom),
+        ("padding", PropertyKey::Padding),
+        ("padding-top", PropertyKey::PaddingTop),
+        ("padding-right", PropertyKey::PaddingRight),
+        ("padding-bottom", PropertyKey::PaddingBottom),
+        ("padding-left", PropertyKey::PaddingLeft),
+        ("padding-inline", PropertyKey::PaddingInline),
+        ("padding-block", PropertyKey::PaddingBlock),
+        ("padding-inline-end", PropertyKey::PaddingRight),
+        ("inset", PropertyKey::Inset),
+        ("inset-inline", PropertyKey::InsetInline),
+        ("inset-block", PropertyKey::InsetBlock),
+        ("inset-block-start", PropertyKey::Top),
+        ("top", PropertyKey::Top),
+        ("right", PropertyKey::Right),
+        ("bottom", PropertyKey::Bottom),
+        ("left", PropertyKey::Left),
+        ("width", PropertyKey::Width),
+        ("height", PropertyKey::Height),
+        ("min-width", PropertyKey::MinWidth),
+        ("min-height", PropertyKey::MinHeight),
+        ("max-width", PropertyKey::MaxWidth),
+        ("max-height", PropertyKey::MaxHeight),
+    ] {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
+                panic!("expected a CSS-wide defaulting marker for `{name}: {keyword}`");
+            };
+            assert_eq!(value.key, key, "{name}: {keyword}");
+            assert_eq!(value.value.as_str(), keyword, "{name}: {keyword}");
+            assert_eq!(
+                value.css_wide_keyword(),
+                CssWideKeyword::from_css_ident(keyword),
+                "{name}: {keyword}"
+            );
+        }
+    }
+}
+
+#[test]
+fn box_properties_still_reject_other_keywords() {
+    // `fill-available` is no CSS-wide keyword, and the logical size
+    // longhands keep dropping the keywords for now.
+    assert_eq!(parse("fill-available", "height"), None);
+    assert_eq!(parse("fill-available", "padding-top"), None);
+    for name in ["inline-size", "block-size", "min-block-size"] {
+        assert_eq!(parse("inherit", name), None, "{name}");
+    }
 }
 
 #[test]

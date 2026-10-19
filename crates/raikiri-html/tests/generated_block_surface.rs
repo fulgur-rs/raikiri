@@ -369,3 +369,187 @@ fn a_float_pushes_the_lines_of_a_block_after_down_but_not_its_height() {
     // 20px block box; the float does not enlarge this non-BFC div.
     assert_eq!(boxes(&document, "div"), vec![(0, 0.0, 100.0, 20.0)]);
 }
+
+/// The `(page, text, y)` of every text run, for the tests that only care about
+/// where the lines fall.
+fn run_rows(document: &DocumentLayout) -> Vec<(u32, String, f32)> {
+    runs(document)
+        .into_iter()
+        .map(|(page, text, (_, y))| (page, text, y))
+        .collect()
+}
+
+fn row(page: u32, text: &str, y: f32) -> (u32, String, f32) {
+    (page, text.to_owned(), y)
+}
+
+#[test]
+fn a_forced_break_after_a_block_before_starts_the_text_on_a_new_page() {
+    for value in ["page", "always"] {
+        let document = lay_out(
+            "<div>A</div><p>B</p>",
+            &format!("div::before{{content:'X';display:block;break-after:{value}}}"),
+        );
+        assert_eq!(document.page_count(), 2, "{value}");
+        assert_eq!(
+            run_rows(&document),
+            vec![row(0, "X", 16.0), row(1, "A", 16.0), row(1, "B", 36.0)],
+            "{value}"
+        );
+        // The element's box carries on over the break.
+        assert_eq!(
+            boxes(&document, "div"),
+            vec![(0, 0.0, 100.0, 60.0), (1, 0.0, 100.0, 20.0)],
+            "{value}"
+        );
+        assert_eq!(
+            boxes(&document, "p"),
+            vec![(1, 20.0, 100.0, 20.0)],
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn a_forced_break_before_a_block_after_starts_the_box_on_a_new_page() {
+    for value in ["page", "always"] {
+        let document = lay_out(
+            "<div>A</div><p>B</p>",
+            &format!("div::after{{content:'Y';display:block;break-before:{value}}}"),
+        );
+        assert_eq!(document.page_count(), 2, "{value}");
+        assert_eq!(
+            run_rows(&document),
+            vec![row(0, "A", 16.0), row(1, "Y", 16.0), row(1, "B", 36.0)],
+            "{value}"
+        );
+        assert_eq!(
+            boxes(&document, "div"),
+            vec![(0, 0.0, 100.0, 60.0), (1, 0.0, 100.0, 20.0)],
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn an_avoid_or_auto_break_value_of_a_block_before_keeps_the_page() {
+    for value in ["auto", "avoid", "avoid-page"] {
+        let document = lay_out(
+            "<div>A</div><p>B</p>",
+            &format!("div::before{{content:'X';display:block;break-after:{value}}}"),
+        );
+        assert_eq!(document.page_count(), 1, "{value}");
+        assert_eq!(
+            run_rows(&document),
+            vec![row(0, "X", 16.0), row(0, "A", 36.0), row(0, "B", 56.0)],
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn forced_breaks_on_both_generated_blocks_give_the_text_a_page_of_its_own() {
+    let document = lay_out(
+        "<div>A<br>B<br>C</div>",
+        "div::before{content:'X';display:block;break-after:page}div::after{content:'Y';display:block;break-before:page}",
+    );
+    assert_eq!(document.page_count(), 3);
+    assert_eq!(
+        run_rows(&document),
+        vec![
+            row(0, "X", 16.0),
+            row(1, "A", 16.0),
+            row(1, "B", 36.0),
+            row(1, "C", 56.0),
+            row(2, "Y", 16.0),
+        ]
+    );
+    assert_eq!(
+        boxes(&document, "div"),
+        vec![
+            (0, 0.0, 100.0, 60.0),
+            (1, 0.0, 100.0, 60.0),
+            (2, 0.0, 100.0, 20.0)
+        ]
+    );
+}
+
+#[test]
+fn a_forced_break_on_a_later_page_moves_only_what_follows_it() {
+    let document = lay_out(
+        "<div>A<br>B<br>C<br>D<br>E</div>",
+        "div::after{content:'Y';display:block;break-before:page}",
+    );
+    assert_eq!(document.page_count(), 3);
+    assert_eq!(
+        run_rows(&document),
+        vec![
+            row(0, "A", 16.0),
+            row(0, "B", 36.0),
+            row(0, "C", 56.0),
+            row(1, "D", 16.0),
+            row(1, "E", 36.0),
+            row(2, "Y", 16.0),
+        ]
+    );
+}
+
+#[test]
+fn a_forced_break_that_meets_a_page_end_adds_no_empty_page() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'X';display:block;height:60px;break-after:page}",
+    );
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(
+        run_rows(&document),
+        vec![row(0, "X", 16.0), row(1, "A", 16.0)]
+    );
+}
+
+#[test]
+fn a_block_after_keeps_its_margin_border_and_padding_below_a_forced_break() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::after{content:'Y';display:block;break-before:page;margin-top:10px;border-top:2px solid;padding-top:4px}",
+    );
+    assert_eq!(document.page_count(), 2);
+    // 10px margin + 2px border + 4px padding + the 16px ascent of the line.
+    assert_eq!(
+        run_rows(&document),
+        vec![row(0, "A", 16.0), row(1, "Y", 32.0)]
+    );
+    assert_eq!(
+        boxes(&document, "div"),
+        vec![(0, 0.0, 100.0, 60.0), (1, 0.0, 100.0, 36.0)]
+    );
+}
+
+#[test]
+fn a_block_after_without_lines_leaves_a_forced_break_unapplied() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::after{content:'';display:block;height:10px;break-before:page}",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_eq!(run_rows(&document), vec![row(0, "A", 16.0)]);
+}
+
+#[test]
+fn a_block_after_whose_content_falls_on_the_next_page_still_moves_whole() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::after{content:'Y';display:block;break-before:page;padding-top:30px}",
+    );
+    assert_eq!(document.page_count(), 2);
+    // The box would begin below A on the first page and carry on over the page
+    // edge: it begins the second page instead.
+    assert_eq!(
+        run_rows(&document),
+        vec![row(0, "A", 16.0), row(1, "Y", 46.0)]
+    );
+    assert_eq!(
+        boxes(&document, "div"),
+        vec![(0, 0.0, 100.0, 60.0), (1, 0.0, 100.0, 50.0)]
+    );
+}
