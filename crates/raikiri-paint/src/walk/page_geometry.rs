@@ -75,39 +75,21 @@ impl PageGeometry {
         } else {
             content_width
         };
-        // The walker keeps source coordinates in the stack.  Only the paint sites
-        // receive the page translation, which makes page membership testable even
-        // when an ancestor spans a page boundary.
         let pages_follow_x_axis = raikiri_dom::pages_follow_x_axis(document, cascade);
-        let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
-            // Pages that follow the x axis hold a band of the flow across the
-            // whole page height: every box is on the page along y, and the
-            // page area decides along x which boxes and lines the page holds. Flowing right to left, the
-            // band starts at the page area's right edge, so on a page whose area
-            // is narrower or wider than the one this document was laid out in it
-            // moves with that edge.
-            Some(right_to_left) => (
-                -FLOW_EXTENT,
-                FLOW_EXTENT,
-                margins.left
-                    + insets.left
-                    + if right_to_left {
-                        let layout_width = document
-                            .laid_out_page_area_width()
-                            .unwrap_or(fixed_content_width);
-                        content_origin_y + content_width - layout_width
-                    } else {
-                        -content_origin_y
-                    },
-                margins.top + insets.top,
-            ),
-            None => (
-                content_origin_y,
-                content_origin_y + content_height,
-                margins.left + insets.left,
-                margins.top + insets.top - content_origin_y,
-            ),
-        };
+        let FlowWindow {
+            page_top,
+            page_bottom,
+            page_offset_x,
+            page_offset_y,
+        } = FlowWindow::new(
+            pages_follow_x_axis,
+            (margins, insets),
+            (content_width, content_height),
+            content_origin_y,
+            document
+                .laid_out_page_area_width()
+                .unwrap_or(fixed_content_width),
+        );
         // Viewport-fixed boxes repeat at the same place on every page, so they
         // are placed against the page, not against the band of the flow that
         // the page offsets above carry.
@@ -118,59 +100,15 @@ impl PageGeometry {
         } else {
             (0.0, content_origin_y)
         };
-        // Element backgrounds can extend past the page content box, for example
-        // through negative margins. Clip those backgrounds to the physical
-        // content box without clipping text ink, which may legitimately overflow
-        // its box.
         // `scene` paints through the root element's `root_transform`, which
         // moves the document but not the page: page-area clips undo it.
         let page_clip_transform = root_transform.inverse();
-        let page_content_clip = if margins.left > 0.0
-            || margins.right > 0.0
-            || margins.top > 0.0
-            || margins.bottom > 0.0
-            || insets.left > 0.0
-            || insets.right > 0.0
-            || insets.top > 0.0
-            || insets.bottom > 0.0
-        {
-            let left = margins.left + insets.left;
-            Some(Rect::new(
-                left as f64,
-                (margins.top + insets.top) as f64,
-                (page_box.width - margins.right - insets.right).max(left) as f64,
-                (margins.top + insets.top + content_height) as f64,
-            ))
-        } else {
-            None
-        };
-        // A page that follows the x axis holds the boxes and lines that lie
-        // across its page area, as pages along y hold those across their page
-        // height; nothing else of the flow beside it is painted.
-        let flow_band = pages_follow_x_axis.map(|right_to_left| {
-            let left = margins.left + insets.left;
-            FlowBand {
-                left,
-                right: left + content_width,
-                right_to_left,
-                root_transform,
-            }
-        });
-        // A paragraph that runs over several pages paints on each only the
-        // lines that page owns, not the ones layout moved beside it into the
-        // page margins. The first page also owns whatever lies before the flow.
-        let page_lines = Some(flow_band.map_or_else(
-            || PageLines::AlongY {
-                start: if content_origin_y > 0.0 {
-                    content_origin_y
-                } else {
-                    -FLOW_EXTENT
-                },
-                end: content_origin_y + content_height,
-                paint_shift: page_offset_y,
-            },
-            PageLines::AlongX,
-        ));
+        let flow_band = flow_band(
+            pages_follow_x_axis,
+            (margins, insets),
+            content_width,
+            root_transform,
+        );
         Self {
             margins,
             insets,
@@ -187,9 +125,14 @@ impl PageGeometry {
             fixed_flow_shift_x,
             fixed_origin_y,
             page_clip_transform,
-            page_content_clip,
+            page_content_clip: page_content_clip(margins, insets, page_box, content_height),
             flow_band,
-            page_lines,
+            page_lines: Some(page_lines(
+                flow_band,
+                content_origin_y,
+                content_height,
+                page_offset_y,
+            )),
         }
     }
 
@@ -234,4 +177,145 @@ impl PageGeometry {
             )
         })
     }
+}
+
+/// The span of the flow along y that a page holds, and the translation from
+/// the flow to the page.
+///
+/// The walker keeps source coordinates in the stack. Only the paint sites
+/// receive the page translation, which makes page membership testable even
+/// when an ancestor spans a page boundary.
+struct FlowWindow {
+    page_top: f32,
+    page_bottom: f32,
+    page_offset_x: f32,
+    page_offset_y: f32,
+}
+
+impl FlowWindow {
+    /// The window of a page whose page area is `content_width` by
+    /// `content_height` inside `(margins, insets)`, which starts
+    /// `content_origin_y` into the flow. `layout_width` is the width of the
+    /// page area the document was laid out in.
+    fn new(
+        pages_follow_x_axis: Option<bool>,
+        (margins, insets): (PageMargins, PageContentInsets),
+        (content_width, content_height): (f32, f32),
+        content_origin_y: f32,
+        layout_width: f32,
+    ) -> Self {
+        let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
+            // Pages that follow the x axis hold a band of the flow across the
+            // whole page height: every box is on the page along y, and the
+            // page area decides along x which boxes and lines the page holds.
+            // Flowing right to left, the band starts at the page area's right
+            // edge, so on a page whose area is narrower or wider than the one
+            // this document was laid out in it moves with that edge.
+            Some(right_to_left) => (
+                -FLOW_EXTENT,
+                FLOW_EXTENT,
+                margins.left
+                    + insets.left
+                    + if right_to_left {
+                        content_origin_y + content_width - layout_width
+                    } else {
+                        -content_origin_y
+                    },
+                margins.top + insets.top,
+            ),
+            None => (
+                content_origin_y,
+                content_origin_y + content_height,
+                margins.left + insets.left,
+                margins.top + insets.top - content_origin_y,
+            ),
+        };
+        Self {
+            page_top,
+            page_bottom,
+            page_offset_x,
+            page_offset_y,
+        }
+    }
+}
+
+/// The physical content box that element backgrounds are clipped to, or
+/// `None` on a page with no margin and no border or padding.
+///
+/// Element backgrounds can extend past the page content box, for example
+/// through negative margins. They are clipped to this box without clipping
+/// text ink, which may legitimately overflow its box.
+fn page_content_clip(
+    margins: PageMargins,
+    insets: PageContentInsets,
+    page_box: PageBox,
+    content_height: f32,
+) -> Option<Rect> {
+    if margins.left > 0.0
+        || margins.right > 0.0
+        || margins.top > 0.0
+        || margins.bottom > 0.0
+        || insets.left > 0.0
+        || insets.right > 0.0
+        || insets.top > 0.0
+        || insets.bottom > 0.0
+    {
+        let left = margins.left + insets.left;
+        Some(Rect::new(
+            left as f64,
+            (margins.top + insets.top) as f64,
+            (page_box.width - margins.right - insets.right).max(left) as f64,
+            (margins.top + insets.top + content_height) as f64,
+        ))
+    } else {
+        None
+    }
+}
+
+/// The band of the flow that a page along the x axis holds, if pages follow
+/// that axis.
+///
+/// Such a page holds the boxes and lines that lie across its page area, as
+/// pages along y hold those across their page height; nothing else of the
+/// flow beside it is painted.
+fn flow_band(
+    pages_follow_x_axis: Option<bool>,
+    (margins, insets): (PageMargins, PageContentInsets),
+    content_width: f32,
+    root_transform: Affine,
+) -> Option<FlowBand> {
+    pages_follow_x_axis.map(|right_to_left| {
+        let left = margins.left + insets.left;
+        FlowBand {
+            left,
+            right: left + content_width,
+            right_to_left,
+            root_transform,
+        }
+    })
+}
+
+/// The lines a page owns of a paragraph that runs over several pages.
+///
+/// Such a paragraph paints on each page only the lines that page owns, not
+/// the ones layout moved beside it into the page margins. The first page also
+/// owns whatever lies before the flow.
+fn page_lines(
+    band: Option<FlowBand>,
+    content_origin_y: f32,
+    content_height: f32,
+    paint_shift: f32,
+) -> PageLines {
+    band.map_or_else(
+        || PageLines::AlongY {
+            start: if content_origin_y > 0.0 {
+                content_origin_y
+            } else {
+                -FLOW_EXTENT
+            },
+            end: content_origin_y + content_height,
+            paint_shift,
+        },
+        PageLines::AlongX,
+    )
 }
