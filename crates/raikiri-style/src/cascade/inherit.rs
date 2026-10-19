@@ -587,7 +587,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             // Whether the element's own candidates include `opacity` and
             // `background-color`, whichever declaration wins.
             if let (Some(candidates), _) = input.element(collector.shared()) {
-                for candidate in candidates.decls() {
+                for (position, candidate) in candidates.decls().iter().enumerate() {
                     match candidate.key() {
                         crate::property::PropertyKey::Opacity => out.opacity_specified[idx] = true,
                         crate::property::PropertyKey::BackgroundColor => {
@@ -602,6 +602,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                                 false,
                             )
                         && let Some(slot) = stroke_length_slot(candidate.key())
+                        && !attribute_inherits(candidates.value(position))
                     {
                         attribute_declared[slot] = true;
                     }
@@ -1691,6 +1692,18 @@ const STROKE_LENGTHS: [crate::property::PropertyKey; 3] = [
     crate::property::PropertyKey::StrokeDashoffset,
 ];
 
+/// Whether the presentation attribute value `value` takes the inherited
+/// value instead of declaring one.
+fn attribute_inherits(value: &PropertyValue) -> bool {
+    matches!(
+        value,
+        PropertyValue::Deferred(marker) if matches!(
+            marker.css_wide_keyword(),
+            Some(CssWideKeyword::Inherit | CssWideKeyword::Unset)
+        )
+    )
+}
+
 fn stroke_length_slot(key: crate::property::PropertyKey) -> Option<usize> {
     STROKE_LENGTHS.iter().position(|length| *length == key)
 }
@@ -1732,9 +1745,12 @@ impl StrokeDeclarers {
 ///
 /// An SVG renderer copies the ancestor's text to the element and resolves a
 /// font-relative length against the element's own font size, while the
-/// computed value of the ancestor is absolute (CSS Values 4 §6). A
-/// declaration itself is exported as written: the elements a `<use>` instances
-/// resolve it against the font size of the instance.
+/// computed value of the ancestor is absolute (CSS Values 4 §6). Only this
+/// inheriting side is converted. A declaration stays as written, because a
+/// `<use>` instance resolves the declarations of the elements it instantiates
+/// against its own font size. A declaration by a presentation attribute is
+/// not exported with its text here: it only ends the search, and the length
+/// is resolved where the attribute sits.
 fn absolutize_inherited_lengths(
     properties: &mut [SvgStyleProperty],
     parent_declarers: StrokeDeclarers,

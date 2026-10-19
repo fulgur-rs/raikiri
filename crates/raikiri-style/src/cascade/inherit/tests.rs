@@ -12124,6 +12124,24 @@ fn a_descendant_that_inherits_from_an_attribute_keeps_inherit() {
 }
 
 #[test]
+fn an_attribute_that_inherits_does_not_declare_the_length() {
+    for value in ["inherit", "unset"] {
+        let properties = svg_rect_in(
+            "svg { font-size: 10px; stroke-width: 1em } g { font-size: 20px } \
+             rect { font-size: 30px; stroke-width: inherit }",
+            Some(&[("stroke-width", value)]),
+            &[],
+            None,
+        );
+        assert_eq!(
+            exported(&properties, PropertyKey::StrokeWidth),
+            Some((false, Some("10px".into()))),
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn svg_lengths_in_px_leaves_what_it_cannot_convert_as_written() {
     assert_eq!(svg_lengths_in_px("4px 3 50%", 10.0), None);
     assert_eq!(svg_lengths_in_px("none", 10.0), None);
