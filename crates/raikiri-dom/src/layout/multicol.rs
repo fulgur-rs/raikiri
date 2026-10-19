@@ -885,25 +885,47 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
     if tree.nodes[parent].ifc.is_some() {
         return false;
     }
-    let mut current = parent;
+    only_element_child(tree, parent)
+        .and_then(|child| plain_paragraph_chain_leaf(tree, child))
+        .is_some()
+}
+
+/// The only rendered element child of `parent`, if it has exactly one.
+fn only_element_child(tree: &Document, parent: usize) -> Option<usize> {
+    let mut children = tree
+        .children_through_contents(parent)
+        .into_iter()
+        .filter(|&child| {
+            tree.nodes[child].is_in_document()
+                && tree.nodes[child].kind() == NodeKind::Element
+                && !tree.nodes[child].is_display_none()
+        });
+    let child = children.next()?;
+    children.next().is_none().then_some(child)
+}
+
+/// The paragraph at the end of the chain that starts at `start`, when every
+/// box of the chain, the paragraph included, is a plain block in the flow:
+/// no margin, padding, border, float, authored size, size containment or
+/// column span, so its height follows its content, and each box but the last
+/// holds nothing but the next one, clips nothing and paints no effect sized
+/// from its whole box, as the pieces of the paragraph in the later columns
+/// lie outside its box. The paragraph breaks between its lines and holds no
+/// box but atomic inlines.
+fn plain_paragraph_chain_leaf(tree: &Document, start: usize) -> Option<usize> {
+    let mut current = start;
     loop {
-        let mut children = tree
-            .children_through_contents(current)
-            .into_iter()
-            .filter(|&child| {
-                tree.nodes[child].is_in_document()
-                    && tree.nodes[child].kind() == NodeKind::Element
-                    && !tree.nodes[child].is_display_none()
-            });
-        let Some(child) = children.next() else {
-            return false;
-        };
-        if children.next().is_some() {
-            return false;
-        }
-        let node = &tree.layout_node_with_style(child).unwrap();
+        let node = &tree.layout_node_with_style(current).unwrap();
         let zero_margin = LengthPercentageAuto::length(0.0);
-        if node.display() != DisplayValue::Block
+        let clips = node.ifc.is_none()
+            && (node.style.overflow.x != taffy::Overflow::Visible
+                || node.style.overflow.y != taffy::Overflow::Visible);
+        // A slice of a wrapper cannot reproduce an effect sized from its
+        // whole box.
+        let painted = node.ifc.is_none() && node.paints_whole_box_effects;
+        if clips
+            || painted
+            || node.display() != DisplayValue::Block
             || node.style.float.is_floated()
             || node.style.margin.top != zero_margin
             || node.style.margin.right != zero_margin
@@ -917,18 +939,21 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
             || !node.style.size.height.is_auto()
             || !node.style.min_size.height.is_auto()
             || !node.style.max_size.height.is_auto()
+            || node.size_containment.height
+            || node.column_span_all
             || node.break_inside != raikiri_style::property::BreakInside::Auto
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto
         {
-            return false;
+            return None;
         }
         if node.ifc.is_some() {
-            return node.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
-                && paragraph_boxes_are_atomic(tree, child)
-                && !multicol_subtree_has_float(tree, child);
+            return (node.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
+                && paragraph_boxes_are_atomic(tree, current)
+                && !multicol_subtree_has_float(tree, current))
+            .then_some(current);
         }
-        current = child;
+        current = only_element_child(tree, current)?;
     }
 }
 
@@ -1019,6 +1044,19 @@ fn relayout_nested_multicol_children(
     used
 }
 
+/// The only paragraph of a balanced column container, with the line ranges
+/// that balance it over the columns.
+struct ParagraphBalance {
+    /// The child of the container that holds the paragraph.
+    child: usize,
+    /// The paragraph: `child` itself, or the end of the chain of plain
+    /// wrappers that starts at it.
+    leaf: usize,
+    fragments: Vec<MulticolTextFragment>,
+    /// The height of the tallest column.
+    height: f32,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_column_group(
     tree: &mut LayoutSession<'_>,
@@ -1105,13 +1143,30 @@ fn layout_column_group(
         if boxes.next().is_some() {
             return None;
         }
-        let node = &tree.layout_node_with_style(*child).unwrap();
-        if !can_balance_atomic_paragraph(tree, *child) {
+        // A paragraph below plain wrappers is balanced like one of the
+        // container's own. The wrapper that is the container's child has one
+        // box, in the first column, so one that fills its box with a color
+        // would leave the lines of the later columns without it. The wrappers
+        // below it, and the paragraph, have a box in each column.
+        let leaf = if tree.nodes[*child].ifc.is_some() {
+            *child
+        } else {
+            if tree.nodes[*child].paints_background_color {
+                return None;
+            }
+            plain_paragraph_chain_leaf(tree, *child)?
+        };
+        if !can_balance_atomic_paragraph(tree, leaf) {
             return None;
         }
-        let lines = node.ifc.as_ref()?.lines.as_ref()?;
+        let lines = tree.nodes[leaf].ifc.as_ref()?.lines.as_ref()?;
         let (fragments, height) = root_column_fragments(lines, context);
-        (fragments.len() > 1).then_some((*child, fragments, height))
+        (fragments.len() > 1).then_some(ParagraphBalance {
+            child: *child,
+            leaf,
+            fragments,
+            height,
+        })
     });
     let mut avoid_column_break_after_previous = false;
     let mut occupied = std::collections::BTreeSet::new();
@@ -1165,10 +1220,10 @@ fn layout_column_group(
             column = placement.first_column;
             cursor = placement.first_y - margin_top;
             child_output.size.height = placement.first_height;
-        } else if let Some((balanced_child, _, height)) = &paragraph_balance
-            && *balanced_child == child
+        } else if let Some(balance) = &paragraph_balance
+            && balance.child == child
         {
-            child_output.size.height = *height;
+            child_output.size.height = balance.height;
         }
         let break_height =
             fragment_height.or_else(|| auto_measurements.as_ref().map(|(_, height)| *height));
@@ -1331,16 +1386,16 @@ fn layout_column_group(
                 },
             );
         }
-        if let Some((balanced_child, fragments, _)) = &paragraph_balance
-            && *balanced_child == child
-            && let Some(root) = tree.nodes[child].ifc.as_mut()
+        if let Some(balance) = &paragraph_balance
+            && balance.child == child
+            && let Some(root) = tree.nodes[balance.leaf].ifc.as_mut()
         {
-            root.multicol_fragments = Some(fragments.clone());
+            root.multicol_fragments = Some(balance.fragments.clone());
             refresh_paragraph_boxes(
                 tree,
-                child,
+                balance.leaf,
                 column_context,
-                FlexFloatChain::of_ancestors(tree, child),
+                FlexFloatChain::of_ancestors(tree, balance.leaf),
             );
         }
         let Some(child_fragment) = tree
@@ -1383,9 +1438,9 @@ fn layout_column_group(
             || {
                 paragraph_balance
                     .as_ref()
-                    .filter(|(balanced_child, _, _)| *balanced_child == child)
-                    .map_or(context, |(_, _, height)| FragmentationContext {
-                        available_height: Some(*height),
+                    .filter(|balance| balance.child == child)
+                    .map_or(context, |balance| FragmentationContext {
+                        available_height: Some(balance.height),
                         ..context
                     })
             },
@@ -1402,7 +1457,13 @@ fn layout_column_group(
         if record_nested_ifc_box_fragments(tree, child, child_fragment, record_context).is_none() {
             return fallback_height;
         }
-        if let Some(root) = tree.nodes[child].ifc.as_ref()
+        // The lines of a balanced paragraph below wrappers occupy the
+        // columns of the wrappers.
+        let paragraph = paragraph_balance
+            .as_ref()
+            .filter(|balance| balance.child == child)
+            .map_or(child, |balance| balance.leaf);
+        if let Some(root) = tree.nodes[paragraph].ifc.as_ref()
             && let Some(ranges) = &root.multicol_fragments
         {
             occupied.extend(

@@ -485,6 +485,9 @@ pub struct Node {
     /// as background images, rounded corners or shadows. Recomputed by the
     /// style bridge before every layout pass.
     pub(crate) paints_whole_box_effects: bool,
+    /// Whether the box fills its border box with a visible background color.
+    /// Recomputed by the style bridge before every layout pass.
+    pub(crate) paints_background_color: bool,
     /// Whether `box-decoration-break: clone` gives every fragment of this box
     /// its own block-start and block-end padding and border (CSS Fragmentation
     /// 3, 5.4). Recomputed by the style bridge before every layout pass.
@@ -717,6 +720,7 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             paints_whole_box_effects: false,
+            paints_background_color: false,
             clones_box_decorations: false,
             multicol: None,
             column_span_all: false,

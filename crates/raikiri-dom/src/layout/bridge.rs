@@ -265,6 +265,7 @@ fn apply_computed_to_style_in_session_inner(
             });
         doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial)
             || super::fixed::has_applied_transform(doc, idx, cv);
+        doc.nodes[idx].paints_background_color = cv.background_color.a > 0;
         doc.nodes[idx].clones_box_decorations =
             cv.box_decoration_break == BoxDecorationBreak::Clone;
         doc.nodes[idx].contains_absolute_boxes =
