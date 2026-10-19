@@ -109,6 +109,39 @@ fn the_maximum_width_the_block_states_caps_a_width_the_content_raised() {
 }
 
 #[test]
+fn a_ratio_without_auto_relates_the_border_box_of_a_border_box_block() {
+    assert_eq!(
+        ratio_box_size_with(
+            "width:100px;padding:10px;box-sizing:border-box;aspect-ratio:2/1",
+            None
+        ),
+        (100.0, 50.0)
+    );
+}
+
+#[test]
+fn an_auto_ratio_relates_the_content_box_of_a_border_box_block() {
+    assert_eq!(
+        ratio_box_size_with(
+            "width:100px;padding:10px;box-sizing:border-box;aspect-ratio:auto 2/1",
+            None
+        ),
+        (100.0, 60.0)
+    );
+}
+
+#[test]
+fn an_auto_ratio_gives_a_border_box_block_its_width_from_the_height() {
+    assert_eq!(
+        ratio_box_size_with(
+            "height:60px;padding:10px;box-sizing:border-box;aspect-ratio:auto 2/1",
+            None
+        ),
+        (100.0, 60.0)
+    );
+}
+
+#[test]
 fn a_size_contained_empty_block_keeps_the_ratio_it_states() {
     assert_eq!(
         ratio_box_size_with("contain:size;width:100px;aspect-ratio:1/1", None),

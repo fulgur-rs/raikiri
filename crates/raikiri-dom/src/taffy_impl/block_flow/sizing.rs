@@ -42,8 +42,15 @@ fn bounds(own: [Option<f32>; 2], carried: [Option<f32>; 2]) -> (Option<f32>, Opt
 }
 
 impl Metrics {
-    /// `replaced` is whether the box is a replaced element.
-    pub(super) fn resolve(style: &Style, replaced: bool, inputs: LayoutInput) -> Self {
+    /// `replaced` is whether the box is a replaced element. `content_box_ratio`
+    /// is whether its `aspect-ratio` is an `auto <ratio>`, which relates the
+    /// content box sizes whatever the `box-sizing` is.
+    pub(super) fn resolve(
+        style: &Style,
+        replaced: bool,
+        content_box_ratio: bool,
+        inputs: LayoutInput,
+    ) -> Self {
         let padding = style
             .padding()
             .resolve_or_zero(inputs.parent_size.width, resolve_calc);
@@ -58,13 +65,31 @@ impl Metrics {
         };
         let specified = style.size().maybe_resolve(inputs.parent_size, resolve_calc);
         let ratio = style.aspect_ratio();
+        // The box the ratio relates is the content box of a box sized by its
+        // content box and of an `auto <ratio>`, else the border box.
+        let ratio_edges = if style.box_sizing() == BoxSizing::ContentBox || content_box_ratio {
+            padding_border.sum_axes()
+        } else {
+            Size::ZERO
+        };
+        // The other size of a size stated in the box `box-sizing` names.
+        let across_ratio = |size: Size<Option<f32>>| {
+            if style.box_sizing() == BoxSizing::ContentBox || !content_box_ratio {
+                size.maybe_apply_aspect_ratio(ratio)
+            } else {
+                size.maybe_max(ratio_edges)
+                    .maybe_sub(ratio_edges)
+                    .maybe_apply_aspect_ratio(ratio)
+                    .maybe_add(ratio_edges)
+            }
+        };
         // A minimum or maximum carries across the aspect ratio only into an
         // axis whose preferred size is `auto`. Under `ContentSize` the
         // authored size is ignored, so every axis is `auto`. Replaced content
         // always carries them: an `auto` size of an inline `<svg>` is stood
         // in for by a percentage.
         let carried = |own: Size<Option<f32>>| {
-            let across = own.maybe_apply_aspect_ratio(ratio);
+            let across = across_ratio(own);
             let auto = |preferred: Option<f32>| {
                 replaced || inputs.sizing_mode != SizingMode::InherentSize || preferred.is_none()
             };
@@ -104,9 +129,7 @@ impl Metrics {
         }
         .maybe_add(adjustment);
         let own_max = own_max.maybe_add(adjustment);
-        let authored = specified
-            .maybe_apply_aspect_ratio(style.aspect_ratio())
-            .maybe_add(adjustment);
+        let authored = across_ratio(specified).maybe_add(adjustment);
         // Whether the content may raise an axis that the aspect ratio gives:
         // unless the box scrolls or `min-*` says otherwise, an automatic
         // minimum keeps it from ending up smaller than its content.
@@ -150,9 +173,9 @@ impl Metrics {
             })
             .maybe_clamp(min, limit)
             .maybe_max(padding_border.sum_axes())
-            .maybe_sub(adjustment)
+            .maybe_sub(ratio_edges)
             .maybe_apply_aspect_ratio(style.aspect_ratio())
-            .maybe_add(adjustment)
+            .maybe_add(ratio_edges)
             .maybe_clamp(min, limit);
         // An axis is ratio-dependent when its size is not authored or imposed
         // but follows from the other axis through the preferred aspect ratio.

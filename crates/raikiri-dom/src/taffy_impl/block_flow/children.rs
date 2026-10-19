@@ -368,6 +368,7 @@ pub(super) fn layout(
         let child_metrics = Metrics::resolve(
             &style,
             crate::paint_rules::is_replaced_element(tree, usize::from(child)),
+            tree.nodes[usize::from(child)].ratio_in_content_box,
             child_input,
         );
         // A size that only follows from the aspect ratio is left for the child
