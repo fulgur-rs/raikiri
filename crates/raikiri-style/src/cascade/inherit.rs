@@ -35,8 +35,8 @@ use super::candidate::{
     SharedDeclarations,
 };
 use super::collect::{
-    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, flow_mapping,
-    pick_winners,
+    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, cascade_rank,
+    flow_mapping, pick_winners,
 };
 use super::custom_property::{DeferredResolver, resolve_custom_properties};
 use super::first_line::first_line_property_applies;
@@ -1456,8 +1456,14 @@ pub(crate) fn apply_winners(
                 crate::property::PropertyKey::BlockSize => sizes.block_size = rank,
                 _ => {}
             }
+            // A paint attribute that wins is already in the SVG source; only a
+            // stylesheet declaration, or a rollback to the attribute, is exported.
+            let winning_paint_hint = winner.rank
+                == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false)
+                && svg_property_is_paint(winner_key);
             if let Some(properties) = svg_properties.as_deref_mut()
                 && svg_property_is_exported(winner_key)
+                && !winning_paint_hint
             {
                 properties.push(SvgStyleProperty {
                     property: winner_key,
@@ -1547,6 +1553,16 @@ fn svg_presentation_initial(key: crate::property::PropertyKey) -> &'static str {
         Stroke => "none",
         _ => "1",
     }
+}
+
+/// Whether `key` is one of the SVG painting properties: `fill`, `stroke` and
+/// their opacities and width.
+fn svg_property_is_paint(key: crate::property::PropertyKey) -> bool {
+    use crate::property::PropertyKey::*;
+    matches!(
+        key,
+        Fill | Stroke | FillOpacity | StrokeOpacity | StrokeWidth
+    )
 }
 
 fn svg_property_is_exported(key: crate::property::PropertyKey) -> bool {

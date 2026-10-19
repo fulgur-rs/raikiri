@@ -11855,6 +11855,45 @@ fn an_svg_presentation_attribute_is_left_to_the_svg() {
 }
 
 #[test]
+fn revert_layer_rolls_a_paint_property_back_to_its_attribute() {
+    let properties = svg_rect_properties(
+        "@layer a, b; @layer b { rect { fill: revert-layer; stroke-width: revert-layer } }",
+        &[("fill", "red"), ("stroke-width", "3")],
+        None,
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::Fill),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeWidth),
+        Some((false, Some("3".into())))
+    );
+    // An earlier layer still outranks the attribute.
+    let properties = svg_rect_properties(
+        "@layer a, b; @layer a { rect { fill: green } } @layer b { rect { fill: revert-layer } }",
+        &[("fill", "red")],
+        None,
+    );
+    assert_eq!(
+        exported(&properties, PropertyKey::Fill),
+        Some((false, Some("rgba(0,128,0,1)".into())))
+    );
+}
+
+#[test]
+fn revert_layer_without_a_paint_attribute_inherits() {
+    let properties = svg_rect_properties("rect { fill: revert-layer }", &[], None);
+    assert_eq!(exported(&properties, PropertyKey::Fill), Some((true, None)));
+    // `revert` rolls back past the whole author origin, the attribute included.
+    let properties = svg_rect_properties("rect { fill: revert }", &[("fill", "red")], None);
+    assert_eq!(exported(&properties, PropertyKey::Fill), Some((true, None)));
+    // An attribute that is not a valid value is no hint to roll back to.
+    let properties = svg_rect_properties("rect { fill: revert-layer }", &[("fill", "12")], None);
+    assert_eq!(exported(&properties, PropertyKey::Fill), Some((true, None)));
+}
+
+#[test]
 fn svg_painting_properties_resolve_variables() {
     let properties = svg_rect_properties("rect { --c: green; fill: var(--c) }", &[], None);
     assert_eq!(

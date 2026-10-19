@@ -121,3 +121,23 @@ fn an_svg_without_matching_rules_lists_nothing() {
     let elements = declarations("<svg width=20 height=20><rect /></svg>");
     assert!(elements.is_empty());
 }
+
+#[test]
+fn revert_layer_lists_the_paint_attribute_it_rolls_back_to() {
+    let elements = declarations(
+        "<style>@layer a, b; @layer b {rect{fill:revert-layer;stroke:revert-layer}}</style>\
+         <svg width=20 height=20><rect fill=red /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    // The attribute is restored; with none, `stroke` falls back to inheriting.
+    assert_eq!(
+        listed,
+        [(
+            1,
+            "fill:rgba(255,0,0,1)!important;stroke:inherit!important;"
+        )]
+    );
+}

@@ -233,3 +233,11 @@ fn a_stylesheet_stroke_on_the_root_reaches_the_descendants() {
         "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none stroke=blue stroke-width=4 /></svg>",
     );
 }
+
+#[test]
+fn revert_layer_on_a_fill_rolls_back_to_the_fill_attribute() {
+    assert_paints_like(
+        "<style>@layer a, b; @layer b {rect{fill:revert-layer}}</style><svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
