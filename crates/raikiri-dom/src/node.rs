@@ -1063,6 +1063,27 @@ impl Node {
         self.ifc.as_ref()?.multicol_fragments.as_deref()
     }
 
+    /// The column of its paragraph that a visit of this box through `fragment`
+    /// draws, or `None` when the visit draws all of the paragraph.
+    ///
+    /// A column container that holds its own paragraph is placed in one
+    /// column of its parent, as one box. The line ranges of its paragraph name
+    /// the container's own columns and carry their own origins, so the column
+    /// of that placement must not select among them.
+    #[doc(hidden)]
+    pub fn paragraph_column_of_fragment(
+        &self,
+        fragment: &crate::fragment::LayoutFragment,
+    ) -> Option<usize> {
+        let in_own_columns = self.multicol.is_some()
+            && fragment.fragment_count == 1
+            && fragment.line_start.is_none()
+            && self.ifc.as_ref().is_some_and(|root| {
+                root.multicol_fragments.is_some() && !root.multicol_fragment_origins_recorded
+            });
+        (!in_own_columns).then_some(fragment.fragmentainer)
+    }
+
     /// Content width the lines of an ifc root were broken at, and their total
     /// height.
     #[doc(hidden)]

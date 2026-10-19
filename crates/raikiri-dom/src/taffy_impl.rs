@@ -1454,10 +1454,10 @@ fn measure_ifc_root(
     }
     // The content of a multicol container is broken at the column width and
     // split in its columns. Atomic inlines sit on the lines like text, so a
-    // paragraph that holds only them is split line by line in an outermost
-    // container. A paragraph with floats, blocks, out-of-flow boxes or
-    // generated blocks of its own, and one with boxes in a container nested in
-    // another, is laid out in one column as wide as the container.
+    // paragraph that holds only them is split line by line, in a nested
+    // container as well. A paragraph with floats, blocks, out-of-flow boxes or
+    // generated blocks of its own is laid out in one column as wide as the
+    // container.
     let nested_fragmentation = (!vertical)
         .then(|| fragmentation_context_for_ifc(tree, idx, &probe))
         .flatten();
@@ -1465,8 +1465,7 @@ fn measure_ifc_root(
         && probe
             .boxes
             .iter()
-            .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic)
-        && (probe.boxes.is_empty() || tree.context.fragmentation_stack.is_empty());
+            .all(|box_| box_.kind == crate::layout::ifc::boxes::IfcBoxKind::Atomic);
     let fragmentation = if vertical {
         None
     } else if nested_fragmentation.is_some() {
