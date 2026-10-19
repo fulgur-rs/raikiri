@@ -4972,3 +4972,13 @@ css/css-flexbox/flex-item-max-width-min-content-002.html
 css/css-grid/grid-items/grid-intrinsic-maximums.html
 css/css-sizing/block-size-with-min-or-max-content-4.html
 css/css-sizing/block-size-with-min-or-max-content-5.html
+
+# --- replaced intrinsic min/max size constraints (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# All seven pass with replaced intrinsic contributions transferred through the preferred aspect ratio where applicable; the paired references render 100×100 green squares; KEEP in two audit-vacuous-passes runs.
+css/css-sizing/replaced-min-width-min-content.html
+css/css-sizing/replaced-min-height-min-content.html
+css/css-sizing/replaced-max-width-min-content.html
+css/css-sizing/replaced-max-height-min-content.html
+css/css-sizing/replaced-max-width-with-height-min-content.html
+css/css-sizing/replaced-max-width-with-height-max-content.html
+css/css-sizing/replaced-max-width-with-height-fit-content.html

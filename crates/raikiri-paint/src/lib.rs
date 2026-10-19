@@ -23,6 +23,8 @@ use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
+use crate::page_layers::PageLayers;
+
 /// One custom-highlight range over a text node.
 ///
 /// Offsets are UTF-8 byte boundaries in the DOM text node. The JS runtime
@@ -49,6 +51,7 @@ mod column_rules;
 )]
 mod emphasis;
 mod ifc_text;
+mod page_layers;
 mod standalone_text;
 mod text;
 mod transform;
@@ -399,23 +402,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     custom_highlights: &[TextHighlightRange],
 ) -> Result<(), raikiri_traits::RenderError> {
-    // The walker (`walk::paint_document` / `ifc_text::draw_ifc_lines_with_resources`) has several
-    // raw-index reads of `cascade.computed[node_id]`. Each assumes the caller
-    // meets the module doc's `## Contract` (`cascade.computed.len() ==
-    // document.node_count()`). Without one enforcement point, a violation
-    // produces a different panic depending on which raw-index site is reached
-    // first (a generic "index out of bounds"). Check once at the walker's
-    // entry point and fail fast with a message naming the contract.
-    // This assertion is the single enforcement point.
-    debug_assert!(
-        cascade.computed.len() == document.node_count(),
-        "cascade.computed.len() ({}) must equal document.node_count() ({}) — \
-         violates this crate's module doc \"## Contract\": `cascade` and \
-         `document` must come from the same `cascade()` call over the same \
-         `document` (caller responsibility, not checked outside debug builds)",
-        cascade.computed.len(),
-        document.node_count(),
-    );
+    debug_assert_cascade_matches_document(document, cascade);
     if root_generates_no_box(cascade) {
         walk::paint_blank_paper(scene, page_box);
         return Ok(());
@@ -423,6 +410,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let image_cache = walk::ImageBrushCache::for_document(document)
         .with_device_scale(cascade.border_width_device_scale());
+    let layers = PageLayers::new(document, cascade, page_box, pixel_source);
     let root = raikiri_dom::root_box(document, cascade, page_box, content_origin_y, page_count);
     let mut warnings = Vec::new();
     let margin_boxes = walk::layout_page_margin_boxes(
@@ -434,47 +422,8 @@ fn paint_single_page_with_origin_and_page_context_impl(
         page_is_left,
         paired_page_increment,
     );
-    // The canvas, the page border and the document contents are one layer at
-    // level zero. The margin boxes below it go right after the page
-    // background, and the others after the document (CSS Page 3 §3.1).
     let (behind, in_front) = walk::split_margin_boxes_by_layer(&margin_boxes);
-    walk::paint_page_background(
-        &image_cache,
-        scene,
-        document,
-        cascade,
-        page_box,
-        pixel_source,
-        &mut warnings,
-    );
-    walk::paint_page_margin_boxes(
-        &image_cache,
-        scene,
-        behind,
-        page_box,
-        pixel_source,
-        &mut warnings,
-    );
-    walk::paint_canvas_background(
-        &image_cache,
-        scene,
-        document,
-        cascade,
-        page_box,
-        root.as_ref(),
-        pixel_source,
-        &mut warnings,
-    );
-    walk::paint_page_border(
-        &image_cache,
-        scene,
-        document,
-        cascade,
-        page_box,
-        pixel_source,
-        &mut warnings,
-    );
-    walk::paint_page_outline(scene, cascade, page_box);
+    layers.paint_behind_document(scene, &image_cache, &mut warnings, behind, root.as_ref());
     if let Some(transform) = root_content_transform(root.as_ref()) {
         let scene = &mut transform::TransformScene { scene, transform };
         if let Some(pixel_source) = pixel_source {
@@ -509,15 +458,29 @@ fn paint_single_page_with_origin_and_page_context_impl(
             );
         }
     }
-    walk::paint_page_margin_boxes(
-        &image_cache,
-        scene,
-        in_front,
-        page_box,
-        pixel_source,
-        &mut warnings,
-    );
+    layers.paint_in_front_of_document(scene, &image_cache, &mut warnings, in_front);
     Ok(())
+}
+
+/// Check that `cascade` and `document` meet the module doc's `## Contract`
+/// (`cascade.computed.len() == document.node_count()`).
+///
+/// The walker (`walk::paint_document` / `ifc_text::draw_ifc_lines_with_resources`)
+/// has several raw-index reads of `cascade.computed[node_id]`. Without a check
+/// at the entry point, a violation produces a different panic depending on
+/// which raw-index site is reached first (a generic "index out of bounds"). A
+/// failure here names the contract instead. Every function that paints a page
+/// calls this first.
+fn debug_assert_cascade_matches_document(document: &Document, cascade: &CascadeResult) {
+    debug_assert!(
+        cascade.computed.len() == document.node_count(),
+        "cascade.computed.len() ({}) must equal document.node_count() ({}) — \
+         violates this crate's module doc \"## Contract\": `cascade` and \
+         `document` must come from the same `cascade()` call over the same \
+         `document` (caller responsibility, not checked outside debug builds)",
+        cascade.computed.len(),
+        document.node_count(),
+    );
 }
 
 /// The document's shared counter snapshots, or the paint error for a document
@@ -621,12 +584,7 @@ pub fn paint_single_page_with_images_and_warnings(
     page_box: PageBox,
     pixel_source: &dyn raikiri_traits::ImagePixelSource,
 ) -> Result<Vec<raikiri_traits::RenderWarning>, raikiri_traits::RenderError> {
-    debug_assert!(
-        cascade.computed.len() == document.node_count(),
-        "cascade.computed.len() ({}) must equal document.node_count() ({})",
-        cascade.computed.len(),
-        document.node_count(),
-    );
+    debug_assert_cascade_matches_document(document, cascade);
     if root_generates_no_box(cascade) {
         walk::paint_blank_paper(scene, page_box);
         return Ok(Vec::new());
@@ -638,6 +596,7 @@ pub fn paint_single_page_with_images_and_warnings(
     // the `paint_single_page_with_origin_and_page_context*` chain.
     let image_cache = walk::ImageBrushCache::for_document(document)
         .with_device_scale(cascade.border_width_device_scale());
+    let layers = PageLayers::new(document, cascade, page_box, Some(pixel_source));
     let root = raikiri_dom::root_box(document, cascade, page_box, 0.0, 1);
     let mut warnings = Vec::new();
     // The margin boxes are laid out for page 0 of 1 and layered as in
@@ -645,43 +604,7 @@ pub fn paint_single_page_with_images_and_warnings(
     let margin_boxes =
         walk::layout_page_margin_boxes(document, cascade, page_box, 0, 1, false, None);
     let (behind, in_front) = walk::split_margin_boxes_by_layer(&margin_boxes);
-    walk::paint_page_background(
-        &image_cache,
-        scene,
-        document,
-        cascade,
-        page_box,
-        Some(pixel_source),
-        &mut warnings,
-    );
-    walk::paint_page_margin_boxes(
-        &image_cache,
-        scene,
-        behind,
-        page_box,
-        Some(pixel_source),
-        &mut warnings,
-    );
-    walk::paint_canvas_background(
-        &image_cache,
-        scene,
-        document,
-        cascade,
-        page_box,
-        root.as_ref(),
-        Some(pixel_source),
-        &mut warnings,
-    );
-    walk::paint_page_border(
-        &image_cache,
-        scene,
-        document,
-        cascade,
-        page_box,
-        Some(pixel_source),
-        &mut warnings,
-    );
-    walk::paint_page_outline(scene, cascade, page_box);
+    layers.paint_behind_document(scene, &image_cache, &mut warnings, behind, root.as_ref());
     if let Some(transform) = root_content_transform(root.as_ref()) {
         walk::paint_document_with_images_and_warnings(
             &image_cache,
@@ -701,14 +624,7 @@ pub fn paint_single_page_with_images_and_warnings(
             transform,
         );
     }
-    walk::paint_page_margin_boxes(
-        &image_cache,
-        scene,
-        in_front,
-        page_box,
-        Some(pixel_source),
-        &mut warnings,
-    );
+    layers.paint_in_front_of_document(scene, &image_cache, &mut warnings, in_front);
     Ok(warnings)
 }
 

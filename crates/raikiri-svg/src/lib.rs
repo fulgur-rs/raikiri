@@ -88,15 +88,19 @@ pub struct SvgRootFont<'a> {
     pub style: &'a str,
 }
 
-/// Resolved declarations for one descendant of the original SVG source.
+/// Resolved declarations for one element of the original SVG source.
 #[derive(Debug, Clone, Copy)]
 pub struct SvgElementStyle<'a> {
     /// Zero-based element preorder index, counting the root as index zero.
-    /// The root is styled separately and must not be included here.
+    /// The root is styled separately, so it may be included here only with
+    /// painting declarations (`fill`, `stroke`, `fill-opacity`,
+    /// `stroke-opacity` and `stroke-width`), which its root style does not
+    /// carry; its descendants inherit them from it.
     pub element_index: usize,
-    /// Resolved CSS declarations for color, display, opacity, visibility and
-    /// font size, family, weight or style. Preserve literal `inherit` when
-    /// a declaration must inherit through an instantiated `use` subtree.
+    /// Resolved CSS declarations for color, display, opacity, visibility,
+    /// font size, family, weight or style, and for the painting properties
+    /// named above. Preserve literal `inherit` when a declaration must inherit
+    /// through an instantiated `use` subtree.
     pub declarations: &'a str,
 }
 
@@ -2941,7 +2945,16 @@ fn with_element_style_overrides(
     rewrite_stylesheets: bool,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
-    const PROPERTIES: &[&str] = &[
+    // The painting properties are the only ones the root may take here; its
+    // color, font, visibility and opacity go through the root style.
+    const PAINTING_PROPERTIES: &[&str] = &[
+        "fill",
+        "stroke",
+        "fill-opacity",
+        "stroke-opacity",
+        "stroke-width",
+    ];
+    const OTHER_PROPERTIES: &[&str] = &[
         "color",
         "display",
         "opacity",
@@ -2966,7 +2979,7 @@ fn with_element_style_overrides(
                 .saturating_mul(8)
                 .saturating_add(256),
         )?;
-        if element.element_index == 0 || element.element_index >= element_count {
+        if element.element_index >= element_count {
             return Err(SvgError::InvalidDocument(
                 "invalid SVG descendant style index".into(),
             ));
@@ -2988,14 +3001,20 @@ fn with_element_style_overrides(
                     SvgError::InvalidDocument("invalid SVG descendant declaration".into())
                 }
             })?;
-            let Some(property) = PROPERTIES
+            let Some(property) = PAINTING_PROPERTIES
                 .iter()
+                .chain(OTHER_PROPERTIES)
                 .find(|property| declaration.name.eq_ignore_ascii_case(property))
             else {
                 return Err(SvgError::InvalidDocument(
                     "unsupported SVG descendant property".into(),
                 ));
             };
+            if element.element_index == 0 && !PAINTING_PROPERTIES.contains(property) {
+                return Err(SvgError::InvalidDocument(
+                    "unsupported SVG root property".into(),
+                ));
+            }
             keys.insert((*property).to_owned());
         }
         if overrides

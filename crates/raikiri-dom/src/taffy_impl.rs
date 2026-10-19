@@ -32,6 +32,27 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
         .map(|(width, height)| Size { width, height })
 }
 
+/// The preferred ratio a replaced leaf can use for size transfer.
+fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
+    let intrinsic = node.image_intrinsic_box()?;
+    intrinsic
+        .aspect_ratio
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+        .or_else(|| {
+            if node.is_inline_svg_root()
+                || !intrinsic.width.is_finite()
+                || !intrinsic.height.is_finite()
+                || intrinsic.width <= 0.0
+                || intrinsic.height <= 0.0
+            {
+                None
+            } else {
+                let ratio = intrinsic.width / intrinsic.height;
+                (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+            }
+        })
+}
+
 /// A `calc()` payload retained with the document's layout styles.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ArenaCalc {
@@ -827,10 +848,13 @@ impl LayoutSession<'_> {
             {
                 // CSS Sizing 3, intrinsic sizes: ratio-only replaced content
                 // uses the definite available inline size, not a 300px default.
-                let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
+                let mut resolver_style = tree.layout_node_with_style(idx).unwrap().style.clone();
+                resolver_style.aspect_ratio = Some(ratio);
+                let mut style = resolver_style.clone();
                 // Transfer the ratio in measurement only. Taffy's leaf ratio
                 // floor would otherwise override explicit/max heights.
                 style.aspect_ratio = None;
+                let limits = tree.nodes[idx].content_limits;
                 // An authored height gives an auto width through the ratio
                 // (CSS 2.1 10.3.2), also when no parent passes the height in
                 // as a known dimension; taffy's leaf then hands it to the
@@ -866,9 +890,25 @@ impl LayoutSession<'_> {
                                 AvailableSpace::MinContent => 0.0,
                                 AvailableSpace::MaxContent => intrinsic.width,
                             });
-                        Size {
+                        let natural = Size {
                             width,
                             height: known.height.unwrap_or(width / ratio),
+                        };
+                        let resolver_inputs = LayoutInput {
+                            known_dimensions: known,
+                            available_space: available,
+                            ..inputs
+                        };
+                        let resolved = replaced_size::auto_sides_size(
+                            &resolver_style,
+                            &resolver_inputs,
+                            natural,
+                            limits,
+                        )
+                        .unwrap_or(natural);
+                        Size {
+                            width: resolved.width,
+                            height: resolved.height,
                         }
                     },
                 );
@@ -881,11 +921,22 @@ impl LayoutSession<'_> {
             if is_leaf {
                 let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
+                let limits = tree.nodes[idx].content_limits;
+                // Natural ratios resolve intrinsic limits; without them,
+                // preserve Taffy's ordinary replaced sizing path.
+                if limits != content_limits::ContentLimits::NONE
+                    && style.aspect_ratio.is_none()
+                    && !tree.nodes[idx].size_containment.width
+                    && !tree.nodes[idx].size_containment.height
+                {
+                    style.aspect_ratio = leaf_intrinsic_ratio(&tree.nodes[idx]);
+                }
                 // A replaced leaf with an `auto` side takes its size from the
                 // ratio and the min/max sizes; Taffy's ratio floor on the
                 // leaf is switched off for it.
-                let constrained = leaf_intrinsic
-                    .and_then(|natural| replaced_size::auto_sides_size(&style, &inputs, natural));
+                let constrained = leaf_intrinsic.and_then(|natural| {
+                    replaced_size::auto_sides_size(&style, &inputs, natural, limits)
+                });
                 if constrained.is_some() {
                     style.aspect_ratio = None;
                 }
@@ -1945,8 +1996,17 @@ fn compute_inline_block_shrink_wrap(
     let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty;
     let display = tree.nodes[idx].display();
     let is_leaf = tree.nodes[idx].children.is_empty();
+    let limits = tree.nodes[idx].content_limits;
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = tree.layout_node_with_style(idx).unwrap().style.clone();
+    if limits != content_limits::ContentLimits::NONE
+        && !empty
+        && !tree.nodes[idx].size_containment.width
+        && !tree.nodes[idx].size_containment.height
+        && leaf_style.aspect_ratio.is_none()
+    {
+        leaf_style.aspect_ratio = leaf_intrinsic_ratio(&tree.nodes[idx]);
+    }
     if empty {
         leaf_style.aspect_ratio = None;
     }
@@ -1961,6 +2021,7 @@ fn compute_inline_block_shrink_wrap(
                 ..inputs
             },
             natural,
+            limits,
         )
     });
     let leaf_intrinsic_before_width = leaf_auto_sides.or(leaf_intrinsic);
@@ -2069,7 +2130,7 @@ fn compute_inline_block_shrink_wrap(
     if is_leaf {
         // The width is fixed now; the height follows it through the ratio.
         let fixed_width = leaf_intrinsic.and_then(|natural| {
-            replaced_size::auto_sides_size(&leaf_style, &final_inputs, natural)
+            replaced_size::auto_sides_size(&leaf_style, &final_inputs, natural, limits)
         });
         if fixed_width.is_some() {
             leaf_style.aspect_ratio = None;

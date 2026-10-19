@@ -48,6 +48,86 @@ fn size(doc: &Document, node: usize) -> (f32, f32) {
     (size.width, size.height)
 }
 
+fn canvas_with_css(css: &str) -> (f32, f32) {
+    let mut canvas = 0;
+    let doc = laid_out(|doc, body| {
+        canvas = doc.append_element(
+            Some(body),
+            "canvas",
+            Style::default(),
+            Some(format!("display:block;{css}").as_str()),
+        );
+        doc.set_element_attribute(canvas, "width", "10")
+            .expect("canvas width");
+        doc.set_element_attribute(canvas, "height", "10")
+            .expect("canvas height");
+    });
+    size(&doc, canvas)
+}
+
+#[test]
+fn min_width_min_content_transfers_height_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:10px;height:100px;min-width:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn min_height_min_content_transfers_width_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:100px;height:10px;min-height:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn max_width_min_content_transfers_height_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:1000px;height:100px;max-width:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn max_height_min_content_transfers_width_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:100px;height:1000px;max-height:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn ratio_only_svg_uses_viewbox_ratio_for_intrinsic_keyword_size() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;width:200px"),
+    );
+    let svg = doc.append_element(
+        Some(body),
+        "svg",
+        Style::default(),
+        Some("display:block;min-height:max-content"),
+    );
+    doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+    doc.set_element_attributes(svg, vec![("viewBox".into(), "0 0 1000 500".into())]);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 200.0;
+    page.height = 400.0;
+    crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).expect("layout");
+
+    assert_eq!(size(&doc, svg), (200.0, 100.0));
+}
+
 #[test]
 fn a_block_level_image_keeps_its_natural_width() {
     let mut image = 0;

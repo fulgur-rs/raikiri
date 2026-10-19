@@ -14,20 +14,23 @@ use raikiri_traits::NodeKind;
 /// Upper bound on the declaration text the descendants of one SVG may add.
 const DECLARATION_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 
-/// Resolved declarations for one descendant of an inline SVG.
+/// Resolved declarations for one element of an inline SVG.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineSvgElementDeclarations {
     /// Zero-based element preorder index within the SVG subtree, counting the
-    /// root as index zero. The root is styled separately and is never listed.
+    /// root as index zero. The root is styled separately, so it is listed only
+    /// for the painting properties (`fill`, `stroke` and their opacities and
+    /// width) that its root style does not carry.
     pub element_index: usize,
     /// CSS declarations, each marked `!important`.
     pub declarations: String,
 }
 
-/// The declarations the cascade resolves for the descendants of the inline
-/// SVG rooted at `root`, in document order.
+/// The declarations the cascade resolves for the elements of the inline SVG
+/// rooted at `root`, in document order.
 ///
-/// Only elements whose cascade holds an explicit SVG property are listed.
+/// Only elements whose cascade holds an explicit SVG property are listed, and
+/// the root only by the painting properties among them.
 /// Fails when the declarations would exceed the size bound, so that a few
 /// rules matching a very large SVG cannot allocate without limit.
 pub fn inline_svg_element_declarations(
@@ -44,16 +47,28 @@ pub fn inline_svg_element_declarations(
     let mut element_index = 0;
     while let Some((node_id, node)) = stack.pop() {
         if node.kind() == NodeKind::Element {
-            if element_index != 0 {
-                let properties = cascade.svg_style_properties(StyleNodeId(node_id as u64));
-                if !properties.is_empty()
-                    && let Some(style) = cascade.computed.get(node_id)
-                {
-                    elements.push(InlineSvgElementDeclarations {
-                        element_index,
-                        declarations: node_declarations(style, properties, &mut remaining_bytes)?,
-                    });
-                }
+            let properties = cascade.svg_style_properties(StyleNodeId(node_id as u64));
+            // The root's color, font, visibility and opacity reach the renderer
+            // through the root style, so only its painting properties are
+            // listed. Descendants inherit them from the root there.
+            let root_painting: Vec<SvgStyleProperty>;
+            let properties = if element_index == 0 {
+                root_painting = properties
+                    .iter()
+                    .filter(|property| is_painting_property(property.property))
+                    .cloned()
+                    .collect();
+                &root_painting[..]
+            } else {
+                properties
+            };
+            if !properties.is_empty()
+                && let Some(style) = cascade.computed.get(node_id)
+            {
+                elements.push(InlineSvgElementDeclarations {
+                    element_index,
+                    declarations: node_declarations(style, properties, &mut remaining_bytes)?,
+                });
             }
             element_index += 1;
         }
@@ -86,6 +101,30 @@ pub fn svg_font_family(style: &ComputedValues) -> String {
         .join(",")
 }
 
+/// Whether `key` is one of the painting properties a page stylesheet gives to
+/// an SVG element: `fill`, `stroke` and their opacities and width.
+fn is_painting_property(key: PropertyKey) -> bool {
+    matches!(
+        key,
+        PropertyKey::Fill
+            | PropertyKey::Stroke
+            | PropertyKey::FillOpacity
+            | PropertyKey::StrokeOpacity
+            | PropertyKey::StrokeWidth
+    )
+}
+
+/// The CSS name of an SVG presentation property.
+fn svg_presentation_name(key: PropertyKey) -> &'static str {
+    match key {
+        PropertyKey::Fill => "fill",
+        PropertyKey::Stroke => "stroke",
+        PropertyKey::FillOpacity => "fill-opacity",
+        PropertyKey::StrokeOpacity => "stroke-opacity",
+        _ => "stroke-width",
+    }
+}
+
 fn node_declarations(
     style: &ComputedValues,
     properties: &[SvgStyleProperty],
@@ -105,6 +144,13 @@ fn node_declarations(
             style.font_family.iter().fold(128usize, |size, name| {
                 size.saturating_add(name.as_str().len().saturating_mul(8))
             })
+        } else if is_painting_property(property.property) && !property.inherited {
+            // The declared text is cloned and then copied into the
+            // declaration, so a long `url(#...)` paint reaching many elements
+            // counts twice per element.
+            property.expression.as_ref().map_or(128, |text| {
+                128usize.saturating_add(text.len().saturating_mul(2))
+            })
         } else {
             128
         };
@@ -119,6 +165,11 @@ fn node_declarations(
                 PropertyKey::FontFamily => "font-family",
                 PropertyKey::FontStyle => "font-style",
                 PropertyKey::FontWeight => "font-weight",
+                key @ (PropertyKey::Fill
+                | PropertyKey::Stroke
+                | PropertyKey::FillOpacity
+                | PropertyKey::StrokeOpacity
+                | PropertyKey::StrokeWidth) => svg_presentation_name(key),
                 _ => continue,
             };
             // SVG renderers such as usvg copy an ancestor's raw `font-size`
@@ -152,6 +203,17 @@ fn node_declarations(
                 PropertyKey::FontFamily => ("font-family", svg_font_family(style)),
                 PropertyKey::FontStyle => ("font-style", style.font_style.as_css_str().to_owned()),
                 PropertyKey::FontWeight => ("font-weight", style.font_weight.to_string()),
+                // Held by the declaration alone: no computed field carries them.
+                key @ (PropertyKey::Fill
+                | PropertyKey::Stroke
+                | PropertyKey::FillOpacity
+                | PropertyKey::StrokeOpacity
+                | PropertyKey::StrokeWidth) => {
+                    let Some(value) = &property.expression else {
+                        continue;
+                    };
+                    (svg_presentation_name(key), value.clone())
+                }
                 _ => continue,
             }
         };

@@ -30,6 +30,24 @@ fn descendant_declaration_budget_rejects_before_serializing() {
 }
 
 #[test]
+fn descendant_declaration_budget_counts_the_text_of_a_painting_property() {
+    let text = format!("url(\"#{}\")", "a".repeat(1000));
+    let properties = [SvgStyleProperty {
+        property: PropertyKey::Fill,
+        inherited: false,
+        expression: Some(text.clone()),
+    }];
+    // The declaration's own 128 bytes, then the text's 128 and its two copies.
+    let needed = 128 + 128 + 2 * text.len();
+    let mut remaining = needed - 1;
+    assert!(node_declarations(&ComputedValues::initial(), &properties, &mut remaining).is_err());
+    let mut remaining = needed;
+    let css = node_declarations(&ComputedValues::initial(), &properties, &mut remaining).unwrap();
+    assert_eq!(css, format!("fill:{text}!important;"));
+    assert_eq!(remaining, 0);
+}
+
+#[test]
 fn descendant_declarations_keep_relative_expressions_and_literal_inherit() {
     let properties = [
         SvgStyleProperty {
@@ -98,4 +116,51 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
     // ancestor size.
     assert_eq!(css.matches(":inherit!important;").count(), 7, "{css}");
     assert!(css.contains("font-size:100%!important;"), "{css}");
+}
+
+#[test]
+fn descendant_declarations_carry_painting_properties_as_declared() {
+    let painting = [
+        (PropertyKey::Fill, "fill", "rgba(255,0,0,1)"),
+        (PropertyKey::Stroke, "stroke", "url(\"#g\") none"),
+        (PropertyKey::FillOpacity, "fill-opacity", "0.5"),
+        (PropertyKey::StrokeOpacity, "stroke-opacity", "0.25"),
+        (PropertyKey::StrokeWidth, "stroke-width", "3px"),
+    ];
+    for (property, name, value) in painting {
+        let declared = [SvgStyleProperty {
+            property,
+            inherited: false,
+            expression: Some(value.into()),
+        }];
+        let mut budget = 1024;
+        assert_eq!(
+            node_declarations(&ComputedValues::initial(), &declared, &mut budget).unwrap(),
+            format!("{name}:{value}!important;")
+        );
+
+        let inherited = [SvgStyleProperty {
+            property,
+            inherited: true,
+            expression: None,
+        }];
+        let mut budget = 1024;
+        assert_eq!(
+            node_declarations(&ComputedValues::initial(), &inherited, &mut budget).unwrap(),
+            format!("{name}:inherit!important;")
+        );
+
+        // No computed field backs these properties, so a declaration without
+        // its text has nothing to export.
+        let missing = [SvgStyleProperty {
+            property,
+            inherited: false,
+            expression: None,
+        }];
+        let mut budget = 1024;
+        assert_eq!(
+            node_declarations(&ComputedValues::initial(), &missing, &mut budget).unwrap(),
+            ""
+        );
+    }
 }

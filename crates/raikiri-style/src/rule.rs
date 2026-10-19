@@ -537,6 +537,11 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | FontVariationSettings
         | ColumnFill
         | TextGroupAlign
+        | Fill
+        | Stroke
+        | FillOpacity
+        | StrokeOpacity
+        | StrokeWidth
         | ColumnSpan
         | ColumnRuleWidth
         | ColumnRuleStyle
@@ -1046,6 +1051,11 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::ColumnWidth(_)
         | PropertyValue::ColumnFill(_)
         | PropertyValue::TextGroupAlign(_)
+        | PropertyValue::Fill(_)
+        | PropertyValue::Stroke(_)
+        | PropertyValue::FillOpacity(_)
+        | PropertyValue::StrokeOpacity(_)
+        | PropertyValue::StrokeWidth(_)
         | PropertyValue::ColumnSpan(_)
         | PropertyValue::ColumnRuleWidth(_)
         | PropertyValue::ColumnRuleStyle(_)
