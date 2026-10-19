@@ -4535,3 +4535,41 @@ fn authored_auto_block_width_accounts_for_box_sizing_and_decorations() {
         assert_eq!(doc.nodes[block].unrounded_layout.size.width, 100.0, "{css}");
     }
 }
+
+#[test]
+fn authored_auto_block_width_propagates_content_width_to_auto_descendants() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:100px"),
+    );
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:auto;padding:0 10px"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;width:auto"),
+    );
+    doc.append_element(Some(inner), "div", Style::default(), Some("height:1px"));
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    assert_eq!(doc.nodes[outer].unrounded_layout.size.width, 100.0);
+    assert_eq!(doc.nodes[inner].unrounded_layout.size.width, 80.0);
+}
