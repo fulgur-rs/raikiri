@@ -1747,6 +1747,60 @@ fn a_clipping_wrapper_of_a_balanced_container_keeps_every_line_visible() {
     );
 }
 
+/// Whether every black glyph of `body` has `background` beside it, at its
+/// right edge. The glyphs are narrower than the columns.
+fn glyphs_have_the_background_beside_them(body: &str, background: [u8; 3]) -> bool {
+    let pixels = raster(body, "");
+    let at = |x: usize, y: usize| {
+        let start = (y * 180 + x) * 4;
+        [pixels[start], pixels[start + 1], pixels[start + 2]]
+    };
+    let glyphs = (0..160)
+        .flat_map(|y| (0..180).map(move |x| (x, y)))
+        .filter(|&(x, y)| at(x, y) == [0, 0, 0])
+        .count();
+    glyphs > 0
+        && (0..160).all(|y| {
+            (0..179).all(|x| {
+                at(x, y) != [0, 0, 0] || at(x + 1, y) == [0, 0, 0] || at(x + 1, y) == background
+            })
+        })
+}
+
+#[test]
+fn a_first_wrapper_that_paints_its_own_box_does_not_leave_a_later_column_bare() {
+    // The wrapper that is the container's child has one box, in the first
+    // column, so its paragraph keeps to the strategy that its box covers.
+    for style in [
+        "background:yellow",
+        "background-image:linear-gradient(yellow,yellow)",
+    ] {
+        let body =
+            format!("<div class=mc><div style='{style}'><p>A<br>B<br>C<br>D</p></div></div>");
+        assert!(
+            glyphs_have_the_background_beside_them(&body, [255, 255, 0]),
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn a_background_below_the_first_wrapper_covers_each_column_of_the_paragraph() {
+    let (paragraph, painted) = (
+        "<p style='background:yellow'>A<br>B<br>C<br>D</p>",
+        "<div style='background:yellow'><p>A<br>B<br>C<br>D</p></div>",
+    );
+    assert!(glyphs_have_the_background_beside_them(
+        &format!("<div class=mc>{}</div>", in_wrappers(painted, 1)),
+        [255, 255, 0]
+    ));
+    compare_bodies(
+        &format!("<div class=mc>{}</div><p>E</p>", in_wrappers(painted, 1)),
+        &format!("<div class=mc>{paragraph}</div><p>E</p>"),
+        "",
+    );
+}
+
 /// Every page of `body` laid out in pages of 180x160 pixels.
 fn pages(body: &str) -> Vec<Vec<u8>> {
     let fonts = FontCollectionBuilder::new()

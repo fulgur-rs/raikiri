@@ -1136,10 +1136,17 @@ fn layout_column_group(
             return None;
         }
         // A paragraph below plain wrappers is balanced like one of the
-        // container's own.
+        // container's own. The wrapper that is the container's child has one
+        // box, in the first column, so one that paints its own box would
+        // leave the lines of the later columns without it. The wrappers
+        // below it, and the paragraph, have a box in each column.
         let leaf = if tree.nodes[*child].ifc.is_some() {
             *child
         } else {
+            let wrapper = &tree.nodes[*child];
+            if wrapper.paints_background_color || wrapper.paints_whole_box_effects {
+                return None;
+            }
             plain_paragraph_chain_leaf(tree, *child)?
         };
         if !can_balance_atomic_paragraph(tree, leaf) {
