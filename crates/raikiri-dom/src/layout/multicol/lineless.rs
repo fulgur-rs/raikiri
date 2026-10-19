@@ -1065,8 +1065,15 @@ fn wrapper_pieces_for_tree(
     column_height: f32,
 ) -> Option<Vec<Piece>> {
     let layout = wrapped.layout?;
-    let first = leaf_pieces.first()?.first()?;
-    let last = leaf_pieces.last()?.last()?;
+    let first = leaf_pieces
+        .iter()
+        .flat_map(|pieces| pieces.iter())
+        .find(|piece| piece.height > 0.0)?;
+    let last = leaf_pieces
+        .iter()
+        .rev()
+        .flat_map(|pieces| pieces.iter().rev())
+        .find(|piece| piece.height > 0.0)?;
     wrapper_pieces(first, last, layout.leading, layout.trailing, column_height)
 }
 

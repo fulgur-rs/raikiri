@@ -2129,6 +2129,20 @@ fn auto_height_columns_balance_lineless_blocks_inside_wrappers() {
 }
 
 #[test]
+fn auto_height_columns_balance_wrappers_with_padding_taller_than_a_column() {
+    let (doc, parent, child) = wrapped_lineless_fixture("padding-top:100px");
+
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 55.0);
+    assert_eq!(
+        fragment_rects(&doc, child)
+            .iter()
+            .map(|fragment| fragment.3)
+            .sum::<f32>(),
+        120.0
+    );
+}
+
+#[test]
 fn auto_height_columns_balance_lineless_blocks_inside_nested_wrappers() {
     let (doc, parent, child) = nested_wrapped_lineless_fixture();
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
