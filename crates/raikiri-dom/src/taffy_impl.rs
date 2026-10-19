@@ -2019,8 +2019,13 @@ fn with_flex_intrinsic_probe<R>(
 /// `max-width` only, so an empty `flex: 1 0 100px` item would contribute
 /// nothing. Each such bound is installed as the item's own bound, together
 /// with the bound the item already has, which is what a keyword `min-width`
-/// or `max-width` came to when the container began laying out its items. A
-/// `width` below the basis of an item that cannot shrink is raised to it.
+/// or `max-width` came to when the container began laying out its items.
+///
+/// Taffy takes the `width` of an item as its contribution without measuring
+/// the item, so a `width` the flex base size bounds is set to the bounded
+/// width instead of installing a bound. Where Taffy measures the item it
+/// clamps the contribution with the item's margins counted in, so the margins
+/// are counted in the upper bound as well and survive it.
 ///
 /// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
 fn with_flex_item_basis_bounds<R>(
@@ -2056,26 +2061,42 @@ fn with_flex_item_basis_bounds<R>(
         };
         let (width, min, max) = (style.size.width, style.min_size.width, style.max_size.width);
         // A percentage of the container's width, which the probe has not got,
-        // bounds nothing.
+        // bounds nothing, and is no margin either.
         let min_length = crate::layout::resolve_length_percentage_auto(min, None);
         let max_length = crate::layout::resolve_length_percentage_auto(max, None);
-        let new_min = (style.flex_shrink == 0.0).then(|| {
+        let margins: f32 = [style.margin.left, style.margin.right]
+            .into_iter()
+            .map(|margin| {
+                crate::layout::resolve_length_percentage_auto(margin, None).unwrap_or(0.0)
+            })
+            .sum();
+        let (cannot_shrink, cannot_grow) = (style.flex_shrink == 0.0, style.flex_grow == 0.0);
+        let preferred = crate::layout::resolve_dimension(width, None);
+        let new_min = cannot_shrink.then(|| {
             taffy::LengthPercentageAuto::length(min_length.map_or(basis, |m| m.max(basis)))
         });
-        let new_max = (style.flex_grow == 0.0).then(|| {
-            taffy::LengthPercentageAuto::length(max_length.map_or(basis, |m| m.min(basis)))
+        let new_max = (cannot_grow && preferred.is_none()).then(|| {
+            taffy::LengthPercentageAuto::length(
+                max_length.map_or(basis, |m| m.min(basis)) + margins,
+            )
         });
-        if new_min.is_none() && new_max.is_none() {
+        let new_width = preferred
+            .filter(|_| cannot_shrink || cannot_grow)
+            .map(|preferred| {
+                let floored = if cannot_shrink {
+                    preferred.max(basis)
+                } else {
+                    preferred
+                };
+                taffy::Dimension::length(if cannot_grow {
+                    floored.min(basis)
+                } else {
+                    floored
+                })
+            });
+        if new_min.is_none() && new_max.is_none() && new_width.is_none() {
             continue;
         }
-        // Taffy takes an item's `width` as its contribution without measuring
-        // the item, and clamps it with the margin counted in, so the margin
-        // of an item that cannot shrink would be clamped away. A `width` below
-        // the basis is raised to the basis instead: the flex base size wins
-        // over it anyway.
-        let new_width = new_min
-            .and_then(|_| crate::layout::resolve_dimension(width, None))
-            .map(|width| taffy::Dimension::length(width.max(basis)));
         let style = tree.layout_style_for_key_mut(child_idx).unwrap();
         style.size.width = new_width.unwrap_or(width);
         style.min_size.width = new_min.unwrap_or(min);

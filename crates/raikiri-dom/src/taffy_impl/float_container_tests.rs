@@ -186,6 +186,9 @@ fn a_floated_flex_container_is_no_wider_than_the_flex_basis_of_items_that_cannot
         container_width("", FLEX, "flex:0 1 20px;min-width:0;margin:0"),
         30.0
     );
+    // The margins stay on top of the capped item: 20px of basis, 10px of
+    // padding and border, 10px of margin.
+    assert_eq!(container_width("", FLEX, "flex:0 1 20px;min-width:0"), 40.0);
 }
 
 #[test]
@@ -199,6 +202,10 @@ fn a_floated_flex_container_ignores_a_percentage_bound_of_its_items() {
     assert_eq!(
         container_width("", FLEX, "flex:0 1 20px;max-width:10%;margin:0"),
         30.0
+    );
+    assert_eq!(
+        container_width("", FLEX, "flex:0 1 20px;max-width:10%;min-width:0"),
+        40.0
     );
 }
 
@@ -307,6 +314,20 @@ fn a_floated_flex_container_bounds_an_explicitly_sized_item_by_its_flex_basis() 
     assert_eq!(
         container_width("width:0", FLEX, "flex:1 0 100px;width:200px"),
         220.0
+    );
+    // The margins of an explicitly sized item stay on top of the capped width.
+    assert_eq!(
+        container_width("", FLEX, "flex:0 1 20px;width:200px;min-width:0"),
+        40.0
+    );
+    // An item that can neither shrink nor grow is as wide as its basis.
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:0 0 100px;width:200px"),
+        120.0
+    );
+    assert_eq!(
+        container_width("width:0", FLEX, "flex:0 0 100px;width:20px"),
+        120.0
     );
 }
 
