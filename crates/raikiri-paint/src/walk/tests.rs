@@ -8010,11 +8010,16 @@ fn paged_scene(markup: &str, device_scale: Option<f32>) -> Scene {
     scene
 }
 
+const CLOSED: OpenBlockEdges = OpenBlockEdges {
+    top: false,
+    bottom: false,
+};
+
 #[test]
 fn a_column_clip_grows_outward_across_the_columns_only() {
     let clip = Rect::new(274.5, 8.5, 525.25, 88.25);
     assert_eq!(
-        snap_column_clip_outward(clip, Some(DeviceGrid::uniform(1.0))),
+        snap_column_clip_outward(clip, Some(DeviceGrid::uniform(1.0)), CLOSED),
         Rect::new(274.0, 8.5, 526.0, 88.25)
     );
     // Whole device pixels at 2 per CSS pixel, 0.5 device pixel in.
@@ -8026,7 +8031,8 @@ fn a_column_clip_grows_outward_across_the_columns_only() {
                 offset_x: 0.5,
                 scale_y: 2.0,
                 offset_y: 0.5,
-            })
+            }),
+            CLOSED
         ),
         Rect::new(274.25, 8.5, 525.75, 88.25)
     );
@@ -8039,31 +8045,124 @@ fn a_column_clip_grows_outward_across_the_columns_only() {
                 offset_x: 800.0,
                 scale_y: 1.0,
                 offset_y: 0.0,
-            })
+            }),
+            CLOSED
         ),
         Rect::new(274.0, 8.5, 526.0, 88.25)
     );
     // Without a grid, or with one that cannot place the edges, it is exact.
-    assert_eq!(snap_column_clip_outward(clip, None), clip);
+    assert_eq!(snap_column_clip_outward(clip, None, CLOSED), clip);
     assert_eq!(
-        snap_column_clip_outward(clip, Some(DeviceGrid::uniform(0.0))),
+        snap_column_clip_outward(clip, Some(DeviceGrid::uniform(0.0)), CLOSED),
         clip
     );
+}
+
+#[test]
+fn a_column_clip_grows_outward_at_the_block_edges_no_other_fragment_lies_behind() {
+    let clip = Rect::new(274.0, 80.25, 526.0, 96.25);
+    let grid = Some(DeviceGrid::uniform(1.0));
+    let open = |top, bottom| OpenBlockEdges { top, bottom };
+    assert_eq!(
+        snap_column_clip_outward(clip, grid, open(true, true)),
+        Rect::new(274.0, 80.0, 526.0, 97.0)
+    );
+    // Only the top edge of the first fragment, or the bottom edge of the
+    // last, grows: the other edge is where the box continues.
+    assert_eq!(
+        snap_column_clip_outward(clip, grid, open(true, false)),
+        Rect::new(274.0, 80.0, 526.0, 96.25)
+    );
+    assert_eq!(
+        snap_column_clip_outward(clip, grid, open(false, true)),
+        Rect::new(274.0, 80.25, 526.0, 97.0)
+    );
+    // An edge on a device pixel stays where it is.
+    assert_eq!(
+        snap_column_clip_outward(Rect::new(0.0, 80.0, 10.0, 96.0), grid, open(true, true)),
+        Rect::new(0.0, 80.0, 10.0, 96.0)
+    );
+    // Whole device pixels at 2 per CSS pixel, 0.5 device pixel in.
+    let doubled = Some(DeviceGrid {
+        scale_x: 2.0,
+        offset_x: 0.5,
+        scale_y: 2.0,
+        offset_y: 0.5,
+    });
+    assert_eq!(
+        snap_column_clip_outward(Rect::new(0.0, 80.3, 10.0, 96.3), doubled, open(true, true)),
+        Rect::new(-0.25, 80.25, 10.25, 96.75)
+    );
+    // A mirrored grid grows the same device pixels outward, so the css top
+    // edge moves to the larger device coordinate.
+    let mirrored = Some(DeviceGrid {
+        scale_x: 1.0,
+        offset_x: 0.0,
+        scale_y: -1.0,
+        offset_y: 600.0,
+    });
+    assert_eq!(
+        snap_column_clip_outward(clip, mirrored, open(true, true)),
+        Rect::new(274.0, 80.0, 526.0, 97.0)
+    );
+    // A grid that places the columns but not the block edges leaves the
+    // open edges exact.
+    let flat = Some(DeviceGrid {
+        scale_x: 1.0,
+        offset_x: 0.0,
+        scale_y: 0.0,
+        offset_y: 0.0,
+    });
+    assert_eq!(snap_column_clip_outward(clip, flat, open(true, true)), clip);
+    // Without a grid it stays exact.
+    assert_eq!(snap_column_clip_outward(clip, None, open(true, true)), clip);
+}
+
+#[test]
+fn only_the_outer_block_edges_of_a_box_broken_across_columns_are_open() {
+    let fragment = |fragment_index, fragment_count| raikiri_dom::LayoutFragment {
+        node_id: 1,
+        parent: None,
+        fragmentainer: fragment_index,
+        rect: raikiri_dom::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        fragmentainer_clip: None,
+        fragment_index,
+        fragment_count,
+        line_start: None,
+        line_end: None,
+    };
+    let edges = |index, count| {
+        let open = OpenBlockEdges::of(&fragment(index, count));
+        (open.top, open.bottom)
+    };
+    // A box in one column has no neighbour behind either edge.
+    assert_eq!(edges(0, 1), (true, true));
+    // Broken across columns, the first fragment keeps its break edge exact at
+    // the bottom, the last at the top, and a middle one at both.
+    assert_eq!(edges(0, 3), (true, false));
+    assert_eq!(edges(1, 3), (false, false));
+    assert_eq!(edges(2, 3), (false, true));
 }
 
 #[test]
 fn an_orthogonal_flow_in_a_column_is_clipped_by_the_same_column_edges() {
     // The wrapper's own writing mode is vertical, but the columns it is
     // clipped to are still side by side: the left and right edges grow
-    // outward and the top and bottom edges, where the flow breaks into the
-    // next column, keep their fractional position (17.6px lines).
+    // outward and the edge where the flow breaks into the next column keeps
+    // its fractional position (17.6px lines).
     let markup = "<!DOCTYPE html><style>.c{columns:3;column-fill:auto;height:5em;orphans:3;widows:3;font:16px/1.1 Ahem}.v{writing-mode:vertical-rl}</style><body><div class=c><div>a<br>b<br>c<br></div><div class=v><div>d<br>e<br>f<br>g<br>h<br>i<br>j<br></div></div></div></body>";
     let clips = clip_layer_bounds(&paged_scene(markup, Some(1.0)));
     assert_eq!(clips.len(), 2, "one clip for each column the flow is in");
-    for clip in clips {
+    for clip in &clips {
         assert_eq!((clip.x0.fract(), clip.x1.fract()), (0.0, 0.0), "{clip:?}");
-        assert_ne!(clip.y0.fract(), 0.0, "{clip:?}");
     }
+    assert_ne!(clips[0].y1.fract(), 0.0, "{:?}", clips[0]);
+    assert_ne!(clips[1].y0.fract(), 0.0, "{:?}", clips[1]);
 }
 
 /// Three columns of 250.67px, the paragraph in the second starting where the

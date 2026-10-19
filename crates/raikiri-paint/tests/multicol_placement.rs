@@ -17,6 +17,12 @@ impl ImagePixelSource for NoPixels {
 }
 
 fn raster(body: &str, css: &str) -> Vec<u8> {
+    raster_at(body, css, None)
+}
+
+/// `raster` for a device with `device_scale` device pixels per CSS pixel,
+/// whose clips lie on its pixels, or for a vector output with `None`.
+fn raster_at(body: &str, css: &str, device_scale: Option<f32>) -> Vec<u8> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -24,7 +30,9 @@ fn raster(body: &str, css: &str) -> Vec<u8> {
         )
         .build()
         .unwrap();
-    let resources = RenderResources::new().fonts(fonts);
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .border_width_device_scale(device_scale);
     let html = format!(
         "<!doctype html><style>@page{{size:180px 160px;margin:0}}body{{margin:0;background:white;font:20px/20px Ahem}}p{{margin:0}}.mc{{width:100px;column-count:2;column-gap:20px;orphans:1;widows:1}}{css}</style>{body}"
     );
@@ -54,8 +62,12 @@ fn raster(body: &str, css: &str) -> Vec<u8> {
 }
 
 fn compare(body: &str, css: &str, reference: &str) {
-    let actual = raster(body, css);
-    let expected = raster(reference, "");
+    compare_at(body, css, reference, None);
+}
+
+fn compare_at(body: &str, css: &str, reference: &str, device_scale: Option<f32>) {
+    let actual = raster_at(body, css, device_scale);
+    let expected = raster_at(reference, "", device_scale);
     assert_eq!(
         actual
             .chunks_exact(4)
@@ -2439,4 +2451,17 @@ fn a_wrapper_is_sliced_like_its_blocks_under_the_sizing_of_the_container() {
             );
         }
     }
+}
+
+#[test]
+fn a_block_after_a_spanner_keeps_its_first_row_of_ink_at_a_fractional_offset() {
+    // The block after the spanner starts 0.3px into a device pixel, and the
+    // rasterizer puts its glyphs on whole pixels, so its fragment clip must not
+    // cut the first row of them.
+    compare_at(
+        "<div class=mc><p>A</p><div style='column-span:all;height:10.3px'></div><p>B</p></div>",
+        "",
+        "<div style='width:100px'><p>A</p><div style='height:10.3px'></div><p>B</p></div>",
+        Some(1.0),
+    );
 }

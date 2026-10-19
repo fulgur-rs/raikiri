@@ -4275,6 +4275,25 @@ mod tests;
 #[cfg(test)]
 use raikiri_style::CounterStyleRegistry;
 
+/// The block-axis edges of a column fragment's clip that no other fragment of
+/// the same box lies behind: the top of the first fragment of a box and the
+/// bottom of its last.
+#[derive(Clone, Copy)]
+struct OpenBlockEdges {
+    top: bool,
+    bottom: bool,
+}
+
+impl OpenBlockEdges {
+    /// The edges of the clip of fragment `fragment` of its box.
+    fn of(fragment: &raikiri_dom::LayoutFragment) -> Self {
+        Self {
+            top: fragment.fragment_index == 0,
+            bottom: fragment.fragment_index + 1 >= fragment.fragment_count,
+        }
+    }
+}
+
 /// The clip of a column fragment, with the vertical edges that separate it
 /// from its neighbour columns grown outward to whole device pixels of the
 /// raster output on `grid`.
@@ -4293,11 +4312,17 @@ use raikiri_style::CounterStyleRegistry;
 /// next column, stay exact, as the next fragment's content starts right
 /// behind them.
 ///
+/// The top edge of the first fragment of a box and the bottom edge of its
+/// last (`open`) have no such neighbour, so they grow outward too. The
+/// rasterizer places a line's glyphs on whole device pixels, up to half a
+/// pixel beyond the line box, and an exact edge at a fractional block offset
+/// would cut the row of ink there.
+///
 /// The edges move in device space, so a scaled ancestor grows the clip by
 /// less than one device pixel, not one CSS pixel. A vector output, or a
 /// transform that rotates or skews, has no grid (`None`) and keeps the clip
 /// exact.
-fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>) -> Rect {
+fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>, open: OpenBlockEdges) -> Rect {
     let Some(grid) = grid.filter(|grid| {
         grid.scale_x.is_finite() && grid.scale_x != 0.0 && grid.offset_x.is_finite()
     }) else {
@@ -4311,7 +4336,29 @@ fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>) -> Rect {
         css(first.min(second).floor()),
         css(first.max(second).ceil()),
     );
-    Rect::new(near.min(far), clip.y0, near.max(far), clip.y1)
+    let (mut top, mut bottom) = (clip.y0, clip.y1);
+    if grid.scale_y.is_finite() && grid.scale_y != 0.0 && grid.offset_y.is_finite() {
+        let device = |y: f64| y * grid.scale_y + grid.offset_y;
+        let css = |y: f64| (y - grid.offset_y) / grid.scale_y;
+        // The top edge is the low one in device space unless the grid is
+        // mirrored.
+        let grow = |y: f64, is_top: bool| {
+            let low = (grid.scale_y > 0.0) == is_top;
+            let device_y = device(y);
+            css(if low {
+                device_y.floor()
+            } else {
+                device_y.ceil()
+            })
+        };
+        if open.top {
+            top = grow(clip.y0, true);
+        }
+        if open.bottom {
+            bottom = grow(clip.y1, false);
+        }
+    }
+    Rect::new(near.min(far), top, near.max(far), bottom)
 }
 
 fn push_overflow_clip(

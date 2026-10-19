@@ -4,9 +4,9 @@ use super::frames::{PaintFrame, VisitFrame};
 use super::page_geometry::PageGeometry;
 use super::paint_walk::PaintWalk;
 use super::{
-    box_intersects_page, element_transform, fixed_position_px, generated_flow_height,
-    paintable_border_radius, snap_column_clip_outward, transform_translation, translation_only,
-    used_padding_for_paint, vertical_align_shift_px,
+    OpenBlockEdges, box_intersects_page, element_transform, fixed_position_px,
+    generated_flow_height, paintable_border_radius, snap_column_clip_outward,
+    transform_translation, translation_only, used_padding_for_paint, vertical_align_shift_px,
 };
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
@@ -525,9 +525,19 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             node_id,
             fragment_clip_height,
             fragment_clip,
+            fragment_id,
             ..
         } = *inputs;
         let image_cache = self.image_cache;
+        let open_edges = fragment_id
+            .and_then(|id| self.layout_fragments.get(id))
+            .map_or(
+                OpenBlockEdges {
+                    top: false,
+                    bottom: false,
+                },
+                OpenBlockEdges::of,
+            );
         let scene = &mut *self.scene;
         let trace = &mut self.trace;
         let mut paint_y = paint_y;
@@ -550,6 +560,12 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     (clip_origin_y + clip_height) as f64,
                 ),
                 image_cache.device_grid(scene.transform),
+                // The column clip of a box that fills the columns: its
+                // block edges are the column's.
+                OpenBlockEdges {
+                    top: false,
+                    bottom: false,
+                },
             );
             scene.push_clip_layer(Affine::IDENTITY, &clip);
             multicol_clip_pushed = true;
@@ -566,6 +582,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     (paint_y + clip.y + clip.height) as f64,
                 ),
                 image_cache.device_grid(scene.transform),
+                open_edges,
             );
             scene.push_clip_layer(Affine::IDENTITY, &clip);
             fragmentainer_clip_pushed = true;
