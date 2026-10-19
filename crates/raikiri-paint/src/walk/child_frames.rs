@@ -121,6 +121,38 @@ pub(super) struct ChildFrames<'w> {
     pub(super) blocks: Vec<PaintFrame<'w>>,
 }
 
+/// How far the generated inline text before each child pushes it along the
+/// line, as `(child, offset)` pairs, from the `(child, is_text, advance)`
+/// triples of the children in source order.
+///
+/// A child that carries generated text starts where the ones before it end.
+/// Each text child between two such children adds one collapsed space to the
+/// line.
+fn inline_flow_offsets(
+    child_generated_advances: &[(usize, bool, f32)],
+    collapsed_space: f32,
+) -> Vec<(usize, f32)> {
+    let mut flow_advance = 0.0;
+    let mut saw_generated_inline = false;
+    let mut offsets = Vec::new();
+    for (index, (child, is_text, advance)) in child_generated_advances.iter().enumerate() {
+        if *is_text {
+            let has_following_generated_inline = child_generated_advances
+                .iter()
+                .skip(index + 1)
+                .any(|(_, _, following)| *following > 0.0);
+            if saw_generated_inline && has_following_generated_inline {
+                flow_advance += collapsed_space;
+            }
+        } else if *advance > 0.0 {
+            offsets.push((*child, flow_advance));
+            flow_advance += *advance;
+            saw_generated_inline = true;
+        }
+    }
+    offsets
+}
+
 /// The shifts that generated text puts on the children of an element, as
 /// `(child, shift)` pairs.
 pub(super) struct GeneratedOffsets {
@@ -139,17 +171,56 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         element: &ElementBox<'w>,
         children: &[usize],
     ) -> GeneratedOffsets {
+        GeneratedOffsets {
+            inline: self.inline_generated_offsets(element, children),
+            vertical: self.vertical_generated_offsets(element, children),
+        }
+    }
+
+    /// How far the generated text before each of `children` pushes it along
+    /// the line, as `(child, offset)` pairs; empty when no child carries
+    /// generated text.
+    fn inline_generated_offsets(
+        &self,
+        element: &ElementBox<'w>,
+        children: &[usize],
+    ) -> Vec<(usize, f32)> {
+        let child_generated_advances = self.child_generated_advances(children);
+        if child_generated_advances
+            .iter()
+            .any(|(_, _, advance)| *advance > 0.0)
+        {
+            let family = element
+                .cv
+                .font_family
+                .first()
+                .cloned()
+                .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
+            let collapsed_space = text::measure_margin_text_advance(
+                self.document,
+                " ",
+                element.cv.font_size.px(),
+                std::slice::from_ref(&family),
+            );
+            inline_flow_offsets(&child_generated_advances, collapsed_space)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// For each of `children`, whether it is a text node and how far the
+    /// generated text of its `::before` and `::after` advances along the line.
+    ///
+    /// The current Taffy bridge treats inline children as zero-sized block
+    /// items. Keep that layout authority, but provide the measured paint-time
+    /// inline advance for generated pseudo text so a sequence such as
+    /// `span::before { content: counter(c) }` remains in source order. This is
+    /// deliberately limited to siblings that actually carry generated content;
+    /// ordinary inline layout remains unchanged until a full IFC lands.
+    fn child_generated_advances(&self, children: &[usize]) -> Vec<(usize, bool, f32)> {
         let (document, cascade, counter_snapshots) =
             (self.document, self.cascade, self.counter_snapshots);
-        let (cv, node_id) = (element.cv, element.node_id);
-        // The current Taffy bridge treats inline children as zero-sized
-        // block items.  Keep that layout authority, but provide the
-        // measured paint-time inline advance for generated pseudo text
-        // so a sequence such as `span::before { content: counter(c) }`
-        // remains in source order.  This is deliberately limited to
-        // siblings that actually carry generated content; ordinary
-        // inline layout remains unchanged until a full IFC lands.
-        let child_generated_advances: Vec<(usize, bool, f32)> = children
+        children
             .iter()
             .map(|&child| {
                 let is_text = document
@@ -179,58 +250,33 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 };
                 (child, is_text, advance)
             })
-            .collect();
-        let inline_offsets = if child_generated_advances
-            .iter()
-            .any(|(_, _, advance)| *advance > 0.0)
-        {
-            let family = cv
-                .font_family
-                .first()
-                .cloned()
-                .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
-            let collapsed_space = text::measure_margin_text_advance(
-                document,
-                " ",
-                cv.font_size.px(),
-                std::slice::from_ref(&family),
-            );
-            let mut flow_advance = 0.0;
-            let mut saw_generated_inline = false;
-            let mut offsets = Vec::new();
-            for (index, (child, is_text, advance)) in child_generated_advances.iter().enumerate() {
-                if *is_text {
-                    let has_following_generated_inline = child_generated_advances
-                        .iter()
-                        .skip(index + 1)
-                        .any(|(_, _, following)| *following > 0.0);
-                    if saw_generated_inline && has_following_generated_inline {
-                        flow_advance += collapsed_space;
-                    }
-                } else if *advance > 0.0 {
-                    offsets.push((*child, flow_advance));
-                    flow_advance += *advance;
-                    saw_generated_inline = true;
-                }
-            }
-            offsets
-        } else {
-            Vec::new()
-        };
-        let vertical_generated_offsets = if !cv.display.is_inline_flow() {
-            let mut flow_extra = generated_pseudo_text_height(
-                document,
-                cascade,
-                node_id,
-                raikiri_style::PseudoElem::Before,
-                counter_snapshots,
-            );
-            let mut offsets = Vec::new();
-            for &child in children {
-                offsets.push((child, flow_extra));
-                let Some(child_node) = document.get_node(child) else {
-                    continue; // cov:ignore: document child ids are arena-valid
-                };
+            .collect()
+    }
+
+    /// How far the generated text above each of `children` pushes it down, as
+    /// `(child, offset)` pairs; empty unless `element` is a block container.
+    fn vertical_generated_offsets(
+        &mut self,
+        element: &ElementBox<'w>,
+        children: &[usize],
+    ) -> Vec<(usize, f32)> {
+        let (document, cascade, counter_snapshots) =
+            (self.document, self.cascade, self.counter_snapshots);
+        let (cv, node_id) = (element.cv, element.node_id);
+        if cv.display.is_inline_flow() {
+            return Vec::new();
+        }
+        let mut flow_extra = generated_pseudo_text_height(
+            document,
+            cascade,
+            node_id,
+            raikiri_style::PseudoElem::Before,
+            counter_snapshots,
+        );
+        let mut offsets = Vec::new();
+        for &child in children {
+            offsets.push((child, flow_extra));
+            if let Some(child_node) = document.get_node(child) {
                 let child_cv = &cascade.computed[child];
                 let child_is_normal_flow = matches!(
                     child_cv.position,
@@ -251,14 +297,8 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                         (required_height - child_node.unrounded_layout.size.height).max(0.0);
                 }
             }
-            offsets
-        } else {
-            Vec::new()
-        };
-        GeneratedOffsets {
-            inline: inline_offsets,
-            vertical: vertical_generated_offsets,
         }
+        offsets
     }
 
     /// The frame that draws the lines of the paragraph that `element` is,
@@ -705,3 +745,6 @@ fn generated_shift(shifts: &[(usize, f32)], child: usize) -> f32 {
         .find_map(|(shifted, shift)| (*shifted == child).then_some(*shift))
         .unwrap_or(0.0)
 }
+
+#[cfg(test)]
+mod tests;
