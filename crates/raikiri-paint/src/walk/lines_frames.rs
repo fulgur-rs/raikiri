@@ -11,65 +11,70 @@ use super::{
 use crate::ifc_text::{HeldLines, IfcPosition};
 use anyrender::PaintScene;
 use kurbo::Affine;
-use raikiri_dom::paint_rules;
+use raikiri_dom::{Document, Node, paint_rules};
 use raikiri_traits::NodeKind;
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
     /// Paint the lines of the paragraph of an anonymous table cell.
     pub(super) fn anonymous_paragraph(&mut self, paragraph: AnonymousParagraphFrame<'w>) {
-        let AnonymousParagraphFrame {
-            key,
-            cell,
-            x,
-            y,
-            shift_y,
-            transform_x,
-            transform_y,
-            paint_offset_y,
-            fragmentainer,
-            inside_fixed,
-            decorations,
-            fixed_viewport,
-            defer: _,
-        } = paragraph;
-        let (document, cascade) = (self.document, self.cascade);
-        let layout = cell.unrounded_layout;
-        let probe = cell
-            .ifc_lines()
-            .and_then(|lines| {
-                lines
-                    .iter()
-                    .flat_map(|line| line.fragments())
-                    .find_map(|fragment| {
-                        let shodo::Fragment::GlyphRun(run) = fragment else {
-                            return None;
-                        };
-                        let owner = run.node()?.0 as usize;
-                        document
-                            .get_node(owner)
-                            .filter(|node| node.kind() == NodeKind::Text)
-                            .map(|_| owner)
-                    })
-            })
-            .unwrap_or(document.ifc_source_owner(key));
-        if !paint_rules::named_page_matches(document, cascade, probe, self.active_page_name)
-            || (!box_intersects_page(
-                y,
-                ifc_paint_extent(cell, &layout),
-                self.geometry.page_top,
-                self.geometry.page_bottom,
-            ) && !inside_fixed)
-        {
+        if !self.anonymous_paragraph_is_on_page(&paragraph) {
             return;
         }
-        let clip = self
-            .geometry
-            .text_page_clip(cascade, self.page_box, inside_fixed);
+        let clip =
+            self.geometry
+                .text_page_clip(self.cascade, self.page_box, paragraph.inside_fixed);
         if let Some(clip) = &clip {
             self.scene
                 .scene
                 .push_clip_layer(self.geometry.page_clip_transform, clip);
         }
+        self.paint_anonymous_cell_border(&paragraph);
+        self.trace_anonymous_paragraph(&paragraph);
+        self.draw_anonymous_lines(&paragraph);
+        if clip.is_some() {
+            self.scene.pop_layer();
+        }
+    }
+
+    /// Whether the paragraph of an anonymous table cell paints on the page:
+    /// its page name matches the active one, and its box meets the page or
+    /// sits inside a fixed box.
+    fn anonymous_paragraph_is_on_page(&self, paragraph: &AnonymousParagraphFrame<'w>) -> bool {
+        let AnonymousParagraphFrame {
+            key,
+            cell,
+            y,
+            inside_fixed,
+            ..
+        } = *paragraph;
+        let (document, cascade) = (self.document, self.cascade);
+        let layout = cell.unrounded_layout;
+        let probe = page_name_probe(document, cell, key);
+        paint_rules::named_page_matches(document, cascade, probe, self.active_page_name)
+            && (box_intersects_page(
+                y,
+                ifc_paint_extent(cell, &layout),
+                self.geometry.page_top,
+                self.geometry.page_bottom,
+            ) || inside_fixed)
+    }
+
+    /// Paint the collapsed border of an anonymous table cell that has one,
+    /// unless its owner hides its box or the cell is off the band of the
+    /// page.
+    fn paint_anonymous_cell_border(&mut self, paragraph: &AnonymousParagraphFrame<'w>) {
+        let AnonymousParagraphFrame {
+            key,
+            cell,
+            x,
+            y,
+            transform_x,
+            transform_y,
+            inside_fixed,
+            ..
+        } = *paragraph;
+        let (document, cascade) = (self.document, self.cascade);
+        let layout = cell.unrounded_layout;
         let owner = document.ifc_source_owner(key);
         let cell_on_band = inside_fixed
             || self.geometry.flow_band.is_none_or(|band| {
@@ -97,18 +102,48 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cascade.computed[owner].color,
             );
         }
+    }
+
+    /// Record that the paragraph of an anonymous table cell paints text, when
+    /// the paint is traced and at least one of its lines has a run.
+    fn trace_anonymous_paragraph(&mut self, paragraph: &AnonymousParagraphFrame<'w>) {
+        let AnonymousParagraphFrame {
+            key, fragmentainer, ..
+        } = *paragraph;
+        let (document, cascade) = (self.document, self.cascade);
         if let Some(events) = self.trace.as_deref_mut()
             && raikiri_dom::PositionedLines::new(document, cascade, key, fragmentainer)
                 .is_some_and(|lines| lines.lines().any(|line| !line.runs.is_empty()))
         {
             events.push(crate::PaintTraceEvent::Text(document.ifc_source_owner(key)));
         }
+    }
+
+    /// Draw the lines of the paragraph of an anonymous table cell inside its
+    /// content box.
+    fn draw_anonymous_lines(&mut self, paragraph: &AnonymousParagraphFrame<'w>) {
+        let AnonymousParagraphFrame {
+            key,
+            cell,
+            x,
+            y,
+            shift_y,
+            transform_x,
+            transform_y,
+            paint_offset_y,
+            fragmentainer,
+            inside_fixed,
+            ref decorations,
+            fixed_viewport,
+            ..
+        } = *paragraph;
+        let layout = cell.unrounded_layout;
         let paint_transform = self.scene.transform;
         crate::ifc_text::draw_ifc_lines_with_resources(
             self.image_cache,
             self.scene,
-            document,
-            cascade,
+            self.document,
+            self.cascade,
             key,
             IfcPosition {
                 x: x + self.geometry.page_offset_x
@@ -121,7 +156,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                     + layout.padding.top,
                 shift_y,
             },
-            &decorations,
+            decorations,
             fragmentainer,
             self.custom_highlights,
             self.pixel_source,
@@ -134,9 +169,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_transform,
             fixed_viewport,
         );
-        if clip.is_some() {
-            self.scene.pop_layer();
-        }
     }
 
     /// Paint the lines of a paragraph, hold them for the boxes laid out beside
@@ -295,4 +327,28 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             frame.fixed_viewport,
         )
     }
+}
+
+/// The node whose page name decides whether the paragraph `key` of the
+/// anonymous table cell `cell` paints on the active page: the owner of its
+/// first glyph run that sits in a text node, or the source owner of the
+/// paragraph when it has none.
+fn page_name_probe(document: &Document, cell: &Node, key: usize) -> usize {
+    cell.ifc_lines()
+        .and_then(|lines| {
+            lines
+                .iter()
+                .flat_map(|line| line.fragments())
+                .find_map(|fragment| {
+                    let shodo::Fragment::GlyphRun(run) = fragment else {
+                        return None;
+                    };
+                    let owner = run.node()?.0 as usize;
+                    document
+                        .get_node(owner)
+                        .filter(|node| node.kind() == NodeKind::Text)
+                        .map(|_| owner)
+                })
+        })
+        .unwrap_or(document.ifc_source_owner(key))
 }
