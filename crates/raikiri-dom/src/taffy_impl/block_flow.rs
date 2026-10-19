@@ -5,6 +5,8 @@ pub(crate) mod context;
 mod positioned;
 mod sizing;
 
+pub(crate) use positioned::aligned_static_position;
+
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};

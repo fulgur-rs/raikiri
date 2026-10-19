@@ -188,14 +188,13 @@ pub(super) fn layout(
                     } else {
                         Position::Absolute
                     },
-                    Point {
-                        x: metrics.inset.left,
-                        y: flow.end + pending.resolve(),
-                    },
+                    flow.end + pending.resolve(),
                     super::positioned::CandidateContext {
                         direction: container.direction,
                         container_width: width,
                         metrics,
+                        container,
+                        child: &style,
                     },
                 );
             }
