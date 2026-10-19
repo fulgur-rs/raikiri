@@ -1,5 +1,6 @@
 use super::*;
 use crate::taffy_impl::content_limits::ContentLimits;
+use crate::taffy_impl::replaced_size::keyword_bounds;
 
 fn inputs() -> LayoutInput {
     LayoutInput {
@@ -146,6 +147,84 @@ fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
             limits,
         ),
         None
+    );
+}
+
+#[test]
+fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
+    let style = Style {
+        box_sizing: taffy::BoxSizing::ContentBox,
+        padding: taffy::Rect {
+            left: taffy::LengthPercentage::length(5.0),
+            right: taffy::LengthPercentage::length(5.0),
+            ..Style::<String>::default().padding
+        },
+        border: taffy::Rect {
+            left: taffy::LengthPercentage::length(1.0),
+            right: taffy::LengthPercentage::length(1.0),
+            ..Style::<String>::default().border
+        },
+        ..ratio_style(Dimension::auto(), Dimension::auto())
+    };
+    let limits = limits(
+        Size {
+            width: Dimension::min_content(),
+            height: Dimension::auto(),
+        },
+        Size::auto(),
+    );
+
+    assert_eq!(
+        keyword_bounds(&style, &inputs(), natural_size(), limits)
+            .unwrap()
+            .width
+            .min,
+        Some(22.0)
+    );
+    assert_eq!(
+        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        Some(natural_size())
+    );
+}
+
+#[test]
+fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
+    let style = Style {
+        box_sizing: taffy::BoxSizing::ContentBox,
+        size: Size {
+            width: Dimension::length(100.0),
+            height: Dimension::auto(),
+        },
+        padding: taffy::Rect {
+            left: taffy::LengthPercentage::length(5.0),
+            right: taffy::LengthPercentage::length(5.0),
+            ..Style::<String>::default().padding
+        },
+        border: taffy::Rect {
+            left: taffy::LengthPercentage::length(1.0),
+            right: taffy::LengthPercentage::length(1.0),
+            ..Style::<String>::default().border
+        },
+        ..ratio_style(Dimension::auto(), Dimension::auto())
+    };
+    let limits = limits(
+        Size::auto(),
+        Size {
+            width: Dimension::max_content(),
+            height: Dimension::auto(),
+        },
+    );
+
+    assert_eq!(
+        keyword_bounds(&style, &inputs(), natural_size(), limits)
+            .unwrap()
+            .width
+            .max,
+        Some(22.0)
+    );
+    assert_eq!(
+        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        Some(natural_size())
     );
 }
 

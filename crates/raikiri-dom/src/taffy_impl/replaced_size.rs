@@ -78,28 +78,28 @@ pub(super) fn auto_sides_size(
             keyword
                 .width
                 .min
-                .map(|size| content_side(style, size, edges.width)),
+                .map(|size| content_box_from_border_box(size, edges.width)),
         );
         min.height = merge_min(
             min.height,
             keyword
                 .height
                 .min
-                .map(|size| content_side(style, size, edges.height)),
+                .map(|size| content_box_from_border_box(size, edges.height)),
         );
         max.width = merge_max(
             max.width,
             keyword
                 .width
                 .max
-                .map(|size| content_side(style, size, edges.width)),
+                .map(|size| content_box_from_border_box(size, edges.width)),
         );
         max.height = merge_max(
             max.height,
             keyword
                 .height
                 .max
-                .map(|size| content_side(style, size, edges.height)),
+                .map(|size| content_box_from_border_box(size, edges.height)),
         );
     }
     let (min_width, min_height) = (min.width.unwrap_or(0.0), min.height.unwrap_or(0.0));
@@ -116,11 +116,11 @@ pub(super) fn auto_sides_size(
             let min = bounds
                 .width
                 .min
-                .map(|size| content_side(style, size, edges.width));
+                .map(|size| content_box_from_border_box(size, edges.width));
             let max = bounds
                 .width
                 .max
-                .map(|size| content_side(style, size, edges.width));
+                .map(|size| content_box_from_border_box(size, edges.width));
             size_in_bounds((fixed - edges.width).max(0.0), min, max)
         });
         return Some(Size {
@@ -359,6 +359,11 @@ fn content_side(style: &Style, side: f32, edges: f32) -> f32 {
         BoxSizing::ContentBox => side,
         BoxSizing::BorderBox => (side - edges).max(0.0),
     }
+}
+
+/// Convert a border-box size to the content-box size returned by this module.
+fn content_box_from_border_box(side: f32, edges: f32) -> f32 {
+    (side - edges).max(0.0)
 }
 
 #[cfg(test)]
