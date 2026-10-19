@@ -2080,6 +2080,9 @@ css/css-break/out-of-flow-in-multicolumn-116.html
 css/css-break/out-of-flow-in-multicolumn-123.html
 css/css-break/out-of-flow-in-multicolumn-127.html
 css/css-break/overflow-clip-004.html
+css/css-break/ruby-000.html
+css/css-break/ruby-001.html
+css/css-break/ruby-002.html
 css/css-break/table/break-inside-cell-001.html
 css/css-break/table/caption-margin-002.html
 css/css-break/table/caption-margin-005.html

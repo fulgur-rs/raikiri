@@ -13,10 +13,9 @@
 //! wraps each run of such boxes, giving every one an empty base of its own.
 //!
 //! Content that this mapping does not cover yet (blocks, generated content,
-//! misparented bases, atomic inlines in an inter-character annotation, alone
-//! on both sides of a pairing or in a vertical paragraph) leaves the container
-//! to the ordinary inline path, which lays its bases and annotations out in
-//! the line.
+//! misparented bases, atomic inlines in an inter-character annotation) leaves
+//! the container to the ordinary inline path, which lays its bases and
+//! annotations out in the line.
 
 use super::assign::is_css_whitespace;
 use super::boxes::{IfcBox, IfcBoxKind};
@@ -236,12 +235,10 @@ impl Planner<'_> {
             DisplayValue::RubyText => {
                 let parent = doc.parent_of(id).unwrap_or(id);
                 let children = &doc.nodes[id].children;
-                // An atomic inline in it is not turned beside its base, and
-                // without text it is the whole annotation of an empty base,
-                // which shodo would hide as a repeat of it (see
-                // `has_objects_alone`).
-                let atomic_trouble = holds_atomic(doc, cascade, children)
-                    && (is_inter_character(cascade, parent) || !has_text(doc, cascade, children));
+                // An atomic inline in an inter-character annotation is not
+                // turned beside its base.
+                let atomic_trouble =
+                    holds_atomic(doc, cascade, children) && is_inter_character(cascade, parent);
                 !atomic_trouble
                     && children
                         .iter()
@@ -622,43 +619,13 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
                     .any(|part| holds_atomic(doc, cascade, &part.children))
         })
     });
-    if turned_atomic || has_objects_alone(doc, cascade, &segments) {
+    if turned_atomic {
         return None;
     }
     Some(Plan {
         segments,
         out_of_flow: planner.out_of_flow,
         base_containers: planner.base_containers,
-    })
-}
-
-/// Whether a segment annotates a base that has no text with an annotation of
-/// atomic inlines alone. shodo takes an annotation whose text equals that of
-/// its bases for a repeat of them and hides it, and atomic inlines have no
-/// text, so such an annotation would vanish; the ordinary inline path keeps
-/// it in the line instead.
-fn has_objects_alone(doc: &Document, cascade: &CascadeResult, segments: &[Segment]) -> bool {
-    segments.iter().any(|segment| {
-        (segment.bases.is_empty()
-            || segment
-                .bases
-                .iter()
-                .any(|base| !has_text(doc, cascade, &base.children)))
-            && segment.levels.iter().any(|level| {
-                level.annotations.iter().any(|part| {
-                    holds_atomic(doc, cascade, &part.children)
-                        && !has_text(doc, cascade, &part.children)
-                })
-            })
-    })
-}
-
-/// Whether `nodes` lay out text other than white space.
-fn has_text(doc: &Document, cascade: &CascadeResult, nodes: &[usize]) -> bool {
-    texts(doc, cascade, nodes).into_iter().any(|id| {
-        doc.nodes[id]
-            .text_content()
-            .is_some_and(|text| text.chars().any(|c| !is_css_whitespace(c)))
     })
 }
 

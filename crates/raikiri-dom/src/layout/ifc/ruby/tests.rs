@@ -1821,44 +1821,48 @@ fn atomic_inlines_in_inter_character_annotations_stay_plain() {
 }
 
 #[test]
-fn atomic_inlines_alone_on_both_sides_of_a_pairing_stay_plain() {
-    // An atomic inline has no text, so shodo would take an annotation of boxes
-    // over bases of boxes for a repeat of them and hide it.
-    assert!(!is_planned(|doc, ruby| {
+fn atomic_inlines_alone_on_both_sides_of_a_pairing_are_planned() {
+    // An atomic inline has no text, and shodo does not take an annotation of
+    // boxes over bases of boxes for a repeat of them.
+    assert!(is_planned(|doc, ruby| {
         inline_block(doc, ruby, 5, 5);
         let annotation = rt(doc, ruby, "");
         inline_block(doc, annotation, 5, 5);
     }));
     // The text of a box is a paragraph of its own, and white space is not text.
-    assert!(!is_planned(|doc, ruby| {
+    assert!(is_planned(|doc, ruby| {
         let base = rb(doc, ruby, " ");
         text_element(doc, base, "span", "display:inline-block", "t");
         let annotation = rt(doc, ruby, " ");
         text_element(doc, annotation, "span", "display:inline-block", "t");
     }));
     // An annotation that has no base of its own gets an empty one.
-    assert!(!is_planned(|doc, ruby| {
+    assert!(is_planned(|doc, ruby| {
         let rbc = element(doc, ruby, "rbc", "display:ruby-base-container");
         let annotation = rt(doc, rbc, "");
         inline_block(doc, annotation, 5, 5);
     }));
-    // Text on either side tells the two apart.
-    assert!(is_planned(|doc, ruby| {
-        let base = rb(doc, ruby, "a");
-        inline_block(doc, base, 5, 5);
-        let annotation = rt(doc, ruby, "");
-        inline_block(doc, annotation, 5, 5);
-    }));
-    assert!(is_planned(|doc, ruby| {
-        inline_block(doc, ruby, 5, 5);
-        let annotation = rt(doc, ruby, "x");
-        inline_block(doc, annotation, 5, 5);
-    }));
-    // An annotation of text is not a repeat of a base of a box.
-    assert!(is_planned(|doc, ruby| {
-        inline_block(doc, ruby, 5, 5);
-        rt(doc, ruby, "x");
-    }));
+}
+
+#[test]
+fn an_atomic_annotation_is_stacked_over_an_atomic_base() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        ids.0 = inline_block(doc, container, 25, 75);
+        let annotation = rt(doc, container, "");
+        ids.1 = inline_block(doc, annotation, 25, 25);
+    });
+    let (doc, _) = lay_out(fixture);
+    let (base, annotation) = (border_box(&doc, ids.0), border_box(&doc, ids.1));
+    assert_eq!((base.2, base.3), (25.0, 75.0), "{base:?}");
+    assert_eq!((annotation.2, annotation.3), (25.0, 25.0), "{annotation:?}");
+    // The annotation is over the base and centered on it, not beside it.
+    assert!(
+        annotation.1 + annotation.3 <= base.1,
+        "{annotation:?} {base:?}"
+    );
+    assert_eq!(annotation.0, base.0, "{annotation:?} {base:?}");
 }
 
 #[test]
