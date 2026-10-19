@@ -156,9 +156,8 @@ impl Metrics {
             .maybe_clamp(min, limit);
         // An axis is ratio-dependent when its size is not authored or imposed
         // but follows from the other axis through the preferred aspect ratio.
-        let ratio_width = width_eligible
-            && inputs.known_dimensions.width.is_none()
-            && preferred.width.is_some();
+        let ratio_width =
+            width_eligible && inputs.known_dimensions.width.is_none() && preferred.width.is_some();
         let ratio_height = height_eligible
             && inputs.known_dimensions.height.is_none()
             && preferred.height.is_some();
