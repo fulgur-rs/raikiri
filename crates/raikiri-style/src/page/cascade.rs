@@ -1107,36 +1107,59 @@ fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::Laye
 /// The value of the winning declaration of `key` among `declared`, for the
 /// margin context's own `writing-mode`, `text-orientation` and `direction`:
 /// the winner is picked from the declarations of the margin context alone
-/// (`direction` is exempt from `all`, like the page context's), with `var()`
-/// substituted from `custom_properties`. `None` when no declaration resolves.
+/// the way the margin-box cascade below picks it. `writing-mode` and
+/// `text-orientation` honour `revert-layer` and `all: revert-layer`
+/// rollback; `direction` is exempt from `all`, like the page context's, and
+/// keeps its plain winner. A `var()` value is substituted from
+/// `custom_properties`. `None` when no declaration survives or resolves.
 fn margin_box_winning_value(
     declared: &[(usize, usize, &PageMarginBoxCascadeResult, &Declaration)],
     custom_properties: &CustomPropertyEnvironment,
     key: PropertyKey,
 ) -> Option<PropertyValue> {
-    let (.., decl) = declared
-        .iter()
-        .filter(|(.., decl)| decl.value.key() == key)
-        .max_by_key(|&&(rule_index, decl_index, rule, decl)| {
-            let layer = crate::layer::LayerPosition {
-                attached: false,
-                rank: rule.layer_order,
-            };
-            (
-                cascade_rank(rule.origin, decl.important),
-                layer.priority(decl.important),
-                rule.specificity,
-                rule.source_order,
-                rule_index,
-                decl_index,
-            )
-        })?;
-    match &decl.value {
+    let resolve = |value: &PropertyValue| match value {
         PropertyValue::Deferred(deferred) => {
             resolve_page_deferred_value(deferred, custom_properties)
         }
         value => Some(value.clone()),
-    }
+    };
+    let index = crate::cascade::rollback::select_layered_winner(
+        declared,
+        |_, &(rule_index, decl_index, rule, decl)| {
+            let reset_all = key != PropertyKey::Direction
+                && matches!(decl.value, PropertyValue::AllRevertLayer);
+            if decl.value.key() != key && !reset_all {
+                return None;
+            }
+            let layer = crate::layer::LayerPosition {
+                attached: false,
+                rank: rule.layer_order,
+            };
+            let rollback = if key == PropertyKey::Direction {
+                crate::cascade::rollback::Rollback::None
+            } else {
+                resolve(&decl.value).as_ref().map_or(
+                    crate::cascade::rollback::Rollback::None,
+                    crate::cascade::rollback::rollback_kind,
+                )
+            };
+            Some((
+                (
+                    cascade_rank(rule.origin, decl.important),
+                    layer.priority(decl.important),
+                    rule.specificity,
+                    rule.source_order,
+                    rule_index,
+                    decl_index,
+                ),
+                rule.origin,
+                layer,
+                decl.important,
+                rollback,
+            ))
+        },
+    )?;
+    resolve(&declared[index].3.value)
 }
 
 /// The mapping of flow-relative sides for a box in `writing_mode` whose

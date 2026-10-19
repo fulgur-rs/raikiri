@@ -8705,3 +8705,33 @@ fn margin_box_logical_margins_agree_with_a_rolled_back_flow() {
     // The inline start of `vertical-rl` under `rtl` is the bottom.
     assert_eq!(margin_box_margins(css), [None, None, Some(1.0), None]);
 }
+
+/// `all: revert-layer` rolls a margin box's `writing-mode` back to the
+/// layer below, and `direction`, which `all` does not reset, stays as the
+/// rolled-back layer declared it, so the flow-relative margins follow the
+/// computed style (CSS Cascade 5 §6.4.1, CSS Logical Properties 1 §4).
+#[test]
+fn margin_box_logical_margins_agree_with_a_flow_rolled_back_by_all() {
+    let css = "@layer a { @page { @top-left { content: 'X'; writing-mode: vertical-rl } } } \
+               @layer b { @page { @top-left { writing-mode: horizontal-tb; \
+               direction: rtl; all: revert-layer; margin-inline-start: 1px } } }";
+    let result = page(css, &ComputedValues::initial());
+    let rule = result
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap();
+    let style = result.margin_box_style(&rule, None);
+    assert_eq!(style.cssom_writing_mode, WritingMode::VerticalRl);
+    assert_eq!(style.direction, Direction::Rtl);
+    // The inline start of `vertical-rl` under `rtl` is the bottom.
+    assert_eq!(margin_box_margins(css), [None, None, Some(1.0), None]);
+}
+
+/// A flow property declared after `all: revert-layer` in the same layer
+/// survives the rollback and decides the mapping.
+#[test]
+fn margin_box_logical_margins_follow_a_flow_declared_after_all_revert_layer() {
+    let css = "@layer a { @page { @top-left { content: 'X'; writing-mode: vertical-rl } } } \
+               @layer b { @page { @top-left { all: revert-layer; \
+               writing-mode: horizontal-tb; margin-block-start: 1px } } }";
+    assert_eq!(margin_box_margins(css), [Some(1.0), None, None, None]);
+}
