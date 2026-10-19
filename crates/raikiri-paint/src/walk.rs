@@ -43,6 +43,7 @@ use raikiri_traits::{
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
+mod background_image;
 mod border_image;
 mod box_layers;
 mod box_paint;
@@ -64,6 +65,7 @@ mod visit_text;
 pub(crate) use image_brush::ImageBrushCache;
 pub(crate) use inline_box::paint_inline_box;
 
+use background_image::ImageLayer;
 use border_image::BorderImage;
 use element_background::ElementBackgroundLayer;
 use frames::{DeferralLayer, LayerClose, PaintFrame, VisitFrame, set_aside};
@@ -2700,131 +2702,17 @@ fn paint_background_image(
     repeat: &raikiri_style::property::BackgroundRepeat,
     device_grid: Option<DeviceGrid>,
 ) {
-    if decoded.width == 0 || decoded.height == 0 {
-        return;
-    }
-    let Some(tiles) = background_tiles(
-        (
-            positioning.x0,
-            positioning.y0,
-            positioning.width(),
-            positioning.height(),
-        ),
-        (
-            painting.x0,
-            painting.y0,
-            painting.width(),
-            painting.height(),
-        ),
-        (image_w, image_h),
+    ImageLayer {
+        image_cache,
+        decoded,
+        positioning,
+        painting,
+        image: (image_w, image_h),
         position,
         repeat,
-    ) else {
-        return;
-    };
-    let brush = image_cache.whole(decoded);
-    let (image_px_w, image_px_h) = (f64::from(decoded.width), f64::from(decoded.height));
-    let tile_shape = Rect::new(0.0, 0.0, image_px_w, image_px_h);
-    // A `repeat` or `round` axis places tiles edge to edge, so one fill with
-    // the image repeating along that axis covers it without a seam between
-    // tiles, however small they are. A `space` or `no-repeat` axis keeps one
-    // fill per tile, which leaves its gaps and clips the tile to its edges.
-    let continuous = |keyword: raikiri_style::property::BackgroundRepeatKeyword| {
-        matches!(
-            keyword,
-            raikiri_style::property::BackgroundRepeatKeyword::Repeat
-                | raikiri_style::property::BackgroundRepeatKeyword::Round
-        )
-    };
-    let (continuous_x, continuous_y) = (continuous(repeat.x), continuous(repeat.y));
-    let xs = axis_tile_spans(
-        &tiles.x,
-        tiles.width,
-        repeat.x,
-        (
-            positioning.x0
-                + position_offset(position.horizontal, positioning.width() - tiles.width),
-            painting.x0,
-        ),
-        device_grid.map(|grid| (grid.scale_x, grid.offset_x)),
-    );
-    let ys = axis_tile_spans(
-        &tiles.y,
-        tiles.height,
-        repeat.y,
-        (
-            positioning.y0
-                + position_offset(position.vertical, positioning.height() - tiles.height),
-            painting.y0,
-        ),
-        device_grid.map(|grid| (grid.scale_y, grid.offset_y)),
-    );
-    // `background_tiles` returns a tile in each axis, so the fallbacks never apply.
-    let (origin_x, tile_w) = xs.first().copied().unwrap_or((painting.x0, tiles.width));
-    let (origin_y, tile_h) = ys.first().copied().unwrap_or((painting.y0, tiles.height));
-    let mut pattern = brush.clone();
-    if continuous_x {
-        pattern.sampler.x_extend = PenikoExtend::Repeat;
+        device_grid,
     }
-    if continuous_y {
-        pattern.sampler.y_extend = PenikoExtend::Repeat;
-    }
-    scene.push_clip_layer(Affine::IDENTITY, &painting);
-    match (continuous_x, continuous_y) {
-        (true, true) => scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            pattern.as_ref(),
-            Some(
-                Affine::translate((origin_x, origin_y))
-                    * Affine::scale_non_uniform(tile_w / image_px_w, tile_h / image_px_h),
-            ),
-            &painting,
-        ),
-        (true, false) => {
-            for (tile_y, height) in &ys {
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    pattern.as_ref(),
-                    Some(
-                        Affine::translate((origin_x, *tile_y))
-                            * Affine::scale_non_uniform(tile_w / image_px_w, height / image_px_h),
-                    ),
-                    &Rect::new(painting.x0, *tile_y, painting.x1, *tile_y + height),
-                );
-            }
-        }
-        (false, true) => {
-            for (tile_x, width) in &xs {
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    pattern.as_ref(),
-                    Some(
-                        Affine::translate((*tile_x, origin_y))
-                            * Affine::scale_non_uniform(width / image_px_w, tile_h / image_px_h),
-                    ),
-                    &Rect::new(*tile_x, painting.y0, *tile_x + width, painting.y1),
-                );
-            }
-        }
-        (false, false) => {
-            for (tile_y, height) in &ys {
-                for (tile_x, width) in &xs {
-                    scene.fill(
-                        Fill::NonZero,
-                        Affine::translate((*tile_x, *tile_y))
-                            * Affine::scale_non_uniform(width / image_px_w, height / image_px_h),
-                        brush.as_ref(),
-                        None,
-                        &tile_shape,
-                    );
-                }
-            }
-        }
-    }
-    scene.pop_layer();
+    .paint(scene);
 }
 
 /// [`tile_spans`] for one axis of a layer, where `placed` is the start of the
