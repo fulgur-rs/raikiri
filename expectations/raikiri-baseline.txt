@@ -4997,3 +4997,10 @@ css/css-multicol/change-intrinsic-width.html
 # Both pass once content wider than a column is no longer cut at the column edge in a container with a `column-span: all` child; KEEP in audit-vacuous-passes.
 css/css-multicol/multicol-width-004.html
 css/css-multicol/multicol-width-005.html
+
+# --- blocks held by the wrappers of a multicol container, and the spanners among them (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# Tall blocks in wrappers are cut at the column ends, in a container with a fixed height or `column-fill: auto` as well as in a balanced one, and the spanners of a wrapper stay out of the columns; KEEP in audit-vacuous-passes.
+css/css-break/trailing-child-margin-001.html
+css/css-multicol/multicol-span-all-margin-003.html
+css/css-multicol/resize-multicol-with-fixed-size-children-002.html
+css/css-multicol/intrinsic-size-004.html
