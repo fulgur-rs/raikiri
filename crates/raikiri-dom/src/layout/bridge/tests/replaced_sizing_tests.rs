@@ -48,6 +48,86 @@ fn size(doc: &Document, node: usize) -> (f32, f32) {
     (size.width, size.height)
 }
 
+fn canvas_with_css(css: &str) -> (f32, f32) {
+    let mut canvas = 0;
+    let doc = laid_out(|doc, body| {
+        canvas = doc.append_element(
+            Some(body),
+            "canvas",
+            Style::default(),
+            Some(format!("display:block;{css}").as_str()),
+        );
+        doc.set_element_attribute(canvas, "width", "10")
+            .expect("canvas width");
+        doc.set_element_attribute(canvas, "height", "10")
+            .expect("canvas height");
+    });
+    size(&doc, canvas)
+}
+
+#[test]
+fn min_width_min_content_transfers_height_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:10px;height:100px;min-width:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn min_height_min_content_transfers_width_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:100px;height:10px;min-height:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn max_width_min_content_transfers_height_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:1000px;height:100px;max-width:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn max_height_min_content_transfers_width_bound_through_natural_ratio() {
+    assert_eq!(
+        canvas_with_css("width:100px;height:1000px;max-height:min-content"),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn ratio_only_svg_uses_viewbox_ratio_for_intrinsic_keyword_size() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;width:200px"),
+    );
+    let svg = doc.append_element(
+        Some(body),
+        "svg",
+        Style::default(),
+        Some("display:block;min-height:max-content"),
+    );
+    doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+    doc.set_element_attributes(svg, vec![("viewBox".into(), "0 0 1000 500".into())]);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 200.0;
+    page.height = 400.0;
+    crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).expect("layout");
+
+    assert_eq!(size(&doc, svg), (200.0, 100.0));
+}
+
 #[test]
 fn a_block_level_image_keeps_its_natural_width() {
     let mut image = 0;
@@ -410,6 +490,7 @@ fn the_width_of_a_percentage_height_image_follows_the_height_it_is_measured_agai
                         parent,
                         100.0,
                         percent_height,
+                        None,
                     )
                 };
                 let root = doc.nodes[parent].ifc.as_ref().unwrap();
@@ -462,6 +543,7 @@ fn the_width_of_a_percentage_height_container_follows_the_height_it_is_measured_
                     parent,
                     100.0,
                     percent_height,
+                    None,
                 )
             };
             let root = doc.nodes[parent].ifc.as_ref().unwrap();
@@ -747,4 +829,29 @@ fn a_percentage_height_of_a_block_is_auto_in_an_absolute_box_that_sizes_to_its_c
     assert_eq!(height("position:absolute"), (10.0, 10.0));
     assert_eq!(height("position:absolute;height:30px"), (30.0, 30.0));
     assert_eq!(height("display:inline-block"), (10.0, 10.0));
+}
+
+#[test]
+fn a_replaced_box_in_a_vertical_shrink_to_fit_box_resolves_its_percentage_width() {
+    // The box is 50% of the 200px container, 100px wide. Its image takes the
+    // whole width, and the 1:1 ratio makes it 100px tall, which the box
+    // takes as the size of its single line.
+    let (mut parent, mut image) = (0, 0);
+    let doc = laid_out_with_natural_size((1.0, 1.0), |doc, body| {
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:relative;width:200px;height:100px"),
+        );
+        parent = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("position:absolute;writing-mode:vertical-rl;width:50%"),
+        );
+        image = doc.append_element(Some(parent), "img", Style::default(), Some("width:100%"));
+    });
+    assert_eq!(size(&doc, image), (100.0, 100.0));
+    assert_eq!(size(&doc, parent), (100.0, 100.0));
 }

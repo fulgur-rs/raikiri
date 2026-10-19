@@ -79,6 +79,65 @@ fn painting_properties_are_listed_as_declarations() {
 }
 
 #[test]
+fn stroke_and_rule_properties_are_listed_as_declarations() {
+    let elements = declarations(
+        "<style>path{fill-rule:EvenOdd;stroke-linecap:round;stroke-linejoin:arcs;\
+         stroke-miterlimit:2;stroke-dasharray:4px,2;stroke-dashoffset:-1px}\
+         .k{clip-rule:evenodd}</style>\
+         <svg width=20 height=20><path class=k /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            1,
+            "fill-rule:evenodd!important;clip-rule:evenodd!important;stroke-linecap:round!important;stroke-linejoin:miter!important;stroke-miterlimit:2!important;stroke-dasharray:4px 2!important;stroke-dashoffset:-1px!important;"
+        )]
+    );
+}
+
+#[test]
+fn css_wide_stroke_keywords_are_listed_as_declarations() {
+    let elements = declarations(
+        "<style>path{stroke-dasharray:initial;stroke-linecap:inherit;stroke-miterlimit:unset;\
+         stroke-dashoffset:initial}</style><svg width=20 height=20><path /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            1,
+            "stroke-linecap:inherit!important;stroke-miterlimit:inherit!important;stroke-dasharray:none!important;stroke-dashoffset:0!important;"
+        )]
+    );
+}
+
+#[test]
+fn a_rule_on_the_root_lists_its_stroke_and_rule_properties() {
+    let elements = declarations(
+        "<style>svg{stroke-dasharray:3 1;fill-rule:evenodd;visibility:visible}</style>\
+         <svg width=20 height=20><rect /></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            0,
+            "fill-rule:evenodd!important;stroke-dasharray:3 1!important;"
+        )]
+    );
+}
+
+#[test]
 fn css_wide_painting_keywords_are_listed_as_declarations() {
     let elements = declarations(
         "<style>rect{fill:inherit;stroke:unset;stroke-width:initial}</style>\

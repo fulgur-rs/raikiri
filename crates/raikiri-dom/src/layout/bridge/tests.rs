@@ -2757,14 +2757,12 @@ fn a_size_that_is_no_keyword_is_no_content_limit() {
 }
 
 #[test]
-fn unsupported_box_content_limits_record_none() {
+fn unsupported_generic_box_content_limits_record_none() {
     use crate::taffy_impl::content_limits::ContentLimits;
 
     let keyword = "min-width:min-content;max-height:max-content";
     let block = format!("display:block;{keyword}");
     let cases: Vec<(&str, &str, String)> = vec![
-        // Tables that size themselves.
-        ("display:block", "div", format!("display:table;{keyword}")),
         // An inline-level box.
         ("display:block", "span", format!("display:inline;{keyword}")),
         (
@@ -2777,10 +2775,7 @@ fn unsupported_box_content_limits_record_none() {
             "div",
             format!("display:grid;{keyword};writing-mode:vertical-rl"),
         ),
-        // A replaced element, a multicol container and a box in its columns.
-        ("display:block", "img", block.clone()),
-        ("display:block", "img", format!("display:flex;{keyword}")),
-        ("display:block", "img", format!("display:grid;{keyword}")),
+        // A multicol container and a box in its columns.
         ("display:block", "div", format!("{block};column-count:2")),
         ("display:block;column-count:2", "div", block.clone()),
         // A vertical box writes on physical axes different from its parent.
@@ -2904,13 +2899,6 @@ fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
                 "img",
                 &format!("{width};position:absolute"),
             ),
-            // A multicol container has no intrinsic inline size yet.
-            ("display:block", "div", &format!("{width};column-count:2")),
-            (
-                "display:block",
-                "div",
-                &format!("{width};column-width:10px"),
-            ),
         ]);
         assert!(
             widths.iter().all(|width| *width == Dimension::auto()),
@@ -2982,29 +2970,19 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
                 "div",
                 "display:block;width:max-content;min-width:calc(0% + 0px)"
             ),
+            // A multicol container is sized by its columns.
             (
                 "display:block",
                 "div",
                 "display:block;column-width:10px;width:max-content;"
             ),
+            (
+                "display:flex",
+                "div",
+                "display:block;column-count:2;width:max-content;"
+            ),
         ]),
-        [
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            Dimension::auto()
-        ],
+        [keyword; 16],
     );
 }
 
@@ -3397,4 +3375,5 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
     }
 }
 
+mod content_limit_bridge_tests;
 mod replaced_sizing_tests;

@@ -1506,11 +1506,11 @@ pub(crate) fn apply_winners(
                 crate::property::PropertyKey::BlockSize => sizes.block_size = rank,
                 _ => {}
             }
-            // A paint attribute that wins is already in the SVG source; only a
+            // A painting attribute that wins is already in the SVG source; only a
             // stylesheet declaration, or a rollback to the attribute, is exported.
             let winning_paint_hint = winner.rank
                 == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false)
-                && svg_property_is_paint(winner_key);
+                && winner_key.is_svg_presentation();
             if let Some(properties) = svg_properties.as_deref_mut()
                 && svg_property_is_exported(winner_key)
                 && !winning_paint_hint
@@ -1581,76 +1581,22 @@ fn svg_color_is_current_color(source: &str) -> bool {
     parser.expect_ident_matching("currentcolor").is_ok() && parser.expect_exhausted().is_ok()
 }
 
-/// The initial value of an SVG presentation property, as the SVG renderer
-/// reads it (SVG 2 §13).
-/// The value of the SVG presentation property `key` with the given text.
-fn svg_presentation_value(key: crate::property::PropertyKey, text: &str) -> PropertyValue {
-    use crate::property::PropertyKey::*;
-    let text = text.into();
-    match key {
-        Fill => PropertyValue::Fill(text),
-        Stroke => PropertyValue::Stroke(text),
-        FillOpacity => PropertyValue::FillOpacity(text),
-        StrokeOpacity => PropertyValue::StrokeOpacity(text),
-        _ => PropertyValue::StrokeWidth(text),
-    }
-}
-
-fn svg_presentation_initial(key: crate::property::PropertyKey) -> &'static str {
-    use crate::property::PropertyKey::*;
-    match key {
-        Fill => "black",
-        Stroke => "none",
-        _ => "1",
-    }
-}
-
-/// Whether `key` is one of the SVG painting properties: `fill`, `stroke` and
-/// their opacities and width.
-fn svg_property_is_paint(key: crate::property::PropertyKey) -> bool {
-    use crate::property::PropertyKey::*;
-    matches!(
-        key,
-        Fill | Stroke | FillOpacity | StrokeOpacity | StrokeWidth
-    )
-}
-
 fn svg_property_is_exported(key: crate::property::PropertyKey) -> bool {
     use crate::property::PropertyKey::*;
-    matches!(
-        key,
-        Color
-            | FontFamily
-            | FontSize
-            | FontWeight
-            | FontStyle
-            | Visibility
-            | Display
-            | Opacity
-            | Fill
-            | Stroke
-            | FillOpacity
-            | StrokeOpacity
-            | StrokeWidth
-    )
+    key.is_svg_presentation()
+        || matches!(
+            key,
+            Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility | Display | Opacity
+        )
 }
 
 fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
     use crate::property::PropertyKey::*;
-    matches!(
-        key,
-        Color
-            | FontFamily
-            | FontSize
-            | FontWeight
-            | FontStyle
-            | Visibility
-            | Fill
-            | Stroke
-            | FillOpacity
-            | StrokeOpacity
-            | StrokeWidth
-    )
+    key.is_svg_presentation()
+        || matches!(
+            key,
+            Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility
+        )
 }
 
 fn svg_property_expression(value: &PropertyValue) -> Option<String> {
@@ -1682,7 +1628,14 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Stroke(text)
         | PropertyValue::FillOpacity(text)
         | PropertyValue::StrokeOpacity(text)
-        | PropertyValue::StrokeWidth(text) => Some(text.to_string()),
+        | PropertyValue::StrokeWidth(text)
+        | PropertyValue::FillRule(text)
+        | PropertyValue::ClipRule(text)
+        | PropertyValue::StrokeLinecap(text)
+        | PropertyValue::StrokeLinejoin(text)
+        | PropertyValue::StrokeMiterlimit(text)
+        | PropertyValue::StrokeDasharray(text)
+        | PropertyValue::StrokeDashoffset(text) => Some(text.to_string()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
         PropertyValue::FontWeight(FontWeightValue::Lighter) => Some("lighter".into()),
         // `<absolute-size>` keywords keep their computed px size. SVG
@@ -2448,17 +2401,15 @@ pub(crate) fn resolve_defaulting_value(
             }
             // The SVG renderer inherits these itself: an `inherit` or `unset`
             // is exported as the keyword, and `initial` as the initial value.
-            key @ (crate::property::PropertyKey::Fill
-            | crate::property::PropertyKey::Stroke
-            | crate::property::PropertyKey::FillOpacity
-            | crate::property::PropertyKey::StrokeOpacity
-            | crate::property::PropertyKey::StrokeWidth) => {
+            key if key.is_svg_presentation() => {
                 let text = if initial {
-                    svg_presentation_initial(key)
+                    key.svg_presentation_initial()
                 } else {
-                    "inherit"
+                    Some("inherit")
                 };
-                return svg_presentation_value(key, text);
+                return text
+                    .and_then(|text| PropertyValue::svg_presentation(key, text.into()))
+                    .unwrap_or(value);
             }
             crate::property::PropertyKey::VerticalAlign => {
                 return PropertyValue::VerticalAlign(if keyword == CssWideKeyword::Inherit {
@@ -3322,6 +3273,13 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::FillOpacity(_)
         | PropertyValue::StrokeOpacity(_)
         | PropertyValue::StrokeWidth(_)
+        | PropertyValue::FillRule(_)
+        | PropertyValue::ClipRule(_)
+        | PropertyValue::StrokeLinecap(_)
+        | PropertyValue::StrokeLinejoin(_)
+        | PropertyValue::StrokeMiterlimit(_)
+        | PropertyValue::StrokeDasharray(_)
+        | PropertyValue::StrokeDashoffset(_)
         | PropertyValue::ColumnSpan(_)
         | PropertyValue::Columns(_)
         | PropertyValue::ColumnRule(_)
@@ -3891,12 +3849,19 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ColumnCount(value) => target.column_count = value,
         PropertyValue::ColumnFill(value) => target.column_fill = value,
         PropertyValue::TextGroupAlign(value) => target.text_group_align = value,
-        // Only the SVG export reads these: see `PropertyValue::SvgPresentation`.
+        // Only the SVG export reads these: see `PropertyKey::is_svg_presentation`.
         PropertyValue::Fill(_)
         | PropertyValue::Stroke(_)
         | PropertyValue::FillOpacity(_)
         | PropertyValue::StrokeOpacity(_)
-        | PropertyValue::StrokeWidth(_) => {}
+        | PropertyValue::StrokeWidth(_)
+        | PropertyValue::FillRule(_)
+        | PropertyValue::ClipRule(_)
+        | PropertyValue::StrokeLinecap(_)
+        | PropertyValue::StrokeLinejoin(_)
+        | PropertyValue::StrokeMiterlimit(_)
+        | PropertyValue::StrokeDasharray(_)
+        | PropertyValue::StrokeDashoffset(_) => {}
         PropertyValue::ColumnSpan(value) => target.column_span = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
         PropertyValue::ColumnRuleWidth(value) => {

@@ -67,6 +67,7 @@ mod page_pipeline;
 mod relative;
 mod root_box;
 pub(crate) mod sanitize;
+#[cfg(test)]
 mod static_position;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -86,6 +87,7 @@ use sanitize::*;
 #[cfg(test)]
 pub(crate) use bridge::apply_computed_to_style;
 pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
+pub(crate) use multicol::spanning::is_spanner;
 pub(crate) use multicol::{
     compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
 };

@@ -192,11 +192,17 @@ fn apply_computed_to_style_in_session_inner(
             continue;
         }
         let vertical_sized = vertical_logical_sized(cascade, idx);
+        let raw_cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         let values = layout_values(doc, cascade, idx, vertical_sized.as_ref());
         let cv = &*values;
         // Taffy does not carry CSS `order` in Style. Retain the computed value
         // on Node so flex/grid child traversal can build order-modified order.
         doc.nodes[idx].order = cv.order;
+        // Block-flow static positions use CSS text alignment, including the
+        // last-line override, which is more expressive than Taffy's legacy
+        // `text_align` field.
+        doc.nodes[idx].static_position_text_align = cv.text_align;
+        doc.nodes[idx].static_position_text_align_last = cv.text_align_last;
         // Carry multicol settings into the Taffy dispatch seam. Taffy has no
         // native multicol style fields, so the custom strategy reads this
         // side-channel while the ordinary Style remains Taffy-compatible.
@@ -392,8 +398,18 @@ fn apply_computed_to_style_in_session_inner(
             &mut calc_values,
             &mut doc.context.layout_warnings,
         );
-        doc.nodes[idx].content_limits =
-            bridge_content_limits(cv, &mut calc_values, &mut doc.context.layout_warnings);
+        let content_limit_values = if crate::taffy_impl::is_table_box(raw_cv.display)
+            || crate::paint_rules::is_replaced_element(doc.document, idx)
+        {
+            raw_cv
+        } else {
+            cv
+        };
+        doc.nodes[idx].content_limits = bridge_content_limits(
+            content_limit_values,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
         bridge_border(&mut style, cv, &mut doc.context.layout_warnings);
         bridge_box_sizing(&mut style, cv);
         bridge_flex(
@@ -871,7 +887,6 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// measures. The others keep sizing themselves as if the size were `auto`:
 /// - a replaced element takes its natural size, and an `auto` size is what
 ///   transfers its aspect ratio;
-/// - a multicol container has no intrinsic inline size yet;
 /// - a vertical flex or grid item takes its inline size from the height, which
 ///   the container's algorithm sizes along its physical axes;
 /// - a flex or grid item with a `min-width` or `max-width` is measured by Taffy
@@ -883,9 +898,7 @@ fn sized_by_content_keyword(
     idx: usize,
     cv: &ComputedValues,
 ) -> bool {
-    if crate::paint_rules::is_replaced_element(doc, idx)
-        || multicol_style_from_computed(cv).is_some_and(|_| !lays_out_without_columns(cv.display))
-    {
+    if crate::paint_rules::is_replaced_element(doc, idx) {
         return false;
     }
     if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {

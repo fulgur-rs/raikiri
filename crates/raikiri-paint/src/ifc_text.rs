@@ -518,96 +518,132 @@ fn draw_line_highlights(
     line_index: usize,
     place: impl Fn(f32, f32) -> (f32, f32),
 ) {
+    let line_range = line.text_range();
+    let Some(offset_mapping) = line.offset_mapping() else {
+        return;
+    };
+    for highlight in highlights.custom_highlights {
+        let Some(color) = highlight_background(highlights.paragraph.cascade, highlight) else {
+            continue;
+        };
+        let Some(selection) = highlight_selection(
+            highlight,
+            &line_range,
+            offset_mapping,
+            hit_layout,
+            line_index,
+        ) else {
+            continue;
+        };
+        fill_highlight(
+            paint,
+            highlights,
+            highlight.node,
+            css_color_to_peniko(color),
+            &selection,
+            &place,
+        );
+    }
+}
+
+/// The background `highlight` paints, or `None` when its text is hidden or
+/// the cascade has no `::highlight()` background for its name.
+fn highlight_background(
+    cascade: &CascadeResult,
+    highlight: &crate::TextHighlightRange,
+) -> Option<CssColor> {
+    let values = cascade.computed.get(highlight.node);
+    // Hidden text is laid out but not painted, and neither is its
+    // highlight. Its line can still hold visible text.
+    if values
+        .is_some_and(|values| values.visibility != raikiri_style::property::Visibility::Visible)
+    {
+        return None;
+    }
+    let foreground = values.map_or(CssColor::BLACK, |values| values.color);
+    cascade.custom_highlight_background(&highlight.name, foreground)
+}
+
+/// The rectangles, in the logical coordinates of `hit_layout`, that
+/// `highlight` selects on line `line_index` of it, or `None` when it selects
+/// nothing on the line whose text is `line_range`.
+fn highlight_selection(
+    highlight: &crate::TextHighlightRange,
+    line_range: &std::ops::Range<usize>,
+    offset_mapping: &shodo::mapping::OffsetMapping,
+    hit_layout: &LineLayout<'_>,
+    line_index: usize,
+) -> Option<Vec<shodo::geometry::LogicalRect>> {
+    let start_byte = u32::try_from(highlight.start_byte).ok()?;
+    let end_byte = u32::try_from(highlight.end_byte).ok()?;
+    let node = NodeId(highlight.node as u64);
+    let (start_offset, start_affinity) = offset_mapping.dom_to_text(node, start_byte)?;
+    let (end_offset, end_affinity) = offset_mapping.dom_to_text(node, end_byte)?;
+    if start_offset >= end_offset
+        || (start_offset as usize) < line_range.start
+        || (end_offset as usize) > line_range.end
+    {
+        return None;
+    }
+    let selection = hit_layout.selection_rects(
+        TextPosition {
+            line: line_index,
+            offset: start_offset,
+            affinity: start_affinity,
+        },
+        TextPosition {
+            line: line_index,
+            offset: end_offset,
+            affinity: end_affinity,
+        },
+    );
+    (!selection.is_empty()).then_some(selection)
+}
+
+/// Fill `selection`, the rectangles one highlight selects on a line, with
+/// `color`. The highlight paints with its text node `node`, in the groups of
+/// the inline elements around it.
+fn fill_highlight(
+    paint: &mut typographic::TypographicPaint,
+    highlights: &LineHighlights<'_>,
+    node: usize,
+    color: peniko::Color,
+    selection: &[shodo::geometry::LogicalRect],
+    place: &impl Fn(f32, f32) -> (f32, f32),
+) {
     let Paragraph {
         document,
         cascade,
         root_id,
     } = highlights.paragraph;
     let position = highlights.position;
-    let line_range = line.text_range();
-    let Some(offset_mapping) = line.offset_mapping() else {
-        return;
-    };
-    for highlight in highlights.custom_highlights {
-        let values = cascade.computed.get(highlight.node);
-        // Hidden text is laid out but not painted, and neither is its
-        // highlight. Its line can still hold visible text.
-        if values
-            .is_some_and(|values| values.visibility != raikiri_style::property::Visibility::Visible)
-        {
-            continue;
-        }
-        let foreground = values.map_or(raikiri_style::CssColor::BLACK, |values| values.color);
-        let Some(color) = cascade.custom_highlight_background(&highlight.name, foreground) else {
-            continue;
-        };
-        let (Ok(start_byte), Ok(end_byte)) = (
-            u32::try_from(highlight.start_byte),
-            u32::try_from(highlight.end_byte),
-        ) else {
-            continue;
-        };
-        let node = NodeId(highlight.node as u64);
-        let Some((start_offset, start_affinity)) = offset_mapping.dom_to_text(node, start_byte)
-        else {
-            continue;
-        };
-        let Some((end_offset, end_affinity)) = offset_mapping.dom_to_text(node, end_byte) else {
-            continue;
-        };
-        if start_offset >= end_offset
-            || (start_offset as usize) < line_range.start
-            || (end_offset as usize) > line_range.end
-        {
-            continue;
-        }
-        let selection = hit_layout.selection_rects(
-            TextPosition {
-                line: line_index,
-                offset: start_offset,
-                affinity: start_affinity,
-            },
-            TextPosition {
-                line: line_index,
-                offset: end_offset,
-                affinity: end_affinity,
-            },
+    let (offset_x, offset_y) = cumulative_offset(document, root_id, highlights.offsets, node);
+    let group = paint.element_group(
+        highlights.paragraph,
+        paint_box(document, cascade, node, node),
+    );
+    let scene = paint.target(group);
+    for selected in selection {
+        let (inline_a, block_a) = place(selected.inline_start, selected.block_start);
+        let (inline_b, block_b) = place(
+            selected.inline_start + selected.inline_size,
+            selected.block_start + selected.block_size,
         );
-        if selection.is_empty() {
-            continue;
-        }
-        let color = css_color_to_peniko(color);
-        let (offset_x, offset_y) =
-            cumulative_offset(document, root_id, highlights.offsets, highlight.node);
-        // The highlight paints with its text, in the groups of the inline
-        // elements around it.
-        let group = paint.element_group(
-            highlights.paragraph,
-            paint_box(document, cascade, highlight.node, highlight.node),
+        let placed = highlights.converter.rect(shodo::geometry::LogicalRect {
+            inline_start: inline_a.min(inline_b),
+            block_start: block_a.min(block_b),
+            inline_size: (inline_b - inline_a).abs(),
+            block_size: (block_b - block_a).abs(),
+        });
+        let x = position.x + offset_x + placed.x;
+        let y = position.y + position.shift_y + offset_y + placed.y;
+        let rect = Rect::new(
+            f64::from(x),
+            f64::from(y),
+            f64::from(x + placed.width),
+            f64::from(y + placed.height),
         );
-        let scene = paint.target(group);
-        for selected in selection {
-            let (inline_a, block_a) = place(selected.inline_start, selected.block_start);
-            let (inline_b, block_b) = place(
-                selected.inline_start + selected.inline_size,
-                selected.block_start + selected.block_size,
-            );
-            let placed = highlights.converter.rect(shodo::geometry::LogicalRect {
-                inline_start: inline_a.min(inline_b),
-                block_start: block_a.min(block_b),
-                inline_size: (inline_b - inline_a).abs(),
-                block_size: (block_b - block_a).abs(),
-            });
-            let x = position.x + offset_x + placed.x;
-            let y = position.y + position.shift_y + offset_y + placed.y;
-            let rect = Rect::new(
-                f64::from(x),
-                f64::from(y),
-                f64::from(x + placed.width),
-                f64::from(y + placed.height),
-            );
-            scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
-        }
+        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
     }
 }
 

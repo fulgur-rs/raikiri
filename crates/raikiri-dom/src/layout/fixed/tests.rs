@@ -28,6 +28,18 @@ fn laid_out_with(
     wrapper_css: &str,
     fixed_css: &str,
 ) -> (Document, usize) {
+    laid_out_with_text(html_css, body_css, parent_css, wrapper_css, fixed_css, "")
+}
+
+/// [`laid_out_with`] with the text `wrapper_text` before the innermost div.
+fn laid_out_with_text(
+    html_css: &str,
+    body_css: &str,
+    parent_css: &str,
+    wrapper_css: &str,
+    fixed_css: &str,
+    wrapper_text: &str,
+) -> (Document, usize) {
     let mut doc = Document::new();
     let html = doc.append_element(
         Some(0),
@@ -52,6 +64,9 @@ fn laid_out_with(
     add(&mut doc, body, "height:50px");
     let parent = add(&mut doc, body, parent_css);
     let wrapper = add(&mut doc, parent, wrapper_css);
+    if !wrapper_text.is_empty() {
+        doc.append_text(wrapper, wrapper_text);
+    }
     let fixed = add(&mut doc, wrapper, fixed_css);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
@@ -1306,4 +1321,178 @@ fn overflowing_absolute_boxes_keep_the_main_axis_alignment_of_a_flex_container()
         );
         assert_eq!(absolute_rect(&doc, abspos), (3.0, y, 8.0, 6.0), "{justify}");
     }
+}
+
+/// The border box of a 50x50 absolutely positioned box styled `abs_css` in a
+/// 75x50 block with a 5px border and `block_css`, which sits in a relative
+/// 100x100 container with a 1px border. The block's content box spans x = 6
+/// to 81 and starts at y = 56.
+fn aligned_in_block(block_css: &str, abs_css: &str) -> (f32, f32, f32, f32) {
+    let (doc, abs) = laid_out(
+        "position:relative;width:100px;height:100px;border:1px solid",
+        &format!("width:75px;height:50px;border:5px solid;{block_css}"),
+        &format!("position:absolute;width:50px;height:50px;{abs_css}"),
+    );
+    absolute_rect(&doc, abs)
+}
+
+#[test]
+fn an_absolute_box_in_a_block_is_aligned_in_the_static_position_rectangle() {
+    // The rectangle spans the content box in the inline axis and is a line
+    // at the box's hypothetical position in the block axis.
+    assert_eq!(aligned_in_block("", ""), (6.0, 56.0, 50.0, 50.0));
+    for (alignment, expected) in [
+        ("start", (6.0, 56.0)),
+        ("normal", (6.0, 56.0)),
+        ("stretch", (6.0, 56.0)),
+        ("end", (31.0, 6.0)),
+        ("flex-end", (31.0, 6.0)),
+        ("center", (18.5, 31.0)),
+    ] {
+        let rect = aligned_in_block(
+            "",
+            &format!("justify-self:{alignment};align-self:{alignment}"),
+        );
+        assert_eq!(rect, (expected.0, expected.1, 50.0, 50.0), "{alignment}");
+    }
+    // Each axis has its own alignment.
+    assert_eq!(
+        aligned_in_block("", "justify-self:end"),
+        (31.0, 56.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_block("", "align-self:center"),
+        (6.0, 31.0, 50.0, 50.0)
+    );
+}
+
+#[test]
+fn an_absolute_box_in_a_block_follows_the_justify_items_of_its_container() {
+    let abs = "";
+    assert_eq!(
+        aligned_in_block("justify-items:end", abs),
+        (31.0, 56.0, 50.0, 50.0)
+    );
+    // The box's own `justify-self` wins.
+    assert_eq!(
+        aligned_in_block("justify-items:end", "justify-self:center"),
+        (18.5, 56.0, 50.0, 50.0)
+    );
+    // Block containers have no `align-items`.
+    assert_eq!(
+        aligned_in_block("align-items:end", abs),
+        (6.0, 56.0, 50.0, 50.0)
+    );
+}
+
+#[test]
+fn an_absolute_box_in_a_block_aligns_with_the_side_it_names_in_a_right_to_left_container() {
+    // The start side is the right one.
+    assert_eq!(
+        aligned_in_block("direction:rtl", ""),
+        (31.0, 56.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_block("direction:rtl", "justify-self:start"),
+        (31.0, 56.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_block("direction:rtl", "justify-self:end"),
+        (6.0, 56.0, 50.0, 50.0)
+    );
+}
+
+#[test]
+fn an_inset_takes_its_axis_out_of_the_static_position_rectangle() {
+    // Only an axis with both insets `auto` is aligned in the rectangle. With
+    // one inset the box sits at that inset, and with both it is aligned in
+    // the containing block, the padding box of the container.
+    assert_eq!(
+        aligned_in_block("", "justify-self:end;align-self:end;top:0"),
+        (31.0, 51.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_block("", "justify-self:end;align-self:end;left:0"),
+        (1.0, 6.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_block("", "justify-self:end;align-self:end;top:0;bottom:0"),
+        (31.0, 101.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_block("", "justify-self:end;align-self:end;left:0;right:0"),
+        (51.0, 6.0, 50.0, 50.0)
+    );
+}
+
+/// [`aligned_in_block`] for a block that holds a 10px line of text before the
+/// box, so that the box is placed among inline content: it would have started
+/// below the line, at y = 66.
+fn aligned_in_text_block(block_css: &str, abs_css: &str) -> (f32, f32, f32, f32) {
+    let (doc, abs) = laid_out_with_text(
+        "",
+        "",
+        "position:relative;width:100px;height:100px;border:1px solid",
+        &format!("width:75px;height:50px;border:5px solid;font-size:10px;{block_css}"),
+        &format!("position:absolute;width:50px;height:50px;{abs_css}"),
+        "X",
+    );
+    absolute_rect(&doc, abs)
+}
+
+#[test]
+fn an_absolute_box_among_inline_content_is_aligned_in_the_static_position_rectangle() {
+    assert_eq!(aligned_in_text_block("", ""), (6.0, 66.0, 50.0, 50.0));
+    for (alignment, expected) in [
+        ("start", (6.0, 66.0)),
+        ("normal", (6.0, 66.0)),
+        ("end", (31.0, 16.0)),
+        ("center", (18.5, 41.0)),
+    ] {
+        let rect = aligned_in_text_block(
+            "",
+            &format!("justify-self:{alignment};align-self:{alignment}"),
+        );
+        assert_eq!(rect, (expected.0, expected.1, 50.0, 50.0), "{alignment}");
+    }
+    // The container's `justify-items` stands for an `auto` `justify-self`.
+    assert_eq!(
+        aligned_in_text_block("justify-items:end", ""),
+        (31.0, 66.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_text_block("justify-items:end", "justify-self:start"),
+        (6.0, 66.0, 50.0, 50.0)
+    );
+}
+
+#[test]
+fn an_absolute_box_among_inline_content_follows_the_direction_of_its_container() {
+    // `start` is the right side in a right-to-left container.
+    assert_eq!(
+        aligned_in_text_block("direction:rtl", ""),
+        (31.0, 66.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_text_block("direction:rtl", "justify-self:end"),
+        (6.0, 66.0, 50.0, 50.0)
+    );
+}
+
+#[test]
+fn an_absolute_box_among_inline_content_keeps_the_alignment_of_the_axis_an_inset_leaves() {
+    // An inset takes its axis out of the rectangle; the other axis stays aligned.
+    assert_eq!(
+        aligned_in_text_block("", "justify-self:end;align-self:end;top:0"),
+        (31.0, 51.0, 50.0, 50.0)
+    );
+    assert_eq!(
+        aligned_in_text_block("", "justify-self:end;align-self:end;left:0"),
+        (1.0, 16.0, 50.0, 50.0)
+    );
+    // `justify-items` and the direction act together.
+    assert_eq!(
+        aligned_in_text_block("direction:rtl;justify-items:end", ""),
+        (6.0, 66.0, 50.0, 50.0)
+    );
 }

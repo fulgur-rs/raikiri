@@ -276,6 +276,68 @@ fn inline_svg_export_carries_stylesheet_fill_and_stroke() {
     assert_eq!(pixel(3, 10), &[0, 255, 0, 255], "the stroke");
 }
 
+/// Every property the cascade exports for an inline SVG is one the SVG
+/// backend accepts, on the root and on a descendant.
+#[test]
+fn the_svg_backend_accepts_every_painting_property_the_cascade_exports() {
+    let source = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><rect width='5' height='5'/></svg>";
+    let svg = raikiri_svg::SvgDocument::parse(source.as_bytes()).unwrap();
+    for (_, name, _) in raikiri_style::PropertyKey::SVG_PRESENTATION {
+        let declarations = format!("{name}:inherit!important");
+        for element_index in [0, 1] {
+            let elements = [raikiri_svg::SvgElementStyle {
+                element_index,
+                declarations: &declarations,
+            }];
+            svg.styled_source_with_resolved_styles(
+                raikiri_svg::SvgViewport {
+                    width: 20.0,
+                    height: 20.0,
+                },
+                raikiri_svg::SvgRootStyle::default(),
+                [0, 0, 0, 255],
+                raikiri_svg::SvgRootFont {
+                    size: 12.0,
+                    family: "sans-serif",
+                    weight: 400.0,
+                    style: "normal",
+                },
+                &elements,
+            )
+            .unwrap_or_else(|error| panic!("{name} on element {element_index}: {error}"));
+        }
+    }
+}
+
+#[test]
+fn inline_svg_export_carries_stylesheet_dashes_and_fill_rule() {
+    let result = laid_out(
+        "<style>@page{size:100px 100px;margin:0}svg{display:block}path.line{fill:none;stroke:blue;stroke-width:4px;stroke-dasharray:4 4}path.ring{fill:lime;fill-rule:evenodd}</style><svg width='20' height='20'><path class='line' d='M0 2h20'/><path class='ring' d='M2 6h16v12h-16z M6 9h8v6h-8z'/></svg>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let payload = page.inline_svg(&fragment).unwrap().unwrap();
+    let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 20.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &image.rgba[(y * 20 + x) * 4..(y * 20 + x) * 4 + 4];
+    assert_eq!(pixel(2, 2), &[0, 0, 255, 255], "inside a dash");
+    assert_eq!(pixel(6, 2)[3], 0, "inside a gap");
+    assert_eq!(pixel(4, 12), &[0, 255, 0, 255], "the ring");
+    assert_eq!(pixel(10, 12)[3], 0, "the hole the even-odd rule opens");
+}
+
 #[test]
 fn inline_svg_presentation_dimensions_yield_to_layered_author_css() {
     let document = dom(

@@ -19,8 +19,9 @@ const DECLARATION_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 pub struct InlineSvgElementDeclarations {
     /// Zero-based element preorder index within the SVG subtree, counting the
     /// root as index zero. The root is styled separately, so it is listed only
-    /// for the painting properties (`fill`, `stroke` and their opacities and
-    /// width) that its root style does not carry.
+    /// for the painting properties (`fill`, `stroke`, the stroke shape and dash
+    /// properties, their opacities and the fill and clip rules) that its root
+    /// style does not carry.
     pub element_index: usize,
     /// CSS declarations, each marked `!important`.
     pub declarations: String,
@@ -55,7 +56,7 @@ pub fn inline_svg_element_declarations(
             let properties = if element_index == 0 {
                 root_painting = properties
                     .iter()
-                    .filter(|property| is_painting_property(property.property))
+                    .filter(|property| property.property.is_svg_presentation())
                     .cloned()
                     .collect();
                 &root_painting[..]
@@ -101,28 +102,9 @@ pub fn svg_font_family(style: &ComputedValues) -> String {
         .join(",")
 }
 
-/// Whether `key` is one of the painting properties a page stylesheet gives to
-/// an SVG element: `fill`, `stroke` and their opacities and width.
-fn is_painting_property(key: PropertyKey) -> bool {
-    matches!(
-        key,
-        PropertyKey::Fill
-            | PropertyKey::Stroke
-            | PropertyKey::FillOpacity
-            | PropertyKey::StrokeOpacity
-            | PropertyKey::StrokeWidth
-    )
-}
-
-/// The CSS name of an SVG presentation property.
+/// The CSS name of an SVG painting property.
 fn svg_presentation_name(key: PropertyKey) -> &'static str {
-    match key {
-        PropertyKey::Fill => "fill",
-        PropertyKey::Stroke => "stroke",
-        PropertyKey::FillOpacity => "fill-opacity",
-        PropertyKey::StrokeOpacity => "stroke-opacity",
-        _ => "stroke-width",
-    }
+    key.svg_presentation_name().unwrap_or_default()
 }
 
 fn node_declarations(
@@ -144,7 +126,7 @@ fn node_declarations(
             style.font_family.iter().fold(128usize, |size, name| {
                 size.saturating_add(name.as_str().len().saturating_mul(8))
             })
-        } else if is_painting_property(property.property) && !property.inherited {
+        } else if property.property.is_svg_presentation() && !property.inherited {
             // The declared text is cloned and then copied into the
             // declaration, so a long `url(#...)` paint reaching many elements
             // counts twice per element.
@@ -165,11 +147,7 @@ fn node_declarations(
                 PropertyKey::FontFamily => "font-family",
                 PropertyKey::FontStyle => "font-style",
                 PropertyKey::FontWeight => "font-weight",
-                key @ (PropertyKey::Fill
-                | PropertyKey::Stroke
-                | PropertyKey::FillOpacity
-                | PropertyKey::StrokeOpacity
-                | PropertyKey::StrokeWidth) => svg_presentation_name(key),
+                key if key.is_svg_presentation() => svg_presentation_name(key),
                 _ => continue,
             };
             // SVG renderers such as usvg copy an ancestor's raw `font-size`
@@ -204,11 +182,7 @@ fn node_declarations(
                 PropertyKey::FontStyle => ("font-style", style.font_style.as_css_str().to_owned()),
                 PropertyKey::FontWeight => ("font-weight", style.font_weight.to_string()),
                 // Held by the declaration alone: no computed field carries them.
-                key @ (PropertyKey::Fill
-                | PropertyKey::Stroke
-                | PropertyKey::FillOpacity
-                | PropertyKey::StrokeOpacity
-                | PropertyKey::StrokeWidth) => {
+                key if key.is_svg_presentation() => {
                     let Some(value) = &property.expression else {
                         continue;
                     };

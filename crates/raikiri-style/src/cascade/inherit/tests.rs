@@ -12017,6 +12017,125 @@ fn svg_painting_properties_take_the_css_wide_keywords() {
 }
 
 #[test]
+fn svg_stroke_and_rule_properties_export_their_validated_text() {
+    let properties = svg_rect_properties(
+        "rect { fill-rule: EVENODD; clip-rule: evenodd; stroke-linecap: Round; \
+         stroke-linejoin: arcs; stroke-miterlimit: 2.50; stroke-dasharray: 4px,2 50%; \
+         stroke-dashoffset: -1EM }",
+        &[],
+        None,
+    );
+    for (key, text) in [
+        (PropertyKey::FillRule, "evenodd"),
+        (PropertyKey::ClipRule, "evenodd"),
+        (PropertyKey::StrokeLinecap, "round"),
+        (PropertyKey::StrokeLinejoin, "miter"),
+        (PropertyKey::StrokeMiterlimit, "2.5"),
+        (PropertyKey::StrokeDasharray, "4px 2 50%"),
+        (PropertyKey::StrokeDashoffset, "-1em"),
+    ] {
+        assert_eq!(
+            exported(&properties, key),
+            Some((false, Some(text.into()))),
+            "{key:?}"
+        );
+    }
+}
+
+#[test]
+fn an_invalid_stroke_or_rule_declaration_does_not_hide_an_earlier_one() {
+    let properties = svg_rect_properties(
+        "rect { fill-rule: evenodd; fill-rule: odd; stroke-miterlimit: 3; stroke-miterlimit: 0.5; \
+         stroke-dasharray: 4 2; stroke-dasharray: 4 -2; stroke-linecap: round; stroke-linecap: 4 }",
+        &[],
+        None,
+    );
+    for (key, text) in [
+        (PropertyKey::FillRule, "evenodd"),
+        (PropertyKey::StrokeMiterlimit, "3"),
+        (PropertyKey::StrokeDasharray, "4 2"),
+        (PropertyKey::StrokeLinecap, "round"),
+    ] {
+        assert_eq!(
+            exported(&properties, key),
+            Some((false, Some(text.into()))),
+            "{key:?}"
+        );
+    }
+}
+
+#[test]
+fn svg_stroke_and_rule_attributes_are_left_to_the_svg_unless_rolled_back_to() {
+    let attributes = [
+        ("fill-rule", "evenodd"),
+        ("stroke-dasharray", "3 1"),
+        ("stroke-linejoin", "round"),
+    ];
+    let properties = svg_rect_properties("", &attributes, None);
+    for key in [
+        PropertyKey::FillRule,
+        PropertyKey::StrokeDasharray,
+        PropertyKey::StrokeLinejoin,
+    ] {
+        assert_eq!(exported(&properties, key), None, "{key:?}");
+    }
+    let properties = svg_rect_properties(
+        "@layer a, b; @layer b { rect { fill-rule: revert-layer; stroke-dasharray: revert-layer; \
+         stroke-linejoin: revert-layer } }",
+        &attributes,
+        None,
+    );
+    for (key, text) in [
+        (PropertyKey::FillRule, "evenodd"),
+        (PropertyKey::StrokeDasharray, "3 1"),
+        (PropertyKey::StrokeLinejoin, "round"),
+    ] {
+        assert_eq!(
+            exported(&properties, key),
+            Some((false, Some(text.into()))),
+            "{key:?}"
+        );
+    }
+    // A stylesheet declaration outranks the attribute.
+    let properties = svg_rect_properties("rect { stroke-dasharray: 1 }", &attributes, None);
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeDasharray),
+        Some((false, Some("1".into())))
+    );
+}
+
+#[test]
+fn svg_stroke_and_rule_properties_take_variables_and_the_css_wide_keywords() {
+    let properties = svg_rect_properties(
+        "rect { --d: 6 3; stroke-dasharray: var(--d); stroke-linecap: inherit; \
+         clip-rule: unset; stroke-dashoffset: initial; stroke-miterlimit: initial; \
+         stroke-linejoin: initial; fill-rule: initial; }",
+        &[],
+        None,
+    );
+    for (key, expected) in [
+        (PropertyKey::StrokeDasharray, (false, "6 3")),
+        (PropertyKey::StrokeLinecap, (true, "inherit")),
+        (PropertyKey::ClipRule, (true, "inherit")),
+        (PropertyKey::StrokeDashoffset, (false, "0")),
+        (PropertyKey::StrokeMiterlimit, (false, "4")),
+        (PropertyKey::StrokeLinejoin, (false, "miter")),
+        (PropertyKey::FillRule, (false, "nonzero")),
+    ] {
+        assert_eq!(
+            exported(&properties, key),
+            Some((expected.0, Some(expected.1.into()))),
+            "{key:?}"
+        );
+    }
+    let properties = svg_rect_properties("rect { stroke-dasharray: initial }", &[], None);
+    assert_eq!(
+        exported(&properties, PropertyKey::StrokeDasharray),
+        Some((false, Some("none".into())))
+    );
+}
+
+#[test]
 fn overflow_clip_margin_inherits_explicitly() {
     let mut doc = TestDoc::new();
     let parent = doc.push_element(0, "div", Some("overflow-clip-margin: content-box 2em"));

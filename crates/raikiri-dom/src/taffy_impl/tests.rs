@@ -2,6 +2,22 @@ use super::*;
 use crate::layout::context::LayoutSession;
 
 #[test]
+fn leaf_intrinsic_ratio_derives_normal_image_ratio_and_ignores_inline_svg() {
+    let mut doc = crate::document::Document::new();
+    let image = doc.append_element(None, "img", Style::default(), None::<&str>);
+    let svg = doc.append_element(None, "svg", Style::default(), None::<&str>);
+    for idx in [image, svg] {
+        if let crate::node::NodeData::Element(element) = &mut doc.nodes[idx].data {
+            element.image_intrinsic_size = Some(raikiri_traits::IntrinsicBox::new(20.0, 10.0));
+        }
+    }
+    doc.nodes[svg].set_inline_svg_root(true);
+
+    assert_eq!(super::leaf_intrinsic_ratio(&doc.nodes[image]), Some(2.0));
+    assert_eq!(super::leaf_intrinsic_ratio(&doc.nodes[svg]), None);
+}
+
+#[test]
 fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
     use crate::layout::ifc::test_support::block_fixture_with_ahem;
 

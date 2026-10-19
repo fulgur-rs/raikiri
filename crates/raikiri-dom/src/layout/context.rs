@@ -24,6 +24,10 @@ pub(crate) struct LayoutContext {
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
     /// sizes (see `taffy_impl::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,
+    /// The flex container whose intrinsic widths are being measured, whose
+    /// items are bounded by their flex base sizes meanwhile (see
+    /// `with_flex_intrinsic_probe` in [`crate::taffy_impl`]).
+    pub(crate) flex_intrinsic_probe: Option<usize>,
     /// Definite block sizes retained as percentage bases for the direct
     /// children of boxes being measured for intrinsic height limits.
     pub(crate) content_limit_percentage_height_bases: Vec<(usize, f32)>,

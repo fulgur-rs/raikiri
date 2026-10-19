@@ -32,6 +32,27 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
         .map(|(width, height)| Size { width, height })
 }
 
+/// The preferred ratio a replaced leaf can use for size transfer.
+fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
+    let intrinsic = node.image_intrinsic_box()?;
+    intrinsic
+        .aspect_ratio
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+        .or_else(|| {
+            if node.is_inline_svg_root()
+                || !intrinsic.width.is_finite()
+                || !intrinsic.height.is_finite()
+                || intrinsic.width <= 0.0
+                || intrinsic.height <= 0.0
+            {
+                None
+            } else {
+                let ratio = intrinsic.width / intrinsic.height;
+                (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+            }
+        })
+}
+
 /// A `calc()` payload retained with the document's layout styles.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ArenaCalc {
@@ -750,7 +771,8 @@ impl LayoutSession<'_> {
                     );
                 let inline_shrink_wrap = ifc_table
                     || (tree.nodes[idx].display().is_atomic_inline_level()
-                        && tree.nodes[idx].display() != DisplayValue::InlineTable);
+                        && tree.nodes[idx].display() != DisplayValue::InlineTable)
+                    || is_floated_flex_or_grid(tree, idx);
                 // Size containment already gave the box its width.
                 let contained_width = tree.nodes[idx].size_containment.width && !empty;
                 if inline_shrink_wrap
@@ -827,10 +849,13 @@ impl LayoutSession<'_> {
             {
                 // CSS Sizing 3, intrinsic sizes: ratio-only replaced content
                 // uses the definite available inline size, not a 300px default.
-                let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
+                let mut resolver_style = tree.layout_node_with_style(idx).unwrap().style.clone();
+                resolver_style.aspect_ratio = Some(ratio);
+                let mut style = resolver_style.clone();
                 // Transfer the ratio in measurement only. Taffy's leaf ratio
                 // floor would otherwise override explicit/max heights.
                 style.aspect_ratio = None;
+                let limits = tree.nodes[idx].content_limits;
                 // An authored height gives an auto width through the ratio
                 // (CSS 2.1 10.3.2), also when no parent passes the height in
                 // as a known dimension; taffy's leaf then hands it to the
@@ -866,9 +891,25 @@ impl LayoutSession<'_> {
                                 AvailableSpace::MinContent => 0.0,
                                 AvailableSpace::MaxContent => intrinsic.width,
                             });
-                        Size {
+                        let natural = Size {
                             width,
                             height: known.height.unwrap_or(width / ratio),
+                        };
+                        let resolver_inputs = LayoutInput {
+                            known_dimensions: known,
+                            available_space: available,
+                            ..inputs
+                        };
+                        let resolved = replaced_size::auto_sides_size(
+                            &resolver_style,
+                            &resolver_inputs,
+                            natural,
+                            limits,
+                        )
+                        .unwrap_or(natural);
+                        Size {
+                            width: resolved.width,
+                            height: resolved.height,
                         }
                     },
                 );
@@ -881,11 +922,22 @@ impl LayoutSession<'_> {
             if is_leaf {
                 let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
+                let limits = tree.nodes[idx].content_limits;
+                // Natural ratios resolve intrinsic limits; without them,
+                // preserve Taffy's ordinary replaced sizing path.
+                if limits != content_limits::ContentLimits::NONE
+                    && style.aspect_ratio.is_none()
+                    && !tree.nodes[idx].size_containment.width
+                    && !tree.nodes[idx].size_containment.height
+                {
+                    style.aspect_ratio = leaf_intrinsic_ratio(&tree.nodes[idx]);
+                }
                 // A replaced leaf with an `auto` side takes its size from the
                 // ratio and the min/max sizes; Taffy's ratio floor on the
                 // leaf is switched off for it.
-                let constrained = leaf_intrinsic
-                    .and_then(|natural| replaced_size::auto_sides_size(&style, &inputs, natural));
+                let constrained = leaf_intrinsic.and_then(|natural| {
+                    replaced_size::auto_sides_size(&style, &inputs, natural, limits)
+                });
                 if constrained.is_some() {
                     style.aspect_ratio = None;
                 }
@@ -1004,6 +1056,8 @@ impl LayoutSession<'_> {
     }
 }
 
+#[cfg(test)]
+mod float_container_tests;
 #[cfg(test)]
 mod item_width_tests;
 #[cfg(test)]
@@ -1488,7 +1542,22 @@ fn measure_ifc_root(
             _ => 0.0,
         };
         let percent_height = measure.definite_height.filter(|_| !vertical);
-        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis, percent_height)
+        // A vertical paragraph's boxes are measured along their heights, and
+        // their percentage widths refer to the physical width the root has
+        // when it is known or stretched.
+        let physical_width = known_width
+            .or(match available.width {
+                AvailableSpace::Definite(size) if measure.stretched_width => Some(size),
+                _ => None,
+            })
+            .filter(|_| vertical);
+        crate::layout::ifc::boxes::intrinsics_of_boxes(
+            tree,
+            idx,
+            basis,
+            percent_height,
+            physical_width,
+        )
     } else {
         crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };
@@ -1514,6 +1583,14 @@ fn measure_ifc_root(
         min_content.max(box_intrinsics.blocks.0),
         max_content.max(box_intrinsics.blocks.1),
     );
+    // The lines of a multicol container are laid out in its columns, so the
+    // widths of the container repeat the widths of its lines.
+    let (min_content, max_content) = tree.nodes[idx]
+        .multicol
+        .filter(|style| style.horizontal && !vertical)
+        .map_or((min_content, max_content), |style| {
+            style.intrinsic_inline_sizes((min_content, max_content), (0.0, 0.0))
+        });
     let width = match inline_available {
         AvailableSpace::Definite(width) if inline_stretched => width,
         AvailableSpace::Definite(width) => width.max(min_content).min(max_content),
@@ -1907,6 +1984,201 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     last_baseline
 }
 
+/// Whether element `idx` is a flex or grid container that floats.
+///
+/// A float is shrink-to-fit like an inline-level box (CSS 2.1 section 10.3.5);
+/// Taffy sizes such a flex or grid container from the flex base sizes of its
+/// items instead, which differ from the fit-content size.
+fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].display().is_block_flex_or_grid_container()
+        && tree
+            .layout_node_with_style(idx)
+            .is_some_and(|node| node.style.float != taffy::Float::None)
+}
+
+/// The `flex-shrink`, `width`, `min-width` and `max-width` of a flex item, as a
+/// probe of the container's intrinsic sizes left them.
+struct FlexItemBounds {
+    idx: usize,
+    shrink: f32,
+    width: taffy::Dimension,
+    min: taffy::LengthPercentageAuto,
+    max: taffy::LengthPercentageAuto,
+    cache: Cache,
+}
+
+/// Run `probe`, which measures the intrinsic widths of the flex container
+/// `node_id`, with what Taffy leaves out of the measure put in place.
+///
+/// Taffy breaks the lines of a wrapping container at its own `max-width` even
+/// while it measures the container's max-content width, which is the width of
+/// a single line (CSS Flexbox §9.9.1). The container's `max-width` is dropped
+/// for the probe; the caller clamps the result by it. The items are bounded by
+/// their flex base sizes while the container lays them out
+/// ([`with_flex_item_basis_bounds`]).
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-sizes>
+fn with_flex_intrinsic_probe<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    probe: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let idx = usize::from(node_id);
+    let style = tree.layout_style_for_key_mut(idx).unwrap();
+    let container_max = style.max_size.width;
+    style.max_size.width = taffy::LengthPercentageAuto::auto();
+    let outer = tree.context.flex_intrinsic_probe.replace(idx);
+    let result = probe(tree);
+    tree.context.flex_intrinsic_probe = outer;
+    tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
+    result
+}
+
+/// Run `layout`, a layout of the row flex container `node_id`, with each item
+/// whose flex base size is a length bounded by it.
+///
+/// An item contributes at least its flex base size to the intrinsic widths of
+/// the container when it cannot shrink and at most that size when it cannot
+/// grow. Taffy clamps a measured contribution by the item's `min-width` and
+/// `max-width` only, so an empty `flex: 1 0 100px` item would contribute
+/// nothing. Each such bound is installed as the item's own bound, together
+/// with the bound the item already has, which is what a keyword `min-width`
+/// or `max-width` came to when the container began laying out its items.
+///
+/// Taffy takes the `width` of an item as its contribution without measuring
+/// the item, so a `width` the flex base size bounds is set to the bounded
+/// width instead of installing a bound. Where Taffy measures the item it
+/// clamps the contribution with the item's margins counted in, so the margins
+/// are counted in the upper bound as well and survive it.
+///
+/// spec: <https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions>
+fn with_flex_item_basis_bounds<R>(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let is_row = matches!(
+        tree.layout_node_with_style(usize::from(node_id))
+            .unwrap()
+            .style
+            .flex_direction,
+        taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+    );
+    let children: Vec<NodeId> = if is_row {
+        tree.child_ids(node_id).collect()
+    } else {
+        Vec::new()
+    };
+    let mut saved = Vec::new();
+    for child in children {
+        let child_idx = usize::from(child);
+        let style = &tree.layout_node_with_style(child_idx).unwrap().style;
+        if style.box_generation_mode() == BoxGenerationMode::None
+            || style.position == TaffyPosition::Absolute
+        {
+            continue;
+        }
+        let Some(basis) = crate::layout::resolve_dimension(style.flex_basis, None)
+            .filter(|basis| basis.is_finite())
+        else {
+            continue;
+        };
+        let (width, min, max) = (style.size.width, style.min_size.width, style.max_size.width);
+        // A percentage of the container's width, which the probe has not got,
+        // bounds nothing, and is no margin either.
+        let min_length = crate::layout::resolve_length_percentage_auto(min, None);
+        let max_length = crate::layout::resolve_length_percentage_auto(max, None);
+        let margins: f32 = [style.margin.left, style.margin.right]
+            .into_iter()
+            .map(|margin| {
+                crate::layout::resolve_length_percentage_auto(margin, None).unwrap_or(0.0)
+            })
+            .sum();
+        let (cannot_shrink, cannot_grow) = (style.flex_shrink == 0.0, style.flex_grow == 0.0);
+        let preferred = crate::layout::resolve_dimension(width, None);
+        // The flex base size floors the contribution, and then the item's own
+        // bounds clamp it, the minimum over the maximum.
+        let new_min = cannot_shrink.then(|| {
+            let floor = max_length.map_or(basis, |max| basis.min(max));
+            taffy::LengthPercentageAuto::length(min_length.map_or(floor, |min| min.max(floor)))
+        });
+        let new_max = (cannot_grow && preferred.is_none()).then(|| {
+            taffy::LengthPercentageAuto::length(
+                max_length.map_or(basis, |m| m.min(basis)) + margins,
+            )
+        });
+        let new_width = preferred
+            .filter(|_| cannot_shrink || cannot_grow)
+            .map(|preferred| {
+                let floored = if cannot_shrink {
+                    preferred.max(basis)
+                } else {
+                    preferred
+                };
+                taffy::Dimension::length(if cannot_grow {
+                    floored.min(basis)
+                } else {
+                    floored
+                })
+            });
+        if new_min.is_none() && new_max.is_none() && new_width.is_none() {
+            continue;
+        }
+        let style = tree.layout_style_for_key_mut(child_idx).unwrap();
+        // Taffy floors the contribution of an item that cannot shrink by its
+        // flex base size on its own, ahead of the item's maximum. The floor
+        // installed above has the maximum applied, so the item is shrinkable
+        // while the container is measured.
+        let shrink = style.flex_shrink;
+        if cannot_shrink {
+            style.flex_shrink = 1.0;
+        }
+        style.size.width = new_width.unwrap_or(width);
+        style.min_size.width = new_min.unwrap_or(min);
+        style.max_size.width = new_max.unwrap_or(max);
+        // The entries cached while the bounds differ answer no other layout.
+        let cache = std::mem::replace(&mut tree.nodes[child_idx].cache, Cache::new());
+        saved.push(FlexItemBounds {
+            idx: child_idx,
+            shrink,
+            width,
+            min,
+            max,
+            cache,
+        });
+    }
+    let result = layout(tree);
+    for item in saved {
+        let style = tree.layout_style_for_key_mut(item.idx).unwrap();
+        style.flex_shrink = item.shrink;
+        style.size.width = item.width;
+        style.min_size.width = item.min;
+        style.max_size.width = item.max;
+        tree.nodes[item.idx].cache = item.cache;
+    }
+    result
+}
+
+/// The border-box `min-width` and `max-width` of element `idx` that resolve
+/// against `parent_width`, the maximum no smaller than the minimum.
+fn border_box_width_bounds(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_width: Option<f32>,
+) -> (f32, f32) {
+    let style = &tree.layout_node_with_style(idx).unwrap().style;
+    let adjustment =
+        crate::layout::ifc::boxes::box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
+    let resolve = |value, auto: f32| {
+        crate::layout::resolve_length_percentage_auto(value, parent_width)
+            .filter(|resolved| resolved.is_finite())
+            .map_or(auto, |resolved| resolved + adjustment)
+    };
+    let min = resolve(style.min_size.width, 0.0);
+    let max = resolve(style.max_size.width, f32::INFINITY);
+    (min, max.max(min))
+}
+
 /// Shrink-to-fit layout for a width:auto inline-block.
 ///
 /// A width:auto inline-block sizes to its fit-content size: the preferred
@@ -1944,9 +2216,27 @@ fn compute_inline_block_shrink_wrap(
     // engine measures and lays out its content in the same steps below.
     let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty;
     let display = tree.nodes[idx].display();
-    let is_leaf = tree.nodes[idx].children.is_empty();
+    // An empty flex or grid container still runs its layout algorithm:
+    // explicit grid tracks contribute even when there are no items.
+    let is_leaf = tree.nodes[idx].children.is_empty()
+        && !matches!(
+            display,
+            DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+        );
+    let limits = tree.nodes[idx].content_limits;
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = tree.layout_node_with_style(idx).unwrap().style.clone();
+    if limits != content_limits::ContentLimits::NONE
+        && !empty
+        && !tree.nodes[idx].size_containment.width
+        && !tree.nodes[idx].size_containment.height
+        && leaf_style.aspect_ratio.is_none()
+    {
+        leaf_style.aspect_ratio = leaf_intrinsic_ratio(&tree.nodes[idx]);
+    }
     if empty {
         leaf_style.aspect_ratio = None;
     }
@@ -1961,6 +2251,7 @@ fn compute_inline_block_shrink_wrap(
                 ..inputs
             },
             natural,
+            limits,
         )
     });
     let leaf_intrinsic_before_width = leaf_auto_sides.or(leaf_intrinsic);
@@ -2021,11 +2312,11 @@ fn compute_inline_block_shrink_wrap(
                 ..inputs
             };
             match display {
-                DisplayValue::InlineFlex => flex_layout(tree, node_id, intrinsic_inputs).size.width,
-                DisplayValue::InlineGrid => {
-                    compute_grid_layout(tree, node_id, intrinsic_inputs)
-                        .size
-                        .width
+                DisplayValue::Flex | DisplayValue::InlineFlex => {
+                    flex_layout(tree, node_id, intrinsic_inputs).size.width
+                }
+                DisplayValue::Grid | DisplayValue::InlineGrid => {
+                    grid_layout(tree, node_id, intrinsic_inputs).size.width
                 }
                 _ if ifc_root => {
                     compute_ifc_root(tree, node_id, intrinsic_inputs, None)
@@ -2041,8 +2332,19 @@ fn compute_inline_block_shrink_wrap(
         }
     };
 
-    let min_w = intrinsic_width(tree, AvailableSpace::MinContent);
-    let max_w = intrinsic_width(tree, AvailableSpace::MaxContent);
+    let measure = |tree: &mut LayoutSession<'_>| {
+        (
+            intrinsic_width(tree, AvailableSpace::MinContent),
+            intrinsic_width(tree, AvailableSpace::MaxContent),
+        )
+    };
+    let (min_w, max_w) = if matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex) {
+        let (_, max_width) = border_box_width_bounds(tree, idx, inputs.parent_size.width);
+        let (min_w, max_w) = with_flex_intrinsic_probe(tree, node_id, measure);
+        (min_w.min(max_width), max_w.min(max_width))
+    } else {
+        measure(tree)
+    };
     let (lo, hi) = if min_w <= max_w {
         (min_w, max_w)
     } else {
@@ -2069,7 +2371,7 @@ fn compute_inline_block_shrink_wrap(
     if is_leaf {
         // The width is fixed now; the height follows it through the ratio.
         let fixed_width = leaf_intrinsic.and_then(|natural| {
-            replaced_size::auto_sides_size(&leaf_style, &final_inputs, natural)
+            replaced_size::auto_sides_size(&leaf_style, &final_inputs, natural, limits)
         });
         if fixed_width.is_some() {
             leaf_style.aspect_ratio = None;
@@ -2083,8 +2385,12 @@ fn compute_inline_block_shrink_wrap(
         })
     } else {
         match display {
-            DisplayValue::InlineFlex => flex_layout(tree, node_id, final_inputs),
-            DisplayValue::InlineGrid => grid_layout(tree, node_id, final_inputs),
+            DisplayValue::Flex | DisplayValue::InlineFlex => {
+                flex_layout(tree, node_id, final_inputs)
+            }
+            DisplayValue::Grid | DisplayValue::InlineGrid => {
+                grid_layout(tree, node_id, final_inputs)
+            }
             _ if ifc_root => compute_ifc_root(tree, node_id, final_inputs, block_ctx),
             _ => block_layout(tree, node_id, final_inputs, block_ctx),
         }
@@ -2388,7 +2694,15 @@ fn flex_layout_sized(
         node_id,
         inputs,
         basis,
-        |tree, node_id, inputs| compute_flexbox_layout(tree, node_id, inputs),
+        |tree, node_id, inputs| {
+            if tree.context.flex_intrinsic_probe == Some(idx) {
+                with_flex_item_basis_bounds(tree, node_id, |tree| {
+                    compute_flexbox_layout(tree, node_id, inputs)
+                })
+            } else {
+                compute_flexbox_layout(tree, node_id, inputs)
+            }
+        },
     );
     if inputs.run_mode == RunMode::PerformLayout {
         oof::layout_local_oof(tree, node_id, &mut output);

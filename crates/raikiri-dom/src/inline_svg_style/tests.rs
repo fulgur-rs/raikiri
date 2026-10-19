@@ -126,6 +126,13 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
         (PropertyKey::FillOpacity, "fill-opacity", "0.5"),
         (PropertyKey::StrokeOpacity, "stroke-opacity", "0.25"),
         (PropertyKey::StrokeWidth, "stroke-width", "3px"),
+        (PropertyKey::FillRule, "fill-rule", "evenodd"),
+        (PropertyKey::ClipRule, "clip-rule", "evenodd"),
+        (PropertyKey::StrokeLinecap, "stroke-linecap", "round"),
+        (PropertyKey::StrokeLinejoin, "stroke-linejoin", "miter-clip"),
+        (PropertyKey::StrokeMiterlimit, "stroke-miterlimit", "2.5"),
+        (PropertyKey::StrokeDasharray, "stroke-dasharray", "4 2"),
+        (PropertyKey::StrokeDashoffset, "stroke-dashoffset", "-1px"),
     ];
     for (property, name, value) in painting {
         let declared = [SvgStyleProperty {
