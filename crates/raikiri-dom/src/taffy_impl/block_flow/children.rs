@@ -3,11 +3,14 @@
 use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
 use crate::layout::context::LayoutSession;
+use crate::node::FormattingContext;
 use crate::taffy_impl::resolve_calc;
+use raikiri_style::property::{DisplayValue, TextAlign, TextAlignLast};
 use taffy::{
-    AvailableSpace, Baselines, BlockItemStyle, BoxGenerationMode, Clear, CollapsibleMarginSet,
-    CoreStyle, Float, FloatDirection, LayoutInput, LayoutOutput, Line, MaybeResolve, NodeId, Point,
-    Position, Rect, RunMode, Size, Style, TraversePartialTree,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, BlockItemStyle,
+    BoxGenerationMode, Clear, CollapsibleMarginSet, CoreStyle, Direction, Float, FloatDirection,
+    LayoutInput, LayoutOutput, Line, MaybeResolve, NodeId, Point, Position, Rect, RunMode, Size,
+    Style, TraversePartialTree,
 };
 
 pub(super) struct Flow {
@@ -59,6 +62,129 @@ fn margins(style: &Style, basis: f32) -> Rect<f32> {
     style
         .margin
         .map(|edge| edge.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
+}
+
+fn supports_inline_static_position(tree: &LayoutSession<'_>, parent: NodeId) -> bool {
+    let index = usize::from(parent);
+    let node = &tree.nodes[index];
+    node.ifc.is_none()
+        && node.multicol.is_none()
+        && !crate::taffy_impl::used_writing_mode(tree, index).is_vertical()
+        && node.formatting_context == FormattingContext::Block
+        && matches!(
+            node.display(),
+            DisplayValue::Block
+                | DisplayValue::InlineBlock
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::TableCell
+                | DisplayValue::TableCaption
+        )
+}
+
+fn is_non_atomic_inline(tree: &LayoutSession<'_>, child: NodeId) -> bool {
+    use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
+
+    let node = &tree.nodes[usize::from(child)];
+    let tag = node.tag_name().unwrap_or("");
+    node.display() == DisplayValue::Inline
+        && !node.is_inline_svg_root()
+        && !ATOMIC_TAGS.contains(&tag)
+        && !REPLACED_BOX_TAGS.contains(&tag)
+}
+
+fn static_inline_share(
+    text_align: TextAlign,
+    text_align_last: TextAlignLast,
+    direction: Direction,
+) -> f32 {
+    let start = if direction == Direction::Rtl {
+        1.0
+    } else {
+        0.0
+    };
+    let end = 1.0 - start;
+    match text_align_last {
+        TextAlignLast::Start => start,
+        TextAlignLast::End => end,
+        TextAlignLast::Left => 0.0,
+        TextAlignLast::Right => 1.0,
+        TextAlignLast::Center | TextAlignLast::Justify => 0.5,
+        TextAlignLast::Auto | TextAlignLast::MatchParent => {
+            match text_align {
+                TextAlign::Start => start,
+                TextAlign::End => end,
+                TextAlign::Left => 0.0,
+                TextAlign::Right => 1.0,
+                TextAlign::Center | TextAlign::InternalCenter => 0.5,
+                // `justify-all` also justifies the last line. A hypothetical
+                // line without expandable content uses the specified center
+                // fallback for justification.
+                TextAlign::JustifyAll => 0.5,
+                // A lone hypothetical line has no text to justify, so it
+                // falls back to the line's logical start edge when only the
+                // ordinary `justify` value applies.
+                TextAlign::Justify | TextAlign::MatchParent | TextAlign::Inherit => start,
+                _ => start, // cov:ignore: non-exhaustive TextAlign may add future variants
+            }
+        }
+        _ => start, // cov:ignore: non-exhaustive TextAlignLast may add future variants
+    }
+}
+
+struct StaticLine<'context, 'owner> {
+    from: f32,
+    context: &'context BlockContext<'owner>,
+    direction: Direction,
+    text_align: TextAlign,
+    text_align_last: TextAlignLast,
+}
+
+fn inline_static_position(
+    tree: &mut LayoutSession<'_>,
+    child: NodeId,
+    style: &Style,
+    parent_size: Size<Option<f32>>,
+    line: StaticLine<'_, '_>,
+) -> Point<AxisStaticPosition> {
+    let mut after = None;
+    loop {
+        let slot = line
+            .context
+            .find_content_slot(line.from, Clear::None, after);
+        // CSS 2.1 §10.3.7 permits estimating the hypothetical box's probable
+        // position. Non-atomic inline candidates use a zero-width point.
+        let child_margins = margins(style, parent_size.width.unwrap_or(slot.width));
+        let hypothetical_margin_width = child_margins.horizontal_axis_sum();
+        let hypothetical_width = if is_non_atomic_inline(tree, child) {
+            0.0
+        } else {
+            let mut input = child_inputs(parent_size, None, RunMode::ComputeSize);
+            input.available_space.width =
+                AvailableSpace::Definite((slot.width - hypothetical_margin_width).max(0.0));
+            let measured = tree.compute_child_layout_with_block_ctx(child, input, None);
+            measured.size.width + hypothetical_margin_width
+        };
+
+        let does_not_fit = slot.width <= 0.0 || hypothetical_width > slot.width + 0.001;
+        if does_not_fit && let Some(segment) = slot.segment_id {
+            after = Some(segment);
+            continue;
+        }
+
+        let start = slot.x
+            + (slot.width - hypothetical_width).max(0.0)
+                * static_inline_share(line.text_align, line.text_align_last, line.direction);
+        let (anchor, edge) = if line.direction == Direction::Rtl {
+            (start + hypothetical_width, AxisStaticEdge::End)
+        } else {
+            (start, AxisStaticEdge::Start)
+        };
+        return Point {
+            x: AxisStaticPosition::from_edge(anchor, edge),
+            y: AxisStaticPosition::from_edge(slot.y, AxisStaticEdge::Start),
+        };
+    }
 }
 
 pub(super) fn relative(
@@ -175,6 +301,44 @@ pub(super) fn layout(
         let mut margin = margins(&style, content_width);
         if style.position == Position::Absolute {
             if inputs.run_mode == RunMode::PerformLayout {
+                let static_y = flow.end + pending.resolve();
+                let child_index = usize::from(child);
+                let node_inline = tree.nodes[child_index].display().is_inline_level();
+                let resolve_inline = node_inline && supports_inline_static_position(tree, node);
+                let static_position = if resolve_inline {
+                    let (text_align, text_align_last) = {
+                        let parent_node = &tree.nodes[usize::from(node)];
+                        (
+                            parent_node.static_position_text_align,
+                            parent_node.static_position_text_align_last,
+                        )
+                    };
+                    inline_static_position(
+                        tree,
+                        child,
+                        &style,
+                        parent,
+                        StaticLine {
+                            from: static_y,
+                            context: ctx,
+                            direction: container.direction,
+                            text_align,
+                            text_align_last,
+                        },
+                    )
+                } else {
+                    let inline_area = Line {
+                        start: metrics.inset.left,
+                        end: width - metrics.inset.right,
+                    };
+                    super::positioned::aligned_static_position(
+                        container,
+                        &style,
+                        container.direction,
+                        inline_area,
+                        static_y,
+                    )
+                };
                 super::positioned::push_candidate(
                     &mut flow.oof_candidates,
                     child,
@@ -188,14 +352,7 @@ pub(super) fn layout(
                     } else {
                         Position::Absolute
                     },
-                    flow.end + pending.resolve(),
-                    super::positioned::CandidateContext {
-                        direction: container.direction,
-                        container_width: width,
-                        metrics,
-                        container,
-                        child: &style,
-                    },
+                    static_position,
                 );
             }
             continue;

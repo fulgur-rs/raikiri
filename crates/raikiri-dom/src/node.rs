@@ -16,7 +16,7 @@ use crate::fragment::{MulticolGroup, MulticolStyle};
 
 use raikiri_style::property::{
     BorderCollapseValue, BreakBetween, BreakInside, CaptionSideValue, DisplayValue, PositionValue,
-    Sides, TableLayoutValue, VerticalAlign, WritingMode,
+    Sides, TableLayoutValue, TextAlign, TextAlignLast, VerticalAlign, WritingMode,
 };
 use raikiri_style::{ComputedBorder, ComputedBorderSpacing};
 use raikiri_traits::{IntrinsicBox, NodeKind, PaintRect};
@@ -422,6 +422,12 @@ pub struct Node {
     /// [`Self::display`], the retained style from
     /// [`crate::Document::layout_node_with_style`], and the paragraph root flag.
     pub(crate) formatting_context: FormattingContext,
+    /// Computed line alignment used for the hypothetical inline static
+    /// position of out-of-flow children in block flow.
+    pub(crate) static_position_text_align: TextAlign,
+    /// Computed last-line alignment used for the hypothetical inline static
+    /// position of out-of-flow children in block flow.
+    pub(crate) static_position_text_align_last: TextAlignLast,
     /// Computed `table-layout` for the table engine. No `taffy::Style`
     /// counterpart exists (taffy 0.12 has no table layout), so the keyword
     /// is carried here alongside [`Self::display`] and read by
@@ -702,6 +708,8 @@ impl Node {
                 ),
                 _ => FormattingContext::Text,
             },
+            static_position_text_align: TextAlign::Start,
+            static_position_text_align_last: TextAlignLast::Auto,
             box_properties,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,

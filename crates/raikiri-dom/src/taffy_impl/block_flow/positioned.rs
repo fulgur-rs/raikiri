@@ -6,17 +6,6 @@ use taffy::{
     OofPositioningArea, Point, Position, Size, Style,
 };
 
-pub(super) struct CandidateContext<'a> {
-    pub(super) direction: Direction,
-    pub(super) container_width: f32,
-    pub(super) metrics: Metrics,
-    /// The block container: its `justify-items` stands for a child's `auto`
-    /// `justify-self`.
-    pub(super) container: &'a Style,
-    /// The out-of-flow child.
-    pub(super) child: &'a Style,
-}
-
 /// Record the out-of-flow child `node` of a block container for the
 /// containing block that claims it.
 pub(super) fn push_candidate(
@@ -24,31 +13,13 @@ pub(super) fn push_candidate(
     node: taffy::NodeId,
     order: usize,
     position: Position,
-    static_y: f32,
-    context: CandidateContext<'_>,
+    static_position: Point<AxisStaticPosition>,
 ) {
-    let CandidateContext {
-        direction,
-        container_width,
-        metrics,
-        container,
-        child,
-    } = context;
-    let inline_area = Line {
-        start: metrics.inset.left,
-        end: container_width - metrics.inset.right,
-    };
     candidates.push(OofCandidate {
         node,
         order: order as u32,
         position,
-        static_position: aligned_static_position(
-            container,
-            child,
-            direction,
-            inline_area,
-            static_y,
-        ),
+        static_position,
     });
 }
 
