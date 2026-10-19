@@ -2327,3 +2327,116 @@ fn a_spanner_in_plain_blocks_spans_the_columns_of_a_fit_content_container() {
     let body = format!("<div class=f><div style='columns:2;column-gap:0'>{spanner}</div></div>");
     assert_eq!(yellow_width(&body, css), 120);
 }
+
+/// Two lime boxes standing for the pieces of a block cut at the end of the
+/// first of two columns (40px wide, the second one starting at 60px).
+fn lime_pieces(first_height: u32, second_height: u32) -> String {
+    format!(
+        "<div style='position:absolute;left:0;top:0;width:40px;height:{first_height}px;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:{second_height}px;background:lime'></div>"
+    )
+}
+
+#[test]
+fn a_tall_block_in_the_wrappers_of_a_fixed_height_container_is_split_over_the_columns() {
+    for wrapper in [
+        "<div>{}</div>",
+        "<div style='display:flow-root'>{}</div>",
+        "<div><div style='display:flow-root'><div>{}</div></div></div>",
+    ] {
+        compare(
+            &format!(
+                "<div class=mc>{}</div>",
+                wrapper.replace("{}", "<div style='height:150px;background:lime'></div>")
+            ),
+            ".mc{height:100px;column-fill:auto}",
+            &lime_pieces(100, 50),
+        );
+    }
+}
+
+#[test]
+fn the_margin_after_a_block_of_a_flow_root_wrapper_ends_at_the_column() {
+    // The 50px margin does not fit in the 30px left of the first column, so
+    // the next block starts the second one, and the wrapper's background
+    // runs to the end of both columns.
+    compare(
+        "<div class=mc><div style='display:flow-root;background:lime'><div style='height:70px;margin-bottom:50px'></div><div style='height:100px'></div></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        &lime_pieces(100, 100),
+    );
+}
+
+#[test]
+fn a_wrapper_with_a_minimum_width_wider_than_its_column_is_that_wide() {
+    compare(
+        "<div class=mc><div style='min-width:60px'><div style='height:20px;background:lime'></div></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:60px;height:20px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn the_spanners_of_a_wrapper_keep_the_larger_of_their_margins_between_them() {
+    // The spanners are not blocks of a column, and the margins between them
+    // collapse into the larger one: the container is 10 + 80 + 10px high.
+    compare(
+        "<div class=mc><div><div style='column-span:all;height:10px;margin-bottom:50px'></div><div style='column-span:all;height:10px;margin-top:80px'></div></div></div>",
+        ".mc{background:lime}",
+        "<div style='position:absolute;left:0;top:0;width:100px;height:100px;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_wrapper_is_sliced_like_its_blocks_under_the_sizing_of_the_container() {
+    let tall = "<div style='height:150px;margin:10px 0;background:lime'></div>";
+    let pair = "<div style='height:70px;margin:10px 0;background:lime'></div><div style='height:70px;margin:10px 0;background:lime'></div>";
+    let column = "<div style='display:flex;flex-direction:column;height:120px'>{}</div>";
+    for (outer, css, blocks) in [
+        ("{}", ".mc{min-height:120px}", tall),
+        ("{}", ".mc{max-height:60px}", tall),
+        ("{}", ".mc{height:100px}", tall),
+        ("{}", ".mc{height:100px;column-fill:auto}", tall),
+        (
+            "{}",
+            ".mc{height:100px;min-height:130px;column-fill:auto}",
+            tall,
+        ),
+        ("{}", ".mc{padding:5px 3px;border:1px solid black}", tall),
+        (
+            "{}",
+            ".mc{padding:5px 3px;border:1px solid black;height:100px;box-sizing:border-box}",
+            tall,
+        ),
+        // A height that the parent gives the container.
+        (column, ".mc{flex:0 1 auto}", pair),
+        ("<div style='display:flex;height:120px'>{}</div>", "", pair),
+        (
+            "<div style='display:grid;grid-template-rows:120px'>{}</div>",
+            "",
+            pair,
+        ),
+        (
+            "<div style='display:grid;grid-template-rows:120px'>{}</div>",
+            ".mc{column-fill:auto}",
+            pair,
+        ),
+    ] {
+        let page = |content: &str| {
+            let container = format!("<div class=mc>{content}</div>");
+            raster(&outer.replace("{}", &container), css)
+        };
+        let direct = page(blocks);
+        assert!(
+            direct
+                .chunks_exact(4)
+                .any(|pixel| pixel[0] == 0 && pixel[1] > 200),
+            "{outer} {css}"
+        );
+        for wrapper in ["<div>{}</div>", "<div style='display:flow-root'>{}</div>"] {
+            assert!(
+                direct == page(&wrapper.replace("{}", blocks)),
+                "{outer} {css} {wrapper}"
+            );
+        }
+    }
+}

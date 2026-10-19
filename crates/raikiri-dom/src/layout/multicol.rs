@@ -170,16 +170,14 @@ pub(crate) fn compute_multicol_layout(
         && multicol_has_only_paragraph_children(tree, index)
         && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
-    // nested container as well as an outermost one.
-    let balance_wrapped_blocks = available_height.is_none()
-        && style.column_fill != ColumnFillValue::Auto
-        && tree.context.fragmentation_stack.is_empty()
-        && inputs.known_dimensions.height.is_none();
+    // nested container as well as an outermost one. Only an outermost
+    // container also slices the blocks that wrappers hold.
+    let slice_wrappers = tree.context.fragmentation_stack.is_empty();
     let lineless_children =
         (inputs.run_mode == RunMode::PerformLayout && !span_scope && style.horizontal)
             .then(|| {
-                if balance_wrapped_blocks {
-                    lineless::supported_for_auto_balance(tree, index)
+                if slice_wrappers {
+                    lineless::supported_with_wrappers(tree, index)
                 } else {
                     lineless::supported(tree, index, true)
                 }
@@ -374,7 +372,7 @@ pub(crate) fn compute_multicol_layout(
                 lineless_definite,
                 lineless_maximum,
                 outer_height,
-                balance_wrapped_blocks,
+                slice_wrappers,
             )
             .unwrap_or_else(|| {
                 if nested_fallback {
@@ -3195,13 +3193,14 @@ pub(crate) struct AncestorFacts {
     /// A strict ancestor establishes a flex, grid, or table formatting context,
     /// or takes its width from its height through an aspect ratio.
     non_block_flow_ancestor: Vec<bool>,
-    /// A definite width resolved against the parent, else the parent width;
-    /// measured `ch` widths include their calc percentage and `contents` inherits.
+    /// The content width used to resolve descendants. Projected auto block
+    /// widths replace their initial inherited value before descendants run.
     content_width: Vec<f32>,
-    /// The nearest strict ancestor whose authored width is neither `auto`
-    /// nor a sizing keyword; a `min-content`, `max-content` or `fit-content`
-    /// width is intrinsic, not an authored containing width.
-    authored_ancestor: Vec<Option<usize>>,
+    /// The nearest strict ancestor that supplies a containing content width.
+    /// Auto and intrinsic widths are skipped unless this pass projects the auto width.
+    containing_width_ancestor: Vec<Option<usize>>,
+    /// An auto-width block this pass projects to contain descendants.
+    projected_auto_width: Vec<bool>,
     /// The node or an ancestor has a `min-content`, `max-content` or
     /// `fit-content` width.
     intrinsic_width: Vec<bool>,
@@ -3216,7 +3215,8 @@ impl AncestorFacts {
             out_of_flow_ancestor: vec![false; count],
             non_block_flow_ancestor: vec![false; count],
             content_width: vec![0.0; count],
-            authored_ancestor: vec![None; count],
+            containing_width_ancestor: vec![None; count],
+            projected_auto_width: vec![false; count],
             intrinsic_width: vec![false; count],
         };
         visit_top_down(doc, |parent, id| {
@@ -3286,19 +3286,93 @@ impl AncestorFacts {
                         | DisplayValue::TableCell
                         | DisplayValue::TableCaption
                 ));
-        self.authored_ancestor[id] = if doc.nodes[parent].display() == DisplayValue::Contents
+        self.containing_width_ancestor[id] = if self.projected_auto_width[parent] {
+            Some(parent)
+        } else if doc.nodes[parent].display() == DisplayValue::Contents
             || values.width == ComputedLengthPercentageOrAuto::Auto
             || values.width.is_content_keyword()
         {
-            self.authored_ancestor[parent]
+            self.containing_width_ancestor[parent]
         } else {
             Some(parent)
         };
+        self.projected_auto_width[id] = self.can_project_auto_width(doc, cascade, id);
+        if self.projected_auto_width[id]
+            && let Some(width) = self.authored_containing_width(id)
+        {
+            let style = &doc.layout_node_with_style(id).unwrap().style;
+            let horizontal = multicol_resolve_inset(doc, style.padding.left, width)
+                + multicol_resolve_inset(doc, style.padding.right, width)
+                + multicol_resolve_inset(doc, style.border.left, width)
+                + multicol_resolve_inset(doc, style.border.right, width);
+            let content_constraint = |value: f32| {
+                if style.box_sizing == TaffyBoxSizing::BorderBox {
+                    (value - horizontal).max(0.0)
+                } else {
+                    value
+                }
+            };
+            let minimum =
+                multicol_definite_dimension(doc, style.min_size.width.into(), Some(width))
+                    .map(content_constraint)
+                    .unwrap_or(0.0);
+            let maximum =
+                multicol_definite_dimension(doc, style.max_size.width.into(), Some(width))
+                    .map(content_constraint);
+            let content_width = ((width - horizontal).max(0.0)).max(minimum);
+            self.content_width[id] = maximum
+                .map(|maximum| content_width.min(maximum.max(minimum)))
+                .unwrap_or(content_width);
+        }
     }
 
-    /// The content width of the nearest authored-width ancestor.
+    fn can_project_auto_width(&self, doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+        let node = &doc.nodes[id];
+        if node.kind() != NodeKind::Element {
+            return false;
+        }
+        let cv = &cascade.computed[id];
+        if self.containing_width_ancestor[id].is_none()
+            || self.multicol_ancestor[id]
+            || self.vertical[id]
+            || !matches!(
+                node.display(),
+                DisplayValue::Block | DisplayValue::InlineBlock
+            )
+            || cv.width != ComputedLengthPercentageOrAuto::Auto
+            || !matches!(node.position(), PositionValue::Static)
+            || has_nonzero_horizontal_margin(cv)
+            // A float shrinks to fit, and a box whose width follows its
+            // height through the aspect ratio does not stretch.
+            || doc.layout_node_with_style(id).unwrap().style.float != taffy::Float::None
+            || width_follows_height(doc, cascade, id)
+            || self.out_of_flow_ancestor[id]
+            || self.non_block_flow_ancestor[id]
+            || doc
+                .layout_node_with_style(id)
+                .unwrap()
+                .style
+                .item_is_replaced
+        {
+            return false;
+        }
+
+        let scrolls = |overflow| !matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
+        let engine_sized = node.display() == DisplayValue::InlineBlock
+            || scrolls(cv.overflow.x)
+            || scrolls(cv.overflow.y);
+        // The inline engine sizes these boxes from the line width or float slot.
+        let in_ifc_engine = engine_sized
+            && !node.in_ifc_subtree()
+            && doc.parent_of(id).is_some_and(|parent| {
+                doc.nodes[parent].is_ifc_root() || doc.nodes[parent].in_ifc_subtree()
+            });
+        !in_ifc_engine
+    }
+
+    /// The content width supplied by the nearest authored or projected auto-width ancestor.
     pub(crate) fn authored_containing_width(&self, id: usize) -> Option<f32> {
-        self.authored_ancestor
+        self.containing_width_ancestor
             .get(id)
             .copied()
             .flatten()
@@ -3399,49 +3473,21 @@ pub(crate) fn prepare_authored_block_widths(
         if ancestors.multicol_ancestor[idx] {
             continue;
         }
-        // A box of a paragraph laid out by the inline engine (a child of its
-        // root, or of an inline element of it) that the line loop sizes
-        // itself keeps an auto width: an inline-block shrinks to fit (CSS 2.1
-        // 10.3.9), and a block child that is a scroll container takes the
-        // room the floats beside it leave (CSS 2.1 9.5).
-        let cv = &cascade.computed[idx];
-        let scrolls = |overflow| !matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
-        let engine_sized = doc.nodes[idx].display() == DisplayValue::InlineBlock
-            || scrolls(cv.overflow.x)
-            || scrolls(cv.overflow.y);
-        let engine_box = engine_sized
-            && !doc.nodes[idx].in_ifc_subtree()
-            && doc.parent_of(idx).is_some_and(|parent| {
-                doc.nodes[parent].is_ifc_root() || doc.nodes[parent].in_ifc_subtree()
-            });
-        if engine_box {
+        if !ancestors.projected_auto_width[idx] {
             continue;
         }
-        if matches!(
-            cascade.computed[idx].width,
-            ComputedLengthPercentageOrAuto::Auto
-        ) && matches!(
-            doc.nodes[idx].display(),
-            DisplayValue::Block | DisplayValue::InlineBlock
-        ) && !ancestors.vertical[idx]
-            && matches!(doc.nodes[idx].position(), PositionValue::Static)
-            && !has_nonzero_horizontal_margin(&cascade.computed[idx])
-            && !doc
-                .layout_node_with_style(idx)
-                .unwrap()
-                .style
-                .item_is_replaced
-            && !width_follows_height(doc, cascade, idx)
-            && doc.layout_node_with_style(idx).unwrap().style.float == taffy::Float::None
-            && !ancestors.out_of_flow_ancestor[idx]
-            && !ancestors.non_block_flow_ancestor[idx]
-            && let Some(width) = ancestors.authored_containing_width(idx)
-        {
+        if let Some(width) = ancestors.authored_containing_width(idx) {
+            let style = &doc.layout_node_with_style(idx).unwrap().style;
+            let used_width = if style.box_sizing == TaffyBoxSizing::BorderBox {
+                width
+            } else {
+                ancestors.content_width[idx]
+            };
             doc.layout_node_with_style_mut(idx)
                 .unwrap()
                 .style
                 .size
-                .width = Dimension::length(width);
+                .width = Dimension::length(used_width);
         }
     }
 }

@@ -317,8 +317,8 @@ pub(crate) fn last_baseline(lines: &IfcLines) -> Option<f32> {
 }
 
 /// Break every ifc root again at a page-specific width: the content width of
-/// the nearest authored-width ancestor of its text, else `max_advance`. Box
-/// geometry is not touched.
+/// the nearest authored-width ancestor of its text, with eligible auto blocks
+/// projected from that width, else `max_advance`. Box geometry is not touched.
 pub(crate) fn rebreak_roots(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,

@@ -394,12 +394,10 @@ fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
 #[test]
 fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
     let mut differences = Vec::new();
-    for css in [
-        "min-height:60px",
-        "max-height:20px",
-        "min-width:60px",
-        "max-width:30px",
-    ] {
+    // A minimum width is not listed: a wrapper in the column stream gets the
+    // width its column gives it, while this strategy measures against the
+    // container, so the two no longer agree on it.
+    for css in ["min-height:60px", "max-height:20px", "max-width:30px"] {
         let markup = |constraint| {
             format!(
                 "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='{css}'><div style='height:20px'></div><div style='height:20px'></div></div><div id='next' style='height:20px;{constraint}'></div></div>"
