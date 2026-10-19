@@ -665,11 +665,33 @@ struct ShadowRun<'a, 'b> {
     coords: &'a [i16],
     glyph_transform: Option<Affine>,
     document: &'a Document,
-    /// Where the run's emphasis marks are placed from: its start and its
-    /// baseline.
-    emphasis_origin: (f32, f32),
+    marks: ShadowMarks<'a>,
+    /// The run is in a vertical paragraph, whose decoration lines are not
+    /// drawn, so its shadows carry none either.
+    vertical: bool,
     /// The run draws missing-glyph boxes where its font has no outlines.
     missing_glyph_boxes: bool,
+}
+
+/// Where the emphasis marks of a shadowed run are placed from.
+enum ShadowMarks<'a> {
+    /// The run draws none.
+    None,
+    /// Marks above or below a horizontal run, from its start and its
+    /// baseline.
+    Horizontal((f32, f32)),
+    /// Marks beside a run of a vertical line.
+    Vertical(VerticalMarks<'a>),
+}
+
+/// What [`crate::emphasis::draw_vertical_marks_in`] places the marks of a run
+/// of a vertical line by.
+struct VerticalMarks<'a> {
+    line: &'a shodo::Line,
+    writing_mode: WritingMode,
+    converter: &'a PhysicalConverter,
+    /// The page origin of the paragraph's logical coordinates.
+    origin: (f32, f32),
 }
 
 /// The start and baseline a run's emphasis marks are placed from.
@@ -683,6 +705,24 @@ fn emphasis_origin(position: IfcPosition, block_offset: f32, draw: &RunDraw<'_>)
                 .annotation_baseline
                 .unwrap_or(block_offset + draw.run.baseline()),
     )
+}
+
+/// The box, from the line's origin, that holds the ink of the glyphs of a run
+/// of a vertical line: each glyph's position grown by its advance and by `pad`
+/// on every side.
+fn vertical_ink_bounds(glyphs: &[raikiri_dom::LineGlyph], pad: f64) -> Rect {
+    glyphs.iter().fold(Rect::ZERO, |bounds, glyph| {
+        // A glyph's advance runs down the line, or up it against the line's
+        // direction; a sideways run's glyphs can lie either way, so the
+        // advance pads both axes.
+        let reach = pad + f64::from(glyph.advance.abs());
+        bounds.union(Rect::new(
+            f64::from(glyph.x) - reach,
+            f64::from(glyph.y) - reach,
+            f64::from(glyph.x) + reach,
+            f64::from(glyph.y) + reach,
+        ))
+    })
 }
 
 /// Draw one text shadow of one run, behind its glyphs and decorations.
@@ -718,7 +758,10 @@ fn draw_shadow(
     let use_blur_layer = blur.is_finite() && blur > 0.0;
     if use_blur_layer {
         let extent = f64::from((blur * 3.0).max(1.0));
-        let (x, y) = (f64::from(position.x), f64::from(position.y));
+        let (x, y) = (
+            f64::from(position.x),
+            f64::from(position.y + position.shift_y),
+        );
         // Text that overflows its paragraph (`nowrap`, a negative
         // `text-indent`) lies outside the paragraph's own width, and its
         // shadow with it, so the clip also covers the run's glyphs. A glyph's
@@ -727,22 +770,45 @@ fn draw_shadow(
         // glyph is padded by one em, which the ink of an ordinary glyph does
         // not exceed.
         let pad = f64::from(font_size);
-        let (ink_left, ink_right) =
-            run.draw
-                .glyphs
-                .iter()
-                .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
-                    let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
-                    (
-                        left.min(start.min(end) - pad),
-                        right.max(start.max(end) + pad),
-                    )
-                });
+        let ink = if run.vertical {
+            let mut ink = vertical_ink_bounds(&run.draw.glyphs, pad);
+            // The marks of the run lie beside it, as far from its baseline as
+            // the ruby annotations on their side push them, and the mark of a
+            // combined square lies on the square, wherever the glyphs of the
+            // run that draws it are.
+            if let (ShadowMarks::Vertical(marks), Some(mark)) =
+                (&run.marks, run.draw.run.emphasis_mark())
+            {
+                let reach = f64::from(mark.font_size);
+                for (x, y) in crate::emphasis::vertical_mark_centers(
+                    &mark,
+                    (marks.line, &run.draw.run),
+                    (marks.writing_mode, marks.converter),
+                ) {
+                    let (x, y) = (f64::from(x), f64::from(y));
+                    ink = ink.union(Rect::new(x - reach, y - reach, x + reach, y + reach));
+                }
+            }
+            ink
+        } else {
+            let (left, right) =
+                run.draw
+                    .glyphs
+                    .iter()
+                    .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
+                        let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
+                        (
+                            left.min(start.min(end) - pad),
+                            right.max(start.max(end) + pad),
+                        )
+                    });
+            Rect::new(left, 0.0, right, f64::from(height))
+        };
         let clip = Rect::new(
-            x + ink_left + dx - extent,
-            y + dy - extent,
-            x + ink_right + dx + extent,
-            y + f64::from(height) + dy + extent,
+            x + ink.x0 + dx - extent,
+            y + ink.y0 + dy - extent,
+            x + ink.x1 + dx + extent,
+            y + ink.y1 + dy + extent,
         );
         scene.push_layer(
             Mix::Normal,
@@ -757,6 +823,7 @@ fn draw_shadow(
         .draw
         .decorations
         .iter()
+        .filter(|_| !run.vertical)
         .map(|line| {
             let mut line = line.clone();
             let (dx, dy) = (dx as f32, dy as f32);
@@ -799,16 +866,27 @@ fn draw_shadow(
             shadow_transform,
         );
     }
-    let (x, baseline) = run.emphasis_origin;
-    crate::emphasis::draw_marks_in(
-        scene,
-        run.document,
-        &run.draw.run,
-        &run.draw.glyphs,
-        (x + dx as f32, baseline + dy as f32),
-        owner_cv,
-        css_color_to_peniko(color),
-    );
+    match &run.marks {
+        ShadowMarks::None => {}
+        ShadowMarks::Horizontal((x, baseline)) => crate::emphasis::draw_marks_in(
+            scene,
+            run.document,
+            &run.draw.run,
+            &run.draw.glyphs,
+            (x + dx as f32, baseline + dy as f32),
+            owner_cv,
+            css_color_to_peniko(color),
+        ),
+        ShadowMarks::Vertical(marks) => crate::emphasis::draw_vertical_marks_in(
+            scene,
+            run.document,
+            (marks.line, &run.draw.run),
+            (marks.writing_mode, marks.converter),
+            (marks.origin.0 + dx as f32, marks.origin.1 + dy as f32),
+            owner_cv,
+            css_color_to_peniko(color),
+        ),
+    }
     draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
     if use_blur_layer {
         scene.pop_layer();

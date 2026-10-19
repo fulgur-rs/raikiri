@@ -243,18 +243,59 @@ pub(crate) fn draw_vertical_marks(
     style: &ComputedValues,
     text_color: Color,
 ) {
-    let Some(mark) = run.emphasis_mark() else {
-        return;
-    };
     let color = match style.text_emphasis_color {
         TextDecorationColor::Resolved(color) => crate::text::css_color_to_peniko(color),
         _ => text_color,
+    };
+    draw_vertical_marks_in(
+        scene,
+        document,
+        (line, run),
+        (writing_mode, converter),
+        origin,
+        style,
+        color,
+    );
+}
+
+/// [`draw_vertical_marks`] with every mark filled in `color`, as a text
+/// shadow draws them.
+pub(crate) fn draw_vertical_marks_in(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    (line, run): (&shodo::Line, &shodo::GlyphRunView<'_>),
+    (writing_mode, converter): (WritingMode, &PhysicalConverter),
+    origin: (f32, f32),
+    style: &ComputedValues,
+    color: Color,
+) {
+    let Some(mark) = run.emphasis_mark() else {
+        return;
     };
     let Some(shaped) =
         shape_upright_mark(document, mark.character, mark.font_size, &style.font_family)
     else {
         return; // cov:ignore: shaping one character fails only past the engine's limits.
     };
+    for (x, y) in vertical_mark_centers(&mark, (line, run), (writing_mode, converter)) {
+        crate::standalone_text::draw(
+            scene,
+            &shaped.text,
+            origin.0 + x - shaped.center.0,
+            origin.1 + y - shaped.center.1,
+            color,
+        );
+    }
+}
+
+/// Where the em boxes of the emphasis marks `mark` of one glyph run of a
+/// vertical line are centered, as physical offsets from the page origin of the
+/// paragraph's logical coordinates.
+pub(crate) fn vertical_mark_centers(
+    mark: &shodo::EmphasisMark,
+    (line, run): (&shodo::Line, &shodo::GlyphRunView<'_>),
+    (writing_mode, converter): (WritingMode, &PhysicalConverter),
+) -> Vec<(f32, f32)> {
     // Line-over is the block-start side, except in `vertical-lr`, whose
     // lines stack left to right with their line-over side on the right.
     let over = if writing_mode == WritingMode::VerticalLr {
@@ -264,16 +305,7 @@ pub(crate) fn draw_vertical_marks(
     };
     let side = if mark.line_over { over } else { -over };
     let reach = side * (mark.offset + mark.font_size / 2.0);
-    let mut draw = |inline: f32, block: f32| {
-        let (x, y) = converter.point(inline, block);
-        crate::standalone_text::draw(
-            scene,
-            &shaped.text,
-            origin.0 + x - shaped.center.0,
-            origin.1 + y - shaped.center.1,
-            color,
-        );
-    };
+    let mut centers = Vec::new();
     if run.orientation() == shodo::GlyphOrientation::Combined {
         // A square can span several runs, and its first characters may have
         // no glyph (a preserved tab); only the earliest run inside it marks
@@ -291,13 +323,13 @@ pub(crate) fn draw_vertical_marks(
                 .min_by_key(|run| run.start);
             if first == Some(text.clone()) {
                 let square = combination.square;
-                draw(
+                centers.push(converter.point(
                     square.inline_start + square.inline_size / 2.0,
                     line.block_offset() + square.block_start + square.block_size / 2.0 + reach,
-                );
+                ));
             }
         }
-        return;
+        return centers;
     }
     // Clusters follow the run's text, which bidi reordering can reverse;
     // lay their advances out in the order their glyphs are drawn.
@@ -320,13 +352,14 @@ pub(crate) fn draw_vertical_marks(
     let mut inline = run.inline_start();
     for (_, cluster) in clusters {
         for slot in run.emphasis_slots(&cluster) {
-            draw(
+            centers.push(converter.point(
                 inline + cluster.advance * slot_center(slot, reversed),
                 block,
-            );
+            ));
         }
         inline += cluster.advance;
     }
+    centers
 }
 
 #[cfg(test)]

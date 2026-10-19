@@ -4,8 +4,8 @@
 use super::line_paint::LinePaint;
 use super::typographic::{Paragraph, TypographicPaint};
 use super::{
-    IfcPosition, RunDraw, ShadowRun, anyrender_glyph, draw_shadow, emphasis_origin,
-    normalized_coords, paint_box, physical_glyph_transform, run_transform,
+    IfcPosition, RunDraw, ShadowMarks, ShadowRun, VerticalMarks, anyrender_glyph, draw_shadow,
+    emphasis_origin, normalized_coords, paint_box, physical_glyph_transform, run_transform,
 };
 use crate::text::{
     DecorationPhase, css_color_to_peniko, draw_resolved_decoration_phase, synthetic_embolden,
@@ -63,8 +63,8 @@ impl<'a> LinePaint<'a, '_> {
         // Different boxes keep their tree order, so a later box's shadow
         // still covers an earlier box's text.
         for segment in runs.chunk_by(|a, b| a.paint_box == b.paint_box) {
+            self.paint_shadows(paint, segment, &frame);
             if !self.vertical {
-                self.paint_shadows(paint, segment, &frame);
                 paint_decorations(paint, segment, DecorationPhase::BeforeGlyphs);
             }
             self.paint_glyphs(paint, segment, &frame);
@@ -157,8 +157,9 @@ impl<'a> LinePaint<'a, '_> {
                         coords: &coords,
                         glyph_transform,
                         document: self.paragraph.document,
+                        marks: self.shadow_marks(frame, draw),
+                        vertical: self.vertical,
                         missing_glyph_boxes: !self.vertical && !draw.turned,
-                        emphasis_origin: emphasis_origin(position, frame.line.block_offset(), draw),
                     },
                     shadow,
                     draw.style,
@@ -172,6 +173,34 @@ impl<'a> LinePaint<'a, '_> {
                 );
             }
         }
+    }
+
+    /// Where the emphasis marks of `draw`'s shadows are placed from.
+    ///
+    /// A run draws its shadows' marks where it draws its own: none for a run
+    /// of a ruby annotation in a vertical paragraph, whose clusters are laid
+    /// out on its own line.
+    fn shadow_marks<'f>(&self, frame: &'f LineFrame<'_>, draw: &RunDraw<'_>) -> ShadowMarks<'f> {
+        let position = frame.position;
+        if !self.vertical {
+            return ShadowMarks::Horizontal(emphasis_origin(
+                position,
+                frame.line.block_offset(),
+                draw,
+            ));
+        }
+        if draw.annotation_baseline.is_some() {
+            return ShadowMarks::None;
+        }
+        ShadowMarks::Vertical(VerticalMarks {
+            line: frame.line,
+            writing_mode: self.writing_mode,
+            converter: &frame.converter,
+            origin: (
+                position.x + draw.offset.0,
+                position.y + position.shift_y + draw.offset.1,
+            ),
+        })
     }
 
     /// Paint the glyphs of the runs of one box, with their emphasis marks.

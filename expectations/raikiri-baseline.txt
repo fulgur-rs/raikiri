@@ -4241,6 +4241,7 @@ css/css-writing-modes/text-combine-upright-inherit-all-001.html
 css/css-writing-modes/text-combine-upright-layout-rules-001.html
 css/css-writing-modes/text-combine-upright-line-breaking-rules-001.html
 css/css-writing-modes/text-combine-upright-rtl-002.html
+css/css-writing-modes/text-combine-upright-shadow.html
 css/css-writing-modes/text-combine-upright-value-all-003.html
 css/css-writing-modes/text-orientation-upright-vlr-100.html
 css/css-writing-modes/text-orientation-upright-vrl-100.html
