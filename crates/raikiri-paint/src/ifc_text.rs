@@ -289,7 +289,6 @@ pub(crate) fn hold_ifc_lines<'a>(
     let writing_mode = positioned.writing_mode;
     let shifts = &positioned.shifts;
     let base = position;
-    let size = positioned.size;
     let vertical = writing_mode != WritingMode::HorizontalTb;
     // Pages never cut a paragraph across its lines: each of its lines goes
     // with the paragraph's content box.
@@ -321,7 +320,6 @@ pub(crate) fn hold_ifc_lines<'a>(
         base,
         writing_mode,
         vertical,
-        size,
         base_decorations,
         shifts,
         root_node,
@@ -799,12 +797,12 @@ impl ShadowPiece<'_, '_> {
 /// grown by three times the blur radius, which isolates the blur from the
 /// rest of the page. The Gaussian's standard deviation is half the blur
 /// radius (CSS Backgrounds 3 §7.1).
-fn draw_shadow(scene: &mut impl PaintScene, pieces: &[ShadowPiece<'_, '_>], size: (f32, f32)) {
+fn draw_shadow(scene: &mut impl PaintScene, pieces: &[ShadowPiece<'_, '_>]) {
     let blur = pieces.first().and_then(ShadowPiece::blur);
     if let Some(blur) = blur {
         let clip = pieces
             .iter()
-            .map(|piece| blur_clip(piece, size, blur))
+            .map(|piece| blur_clip(piece, blur))
             .reduce(|clip, next| clip.union(next))
             .unwrap_or(Rect::ZERO);
         scene.push_layer(
@@ -844,10 +842,10 @@ fn draw_shadow_ink(scene: &mut impl PaintScene, piece: &ShadowPiece<'_, '_>) {
     draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
 }
 
-/// The box the blurred shadow of one run can reach: the lines of a paragraph
-/// of size `(width, height)` and the glyphs of the run, grown by three times
-/// the `blur` radius and moved by the offset of the shadow.
-fn blur_clip(piece: &ShadowPiece<'_, '_>, (width, height): (f32, f32), blur: f32) -> Rect {
+/// The box the blurred shadow of one run can reach: the ink of the run,
+/// grown by three times the `blur` radius and moved by the offset of the
+/// shadow.
+fn blur_clip(piece: &ShadowPiece<'_, '_>, blur: f32) -> Rect {
     let run = &piece.run;
     let position = piece.position;
     let (dx, dy) = piece.offset();
@@ -856,15 +854,15 @@ fn blur_clip(piece: &ShadowPiece<'_, '_>, (width, height): (f32, f32), blur: f32
         f64::from(position.x),
         f64::from(position.y + position.shift_y),
     );
-    // Text that overflows its paragraph (`nowrap`, a negative
-    // `text-indent`) lies outside the paragraph's own width, and its
-    // shadow with it, so the clip also covers the run's glyphs. A glyph's
+    // The clip follows the ink rather than the paragraph's box: text can
+    // overflow its paragraph (`nowrap`, a negative `text-indent`, a line
+    // height smaller than the glyphs), and its shadow with it. A glyph's
     // ink can stick out of its advance box (an italic or synthetic
     // oblique overhang, a mark, a swash, tight letter spacing), so each
     // glyph is padded by one em, which the ink of an ordinary glyph does
     // not exceed.
     let pad = f64::from(run.draw.run.font_size());
-    let ink = shadow_ink_bounds(run, (width, height), pad);
+    let ink = shadow_ink_bounds(run, (x, y), pad);
     Rect::new(
         x + ink.x0 + dx - extent,
         y + ink.y0 + dy - extent,
@@ -873,12 +871,11 @@ fn blur_clip(piece: &ShadowPiece<'_, '_>, (width, height): (f32, f32), blur: f32
     )
 }
 
-/// The box, from the origin of the paragraph, that holds the ink of the
-/// shadow of `run` before its offset and blur. A horizontal run covers the
-/// `(width, height)` box of the paragraph, widened to hold its glyphs grown by
-/// `pad`. A vertical run covers its glyphs grown by `pad` and its emphasis
-/// marks.
-fn shadow_ink_bounds(run: &ShadowRun<'_, '_>, (width, height): (f32, f32), pad: f64) -> Rect {
+/// The box, from `origin`, the page point the run's glyphs are placed from,
+/// that holds the ink of the shadow of `run` before its offset and blur: its
+/// glyphs grown by `pad` and its emphasis marks, and the decoration lines of
+/// a horizontal run.
+fn shadow_ink_bounds(run: &ShadowRun<'_, '_>, origin: (f64, f64), pad: f64) -> Rect {
     if run.vertical {
         let mut ink = vertical_ink_bounds(&run.draw.glyphs, pad);
         // The marks of the run lie beside it, as far from its baseline as
@@ -900,19 +897,61 @@ fn shadow_ink_bounds(run: &ShadowRun<'_, '_>, (width, height): (f32, f32), pad: 
         }
         ink
     } else {
-        let (left, right) =
-            run.draw
-                .glyphs
-                .iter()
-                .fold((0.0_f64, f64::from(width)), |(left, right), glyph| {
-                    let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
-                    (
-                        left.min(start.min(end) - pad),
-                        right.max(start.max(end) + pad),
-                    )
-                });
-        Rect::new(left, 0.0, right, f64::from(height))
+        horizontal_ink_bounds(run, origin, pad)
     }
+}
+
+/// The box, from `origin`, that holds the ink of a horizontal run: its glyphs
+/// grown by `pad`, its decoration lines and its emphasis marks.
+fn horizontal_ink_bounds(run: &ShadowRun<'_, '_>, (x, y): (f64, f64), pad: f64) -> Rect {
+    let glyphs = run
+        .draw
+        .glyphs
+        .iter()
+        .map(|glyph| {
+            let (start, end) = (f64::from(glyph.x), f64::from(glyph.x + glyph.advance));
+            let glyph_y = f64::from(glyph.y);
+            Rect::new(
+                start.min(end) - pad,
+                glyph_y - pad,
+                start.max(end) + pad,
+                glyph_y + pad,
+            )
+        })
+        .reduce(|ink, glyph| ink.union(glyph));
+    // A decoration line lies in page coordinates, as far from the text as
+    // its offset puts it; a wavy line swings past its thickness.
+    let lines = run.draw.decorations.iter().map(|line| {
+        let reach = f64::from(line.thickness) * 3.0 + 1.0;
+        let center = f64::from(line.y) - y;
+        Rect::new(
+            f64::from(line.x_start.min(line.x_end)) - x,
+            center - reach,
+            f64::from(line.x_start.max(line.x_end)) - x,
+            center + reach,
+        )
+    });
+    // The marks sit beyond the run's baseline by their offset, which the
+    // ruby annotations on their side push out, in a line box of their own.
+    let marks = match (&run.marks, run.draw.run.emphasis_mark(), glyphs) {
+        (ShadowMarks::Horizontal((_, baseline)), Some(mark), Some(glyphs)) => {
+            let baseline = f64::from(*baseline) - y;
+            let reach = f64::from(mark.offset + mark.font_size * 2.0);
+            let (top, bottom) = if mark.line_over {
+                (baseline - reach, baseline)
+            } else {
+                (baseline, baseline + reach)
+            };
+            Some(Rect::new(glyphs.x0, top, glyphs.x1, bottom))
+        }
+        _ => None,
+    };
+    glyphs
+        .into_iter()
+        .chain(lines)
+        .chain(marks)
+        .reduce(|ink, part| ink.union(part))
+        .unwrap_or(Rect::ZERO)
 }
 
 /// The decoration lines of `run` as its shadow draws them: moved by the

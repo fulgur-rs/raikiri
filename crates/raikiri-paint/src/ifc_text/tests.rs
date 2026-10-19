@@ -3444,6 +3444,47 @@ fn each_shadow_layer_covers_every_run_of_the_box_before_the_next() {
 }
 
 #[test]
+fn a_blurred_shadow_layer_covers_ink_outside_the_lines() {
+    // A zero line height leaves the glyphs and their underline sticking out
+    // of the paragraph's content box above and below.
+    let on = painted_root(
+        "width:200px;font-size:16px;line-height:0;color:black;text-decoration:underline;\
+         text-shadow:2px 3px 1px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    let layers: Vec<Rect> = on
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => Some(kurbo::Shape::bounding_box(&layer.clip)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(layers.len(), 1);
+    let clip = layers[0];
+    let blue = solid(0, 0, 255);
+    let shadow: Vec<_> = glyphs(&on).into_iter().filter(|g| g.3 == blue).collect();
+    assert_eq!(shadow.len(), 2);
+    for glyph in shadow {
+        // The ascent of a glyph reaches about three quarters of an em above
+        // its baseline origin.
+        assert!(
+            clip.y0 <= glyph.2 - 12.0 && glyph.2 <= clip.y1,
+            "{clip:?} down {glyph:?}"
+        );
+    }
+    let lines = fills_with(&on, &blue);
+    assert_eq!(lines.len(), 1, "the shadow's underline");
+    let line = lines[0].map(|v| v as f64 / 64.0);
+    assert!(
+        clip.y0 <= line[1] && line[3] <= clip.y1,
+        "{clip:?} holds the underline {line:?}"
+    );
+}
+
+#[test]
 fn each_blurred_shadow_layer_blurs_every_run_of_the_box_in_one_filter() {
     for (shadows, layers) in [
         ("2px 3px 4px rgb(0,0,255)", 1),

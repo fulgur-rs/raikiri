@@ -183,11 +183,7 @@ impl<'a> LinePaint<'a, '_> {
             for together in
                 pieces.chunk_by(|a, b| a.run.draw.group == b.run.draw.group && a.blur() == b.blur())
             {
-                draw_shadow(
-                    paint.target(together[0].run.draw.group),
-                    together,
-                    self.size,
-                );
+                draw_shadow(paint.target(together[0].run.draw.group), together);
             }
         }
     }
