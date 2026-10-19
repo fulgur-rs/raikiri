@@ -1926,3 +1926,109 @@ fn a_paragraph_in_wrappers_of_a_balanced_container_flows_over_pages_like_one_of_
         assert!(wrapped == direct, "{depth} wrappers");
     }
 }
+
+/// A column container 170px wide with two 80px columns and a fixed height,
+/// holding `inner`.
+fn in_fixed_outer(height: u32, inner: &str) -> String {
+    format!(
+        "<div style='width:170px;height:{height}px;column-count:2;column-gap:10px;column-fill:auto'>{inner}</div>"
+    )
+}
+
+#[test]
+fn a_balanced_nested_container_that_fits_an_outer_column_paints_one_box() {
+    // Six lines balance into two columns of three, which fit the first
+    // column of the outer container exactly. The box belongs to that column
+    // alone; the second outer column holds nothing of it.
+    compare(
+        &in_fixed_outer(
+            60,
+            "<div style='column-count:2;column-gap:10px;background:green'>A<br>B<br>C<br>D<br>E<br>F</div>",
+        ),
+        "",
+        "<div style='position:absolute;left:0;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:45px;top:0'>D<br>E<br>F</div>",
+    );
+}
+
+#[test]
+fn a_bordered_nested_container_that_fits_an_outer_column_paints_its_border_once() {
+    compare(
+        &in_fixed_outer(
+            70,
+            "<div style='column-count:2;column-gap:10px;border:2px solid red;background:green'>A<br>B<br>C<br>D<br>E<br>F</div>",
+        ),
+        "",
+        "<div style='position:absolute;left:0;top:0;width:76px;height:60px;border:2px solid red;background:green'></div><div style='position:absolute;left:2px;top:2px'>A<br>B<br>C</div><div style='position:absolute;left:45px;top:2px'>D<br>E<br>F</div>",
+    );
+}
+
+#[test]
+fn a_balanced_nested_container_in_a_later_outer_column_paints_one_box() {
+    // The container starts the second outer column, so the first one holds
+    // nothing of it.
+    compare(
+        &in_fixed_outer(
+            60,
+            "<div style='height:60px'></div><div style='column-count:2;column-gap:10px;background:green'>A<br>B<br>C<br>D<br>E<br>F</div>",
+        ),
+        "",
+        "<div style='position:absolute;left:90px;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:90px;top:0'>A<br>B<br>C</div><div style='position:absolute;left:135px;top:0'>D<br>E<br>F</div>",
+    );
+}
+
+#[test]
+fn a_nested_container_in_an_auto_height_container_paints_all_of_its_columns() {
+    // Every column of the inner container's own text is drawn, not only the
+    // first, whatever the outer container's height.
+    for outer in ["", "height:100px;"] {
+        compare(
+            &format!(
+                "<div style='width:170px;{outer}column-count:2;column-gap:10px;column-fill:auto'><div style='column-count:2;column-gap:10px;background:green'>A<br>B<br>C<br>D<br>E<br>F</div></div>"
+            ),
+            "",
+            "<div style='position:absolute;left:0;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:45px;top:0'>D<br>E<br>F</div>",
+        );
+    }
+}
+
+#[test]
+fn atomic_inlines_of_a_nested_container_follow_their_lines() {
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for outer in ["", "height:100px;", "height:60px;"] {
+        compare(
+            &format!(
+                "<div style='width:170px;{outer}column-count:2;column-gap:10px;column-fill:auto'><div style='column-count:2;column-gap:10px;background:green'>A{red}<br>B<br>{blue}C<br>D<br>E<br>F</div></div>"
+            ),
+            "",
+            &format!(
+                "<div style='position:absolute;left:0;top:0;width:80px;height:60px;background:green'></div><div style='position:absolute;left:0;top:0'>A{red}<br>B<br>{blue}C</div><div style='position:absolute;left:45px;top:0'>D<br>E<br>F</div>"
+            ),
+        );
+    }
+}
+
+#[test]
+fn a_nested_container_paints_like_the_same_container_on_its_own() {
+    // Placed in a column of another container, the box and the lines of each
+    // of its own columns are where they are without the outer container.
+    let (red, blue) = (atomic("", "red"), atomic("X", "blue"));
+    for direction in ["", "direction:rtl;"] {
+        for text in [
+            "A B C D E F G H I J K L".to_string(),
+            format!("A{red}<br>B<br>{blue}C<br>D<br>E<br>F"),
+        ] {
+            let inner = format!(
+                "<div style='{direction}border:3px solid red;padding:2px;column-count:2;column-gap:10px;background:green;width:80px;box-sizing:border-box'>{text}</div>"
+            );
+            for outer in ["", "height:120px;"] {
+                compare_bodies(
+                    &format!(
+                        "<div style='width:170px;{outer}column-count:2;column-gap:10px;column-fill:auto'>{inner}</div>"
+                    ),
+                    &inner,
+                    "",
+                );
+            }
+        }
+    }
+}

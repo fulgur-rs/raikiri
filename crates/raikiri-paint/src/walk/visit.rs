@@ -133,7 +133,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 fragment_id: Some(current_fragment_id),
                 fragment_origin_x: node_abs_x,
                 fragment_origin_y: node_abs_y,
-                fragmentainer: Some(fragment.fragmentainer),
+                fragmentainer: node.paragraph_column_of_fragment(&fragment),
                 fragment_rect: Some(fragment.rect),
                 fragment_clip,
                 is_fragment_visit: true,

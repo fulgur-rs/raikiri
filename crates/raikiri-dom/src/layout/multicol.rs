@@ -2175,8 +2175,11 @@ fn record_nested_ifc_box_fragments(
 
             // A paragraph that is the subtree root owns its fragments: the
             // one it was placed with, and one at the top of each later
-            // column it continues in.
+            // column it continues in. A column container that holds its own
+            // paragraph is no such root: its ranges name its own columns, and
+            // the container stays one box in the column it was placed in.
             let root_owns_fragments = node_id == subtree_root
+                && tree.nodes[node_id].multicol.is_none()
                 && tree.fragment_tree.fragments[parent_fragment].node_id == node_id;
             // Its ranges give each line its block offset in the paragraph,
             // so lines in a later column would be drawn that far below the
