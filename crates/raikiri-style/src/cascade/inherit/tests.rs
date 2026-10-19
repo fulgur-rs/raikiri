@@ -11934,6 +11934,63 @@ fn an_svg_presentation_attribute_is_left_to_the_svg() {
 }
 
 #[test]
+fn a_painting_attribute_written_with_a_variable_is_exported_resolved() {
+    let fill = |css: &str, value: &str| {
+        exported(
+            &svg_rect_properties(css, &[("fill", value)], None),
+            PropertyKey::Fill,
+        )
+    };
+    let green = Some((false, Some("rgba(0,128,0,1)".into())));
+    assert_eq!(fill("rect { --c: green }", "var(--c)"), green);
+    // The variable may come from an ancestor.
+    assert_eq!(fill("svg { --c: green }", "var(--c)"), green);
+    // A fallback stands in for a variable nothing defines.
+    assert_eq!(
+        fill("", "var(--missing, red)"),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+    // A variable nothing defines makes the attribute invalid at computed-value
+    // time, so the property is unset and inherits.
+    assert_eq!(fill("", "var(--missing)"), Some((true, None)));
+    // A value the property rejects is invalid in the same way.
+    assert_eq!(fill("rect { --c: 12 }", "var(--c)"), Some((true, None)));
+    // An attribute without `var()` stays in the SVG source.
+    assert_eq!(fill("rect { --c: green }", "red"), None);
+    // A declaration still outranks the attribute.
+    assert_eq!(
+        fill("rect { --c: green; fill: blue }", "var(--c)"),
+        Some((false, Some("rgba(0,0,255,1)".into())))
+    );
+}
+
+#[test]
+fn every_painting_attribute_written_with_a_variable_is_exported_resolved() {
+    let properties = svg_rect_properties(
+        "rect { --n: 3; --d: 4 2 }",
+        &[
+            ("stroke-width", "var(--n)"),
+            ("stroke-dasharray", "var(--d)"),
+            ("fill-rule", "var(--missing, evenodd)"),
+        ],
+        None,
+    );
+    let text = |key| exported(&properties, key);
+    assert_eq!(
+        text(PropertyKey::StrokeWidth),
+        Some((false, Some("3".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeDasharray),
+        Some((false, Some("4 2".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::FillRule),
+        Some((false, Some("evenodd".into())))
+    );
+}
+
+#[test]
 fn revert_layer_rolls_a_paint_property_back_to_its_attribute() {
     let properties = svg_rect_properties(
         "@layer a, b; @layer b { rect { fill: revert-layer; stroke-width: revert-layer } }",

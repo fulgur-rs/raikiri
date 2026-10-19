@@ -352,3 +352,43 @@ fn revert_layer_on_a_dasharray_rolls_back_to_the_earlier_layer() {
         "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='2 6' /></svg>",
     );
 }
+
+#[test]
+fn a_fill_attribute_may_name_a_variable_of_the_page() {
+    assert_paints_like(
+        "<div style='--paint:blue'><svg width=20 height=20><rect width=20 height=20 fill='var(--paint)' /></svg></div>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_fill_attribute_may_name_a_variable_of_the_svg() {
+    assert_paints_like(
+        "<svg width=20 height=20 style='--paint:blue'><rect width=20 height=20 fill='var(--paint)' /></svg>",
+        "<svg width=20 height=20><rect width=20 height=20 fill=blue /></svg>",
+    );
+}
+
+#[test]
+fn a_stroke_attribute_variable_falls_back_when_nothing_defines_it() {
+    assert_paints_like(
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none stroke='var(--missing, blue)' stroke-width=4 /></svg>",
+        "<svg width=20 height=20><rect x=4 y=4 width=12 height=12 fill=none stroke=blue stroke-width=4 /></svg>",
+    );
+}
+
+#[test]
+fn a_dasharray_attribute_may_name_a_variable() {
+    assert_paints_like(
+        "<div style='--dash:4 4'><svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='var(--dash)' /></svg></div>",
+        "<svg width=20 height=20><path d='M0 10h20' fill=none stroke=black stroke-width=4 stroke-dasharray='4 4' /></svg>",
+    );
+}
+
+#[test]
+fn a_fill_attribute_variable_that_nothing_defines_inherits_the_parents_fill() {
+    assert_paints_like(
+        "<svg width=20 height=20><g fill=blue><rect width=20 height=20 fill='var(--missing)' /></g></svg>",
+        "<svg width=20 height=20><g fill=blue><rect width=20 height=20 /></g></svg>",
+    );
+}

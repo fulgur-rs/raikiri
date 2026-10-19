@@ -1399,6 +1399,12 @@ pub(crate) fn apply_winners(
                     inherited_border_width |= width_is_computed;
                     Some(value)
                 };
+            // A `var()` in a painting attribute is not text the SVG renderer
+            // can read, so the attribute's resolved value is exported.
+            let value_has_variable = matches!(
+                value,
+                PropertyValue::Deferred(deferred) if deferred.css_wide_keyword().is_none()
+            );
             let value = match value {
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(Box::new(
                     inherited_border_radius_value(inherited),
@@ -1504,10 +1510,12 @@ pub(crate) fn apply_winners(
                 _ => {}
             }
             // A painting attribute that wins is already in the SVG source; only a
-            // stylesheet declaration, or a rollback to the attribute, is exported.
+            // stylesheet declaration, a rollback to the attribute, or an
+            // attribute written with `var()` is exported.
             let winning_paint_hint = winner.rank
                 == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false)
-                && winner_key.is_svg_presentation();
+                && winner_key.is_svg_presentation()
+                && !value_has_variable;
             if let Some(properties) = svg_properties.as_deref_mut()
                 && svg_property_is_exported(winner_key)
                 && !winning_paint_hint
