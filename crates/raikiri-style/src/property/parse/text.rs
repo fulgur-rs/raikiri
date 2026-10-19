@@ -1518,8 +1518,9 @@ pub(super) fn parse_unicode_bidi(input: &mut Parser<'_, '_>) -> Option<UnicodeBi
 /// (CSS Text 3 §6.1, <https://www.w3.org/TR/css-text-3/#text-align-property>).
 ///
 /// Spec value grammar (§6.1): `start | end | left | right | center | justify |
-/// match-parent | justify-all`. Additionally, CSS-wide `inherit` for this inherited
-/// property and the HTML UA-only `-internal-center` are accepted for the internal cascade.
+/// match-parent | justify-all`. Additionally, the HTML UA-only `-internal-center`
+/// is accepted for the internal cascade. A lone CSS-wide keyword never gets
+/// here: [`parse_value`](super::parse_value) keeps it as a deferred marker first.
 /// Compare identifiers case-insensitively in ASCII
 /// (the CSS convention, also used by sibling [`parse_string_fetch`](super::content::parse_string_fetch) / [`parse_content_part`](super::content::parse_content_part) /
 /// [`parse_content_text_keyword`](super::content::parse_content_text_keyword)).
@@ -1531,9 +1532,8 @@ pub(super) fn parse_unicode_bidi(input: &mut Parser<'_, '_>) -> Option<UnicodeBi
 ///   <https://www.w3.org/TR/css-text-4/#text-align-property> as an
 ///   alternative (see §7.2, "Character-based Alignment in a Table
 ///   Column," for its semantics).
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
-///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
-///   the canonical list of five keywords and the rationale.
+/// - **Implemented**: CSS-wide keywords are retained as deferred markers; see the
+///   "CSS-wide keywords" section of the [`PropertyValue`] documentation.
 /// - **(a) Invalid under the specification**: unknown keywords such as `middle` are silently dropped (`None`).
 pub(super) fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
     TextAlign::from_css_ident(input.expect_ident().ok()?)
