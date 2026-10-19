@@ -34,9 +34,9 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
     supported_with_wrapped_blocks(tree, parent, out_of_flow, false)
 }
 
-/// [`supported`] for an outer auto-height multicol that balances its columns.
-/// Such a stream may also flatten eligible block-only wrappers.
-pub(super) fn supported_for_auto_balance(tree: &Document, parent: usize) -> Option<Vec<usize>> {
+/// [`supported`] for an outermost multicol container. Its stream may also
+/// hold the blocks of eligible block-only wrappers in their place.
+pub(super) fn supported_with_wrappers(tree: &Document, parent: usize) -> Option<Vec<usize>> {
     supported_with_wrapped_blocks(tree, parent, true, true)
 }
 

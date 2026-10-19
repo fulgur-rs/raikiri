@@ -2147,7 +2147,7 @@ fn auto_height_columns_balance_lineless_blocks_inside_nested_wrappers() {
     let (doc, parent, child) = nested_wrapped_lineless_fixture();
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
     assert!(
-        lineless::supported_for_auto_balance(&doc, parent).is_some(),
+        lineless::supported_with_wrappers(&doc, parent).is_some(),
         "a span below flow-root is regular column content"
     );
     let fragments = fragment_rects(&doc, child);
@@ -2192,13 +2192,13 @@ fn auto_balance_preserves_spanners_in_the_multicol_formatting_context() {
     layout_nested_flex_float_fixture(&mut doc);
 
     assert!(
-        lineless::supported_for_auto_balance(&doc, parent).is_none(),
+        lineless::supported_with_wrappers(&doc, parent).is_none(),
         "a spanner in the multicol formatting context must keep the spanning path active"
     );
 }
 
 #[test]
-fn auto_balance_keeps_empty_spanners_of_a_wrapper_out_of_the_stream() {
+fn wrappers_keep_empty_spanners_out_of_the_stream() {
     let spanners = |wrapper_css: &str| {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -2222,12 +2222,12 @@ fn auto_balance_keeps_empty_spanners_of_a_wrapper_out_of_the_stream() {
 
     // The margins of the two spanners collapse into the larger one.
     let (doc, parent) = spanners("display:block");
-    assert!(lineless::supported_for_auto_balance(&doc, parent).is_none());
+    assert!(lineless::supported_with_wrappers(&doc, parent).is_none());
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
 
     // Below a flow root they are ordinary blocks of the columns.
     let (doc, parent) = spanners("display:flow-root");
-    assert!(lineless::supported_for_auto_balance(&doc, parent).is_some());
+    assert!(lineless::supported_with_wrappers(&doc, parent).is_some());
 }
 
 #[test]
