@@ -2947,27 +2947,31 @@ pub(crate) fn place_out_of_flow(
         let available =
             (cb.width - margin.left - margin.right - left.unwrap_or(0.0) - right.unwrap_or(0.0))
                 .max(0.0);
-        let output = tree.compute_child_layout(
-            taffy::NodeId::from(node),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::ContentSize,
-                axis: RequestedAxis::Both,
-                known_dimensions: Size { width, height },
-                known_dimensions_are_definite: Size {
-                    width: true,
-                    height: true,
-                },
-                parent_size: Size {
-                    width: Some(cb.width),
-                    height: Some(cb.height),
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(available),
-                    height: AvailableSpace::MaxContent,
-                },
-                vertical_margins_are_collapsible: Line::FALSE,
+        let node_id = taffy::NodeId::from(node);
+        let inputs = LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::ContentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size { width, height },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
             },
+            parent_size: Size {
+                width: Some(cb.width),
+                height: Some(cb.height),
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(available),
+                height: AvailableSpace::MaxContent,
+            },
+            vertical_margins_are_collapsible: Line::FALSE,
+        };
+        let output = crate::taffy_impl::content_limits::with_oof_child_content_limits(
+            tree,
+            node_id,
+            inputs,
+            |tree, node_id, inputs| tree.compute_child_layout(node_id, inputs),
         );
         let x = match (left, right) {
             (Some(left), Some(right)) if auto_horizontal_margins => {

@@ -8,13 +8,17 @@
 //! for the duration of that layout. Every algorithm that clamps the box to its
 //! `min_size` and `max_size` then reads the sizes the keywords stand for.
 
+use std::collections::HashMap;
+
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
 use crate::node::FormattingContext;
 use crate::taffy_impl::{fit_content_room, resolve_calc};
+use raikiri_style::property::PositionValue;
 use taffy::{
-    AvailableSpace, Cache, Dimension, ExpandedDimension, LayoutInput, LayoutOutput,
-    LengthPercentageAuto, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode, Style,
+    AvailableSpace, BoxSizing, Cache, Dimension, ExpandedDimension, LayoutInput, LayoutOutput,
+    LengthPercentageAuto, Line, MaybeResolve, NodeId, RequestedAxis, ResolveOrZero, RunMode, Size,
+    SizingMode, Style,
 };
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
@@ -73,12 +77,21 @@ fn applies(tree: &LayoutSession<'_>, idx: usize, limits: &ContentLimits) -> bool
     let context = tree.nodes[idx].formatting_context;
     *limits != ContentLimits::NONE
         && !tree.context.content_limit_probes.contains(&idx)
+        && !is_oof_box(tree, idx)
         && matches!(
             context,
             FormattingContext::Block
                 | FormattingContext::Inline
                 | FormattingContext::Flex
                 | FormattingContext::Grid
+        )
+}
+
+fn is_oof_box(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].fixed_position
+        || matches!(
+            *tree.nodes[idx].position(),
+            PositionValue::Absolute | PositionValue::Fixed
         )
 }
 
@@ -93,6 +106,15 @@ fn is_flex_grid_container(tree: &LayoutSession<'_>, idx: usize) -> bool {
         tree.nodes[idx].formatting_context,
         FormattingContext::Flex | FormattingContext::Grid
     )
+}
+
+fn is_flex_grid_item(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].parent.is_some_and(|parent| {
+        matches!(
+            tree.nodes[parent].formatting_context,
+            FormattingContext::Flex | FormattingContext::Grid
+        )
+    })
 }
 
 fn neutralize_all_sizes(style: &mut Style) {
@@ -168,6 +190,308 @@ pub(super) fn with_content_limits(
         saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
         output
     })
+}
+
+/// Lay out an out-of-flow box whose containing block is an inline element.
+/// That placement path supplies definite inset sizes itself, so apply the
+/// intrinsic bounds to those sizes before dispatching the child layout.
+pub(crate) fn with_oof_child_content_limits(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    mut inputs: LayoutInput,
+    dispatch: impl FnOnce(&mut LayoutSession<'_>, NodeId, LayoutInput) -> LayoutOutput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let limits = tree.nodes[idx].content_limits;
+    if limits == ContentLimits::NONE
+        || !is_oof_box(tree, idx)
+        || tree.context.content_limit_probes.contains(&idx)
+    {
+        return dispatch(tree, node_id, inputs);
+    }
+
+    scoped(tree, |tree| {
+        let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
+        let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
+        let mut width = Bounds::default();
+        if limits.has_width() {
+            width = width_bounds(tree, node_id, &limits, &inputs);
+            let adjustment =
+                box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+            width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+        }
+        if let Some(known) = inputs.known_dimensions.width {
+            let known =
+                clamp_known_width_to_style(tree, idx, inputs.parent_size.width, width.apply(known));
+            inputs.known_dimensions.width = Some(known);
+            inputs.available_space.width = AvailableSpace::Definite(known);
+        }
+        if limits.has_height() {
+            let height = height_bounds(tree, node_id, &limits, &inputs, width);
+            let adjustment =
+                box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+            height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+            inputs.known_dimensions.height = inputs.known_dimensions.height.map(|known| {
+                clamp_known_height_to_style(
+                    tree,
+                    idx,
+                    inputs.parent_size.height,
+                    inputs.parent_size.width,
+                    height.apply(known),
+                )
+            });
+        }
+        let output = dispatch(tree, node_id, inputs);
+        saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+        tree.nodes[idx].cache = cache;
+        output
+    })
+}
+
+/// Resolve intrinsic limits before Taffy's out-of-flow algorithm reads a
+/// candidate's style. The preliminary pass supplies the exact available
+/// inset room, including static-position and grid-area adjustments; a second
+/// pass with numeric min/max constraints removed supplies that unconstrained
+/// room when those numeric constraints would have clamped it.
+pub(crate) fn with_oof_content_limits<R>(
+    tree: &mut LayoutSession<'_>,
+    candidate_ids: Option<&[NodeId]>,
+    clear_cached_nodes: &[NodeId],
+    mut dispatch: impl FnMut(&mut LayoutSession<'_>) -> R,
+) -> R {
+    if candidate_ids.is_some() && tree.context.oof_content_limit_prepass_depth > 0 {
+        return dispatch(tree);
+    }
+    let targets = candidate_ids
+        .map(|candidates| {
+            candidates
+                .iter()
+                .map(|&candidate| usize::from(candidate))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| {
+            (0..tree.nodes.len())
+                .filter(|&idx| is_oof_box(tree, idx))
+                .collect()
+        })
+        .into_iter()
+        .filter(|&idx| {
+            tree.nodes[idx].content_limits != ContentLimits::NONE && is_oof_box(tree, idx)
+        })
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return dispatch(tree);
+    }
+
+    scoped(tree, |tree| {
+        let saved_caches = targets
+            .iter()
+            .map(|&idx| {
+                (
+                    idx,
+                    std::mem::replace(&mut tree.nodes[idx].cache, Cache::new()),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let suppress_nested_prepasses = candidate_ids.is_some();
+        let saved_prepass_caches = suppress_nested_prepasses.then(|| {
+            tree.nodes
+                .iter()
+                .map(|node| node.cache.clone())
+                .collect::<Vec<_>>()
+        });
+        let constrained_inputs =
+            capture_oof_layout_inputs(tree, &mut dispatch, suppress_nested_prepasses);
+        let raw_targets = targets
+            .iter()
+            .copied()
+            .filter(|idx| constrained_inputs.contains_key(idx))
+            .filter(|&idx| {
+                let style = tree.layout_node_with_style(idx).unwrap().style;
+                !style.min_size.width.is_auto()
+                    || !style.min_size.height.is_auto()
+                    || !style.max_size.width.is_auto()
+                    || !style.max_size.height.is_auto()
+            })
+            .collect::<Vec<_>>();
+        let raw_inputs = if raw_targets.is_empty() {
+            None
+        } else {
+            let saved_sizes = raw_targets
+                .iter()
+                .map(|&idx| {
+                    let style = tree.layout_node_with_style(idx).unwrap().style;
+                    (idx, SavedSizes::of(style))
+                })
+                .collect::<Vec<_>>();
+            for &idx in &raw_targets {
+                let style = tree.layout_style_for_key_mut(idx).unwrap();
+                style.min_size = Size::auto();
+                style.max_size = Size::auto();
+            }
+            let inputs = capture_oof_layout_inputs(tree, &mut dispatch, suppress_nested_prepasses);
+            for (idx, saved) in saved_sizes.into_iter().rev() {
+                saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+            }
+            Some(inputs)
+        };
+
+        let mut prepared = Vec::new();
+        for &idx in &targets {
+            let Some(positioned_inputs) = constrained_inputs.get(&idx) else {
+                continue;
+            };
+            let limits = tree.nodes[idx].content_limits;
+            let node_id = NodeId::from(idx);
+            let width = if limits.has_width() {
+                let inputs = raw_inputs
+                    .as_ref()
+                    .and_then(|inputs| inputs.get(&idx))
+                    .unwrap_or(positioned_inputs);
+                width_bounds(tree, node_id, &limits, inputs)
+            } else {
+                Bounds::default()
+            };
+            let width_adjustment = box_sizing_adjustment(
+                tree,
+                idx,
+                positioned_inputs.parent_size.width.unwrap_or(0.0),
+            );
+            let saved = {
+                let style = tree.layout_style_for_key_mut(idx).unwrap();
+                let saved = SavedSizes::of(style);
+                width.install_width(style, width_adjustment);
+                saved
+            };
+
+            if limits.has_height() {
+                let mut height_inputs = *positioned_inputs;
+                if limits.has_width()
+                    && let Some(known) = height_inputs.known_dimensions.width
+                {
+                    let known = clamp_known_width_to_style(
+                        tree,
+                        idx,
+                        height_inputs.parent_size.width,
+                        known,
+                    );
+                    height_inputs.known_dimensions.width = Some(known);
+                    height_inputs.available_space.width = AvailableSpace::Definite(known);
+                }
+                let height = height_bounds(tree, node_id, &limits, &height_inputs, width);
+                let height_adjustment = box_sizing_height_adjustment(
+                    tree,
+                    idx,
+                    positioned_inputs.parent_size.width.unwrap_or(0.0),
+                );
+                height.install_height(
+                    tree.layout_style_for_key_mut(idx).unwrap(),
+                    height_adjustment,
+                );
+            }
+            prepared.push((idx, saved));
+        }
+
+        if let Some(caches) = saved_prepass_caches {
+            // Discard cache entries produced while descendant OOF wrappers
+            // were bypassed for this candidate's preliminary measurements.
+            debug_assert_eq!(caches.len(), tree.nodes.len());
+            for (node, cache) in tree.nodes.iter_mut().zip(caches) {
+                node.cache = cache;
+            }
+        }
+        for &node_id in clear_cached_nodes {
+            tree.nodes[usize::from(node_id)].cache.clear();
+        }
+        for &idx in &targets {
+            tree.nodes[idx].cache = Cache::new();
+            tree.context.content_limit_probes.push(idx);
+        }
+        let output = dispatch(tree);
+        for _ in &targets {
+            tree.context.content_limit_probes.pop();
+        }
+        for (idx, saved) in prepared.into_iter().rev() {
+            saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+        }
+        for (idx, cache) in saved_caches.into_iter().rev() {
+            tree.nodes[idx].cache = cache;
+        }
+        output
+    })
+}
+
+/// Clamp an out-of-flow preliminary width to its installed min/max sizes,
+/// including box-sizing adjustments.
+fn clamp_known_width_to_style(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_width: Option<f32>,
+    known: f32,
+) -> f32 {
+    let style = tree.layout_node_with_style(idx).unwrap().style;
+    let adjustment = box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
+    let minimum = style
+        .min_size
+        .width
+        .maybe_resolve(parent_width, resolve_calc)
+        .map(|width| width + adjustment)
+        .unwrap_or(0.0);
+    let maximum = style
+        .max_size
+        .width
+        .maybe_resolve(parent_width, resolve_calc)
+        .map(|width| width + adjustment)
+        .unwrap_or(f32::INFINITY)
+        .max(minimum);
+    known.max(minimum).min(maximum)
+}
+
+/// Clamp an out-of-flow preliminary height to its installed min/max sizes,
+/// including box-sizing adjustments.
+fn clamp_known_height_to_style(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    parent_height: Option<f32>,
+    parent_width: Option<f32>,
+    known: f32,
+) -> f32 {
+    let style = tree.layout_node_with_style(idx).unwrap().style;
+    let adjustment = box_sizing_height_adjustment(tree, idx, parent_width.unwrap_or(0.0));
+    let minimum = style
+        .min_size
+        .height
+        .maybe_resolve(parent_height, resolve_calc)
+        .map(|height| height + adjustment)
+        .unwrap_or(0.0);
+    let maximum = style
+        .max_size
+        .height
+        .maybe_resolve(parent_height, resolve_calc)
+        .map(|height| height + adjustment)
+        .unwrap_or(f32::INFINITY)
+        .max(minimum);
+    known.max(minimum).min(maximum)
+}
+
+fn capture_oof_layout_inputs<R>(
+    tree: &mut LayoutSession<'_>,
+    dispatch: &mut impl FnMut(&mut LayoutSession<'_>) -> R,
+    suppress_nested_prepasses: bool,
+) -> HashMap<usize, LayoutInput> {
+    tree.context.oof_content_limit_inputs.push(HashMap::new());
+    if suppress_nested_prepasses {
+        tree.context.oof_content_limit_prepass_depth += 1;
+    }
+    let _ = dispatch(tree);
+    if suppress_nested_prepasses {
+        tree.context.oof_content_limit_prepass_depth -= 1;
+    }
+    tree.context
+        .oof_content_limit_inputs
+        .pop()
+        .expect("OOF layout input capture was pushed above")
 }
 
 /// Give `style`, a copy of the style of the block-flow child `child`, the
@@ -686,6 +1010,16 @@ fn height_bounds(
     along.known_dimensions_are_definite.height = false;
     along.vertical_margins_are_collapsible = Line::FALSE;
     let key = MeasureKey::new(tree, usize::from(node_id), false, &along, width);
+    let percentage_height_basis = (is_oof_box(tree, idx)
+        || is_flex_grid_container(tree, idx)
+        || is_flex_grid_item(tree, idx))
+    .then(|| content_percentage_height_basis(tree, idx, inputs))
+    .flatten();
+    if let Some(height) = percentage_height_basis {
+        tree.context
+            .content_limit_percentage_height_bases
+            .push((idx, height));
+    }
     let height = probe(tree, node_id, key, along, |style| {
         if flex_grid_container {
             let preferred_width = style.size.width;
@@ -698,10 +1032,53 @@ fn height_bounds(
             style.max_size.height = LengthPercentageAuto::auto();
         }
     });
+    if percentage_height_basis.is_some() {
+        tree.context.content_limit_percentage_height_bases.pop();
+    }
     Bounds {
         min: (!limits.min.height.is_auto()).then_some(height),
         max: (!limits.max.height.is_auto()).then_some(height),
     }
+}
+
+/// The content-box height the measured box's authored size or its caller's
+/// definite size offers to percentage-sized children during intrinsic sizing.
+fn content_percentage_height_basis(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    inputs: &LayoutInput,
+) -> Option<f32> {
+    let style = tree.layout_node_with_style(idx)?.style;
+    let parent_width = inputs.parent_size.width.unwrap_or(0.0);
+    let edges = (style
+        .padding
+        .resolve_or_zero(Some(parent_width), resolve_calc)
+        + style
+            .border
+            .resolve_or_zero(Some(parent_width), resolve_calc))
+    .sum_axes()
+    .height;
+    if let Some(height) = inputs.known_dimensions.height {
+        return Some((height - edges).max(0.0));
+    }
+
+    let box_sizing_adjustment = if style.box_sizing == BoxSizing::ContentBox {
+        edges
+    } else {
+        0.0
+    };
+    let preferred = style
+        .size
+        .height
+        .maybe_resolve(inputs.parent_size.height, resolve_calc)?
+        + box_sizing_adjustment;
+    let minimum = style
+        .min_size
+        .height
+        .maybe_resolve(inputs.parent_size.height, resolve_calc)
+        .map(|height| height + box_sizing_adjustment)
+        .unwrap_or(0.0);
+    Some((preferred.max(minimum) - edges).max(0.0))
 }
 
 /// The border-box width the box `idx` would stretch to in the room `inputs`

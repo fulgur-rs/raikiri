@@ -575,6 +575,12 @@ impl LayoutPartialTree for LayoutSession<'_> {
     }
 
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        let idx = usize::from(node_id);
+        if inputs.run_mode == RunMode::PerformLayout
+            && let Some(capture) = self.context.oof_content_limit_inputs.last_mut()
+        {
+            capture.insert(idx, inputs);
+        }
         self.compute_child_layout_with_block_ctx(node_id, inputs, None)
     }
 }
@@ -595,9 +601,20 @@ impl LayoutSession<'_> {
     pub(crate) fn compute_child_layout_with_block_ctx(
         &mut self,
         node_id: NodeId,
-        inputs: LayoutInput,
+        mut inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
+        let idx = usize::from(node_id);
+        if let Some(parent) = self.nodes[idx].parent
+            && let Some((_, height)) = self
+                .context
+                .content_limit_percentage_height_bases
+                .iter()
+                .rev()
+                .find(|(ancestor, _)| *ancestor == parent)
+        {
+            inputs.parent_size.height = Some(*height);
+        }
         // A box that does not share its parent's block context is not part of
         // the parent's `text-group-align` group.
         let keeps_group = std::mem::take(&mut self.context.keep_text_group);
@@ -1001,7 +1018,7 @@ mod orthogonal_flow;
 mod replaced_size;
 mod vertical_block;
 mod vertical_oof;
-pub(crate) use oof::layout_container_candidates;
+pub(crate) use oof::{compute_root_layout_with_content_limits, layout_container_candidates};
 pub(crate) use vertical_block::{TransposedBlock, block_right_to_left, is_table_box};
 pub(crate) use vertical_oof::used_writing_mode;
 

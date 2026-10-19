@@ -3,6 +3,7 @@
 //! content, which lies outside the paragraphs of the document.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
@@ -396,99 +397,157 @@ fn paint_decoration_pattern(
         // a defensive sink guard for future/non-finite metrics.
         return;
     }
+    let pattern = pattern_origin..pattern_end;
     match style {
         TextDecorationStyle::Solid => fill_decoration_rect(scene, color, x0, x1, center, thickness),
         TextDecorationStyle::Double => {
-            // CSS Text Decoration 3 defines double as two lines with a gap.
-            // Divide the total auto thickness into three equal bands.
-            let band = (thickness / 3.0).max(0.5);
-            let offset = band;
-            fill_decoration_rect(scene, color, x0, x1, center - offset, band);
-            fill_decoration_rect(scene, color, x0, x1, center + offset, band);
+            paint_double_decoration(scene, color, x0, x1, center, thickness)
         }
         TextDecorationStyle::Dotted => {
-            let radius = (thickness / 2.0).max(0.5);
-            let span = pattern_end - pattern_origin;
-            let natural_step = (radius * 4.0).max(2.0);
-            // A hostile but finite letter-spacing/advance must not turn into
-            // an unbounded number of scene commands.
-            let step = natural_step.max(span / MAX_DECORATION_SEGMENTS as f64);
-            let first_center = pattern_origin + radius;
-            let index = ((x0 - radius - first_center) / step).ceil();
-            let mut x = first_center + index * step;
-            scene.push_clip_layer(
-                Affine::IDENTITY,
-                &Rect::new(x0, center - radius, x1, center + radius),
-            );
-            let mut segments = 0;
-            while x - radius < x1 && segments < MAX_DECORATION_SEGMENTS {
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    color,
-                    None,
-                    &Circle::new(Point::new(x, center), radius),
-                );
-                x += step;
-                segments += 1;
-            }
-            scene.pop_layer();
+            paint_dotted_decoration(scene, color, x0, x1, center, thickness, pattern)
         }
         TextDecorationStyle::Dashed => {
-            let (dash, gap) = dashed_lengths(pattern_end - pattern_origin, thickness);
-            let mut path = BezPath::new();
-            path.move_to((x0, center));
-            path.line_to((x1, center));
-            let stroke = Stroke::new(thickness)
-                .with_caps(Cap::Butt)
-                .with_dashes((x0 - pattern_origin).rem_euclid(dash + gap), [dash, gap]);
-            scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+            paint_dashed_decoration(scene, color, x0, x1, center, thickness, pattern)
         }
         TextDecorationStyle::Wavy => {
-            let span = pattern_end - pattern_origin;
-            let wavelength = (thickness * 4.0).max(4.0);
-            let amplitude = (thickness * 1.5).max(0.75);
-            // Limit path complexity while retaining more detail for normal
-            // spans. The cap is important for huge finite advances.
-            let half_wave = (wavelength * 0.5).max(span / MAX_DECORATION_SEGMENTS as f64);
-            let mut path = BezPath::new();
-            let mut index = ((x0 - pattern_origin) / half_wave).floor();
-            let mut x = pattern_origin + index * half_wave;
-            path.move_to((x, center));
-            let mut segments = 0;
-            while x < x1 && segments <= MAX_DECORATION_SEGMENTS {
-                let end = x + half_wave;
-                if end <= x {
-                    break; // cov:ignore: valid segments lie within the shared extent; the bounded f64 step exceeds roundoff.
-                }
-                let sign = if index.rem_euclid(2.0) < 1.0 {
-                    -1.0
-                } else {
-                    1.0
-                };
-                let control_x = (x + end) * 0.5;
-                path.quad_to((control_x, center + sign * amplitude), (end, center));
-                x = end;
-                index += 1.0;
-                segments += 1;
-            }
-            let stroke = Stroke::new(thickness).with_caps(Cap::Round);
-            scene.push_clip_layer(
-                Affine::IDENTITY,
-                &Rect::new(
-                    x0,
-                    center - amplitude - thickness,
-                    x1,
-                    center + amplitude + thickness,
-                ),
-            );
-            scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
-            scene.pop_layer();
+            paint_wavy_decoration(scene, color, x0, x1, center, thickness, pattern)
         }
         // `TextDecorationStyle` is non-exhaustive. Treat a future style as a
         // solid line until a dedicated paint algorithm is added.
         _ => fill_decoration_rect(scene, color, x0, x1, center, thickness), // cov:ignore: forward guard for a future style variant.
     }
+}
+
+/// Two lines with a gap between them, centered on `center`.
+fn paint_double_decoration(
+    scene: &mut impl PaintScene,
+    color: Color,
+    x0: f64,
+    x1: f64,
+    center: f64,
+    thickness: f64,
+) {
+    // CSS Text Decoration 3 defines double as two lines with a gap.
+    // Divide the total auto thickness into three equal bands.
+    let band = (thickness / 3.0).max(0.5);
+    let offset = band;
+    fill_decoration_rect(scene, color, x0, x1, center - offset, band);
+    fill_decoration_rect(scene, color, x0, x1, center + offset, band);
+}
+
+/// A row of dots from `x0` to `x1` along `center`. The dots follow the pattern
+/// laid out from `pattern.start` to `pattern.end`, which may reach past
+/// `x0..x1`.
+fn paint_dotted_decoration(
+    scene: &mut impl PaintScene,
+    color: Color,
+    x0: f64,
+    x1: f64,
+    center: f64,
+    thickness: f64,
+    pattern: Range<f64>,
+) {
+    let radius = (thickness / 2.0).max(0.5);
+    let span = pattern.end - pattern.start;
+    let natural_step = (radius * 4.0).max(2.0);
+    // A hostile but finite letter-spacing/advance must not turn into
+    // an unbounded number of scene commands.
+    let step = natural_step.max(span / MAX_DECORATION_SEGMENTS as f64);
+    let first_center = pattern.start + radius;
+    let index = ((x0 - radius - first_center) / step).ceil();
+    let mut x = first_center + index * step;
+    scene.push_clip_layer(
+        Affine::IDENTITY,
+        &Rect::new(x0, center - radius, x1, center + radius),
+    );
+    let mut segments = 0;
+    while x - radius < x1 && segments < MAX_DECORATION_SEGMENTS {
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            color,
+            None,
+            &Circle::new(Point::new(x, center), radius),
+        );
+        x += step;
+        segments += 1;
+    }
+    scene.pop_layer();
+}
+
+/// A dashed line from `x0` to `x1` along `center`. The dashes follow the
+/// pattern laid out from `pattern.start` to `pattern.end`, which may reach
+/// past `x0..x1`.
+fn paint_dashed_decoration(
+    scene: &mut impl PaintScene,
+    color: Color,
+    x0: f64,
+    x1: f64,
+    center: f64,
+    thickness: f64,
+    pattern: Range<f64>,
+) {
+    let (dash, gap) = dashed_lengths(pattern.end - pattern.start, thickness);
+    let mut path = BezPath::new();
+    path.move_to((x0, center));
+    path.line_to((x1, center));
+    let stroke = Stroke::new(thickness)
+        .with_caps(Cap::Butt)
+        .with_dashes((x0 - pattern.start).rem_euclid(dash + gap), [dash, gap]);
+    scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+}
+
+/// A wavy line from `x0` to `x1` around `center`. The waves follow the pattern
+/// laid out from `pattern.start` to `pattern.end`, which may reach past
+/// `x0..x1`.
+fn paint_wavy_decoration(
+    scene: &mut impl PaintScene,
+    color: Color,
+    x0: f64,
+    x1: f64,
+    center: f64,
+    thickness: f64,
+    pattern: Range<f64>,
+) {
+    let span = pattern.end - pattern.start;
+    let wavelength = (thickness * 4.0).max(4.0);
+    let amplitude = (thickness * 1.5).max(0.75);
+    // Limit path complexity while retaining more detail for normal
+    // spans. The cap is important for huge finite advances.
+    let half_wave = (wavelength * 0.5).max(span / MAX_DECORATION_SEGMENTS as f64);
+    let mut path = BezPath::new();
+    let mut index = ((x0 - pattern.start) / half_wave).floor();
+    let mut x = pattern.start + index * half_wave;
+    path.move_to((x, center));
+    let mut segments = 0;
+    while x < x1 && segments <= MAX_DECORATION_SEGMENTS {
+        let end = x + half_wave;
+        if end <= x {
+            break; // cov:ignore: valid segments lie within the shared extent; the bounded f64 step exceeds roundoff.
+        }
+        let sign = if index.rem_euclid(2.0) < 1.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        let control_x = (x + end) * 0.5;
+        path.quad_to((control_x, center + sign * amplitude), (end, center));
+        x = end;
+        index += 1.0;
+        segments += 1;
+    }
+    let stroke = Stroke::new(thickness).with_caps(Cap::Round);
+    scene.push_clip_layer(
+        Affine::IDENTITY,
+        &Rect::new(
+            x0,
+            center - amplitude - thickness,
+            x1,
+            center + amplitude + thickness,
+        ),
+    );
+    scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+    scene.pop_layer();
 }
 
 fn fill_decoration_rect(

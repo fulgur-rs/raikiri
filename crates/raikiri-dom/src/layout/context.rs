@@ -28,11 +28,21 @@ pub(crate) struct LayoutContext {
     /// items are bounded by their flex base sizes meanwhile (see
     /// `taffy_impl::with_flex_intrinsic_probe`).
     pub(crate) flex_intrinsic_probe: Option<usize>,
+    /// Definite block sizes retained as percentage bases for the direct
+    /// children of boxes being measured for intrinsic height limits.
+    pub(crate) content_limit_percentage_height_bases: Vec<(usize, f32)>,
     /// The width or height each box measured for its keyword sizes, while the
     /// outermost box laying out with them runs, and how many such layouts are
     /// running (see `taffy_impl::content_limits`).
     pub(crate) content_limit_measures: HashMap<crate::taffy_impl::content_limits::MeasureKey, f32>,
     pub(crate) content_limit_depth: usize,
+    /// The final layout inputs observed for out-of-flow candidates during a
+    /// preliminary positioning pass, before their intrinsic limits are
+    /// installed.
+    pub(crate) oof_content_limit_inputs: Vec<HashMap<usize, taffy::LayoutInput>>,
+    /// Nested candidate wrappers skip their own prepasses while an outer
+    /// candidate wrapper is gathering unconstrained positioning inputs.
+    pub(crate) oof_content_limit_prepass_depth: usize,
     pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<String>>,
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
     pub(crate) pagination_on_transposed_axes: bool,

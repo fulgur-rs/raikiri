@@ -8,7 +8,7 @@ use peniko::Mix;
 use raikiri_dom::{BoxRect, Document, InlineBoxPiece, Node, NodeKind};
 use raikiri_style::PseudoElem;
 use raikiri_style::property::{DisplayValue, PositionValue, ZIndexValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy)]
 pub(crate) struct BackgroundSlice {
@@ -123,6 +123,78 @@ pub(crate) struct Paragraph<'a> {
     pub(crate) root_id: usize,
 }
 
+/// What the pieces of a paragraph say about the groups their fragments form.
+struct PieceFacts {
+    /// The typographic box around each fragment, if any.
+    parents: HashMap<FragmentKey, Option<FragmentKey>>,
+    /// The opacity of the layer each translucent fragment composites in.
+    opacities: HashMap<FragmentKey, f32>,
+    /// The keys that form a group without an opacity: an atomic
+    /// pseudo-element with a transform, or one positioned below the
+    /// paragraph's blocks.
+    grouped: HashSet<FragmentKey>,
+}
+
+impl PieceFacts {
+    /// Reads the facts off the `pieces` of the paragraph `paragraph`, whose
+    /// lines are in `root`.
+    fn of(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
+        let cascade = paragraph.cascade;
+        let mut facts = Self {
+            parents: HashMap::new(),
+            opacities: HashMap::new(),
+            grouped: HashSet::new(),
+        };
+        for piece in pieces {
+            let key = FragmentKey {
+                node: piece.node,
+                owner: piece.source_owner,
+            };
+            facts.parents.entry(key).or_insert_with(|| {
+                root.ifc_typographic_parent(piece.node)
+                    .map(|id| key.parent(id))
+                    // The outermost first letter taken from `::before` or
+                    // `::after` text is inside that pseudo-element's box.
+                    .or_else(|| {
+                        piece
+                            .source_owner
+                            .filter(|&owner| {
+                                owner != piece.node
+                                    && raikiri_dom::generated_content::generated_origin(owner)
+                                        .is_some()
+                            })
+                            .map(|owner| key.parent(owner))
+                    })
+            });
+            let retained = root
+                .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)
+                .map(|(cv, _)| cv);
+            if let Some(opacity) =
+                raikiri_dom::paint_rules::letter_opacity_layer(cascade, piece.node, retained)
+            {
+                facts.opacities.insert(key, opacity);
+            }
+            if raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node).is_some()
+                || raikiri_dom::paint_rules::negative_pseudo_group(
+                    paragraph.document,
+                    cascade,
+                    paragraph.root_id,
+                    piece.node,
+                )
+                || raikiri_dom::paint_rules::pseudo_stacking_group(
+                    paragraph.document,
+                    cascade,
+                    paragraph.root_id,
+                    piece.node,
+                )
+            {
+                facts.grouped.insert(key);
+            }
+        }
+        facts
+    }
+}
+
 pub(super) struct TypographicPaint {
     normal: Scene,
     /// Boxes laid out beside the lines outside every group, placed in
@@ -148,7 +220,6 @@ impl TypographicPaint {
     /// turned as a whole (CSS Transforms 1 §6), and so is one positioned
     /// below the paragraph's blocks. The groups nest as their boxes do.
     pub(super) fn new(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
-        let cascade = paragraph.cascade;
         let mut paint = Self {
             normal: Scene::new(),
             root_children: Vec::new(),
@@ -158,59 +229,22 @@ impl TypographicPaint {
             piece_groups: HashMap::new(),
             element_groups: HashMap::new(),
         };
+        let facts = PieceFacts::of(paragraph, root, pieces);
+        paint.allocate_groups(paragraph, pieces, &facts);
+        paint.index_piece_groups(pieces);
+        paint
+    }
+
+    /// Allocates the groups of the fragments of `pieces`, and finds the
+    /// innermost group around each of them.
+    fn allocate_groups(
+        &mut self,
+        paragraph: Paragraph<'_>,
+        pieces: &[InlineBoxPiece],
+        facts: &PieceFacts,
+    ) {
+        let cascade = paragraph.cascade;
         let mut by_box = HashMap::new();
-        let mut parents = HashMap::new();
-        let mut opacities = HashMap::new();
-        // The keys that form a group without an opacity: an atomic
-        // pseudo-element with a transform, or one positioned below the
-        // paragraph's blocks.
-        let mut grouped = std::collections::HashSet::new();
-        for piece in pieces {
-            let key = FragmentKey {
-                node: piece.node,
-                owner: piece.source_owner,
-            };
-            parents.entry(key).or_insert_with(|| {
-                root.ifc_typographic_parent(piece.node)
-                    .map(|id| key.parent(id))
-                    // The outermost first letter taken from `::before` or
-                    // `::after` text is inside that pseudo-element's box.
-                    .or_else(|| {
-                        piece
-                            .source_owner
-                            .filter(|&owner| {
-                                owner != piece.node
-                                    && raikiri_dom::generated_content::generated_origin(owner)
-                                        .is_some()
-                            })
-                            .map(|owner| key.parent(owner))
-                    })
-            });
-            let retained = root
-                .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)
-                .map(|(cv, _)| cv);
-            if let Some(opacity) =
-                raikiri_dom::paint_rules::letter_opacity_layer(cascade, piece.node, retained)
-            {
-                opacities.insert(key, opacity);
-            }
-            if raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node).is_some()
-                || raikiri_dom::paint_rules::negative_pseudo_group(
-                    paragraph.document,
-                    cascade,
-                    paragraph.root_id,
-                    piece.node,
-                )
-                || raikiri_dom::paint_rules::pseudo_stacking_group(
-                    paragraph.document,
-                    cascade,
-                    paragraph.root_id,
-                    piece.node,
-                )
-            {
-                grouped.insert(key);
-            }
-        }
         // Resolve parents before children. Equal opacities share a group only
         // when their enclosing fragment groups also agree.
         // Allocate groups in fragment paint order so overlapping owner groups
@@ -223,31 +257,31 @@ impl TypographicPaint {
             let mut path = Vec::new();
             let mut next = key;
             let mut group = loop {
-                if let Some(&group) = paint.nearest_groups.get(&next) {
+                if let Some(&group) = self.nearest_groups.get(&next) {
                     break group;
                 }
                 #[cfg(test)]
                 PARENT_GROUP_VISITS.with(|visits| visits.set(visits.get() + 1));
-                paint.nearest_groups.insert(next, None);
+                self.nearest_groups.insert(next, None);
                 path.push(next);
-                match parents.get(&next).copied().flatten() {
+                match facts.parents.get(&next).copied().flatten() {
                     Some(parent) => next = parent,
                     // The outermost typographic box is inside the inline
                     // elements around it.
                     None => {
                         break enclosing_element(paragraph.document, next)
-                            .and_then(|element| paint.element_group(paragraph, element));
+                            .and_then(|element| self.element_group(paragraph, element));
                     }
                 }
             };
             for key in path.into_iter().rev() {
-                let opacity = opacities.get(&key).copied();
-                if opacity.is_some() || grouped.contains(&key) {
+                let opacity = facts.opacities.get(&key).copied();
+                if opacity.is_some() || facts.grouped.contains(&key) {
                     let index = *by_box
                         .entry((key.node, opacity.map(f32::to_bits), group))
                         .or_insert_with(|| {
-                            let index = paint.groups.len();
-                            paint.groups.push(Group {
+                            let index = self.groups.len();
+                            self.groups.push(Group {
                                 scene: Scene::new(),
                                 opacity,
                                 transform: None,
@@ -263,9 +297,15 @@ impl TypographicPaint {
                         });
                     group = Some(index);
                 }
-                paint.nearest_groups.insert(key, group);
+                self.nearest_groups.insert(key, group);
             }
         }
+    }
+
+    /// Finds the innermost group around each piece of `pieces`, once the
+    /// groups of their fragments are allocated: that of its own fragment, or
+    /// else that of the nearest piece around it.
+    fn index_piece_groups(&mut self, pieces: &[InlineBoxPiece]) {
         let piece_parents: HashMap<_, _> = pieces
             .iter()
             .map(|piece| {
@@ -276,16 +316,14 @@ impl TypographicPaint {
                 (key, piece.parent.map(|id| key.parent(id)))
             })
             .collect();
-        paint.piece_groups.extend(
-            paint
-                .nearest_groups
+        self.piece_groups.extend(
+            self.nearest_groups
                 .iter()
                 .filter_map(|(&key, &group)| group.map(|group| (key, Some(group)))),
         );
         for &key in piece_parents.keys() {
-            cached_group(key, &piece_parents, &mut paint.piece_groups);
+            cached_group(key, &piece_parents, &mut self.piece_groups);
         }
-        paint
     }
 
     /// The innermost group of a translucent inline element of `paragraph`
