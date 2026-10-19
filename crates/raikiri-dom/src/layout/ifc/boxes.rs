@@ -14,7 +14,7 @@ use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContex
 use crate::taffy_impl::{fit_content_room, measure_against_parent_height, resolve_calc};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use shodo::geometry::{Direction, WritingMode};
-use shodo::style::TextGroupAlign;
+use shodo::style::{LineOptions, TextGroupAlign};
 use shodo::{
     AtomicIntrinsic, AtomicIntrinsics, AtomicSize, AtomicSizes, BreakToken, FloatClear,
     FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
@@ -798,36 +798,15 @@ fn run_boxes_segment(
             }
         };
         let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
-        let right_inset = (width - space.inline_start - space.inline_size).max(0.0);
         // The lines of a generated block take its own alignment and indent.
         // Its content is part of the paragraph's text, so its lines keep the
         // paragraph's base direction.
-        let (mut line_options, first_line) = open_block.as_ref().map_or_else(
+        let (line_options, first_line) = open_block.as_ref().map_or_else(
             || (options, start.first && lines.is_empty()),
             |open| open.line_options(lines.len()),
         );
-        // Group alignment pads every line of the root, generated blocks'
-        // lines included.
-        if options.text_group_align != TextGroupAlign::None {
-            line_options.text_group_align = options.text_group_align;
-            line_options.group_padding = options.group_padding;
-        }
-        let mut constraint = LineConstraint::from_physical_insets(
-            width,
-            space.inline_start,
-            right_inset,
-            root.writing_mode,
-            if root.rtl {
-                Direction::Rtl
-            } else {
-                Direction::Ltr
-            },
-        );
-        if open_block.is_some() {
-            // The lines of a generated block wider than the paragraph run out
-            // past its content box, which the physical insets cannot say.
-            constraint.available_inline_size = space.inline_size;
-        }
+        let line_options = with_group_align(line_options, &options);
+        let mut constraint = line_constraint(root, width, space, open_block.is_some());
         constraint.block_offset = line_y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float
@@ -907,10 +886,7 @@ fn run_boxes_segment(
                     continue;
                 }
                 let height = line.block_size();
-                if line.is_empty()
-                    && height == 0.0
-                    && line.break_reason() != shodo::BreakReason::Forced
-                {
+                if is_empty_closure(&line) {
                     // Empty inline closures around a block do not separate
                     // its adjoining margins or add a line box (CSS 2.2 9.4.2).
                     token = line.break_token();
@@ -1100,7 +1076,18 @@ fn run_boxes_segment(
                         };
                         match edge {
                             generated_blocks::Token::Start(block) => {
-                                open_block = Some(generated_blocks::open(block, flow));
+                                let mut lines_height = |open: &generated_blocks::OpenBlock| {
+                                    generated_block_lines_height(
+                                        tree,
+                                        root,
+                                        &atomics,
+                                        open,
+                                        (token_after, block.end),
+                                        width,
+                                    )
+                                };
+                                open_block =
+                                    Some(generated_blocks::open(block, flow, &mut lines_height));
                             }
                             generated_blocks::Token::End(block) => {
                                 block_cursor += 1;
@@ -1469,6 +1456,108 @@ fn narrow_to_block(
     width: f32,
 ) -> LineSpace {
     open.map_or(space, |open| open.narrow(space, width))
+}
+
+/// The most lines the lines of a generated block are measured over: more than
+/// any paragraph has, so that only an engine that stops advancing reaches it.
+const MAX_MEASURED_LINES: usize = 1 << 16;
+
+/// The block size of the lines of the generated block `open`, laid out on
+/// their own in a paragraph `width` wide: from the token `after` its start
+/// token to its end token `end`, in the space its lines take in the line
+/// loop. `None` when anything but its lines is met on the way, as the box
+/// then depends on more than its own width.
+fn generated_block_lines_height(
+    tree: &mut LayoutSession<'_>,
+    root: &IfcRoot,
+    atomics: &AtomicMeasure,
+    open: &generated_blocks::OpenBlock,
+    (after, end): (BreakToken, u64),
+    width: f32,
+) -> Option<f32> {
+    let space = open.narrow(
+        LineSpace {
+            inline_start: 0.0,
+            inline_size: width,
+        },
+        width,
+    );
+    let constraint = line_constraint(root, width, space, true);
+    let mut token = after;
+    let mut count = 0;
+    let mut height = 0.0;
+    (0..MAX_MEASURED_LINES)
+        .find_map(|_| {
+            let options = with_group_align(open.line_options(count).0, &root.options);
+            let result = with_state(tree, |state| {
+                root.line_paragraph.next_line(
+                    &mut state.layout_cx,
+                    token,
+                    &options,
+                    &constraint,
+                    &atomics.sizes,
+                )
+            });
+            match result {
+                Some(LineResult::Line(line)) => {
+                    token = line.break_token();
+                    if !is_empty_closure(&line) {
+                        height += line.block_size();
+                        count += 1;
+                    }
+                    None
+                }
+                other => Some(
+                    matches!(other, Some(LineResult::BlockInInline { node, .. }) if node.0 == end)
+                        .then_some(height),
+                ),
+            }
+        })
+        .flatten()
+}
+
+/// The constraint of a line in `space` of a paragraph `width` wide. The lines
+/// of a generated block (`in_block`) wider than the paragraph run out past
+/// its content box, which the physical insets cannot say.
+fn line_constraint(
+    root: &IfcRoot,
+    width: f32,
+    space: LineSpace,
+    in_block: bool,
+) -> LineConstraint<'_> {
+    let right_inset = (width - space.inline_start - space.inline_size).max(0.0);
+    let mut constraint = LineConstraint::from_physical_insets(
+        width,
+        space.inline_start,
+        right_inset,
+        root.writing_mode,
+        if root.rtl {
+            Direction::Rtl
+        } else {
+            Direction::Ltr
+        },
+    );
+    if in_block {
+        constraint.available_inline_size = space.inline_size;
+    }
+    constraint
+}
+
+/// `line_options` with the group alignment of the paragraph's `options`: it
+/// pads every line of the root, generated blocks' lines included.
+fn with_group_align(mut line_options: LineOptions, options: &LineOptions) -> LineOptions {
+    if options.text_group_align != TextGroupAlign::None {
+        line_options.text_group_align = options.text_group_align;
+        line_options.group_padding = options.group_padding;
+    }
+    line_options
+}
+
+/// Whether `line` is the empty line around an inline closure that sits next
+/// to a block: it has no content, no height, and does not end in a forced
+/// break.
+fn is_empty_closure(line: &shodo::Line) -> bool {
+    line.is_empty() && line.block_size() == 0.0 && line.break_reason() != shodo::BreakReason::Forced
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left

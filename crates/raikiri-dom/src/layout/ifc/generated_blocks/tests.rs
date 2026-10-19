@@ -159,7 +159,7 @@ fn a_negative_end_inset_moves_the_line_ends_out_past_the_line_space() {
         let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
         let mut flow = flow(&mut y, &mut pending, &mut leading, &ctx);
         flow.rtl = rtl;
-        let line = open(&block, flow).narrow(space, 100.0);
+        let line = open(&block, flow, &mut |_| None).narrow(space, 100.0);
         (line.inline_start, line.inline_size)
     };
     let all = (0.0, 100.0);
@@ -253,7 +253,11 @@ fn a_continued_box_takes_the_rest_of_its_height_in_the_next_fragmentainer() {
         let mut bfc = crate::taffy_impl::block_flow::context::BlockFormattingContext::new();
         let ctx = bfc.root_block_context();
         let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
-        let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
+        let open = open(
+            &block,
+            flow(&mut y, &mut pending, &mut leading, &ctx),
+            &mut |_| None,
+        );
         // The box fills two 40px fragmentainers, 70px of content, then its
         // lines take 30px of the next.
         let open = open.continued(40.0).continued(40.0);
@@ -541,7 +545,11 @@ fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() 
     let mut bfc = crate::taffy_impl::block_flow::context::BlockFormattingContext::new();
     let ctx = bfc.root_block_context();
     let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
-    let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
+    let open = open(
+        &block,
+        flow(&mut y, &mut pending, &mut leading, &ctx),
+        &mut |_| None,
+    );
     let first = |open: &OpenBlock, lines| {
         let (options, first) = open.line_options(lines);
         assert_eq!(options.text_indent.length, 5.0);
@@ -571,7 +579,11 @@ fn forced_breaks_of(
     let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
     let open = OpenBlock {
         lines_before,
-        ..open(&block, flow(&mut y, &mut pending, &mut leading, &ctx))
+        ..open(
+            &block,
+            flow(&mut y, &mut pending, &mut leading, &ctx),
+            &mut |_| None,
+        )
     };
     let rect = |y| BoxRect {
         x: 0.0,
@@ -1018,8 +1030,13 @@ fn a_float_adjoining_the_margins_above_a_formatting_root_block_moves_with_them()
 /// The border box of a block `::after` styled `css` after `floats`, in a
 /// 100px paragraph.
 fn block_after_floats(css: &str, floats: &[&str]) -> BoxRect {
+    block_with_text_after_floats("XXX", css, floats)
+}
+
+/// [`block_after_floats`] for a block `::after` whose content is `text`.
+fn block_with_text_after_floats(text: &str, css: &str, floats: &[&str]) -> BoxRect {
     let (_, blocks) = placed_after_floats(
-        &format!("div::after {{ content: 'XXX'; display: flow-root; {css} }}"),
+        &format!("div::after {{ content: '{text}'; display: flow-root; {css} }}"),
         TEN_PX,
         floats,
         "",
@@ -1091,5 +1108,91 @@ fn a_formatting_root_block_of_auto_width_narrows_to_the_room_every_band_it_reach
     assert_eq!(
         block_after_floats("height: 10px", &floats),
         rect(20.0, 0.0, 80.0, 10.0)
+    );
+}
+
+#[test]
+fn a_formatting_root_block_of_auto_height_keeps_clear_of_the_float_its_lines_reach() {
+    // Three 10px lines of 20px words fit the 30px beside the first float, but
+    // the box goes on for 30px and the right float starts after 10: the
+    // height the lines make decides, as a declared 30px does.
+    assert_eq!(
+        block_with_text_after_floats("XX XX XX", "width: 20px", &FLOATS_70X10_AND_40X30),
+        rect(0.0, 10.0, 20.0, 30.0)
+    );
+    // One line is no taller than that gap and stays beside the first float.
+    assert_eq!(
+        block_with_text_after_floats("XX", "width: 20px", &FLOATS_70X10_AND_40X30),
+        rect(70.0, 0.0, 20.0, 10.0)
+    );
+    // The box's minimum and maximum height bound the height of its lines.
+    assert_eq!(
+        block_with_text_after_floats(
+            "XX",
+            "width: 20px; min-height: 30px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 20.0, 30.0)
+    );
+    assert_eq!(
+        block_with_text_after_floats(
+            "XX XX XX",
+            "width: 20px; max-height: 10px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(70.0, 0.0, 20.0, 10.0)
+    );
+}
+
+#[test]
+fn the_lines_of_a_formatting_root_block_are_measured_with_its_text_indent() {
+    // 'X X' fits the 30px box on one line, but a 20px indent leaves 10px on
+    // the first line, so the box is two lines tall and reaches the right float.
+    assert_eq!(
+        block_with_text_after_floats("X X", "width: 30px", &FLOATS_70X10_AND_40X30),
+        rect(70.0, 0.0, 30.0, 10.0)
+    );
+    assert_eq!(
+        block_with_text_after_floats(
+            "X X",
+            "width: 30px; text-indent: 20px",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 30.0, 20.0)
+    );
+}
+
+#[test]
+fn a_formatting_root_block_of_auto_height_and_width_settles_on_the_room_its_lines_share() {
+    // Bands 80px wide from y = 0 and 50px wide from y = 10. At 80px the words
+    // make two lines, which reach the second band, where they make three: the
+    // box takes the 50px both bands share and settles there.
+    let floats = [
+        "float: left; width: 20px; height: 10px",
+        "float: left; clear: left; width: 50px; height: 10px",
+    ];
+    assert_eq!(
+        block_with_text_after_floats("XXX XXX XXX", "", &floats),
+        rect(50.0, 0.0, 50.0, 30.0)
+    );
+    // Words that make a single line stay in the first band.
+    assert_eq!(
+        block_with_text_after_floats("XXX", "", &floats),
+        rect(20.0, 0.0, 80.0, 10.0)
+    );
+}
+
+#[test]
+fn a_formatting_root_block_of_very_many_lines_is_measured_in_full() {
+    // 30,000 lines of forced breaks, 300,000px in all: far past the gap
+    // beside the first float, so the box clears it.
+    let breaks = "\\A".repeat(30_000);
+    assert_eq!(
+        block_with_text_after_floats(
+            &breaks,
+            "width: 20px; white-space: pre",
+            &FLOATS_70X10_AND_40X30
+        ),
+        rect(0.0, 10.0, 20.0, 300_000.0)
     );
 }
