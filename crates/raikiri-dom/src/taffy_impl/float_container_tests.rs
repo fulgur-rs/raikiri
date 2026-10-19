@@ -14,6 +14,17 @@ type BorderBox = (f32, f32, f32, f32);
 /// The border box of the container `container_css` styles and of its only
 /// item, in a parent styled by `parent_css`.
 fn laid_out(parent_css: &str, container_css: &str, item_css: &str) -> (BorderBox, BorderBox) {
+    laid_out_beside(parent_css, container_css, item_css, &[])
+}
+
+/// [`laid_out`] with an empty sibling of the item for each entry of
+/// `siblings`, styled by it.
+fn laid_out_beside(
+    parent_css: &str,
+    container_css: &str,
+    item_css: &str,
+    siblings: &[&str],
+) -> (BorderBox, BorderBox) {
     let mut container = 0;
     let mut item = 0;
     let fixture = block_fixture(&format!("line-height:10px;{parent_css}"), |doc, root| {
@@ -32,6 +43,14 @@ fn laid_out(parent_css: &str, container_css: &str, item_css: &str) -> (BorderBox
             )),
         );
         doc.append_text(item, "A A");
+        for &sibling in siblings {
+            doc.append_element(
+                Some(container),
+                "div",
+                taffy::Style::default(),
+                Some(sibling),
+            );
+        }
     });
     let mut doc = fixture.doc;
     layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600()).expect("layout");
@@ -289,4 +308,21 @@ fn a_floated_flex_container_bounds_an_explicitly_sized_item_by_its_flex_basis() 
         container_width("width:0", FLEX, "flex:1 0 100px;width:200px"),
         220.0
     );
+}
+
+#[test]
+fn a_floated_flex_container_is_not_widened_by_the_flex_basis_of_boxes_outside_its_flow() {
+    // Neither a `display: none` child nor an absolutely positioned one is a
+    // flex item, so their bases are not floors for the container.
+    let (container, _) = laid_out_beside(
+        "width:0",
+        FLEX,
+        "",
+        &[
+            "display:none;flex:1 0 100px",
+            "position:absolute;flex:1 0 100px",
+        ],
+    );
+    // No room: the min-content width of the item, 10px of text and its edges.
+    assert_eq!(hundredths(container.2), 30.0);
 }
