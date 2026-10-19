@@ -732,7 +732,8 @@ impl LayoutSession<'_> {
                     );
                 let inline_shrink_wrap = ifc_table
                     || (tree.nodes[idx].display().is_atomic_inline_level()
-                        && tree.nodes[idx].display() != DisplayValue::InlineTable);
+                        && tree.nodes[idx].display() != DisplayValue::InlineTable)
+                    || is_floated_flex_or_grid(tree, idx);
                 // Size containment already gave the box its width.
                 let contained_width = tree.nodes[idx].size_containment.width && !empty;
                 if inline_shrink_wrap
@@ -975,6 +976,8 @@ impl LayoutSession<'_> {
     }
 }
 
+#[cfg(test)]
+mod float_container_tests;
 #[cfg(test)]
 mod item_width_tests;
 #[cfg(test)]
@@ -1878,6 +1881,18 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     last_baseline
 }
 
+/// Whether element `idx` is a flex or grid container that floats.
+///
+/// A float is shrink-to-fit like an inline-level box (CSS 2.1 section 10.3.5);
+/// Taffy sizes such a flex or grid container from the flex base sizes of its
+/// items instead, which differ from the fit-content size.
+fn is_floated_flex_or_grid(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.nodes[idx].display().is_block_flex_or_grid_container()
+        && tree
+            .layout_node_with_style(idx)
+            .is_some_and(|node| node.style.float != taffy::Float::None)
+}
+
 /// Shrink-to-fit layout for a width:auto inline-block.
 ///
 /// A width:auto inline-block sizes to its fit-content size: the preferred
@@ -1992,8 +2007,10 @@ fn compute_inline_block_shrink_wrap(
                 ..inputs
             };
             match display {
-                DisplayValue::InlineFlex => flex_layout(tree, node_id, intrinsic_inputs).size.width,
-                DisplayValue::InlineGrid => {
+                DisplayValue::Flex | DisplayValue::InlineFlex => {
+                    flex_layout(tree, node_id, intrinsic_inputs).size.width
+                }
+                DisplayValue::Grid | DisplayValue::InlineGrid => {
                     compute_grid_layout(tree, node_id, intrinsic_inputs)
                         .size
                         .width
@@ -2054,8 +2071,12 @@ fn compute_inline_block_shrink_wrap(
         })
     } else {
         match display {
-            DisplayValue::InlineFlex => flex_layout(tree, node_id, final_inputs),
-            DisplayValue::InlineGrid => grid_layout(tree, node_id, final_inputs),
+            DisplayValue::Flex | DisplayValue::InlineFlex => {
+                flex_layout(tree, node_id, final_inputs)
+            }
+            DisplayValue::Grid | DisplayValue::InlineGrid => {
+                grid_layout(tree, node_id, final_inputs)
+            }
             _ if ifc_root => compute_ifc_root(tree, node_id, final_inputs, block_ctx),
             _ => block_layout(tree, node_id, final_inputs, block_ctx),
         }

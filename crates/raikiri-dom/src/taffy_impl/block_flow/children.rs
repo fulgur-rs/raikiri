@@ -215,6 +215,30 @@ pub(super) fn layout(
             child_input.known_dimensions.width = child_metrics.preferred.width;
             child_input.available_space.width =
                 AvailableSpace::Definite((content_width - margin.horizontal_axis_sum()).max(0.0));
+            if child_input.known_dimensions.width.is_none() {
+                // Taffy reads a `min-content` or `max-content` width of a flex
+                // or grid container in the room it is offered; the width the
+                // keyword stands for is what the container measures at.
+                let along = match style.size.width.expand() {
+                    taffy::ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
+                    taffy::ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
+                    _ => None,
+                };
+                if let Some(along) = along.filter(|_| {
+                    tree.nodes[usize::from(child)]
+                        .display()
+                        .is_flex_or_grid_container()
+                }) {
+                    let mut measure = child_input;
+                    measure.run_mode = RunMode::ComputeSize;
+                    measure.available_space.width = along;
+                    let width = tree
+                        .compute_child_layout_with_block_ctx(child, measure, None)
+                        .size
+                        .width;
+                    child_input.known_dimensions.width = Some(child_metrics.clamp_width(width));
+                }
+            }
             let output = tree.compute_child_layout_with_block_ctx(child, child_input, None);
             let position = ctx.place_floated_box(
                 output.size + margin.sum_axes(),
