@@ -272,6 +272,7 @@ impl CascadeResult {
             None,
             None,
             None,
+            None,
         );
         let mut computed = specified.finalize_with(inherited, context, self.normal_line_height());
         computed.custom_properties = ordinary.custom_properties.clone();
@@ -311,6 +312,7 @@ impl CascadeResult {
             &mut specified,
             parent,
             &custom.effective,
+            None,
             None,
             None,
             None,

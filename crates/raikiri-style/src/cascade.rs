@@ -76,6 +76,7 @@ pub struct CascadeResult {
     /// Identity of the element cascade alone: [`Self::replace_page`] keeps it.
     element_generation: u64,
     svg_style_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    svg_relative_presentation_attributes: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: HashMap<StyleNodeId, first_letter::FirstLetterInputs>,
     first_line_contexts: HashMap<StyleNodeId, ResolveContext>,
     typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
@@ -270,6 +271,14 @@ impl CascadeResult {
             .get(&node)
             .map_or(&[], Vec::as_slice)
     }
+    /// Winning relative-unit SVG presentation attributes that need conversion
+    /// to the declaring element's font size before an SVG renderer handles
+    /// inheritance. Absolute presentation attributes remain in the SVG source.
+    pub fn svg_relative_presentation_attributes(&self, node: StyleNodeId) -> &[SvgStyleProperty] {
+        self.svg_relative_presentation_attributes
+            .get(&node)
+            .map_or(&[], Vec::as_slice)
+    }
     /// Resolve a named highlight background against its originating foreground.
     /// Literal backgrounds use the same winning declaration as
     /// [`Self::custom_highlight_styles`]; contextual expressions remain deferred
@@ -347,6 +356,7 @@ impl CascadeResult {
             generation: _,
             element_generation: _,
             svg_style_properties,
+            svg_relative_presentation_attributes,
             first_letter_inputs,
             first_line_contexts,
             typographic_inheritance,
@@ -375,6 +385,10 @@ impl CascadeResult {
             generation,
             element_generation: generation,
             svg_style_properties: svg_style_properties
+                .iter()
+                .filter_map(|(id, value)| Some((node(id)?, value.clone())))
+                .collect(),
+            svg_relative_presentation_attributes: svg_relative_presentation_attributes
                 .iter()
                 .filter_map(|(id, value)| Some((node(id)?, value.clone())))
                 .collect(),
@@ -580,6 +594,7 @@ fn finish<D: StyleDom>(
         generation,
         element_generation: generation,
         svg_style_properties: outputs.svg_properties,
+        svg_relative_presentation_attributes: outputs.svg_relative_presentation_attributes,
         first_letter_inputs: outputs.first_letter_inputs,
         first_line_contexts: outputs.first_line_contexts,
         typographic_inheritance: outputs.typographic_inheritance,

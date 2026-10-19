@@ -301,6 +301,7 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
                 None,
                 None,
                 None,
+                None,
             );
         }
         let mut cv = specified.finalize_with(&inherited, &context, measurer);

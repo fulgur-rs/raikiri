@@ -48,7 +48,9 @@ pub fn inline_svg_element_declarations(
     let mut element_index = 0;
     while let Some((node_id, node)) = stack.pop() {
         if node.kind() == NodeKind::Element {
-            let properties = cascade.svg_style_properties(StyleNodeId(node_id as u64));
+            let style_node = StyleNodeId(node_id as u64);
+            let properties = cascade.svg_style_properties(style_node);
+            let relative_attributes = cascade.svg_relative_presentation_attributes(style_node);
             // The root's color, font, visibility and opacity reach the renderer
             // through the root style, so only its painting properties are
             // listed. Descendants inherit them from the root there.
@@ -63,12 +65,17 @@ pub fn inline_svg_element_declarations(
             } else {
                 properties
             };
-            if !properties.is_empty()
+            if (!properties.is_empty() || !relative_attributes.is_empty())
                 && let Some(style) = cascade.computed.get(node_id)
             {
                 elements.push(InlineSvgElementDeclarations {
                     element_index,
-                    declarations: node_declarations(style, properties, &mut remaining_bytes)?,
+                    declarations: node_declarations(
+                        style,
+                        properties,
+                        relative_attributes,
+                        &mut remaining_bytes,
+                    )?,
                 });
             }
             element_index += 1;
@@ -110,6 +117,7 @@ fn svg_presentation_name(key: PropertyKey) -> &'static str {
 fn node_declarations(
     style: &ComputedValues,
     properties: &[SvgStyleProperty],
+    relative_attributes: &[SvgStyleProperty],
     remaining_bytes: &mut usize,
 ) -> Result<String, String> {
     let mut css = String::new();
@@ -201,7 +209,70 @@ fn node_declarations(
         css.push_str(value);
         css.push_str("!important;");
     }
+    for attribute in relative_attributes {
+        let Some(expression) = &attribute.expression else {
+            continue;
+        };
+        let Some(value) = resolve_relative_svg_presentation_value(
+            attribute.property,
+            expression,
+            style.font_size.0,
+        ) else {
+            continue;
+        };
+        consume(
+            128usize
+                .saturating_add(expression.len())
+                .saturating_add(value.len().saturating_mul(2)),
+        )?;
+        css.push_str(svg_presentation_name(attribute.property));
+        css.push(':');
+        css.push_str(&value);
+        css.push_str("!important;");
+    }
     Ok(css)
+}
+
+fn resolve_relative_svg_presentation_value(
+    property: PropertyKey,
+    expression: &str,
+    font_size: f32,
+) -> Option<String> {
+    if !font_size.is_finite() {
+        return None;
+    }
+    match property {
+        PropertyKey::StrokeWidth | PropertyKey::StrokeDashoffset => {
+            let (value, changed) = resolve_relative_svg_length(expression, font_size)?;
+            changed.then_some(value)
+        }
+        PropertyKey::StrokeDasharray => {
+            let mut changed = false;
+            let values = expression
+                .split_ascii_whitespace()
+                .map(|item| {
+                    let (value, item_changed) = resolve_relative_svg_length(item, font_size)?;
+                    changed |= item_changed;
+                    Some(value)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            changed.then(|| values.join(" "))
+        }
+        _ => None,
+    }
+}
+
+fn resolve_relative_svg_length(value: &str, font_size: f32) -> Option<(String, bool)> {
+    let (number, multiplier) = if let Some(number) = value.strip_suffix("em") {
+        (number, 1.0)
+    } else if let Some(number) = value.strip_suffix("ex") {
+        (number, 0.5)
+    } else {
+        return Some((value.to_owned(), false));
+    };
+    let number = number.parse::<f32>().ok()?;
+    let pixels = number * font_size * multiplier;
+    pixels.is_finite().then(|| (format!("{pixels}px"), true))
 }
 
 #[cfg(test)]
