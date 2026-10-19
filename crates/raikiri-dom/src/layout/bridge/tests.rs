@@ -2899,13 +2899,6 @@ fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
                 "img",
                 &format!("{width};position:absolute"),
             ),
-            // A multicol container has no intrinsic inline size yet.
-            ("display:block", "div", &format!("{width};column-count:2")),
-            (
-                "display:block",
-                "div",
-                &format!("{width};column-width:10px"),
-            ),
         ]);
         assert!(
             widths.iter().all(|width| *width == Dimension::auto()),
@@ -2977,29 +2970,19 @@ fn a_box_a_sizing_keyword_sizes_keeps_its_keyword_width() {
                 "div",
                 "display:block;width:max-content;min-width:calc(0% + 0px)"
             ),
+            // A multicol container is sized by its columns.
             (
                 "display:block",
                 "div",
                 "display:block;column-width:10px;width:max-content;"
             ),
+            (
+                "display:flex",
+                "div",
+                "display:block;column-count:2;width:max-content;"
+            ),
         ]),
-        [
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            keyword,
-            Dimension::auto()
-        ],
+        [keyword; 16],
     );
 }
 

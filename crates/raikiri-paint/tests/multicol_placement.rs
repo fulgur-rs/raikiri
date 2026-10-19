@@ -2097,3 +2097,134 @@ fn a_nested_container_paints_like_the_same_container_on_its_own() {
         }
     }
 }
+
+/// The width of the yellow box that `body` paints.
+fn yellow_width(body: &str, css: &str) -> usize {
+    let columns: Vec<usize> = raster(body, css)
+        .chunks_exact(4)
+        .enumerate()
+        .filter(|(_, pixel)| pixel[..3] == [255, 255, 0])
+        .map(|(index, _)| index % 180)
+        .collect();
+    columns
+        .iter()
+        .max()
+        .zip(columns.iter().min())
+        .map_or(0, |(max, min)| max - min + 1)
+}
+
+/// A multicol container painted yellow; its text is not painted.
+const YELLOW_COLUMNS: &str = ".f{columns:2;column-gap:10px;background:yellow;color:transparent}";
+
+#[test]
+fn a_content_keyword_width_makes_a_multicol_container_as_wide_as_its_columns() {
+    // Two columns of the 30px block and the 10px gap between them.
+    let block = "<div style='width:30px;height:20px'></div>";
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        let body = format!("<div class=f style='width:{keyword}'>{block}</div>");
+        assert_eq!(yellow_width(&body, YELLOW_COLUMNS), 70, "{keyword}");
+    }
+    // The padding and the border are around the columns.
+    let body = format!(
+        "<div class=f style='width:max-content;padding:0 5px;border:2px solid yellow'>{block}</div>"
+    );
+    assert_eq!(yellow_width(&body, YELLOW_COLUMNS), 84);
+    // A flex or grid item is sized by the keyword as well.
+    for display in ["flex", "grid"] {
+        let body = format!(
+            "<div style='display:{display}'><div class=f style='width:max-content'>{block}</div></div>"
+        );
+        assert_eq!(yellow_width(&body, YELLOW_COLUMNS), 70, "{display}");
+    }
+}
+
+#[test]
+fn a_shrink_to_fit_multicol_container_is_as_wide_as_its_columns() {
+    let block = "<div style='width:30px;height:20px'></div>";
+    for style in ["float:left", "display:inline-block", "position:absolute"] {
+        let body = format!("<div class=f style='{style}'>{block}</div>");
+        assert_eq!(yellow_width(&body, YELLOW_COLUMNS), 70, "{style}");
+    }
+    // 2 * 20px of columns and the padding around them.
+    let body = "<div class=f style='float:left;column-gap:0;padding:10px'><div style='width:20px;height:20px'></div></div>";
+    assert_eq!(yellow_width(body, YELLOW_COLUMNS), 60);
+}
+
+#[test]
+fn a_fit_content_multicol_container_takes_the_room_between_its_content_widths() {
+    // The line "A B" is 60px wide and the word is 20px wide: the container is
+    // 50px wide at least and 130px wide at most.
+    for (room, expected) in [(40, 50), (100, 100), (180, 130)] {
+        let body = format!(
+            "<div style='width:{room}px'><div class=f style='width:fit-content'><p>A B</p></div></div>"
+        );
+        assert_eq!(yellow_width(&body, YELLOW_COLUMNS), expected, "{room}px");
+    }
+}
+
+#[test]
+fn the_lines_of_a_multicol_container_set_its_content_widths() {
+    // The container holds the text itself, in no block.
+    for (style, expected) in [
+        ("width:max-content", 130),
+        ("width:min-content", 50),
+        ("float:left", 130),
+    ] {
+        let body = format!("<div class=f style='{style}'>A B</div>");
+        assert_eq!(yellow_width(&body, YELLOW_COLUMNS), expected, "{style}");
+    }
+}
+
+#[test]
+fn a_column_width_or_count_sets_the_widths_of_a_container_with_spanners() {
+    // Blocks 30px wide in the columns and a spanner of the given style, with
+    // a 10px gap and no column count other than the one given.
+    let css = ".f{column-gap:10px;background:yellow;color:transparent}";
+    for (keyword, columns, spanner, expected) in [
+        ("max-content", "column-width:20px", "width:15px", 20),
+        ("min-content", "column-width:20px", "width:15px", 20),
+        ("max-content", "column-width:20px", "width:50px", 50),
+        ("min-content", "column-width:20px", "width:50px", 50),
+        ("max-content", "column-width:40px", "width:15px", 40),
+        ("min-content", "column-width:40px", "width:15px", 30),
+        ("max-content", "column-count:2", "width:15px", 70),
+        ("min-content", "column-count:2", "width:15px", 70),
+        ("max-content", "column-count:2", "width:100px", 100),
+        ("min-content", "column-count:2", "width:100px", 100),
+        (
+            "max-content",
+            "column-count:2;column-width:36px",
+            "width:15px",
+            82,
+        ),
+    ] {
+        let body = format!(
+            "<div class=f style='width:{keyword};{columns}'><div style='width:30px;height:20px'></div><div style='column-span:all;{spanner};height:20px'></div><div style='width:30px;height:20px'></div></div>"
+        );
+        assert_eq!(
+            yellow_width(&body, css),
+            expected,
+            "{keyword} {columns} {spanner}"
+        );
+    }
+}
+
+#[test]
+fn a_spanner_in_plain_blocks_spans_the_columns_of_a_fit_content_container() {
+    let spanner = "<div style='column-span:all;width:60px;height:20px'></div>";
+    let css = ".f{columns:2;column-gap:0;background:yellow;width:fit-content}";
+    // Not repeated in the two columns, and the edges of the blocks around it
+    // are around the spanner.
+    for (wrapper, expected) in [
+        ("<div><div>{}</div></div>", 60),
+        ("<div style='padding:0 10px'><div>{}</div></div>", 80),
+        ("<div style='margin:0 5px'>{}</div>", 70),
+    ] {
+        let body = format!("<div class=f>{}</div>", wrapper.replace("{}", spanner));
+        assert_eq!(yellow_width(&body, css), expected, "{wrapper}");
+    }
+    // A block that roots its own formatting context is column content, and
+    // so is the spanner in it: it is repeated in the two columns.
+    let body = format!("<div class=f><div style='display:flow-root'>{spanner}</div></div>");
+    assert_eq!(yellow_width(&body, css), 120);
+}

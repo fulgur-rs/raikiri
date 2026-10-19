@@ -4982,3 +4982,8 @@ css/css-sizing/replaced-max-height-min-content.html
 css/css-sizing/replaced-max-width-with-height-min-content.html
 css/css-sizing/replaced-max-width-with-height-max-content.html
 css/css-sizing/replaced-max-width-with-height-fit-content.html
+
+# --- multicol container intrinsic inline size (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# Both pass with `width: fit-content` and the auto-width shrink-to-fit cases sized from the columns of the container; KEEP in audit-vacuous-passes.
+css/css-multicol/intrinsic-size-001.html
+css/css-multicol/change-intrinsic-width.html
