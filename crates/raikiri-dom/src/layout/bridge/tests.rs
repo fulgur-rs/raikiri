@@ -2607,6 +2607,179 @@ fn bridged_widths(cases: &[(&str, &str, &str)]) -> Vec<Dimension> {
         .collect()
 }
 
+/// The keyword `min-*` and `max-*` sizes bridged for each
+/// `(parent css, child tag, child css)`, with the Taffy min and max size.
+fn bridged_content_limits(
+    cases: &[(&str, &str, &str)],
+) -> Vec<(
+    crate::taffy_impl::content_limits::ContentLimits,
+    taffy::Size<LengthPercentageAuto>,
+    taffy::Size<LengthPercentageAuto>,
+)> {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let children: Vec<usize> = cases
+        .iter()
+        .map(|&(parent_css, tag, child_css)| {
+            let parent = doc.append_element(Some(html), "div", Style::default(), Some(parent_css));
+            doc.append_element(Some(parent), tag, Style::default(), Some(child_css))
+        })
+        .collect();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+    children
+        .into_iter()
+        .map(|child| {
+            let style = &doc.layout_node_with_style(child).unwrap().style;
+            (
+                doc.nodes[child].content_limits,
+                style.min_size,
+                style.max_size,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_block_in_normal_flow_records_its_keyword_min_and_max_sizes() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let css = "display:block;min-width:min-content;max-width:fit-content;\
+               min-height:max-content;max-height:fit-content(10px)";
+    for (parent, display) in [
+        ("display:block", "block"),
+        ("display:flow-root", "block"),
+        ("display:block", "flow-root"),
+        ("display:block", "list-item"),
+    ] {
+        let case = css.replace("display:block", &format!("display:{display}"));
+        let [(limits, min, max)] = bridged_content_limits(&[(parent, "div", &case)])[..] else {
+            panic!("one case");
+        };
+        assert_eq!(
+            limits,
+            ContentLimits {
+                min: taffy::Size {
+                    width: Dimension::min_content(),
+                    height: Dimension::max_content(),
+                },
+                max: taffy::Size {
+                    width: Dimension::fit_content(),
+                    height: Dimension::fit_content_px(10.0),
+                },
+            },
+            "{display} in {parent}"
+        );
+        // Taffy cannot hold a keyword and sees no constraint.
+        assert_eq!(min, taffy::Size::<LengthPercentageAuto>::auto());
+        assert_eq!(max, taffy::Size::<LengthPercentageAuto>::auto());
+    }
+}
+
+#[test]
+fn a_size_that_is_no_keyword_is_no_content_limit() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let [(limits, min, max)] = bridged_content_limits(&[(
+        "display:block",
+        "div",
+        "display:block;min-width:10px;max-width:50%;min-height:auto;max-height:none",
+    )])[..] else {
+        panic!("one case");
+    };
+    assert_eq!(limits, ContentLimits::NONE);
+    assert_eq!(min.width, LengthPercentageAuto::length(10.0));
+    assert_eq!(max.width, LengthPercentageAuto::percent(0.5));
+}
+
+#[test]
+fn a_box_a_content_limit_does_not_apply_to_records_none() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+
+    let keyword = "min-width:min-content;max-height:max-content";
+    let block = format!("display:block;{keyword}");
+    let cases: Vec<(&str, &str, String)> = vec![
+        // A flex or grid item, and the flex and grid containers and tables
+        // that size themselves.
+        ("display:flex", "div", block.clone()),
+        ("display:grid", "div", block.clone()),
+        ("display:block", "div", format!("display:flex;{keyword}")),
+        ("display:block", "div", format!("display:grid;{keyword}")),
+        ("display:block", "div", format!("display:table;{keyword}")),
+        // An inline-level box.
+        ("display:block", "span", format!("display:inline;{keyword}")),
+        (
+            "display:block",
+            "div",
+            format!("display:inline-block;{keyword}"),
+        ),
+        // An out-of-flow box.
+        ("display:block", "div", format!("{block};position:absolute")),
+        ("display:block", "div", format!("{block};position:fixed")),
+        ("display:block", "div", format!("{block};float:left")),
+        // A replaced element, a multicol container and a box in its columns.
+        ("display:block", "img", block.clone()),
+        ("display:block", "div", format!("{block};column-count:2")),
+        ("display:block;column-count:2", "div", block.clone()),
+        // Vertical writing swaps the axes the keywords refer to, in the box
+        // and in its container.
+        (
+            "display:block",
+            "div",
+            format!("{block};writing-mode:vertical-rl"),
+        ),
+        (
+            "display:block;writing-mode:vertical-rl",
+            "div",
+            format!("{block};writing-mode:horizontal-tb"),
+        ),
+    ];
+    let borrowed: Vec<(&str, &str, &str)> = cases
+        .iter()
+        .map(|(parent, tag, css)| (*parent, *tag, css.as_str()))
+        .collect();
+    for (case, (limits, ..)) in borrowed.iter().zip(bridged_content_limits(&borrowed)) {
+        assert_eq!(limits, ContentLimits::NONE, "{case:?}");
+    }
+}
+
+#[test]
+fn a_display_contents_parent_passes_its_own_container_to_the_content_limits() {
+    use crate::taffy_impl::content_limits::ContentLimits;
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let mut items = Vec::new();
+    for container in ["display:flex", "display:block"] {
+        let outer = doc.append_element(Some(html), "div", Style::default(), Some(container));
+        let contents = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        items.push(doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;min-width:max-content"),
+        ));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("bridge Ok");
+
+    assert_eq!(doc.nodes[items[0]].content_limits, ContentLimits::NONE);
+    assert_eq!(
+        doc.nodes[items[1]].content_limits.min.width,
+        Dimension::max_content()
+    );
+}
+
 #[test]
 fn a_box_a_sizing_keyword_does_not_size_keeps_an_auto_width() {
     for keyword in [
@@ -2757,8 +2930,9 @@ fn a_display_contents_parent_passes_its_own_parent_to_the_children() {
 
 #[test]
 fn a_sizing_keyword_is_no_min_max_constraint_and_no_margin() {
-    // Only `width` / `inline-size` keep a sizing keyword; where one reaches a
-    // min/max size or a margin, it is no constraint and no margin.
+    // Taffy's min and max sizes hold no sizing keyword (the node's content
+    // limits do) and a margin never computes to one; where one reaches either,
+    // it is no constraint and no margin.
     for keyword in [
         ComputedLengthPercentageOrAuto::MinContent,
         ComputedLengthPercentageOrAuto::MaxContent,

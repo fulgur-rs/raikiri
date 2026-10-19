@@ -1722,8 +1722,19 @@ fn layout_block_child(
     }
     let mut margin = resolved_margins(tree, node, geometry.width);
     let stretch = (geometry.width - margin.left - margin.right).max(0.0);
-    let width = own_inline_width(tree, node, &geometry).map_or(stretch, |own| own.at(stretch));
-    let width = clamp_block_width(tree, node, geometry.width, width);
+    // The child shares this root's context, which is prepared for the width
+    // its keyword `min-width` and `max-width` leave it.
+    let width = crate::taffy_impl::content_limits::with_width_limits(
+        tree,
+        node,
+        parent_size_of(&geometry),
+        stretch,
+        |tree| {
+            let width =
+                own_inline_width(tree, node, &geometry).map_or(stretch, |own| own.at(stretch));
+            clamp_block_width(tree, node, geometry.width, width)
+        },
+    );
     // `auto` side margins share the room the block leaves (CSS 2.1 10.3.3),
     // as in taffy's block algorithm: both auto centre the block, one auto
     // takes all of it.

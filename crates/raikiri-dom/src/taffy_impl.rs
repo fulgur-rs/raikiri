@@ -670,7 +670,7 @@ impl LayoutSession<'_> {
             .filter(|_| {
                 has_percent_padding_or_border(self.layout_node_with_style(idx).unwrap().style)
             });
-        let compute = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
+        let dispatch = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
             let idx = usize::from(node_id);
             let inputs = with_fit_content_room(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
@@ -881,6 +881,11 @@ impl LayoutSession<'_> {
                 }
             }
         };
+        // A `min-*` or `max-*` size that is an intrinsic sizing keyword is a
+        // length by the time the box is dispatched.
+        let compute = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
+            content_limits::with_content_limits(tree, node_id, inputs, dispatch)
+        };
         let mut output = if let Some(basis) = edge_basis {
             // The edges come out as they would against a parent size of the
             // same width, so cached layouts stay valid while the basis does.
@@ -959,6 +964,7 @@ impl LayoutSession<'_> {
 mod tests;
 
 pub(crate) mod block_flow;
+pub(crate) mod content_limits;
 mod oof;
 mod orthogonal_flow;
 mod replaced_size;

@@ -2073,8 +2073,7 @@ fn width_and_inline_size_keep_the_min_content_keyword() {
         parse("MIN-CONTENT", "inline-size"),
         Some(PropertyValue::InlineSize(LengthOrAuto::MinContent))
     );
-    // Height and block-size keep it as well; the min/max sizes still fold the
-    // keyword into `auto`.
+    // Height and block-size keep it as well.
     assert_eq!(
         parse("min-content", "height"),
         Some(PropertyValue::Height(LengthOrAuto::MinContent))
@@ -2210,6 +2209,66 @@ fn width_drops_a_fit_content_function_with_a_negative_limit() {
             LengthPercentageOrCalc::Length(Length::Px(0.0))
         )))
     );
+}
+
+#[test]
+fn min_and_max_sizes_keep_the_sizing_keywords() {
+    // CSS Sizing 3 §4 and §5: `min-*` is `auto | <box-size>` and `max-*` is
+    // `none | <box-size>`, so the sizing keywords of `width` are values of both.
+    for (property, wrap) in [
+        (
+            "min-width",
+            PropertyValue::MinWidth as fn(LengthOrAuto) -> PropertyValue,
+        ),
+        ("min-height", PropertyValue::MinHeight),
+        ("min-block-size", PropertyValue::MinBlockSize),
+        ("max-width", PropertyValue::MaxWidth),
+        ("max-height", PropertyValue::MaxHeight),
+    ] {
+        assert_eq!(
+            parse("min-content", property),
+            Some(wrap(LengthOrAuto::MinContent)),
+            "{property}"
+        );
+        assert_eq!(
+            parse("MAX-CONTENT", property),
+            Some(wrap(LengthOrAuto::MaxContent)),
+            "{property}"
+        );
+        assert_eq!(
+            parse("Fit-Content", property),
+            Some(wrap(LengthOrAuto::FitContent)),
+            "{property}"
+        );
+        assert_eq!(
+            parse("fit-content(25%)", property),
+            Some(wrap(LengthOrAuto::FitContentOf(
+                LengthPercentageOrCalc::Length(Length::Percent(25.0))
+            ))),
+            "{property}"
+        );
+        // A negative limit leaves the range of `<length-percentage [0,∞]>`.
+        assert_eq!(parse("fit-content(-5px)", property), None, "{property}");
+        assert_eq!(parse("fit-content()", property), None, "{property}");
+    }
+}
+
+#[test]
+fn min_and_max_sizes_keep_their_own_no_constraint_keyword() {
+    // `auto` is the initial minimum size and `none` the initial maximum size;
+    // each is invalid for the other. Both stand for "no constraint".
+    assert_eq!(
+        parse("auto", "min-width"),
+        Some(PropertyValue::MinWidth(LengthOrAuto::Auto))
+    );
+    assert_eq!(
+        parse("none", "max-height"),
+        Some(PropertyValue::MaxHeight(LengthOrAuto::Auto))
+    );
+    assert_eq!(parse("none", "min-width"), None);
+    assert_eq!(parse("auto", "max-width"), None);
+    assert_eq!(parse("auto", "max-height"), None);
+    assert_eq!(parse("none", "min-block-size"), None);
 }
 
 #[test]

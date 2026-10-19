@@ -168,13 +168,11 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         }
 
         // Width/Height/MinWidth/MinHeight/MaxWidth/MaxHeight all wrap
-        // LengthOrAuto too, but parse_width/parse_min_size/parse_max_size
-        // fold `auto`/`min-content`/`max-content`/bare `fit-content` into
-        // the same LengthOrAuto::Auto, discarding which keyword was
-        // written. Serializing Auto as "auto" here would silently turn a
-        // currently-correct echoed "none"/"min-content"/"max-content" into
-        // a wrong "auto" — deliberately left unserialized (falls back to
-        // echo) until those three parse functions preserve the keyword.
+        // LengthOrAuto too. `LengthOrAuto::Auto` stands for `auto` on the
+        // preferred and minimum sizes but for `none` on the maximum sizes,
+        // so serializing it here would silently turn a correctly echoed
+        // "none" into a wrong "auto"; only the unambiguous plain length is
+        // serialized and the rest falls back to the echo.
         // A plain length carries no such ambiguity (`0` reads back `0px`).
         PropertyValue::Width(LengthOrAuto::Length(length))
         | PropertyValue::Height(LengthOrAuto::Length(length))

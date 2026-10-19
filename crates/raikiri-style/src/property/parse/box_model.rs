@@ -196,6 +196,17 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
+    parse_box_size(input)
+}
+
+/// Parse `<box-size>`: a non-negative `<length-percentage>`, `min-content`, `max-content`,
+/// `fit-content` or `fit-content(<length-percentage>)`.
+///
+/// CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#sizing-values> groups every sizing value
+/// other than `auto` and `none` under this production, which `width`, `min-width` and `max-width` (and
+/// their block-axis counterparts) share. The `width` / `min-width` parsers add `auto` in front of it and
+/// the `max-width` parser adds `none`, so each rejects the other's keyword.
+fn parse_box_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input
         .try_parse(|i| i.expect_ident_matching("min-content"))
         .is_ok()
@@ -947,114 +958,31 @@ pub(super) fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     parse_width(input)
 }
 
-/// Parse `min-width` / `min-height` / `min-block-size: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content`.
+/// Parse `max-width` / `max-height: none | <box-size>`.
 ///
-/// CSS Sizing 3 §4 "Minimum Size Properties"
-/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties> specifies initial value `auto` and
-/// inheritance `No`. This follows the shape of [`parse_max_size`] (CSS Sizing 3 §5), replacing its
-/// max-only `none` branch with the minimum size's `auto` branch. Both enforce `[0,∞]` by filtering
-/// through [`Length::payload`] and map intrinsic keywords to an Auto placeholder.
+/// CSS Sizing 3 §5 "Maximum Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#max-size-properties> specifies initial value `none` and
+/// inheritance `No`. `none` means no maximum and is the `Auto` placeholder; the other values are
+/// [`parse_box_size`], so the sizing keywords stay in the value as they do for `width`. `auto` is
+/// not a maximum size and drops the declaration.
 pub(super) fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    if input
-        .try_parse(|i| i.expect_ident_matching("min-content"))
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("max-content"))
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("fit-content"))
-        .is_ok()
-    {
-        let _ = input.try_parse(|i| {
-            i.expect_parenthesis_block()?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
-        });
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| {
-            i.expect_function_matching("fit-content")?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                nested.expect_exhausted()?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
-        })
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    let length = parse_length_value(input, true)?;
-    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
+    parse_box_size(input)
 }
 
-/// Parse `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content`.
+/// Parse `min-width` / `min-height` / `min-block-size: auto | <box-size>`.
 ///
 /// CSS Sizing 3 §4 "Minimum Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties> specifies initial value `auto` and
-/// inheritance `No`. Like `parse_max_size` (CSS Sizing 3 §5), this parser filters `[0,∞]` through
-/// `Length::payload` and maps intrinsic keywords to an Auto placeholder. Only the first keyword branch
-/// changes: minimum sizes use `auto`, while the maximum size grammar alone uses `none`.
+/// inheritance `No`. It is the shape of [`parse_max_size`] with the minimum size's `auto` in place of
+/// `none`; `none` is not a minimum size and drops the declaration.
 pub(super) fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    if input
-        .try_parse(|i| i.expect_ident_matching("min-content"))
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("max-content"))
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("fit-content"))
-        .is_ok()
-    {
-        let _ = input.try_parse(|i| {
-            i.expect_parenthesis_block()?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
-        });
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| {
-            i.expect_function_matching("fit-content")?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                nested.expect_exhausted()?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
-        })
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    let length = parse_length_value(input, true)?;
-    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
+    parse_box_size(input)
 }
 
 /// Parse `box-sizing: <ident>` (CSS Sizing 3 §3.3 <https://www.w3.org/TR/css-sizing-3/#box-sizing>).
