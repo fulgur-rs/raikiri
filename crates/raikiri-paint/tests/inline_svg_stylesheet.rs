@@ -7,6 +7,7 @@ use raikiri_html::{
     FontCollectionBuilder, LayoutConfig, LayoutOptions, LayoutStatus, PageDefaults,
     RenderResources, layout, parse_html_with_resources,
 };
+use raikiri_traits::NodeKind;
 
 fn raster(body: &str) -> Vec<u8> {
     let fonts = FontCollectionBuilder::new()
@@ -40,6 +41,77 @@ fn raster(body: &str) -> Vec<u8> {
         50,
         50,
     )
+}
+
+fn public_svg_raster(body: &str) -> Vec<u8> {
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let html = format!(
+        "<!doctype html><style>@page{{size:50px 50px;margin:0}}body{{margin:0;background:white;font:10px/10px Ahem}}</style>{body}"
+    );
+    let doc = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("layout must complete")
+    };
+    let page = result.page(0).unwrap();
+    let (document, cascade, _, _) = page.paint_inputs();
+    let svg_node = (0..document.node_count())
+        .find(|&node_id| {
+            document
+                .get_node(node_id)
+                .is_some_and(|node| node.kind() == NodeKind::Element && node.is_inline_svg_root())
+        })
+        .expect("inline SVG root");
+    let source = document
+        .serialize_svg_subtree(svg_node)
+        .unwrap()
+        .expect("serialized inline SVG");
+    let declarations =
+        raikiri_dom::inline_svg_style::inline_svg_element_declarations(document, cascade, svg_node)
+            .unwrap();
+    let elements: Vec<_> = declarations
+        .iter()
+        .map(|element| raikiri_svg::SvgElementStyle {
+            element_index: element.element_index,
+            declarations: &element.declarations,
+        })
+        .collect();
+    let style = cascade.computed.get(svg_node).expect("SVG computed style");
+    let family = raikiri_dom::inline_svg_style::svg_font_family(style);
+    let color = style.color;
+    let svg = raikiri_svg::SvgDocument::parse(source.as_bytes()).unwrap();
+    svg.rasterize_at_css_pixel_scale_with_resolved_styles(
+        raikiri_svg::SvgViewport {
+            width: 50.0,
+            height: 50.0,
+        },
+        raikiri_svg::SvgRootStyle::default(),
+        raikiri_svg::SvgResolvedStyles {
+            root_color: [color.r, color.g, color.b, color.a],
+            font: raikiri_svg::SvgRootFont {
+                size: style.font_size.0,
+                family: &family,
+                weight: style.font_weight,
+                style: style.font_style.as_css_str(),
+            },
+            elements: &elements,
+        },
+        None,
+    )
+    .unwrap()
+    .rgba
 }
 
 fn differences(actual: &[u8], expected: &[u8]) -> usize {
@@ -155,6 +227,33 @@ fn a_stylesheet_stroke_width_in_ems_follows_the_svg_font_size() {
     assert_paints_like(
         "<style>rect{stroke:blue;stroke-width:.5em}</style><svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=none /></svg>",
         "<svg width=30 height=30><rect x=5 y=5 width=20 height=20 fill=none stroke=blue stroke-width=5 /></svg>",
+    );
+}
+
+#[test]
+fn inherited_relative_presentation_stroke_uses_the_declaring_font_size() {
+    assert_paints_like(
+        "<svg width=50 height=50><g style='font-size:20px' stroke='black' stroke-width='2em'><path d='M25 0V50' style='font-size:10px;stroke-width:inherit' /></g></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke='black' stroke-width='40' /></svg>",
+    );
+}
+
+#[test]
+fn public_svg_rasterizer_uses_the_declaring_font_size_for_inherited_presentation_stroke() {
+    let actual = public_svg_raster(
+        "<svg width=50 height=50><g style='font-size:20px' stroke='black' stroke-width='2em'><path d='M25 0V50' style='font-size:10px;stroke-width:inherit' /></g></svg>",
+    );
+    let expected = public_svg_raster(
+        "<svg width=50 height=50><path d='M25 0V50' stroke='black' stroke-width='40' /></svg>",
+    );
+    assert_eq!(differences(&actual, &expected), 0);
+}
+
+#[test]
+fn an_svg_stylesheet_stroke_width_still_beats_a_relative_presentation_attribute() {
+    assert_paints_like(
+        "<svg width=50 height=50><style>g{stroke-width:5px}</style><g style='font-size:20px' stroke='black' stroke-width='2em'><path d='M25 0V50' style='font-size:10px;stroke-width:inherit' /></g></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke='black' stroke-width='5' /></svg>",
     );
 }
 
@@ -414,5 +513,13 @@ fn a_used_definition_resolves_a_font_relative_stroke_width_for_each_instance() {
     assert_paints_like(
         "<style>path{stroke:black;stroke-width:.25em}use{font-size:20px}</style><svg width=50 height=20><defs><path id=p d='M0 10h50' fill=none /></defs><use href='#p' /></svg>",
         "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=5 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_comes_from_the_nearest_ancestor_that_sets_it_by_attribute() {
+    assert_paints_like(
+        "<style>svg{font-size:30px;stroke:black;stroke-width:1em}g{font-size:4px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=20><g stroke-width='2em'><path d='M0 10h50' fill=none /></g></svg>",
+        "<svg width=50 height=20><path d='M0 10h50' fill=none stroke=black stroke-width=8 /></svg>",
     );
 }

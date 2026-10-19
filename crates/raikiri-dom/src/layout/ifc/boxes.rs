@@ -1589,16 +1589,20 @@ fn resolved_margins(tree: &Document, node: usize, basis: f32) -> taffy::Rect<f32
 }
 
 /// Lay a child of the root out the way taffy's block algorithm lays out a
-/// float: no known size, the root's content width as the percentage basis,
-/// and `available` as the width it may take. It is also how an atomic inline
-/// is sized: shrink-to-fit within the line's content width. Percentage
-/// heights resolve against `height_basis`, the root's definite content
-/// height, and behave as `auto` without one.
+/// float: no known size but `known_width`, the root's content width as the
+/// percentage basis, and `available` as the width it may take. It is also how
+/// an atomic inline is sized: shrink-to-fit within the line's content width.
+/// Percentage heights resolve against `height_basis`, the root's definite
+/// content height, and behave as `auto` without one. A vertical root passes
+/// its inline extent as the basis, which its children's edges take their
+/// percentages of, and the width its children's own width percentage
+/// resolves to as `known_width`.
 fn perform_box_layout(
     tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
     height_basis: Option<f32>,
+    known_width: Option<f32>,
     available: f32,
 ) -> taffy::LayoutOutput {
     // What taffy's `perform_child_layout` does; that helper is private to
@@ -1609,7 +1613,10 @@ fn perform_box_layout(
             run_mode: RunMode::PerformLayout,
             sizing_mode: SizingMode::InherentSize,
             axis: RequestedAxis::Both,
-            known_dimensions: Size::NONE,
+            known_dimensions: Size {
+                width: known_width,
+                height: None,
+            },
             known_dimensions_are_definite: Size {
                 width: true,
                 height: true,
@@ -1643,6 +1650,7 @@ fn measure_float(
         node,
         geometry.width,
         geometry.definite_height,
+        None,
         available,
     );
     let style = &tree.layout_node_with_style(node).unwrap().style;
@@ -1685,10 +1693,11 @@ pub(crate) fn measure_atomics(
     }
     // The containing block's physical size: a vertical root's inline size is
     // its height, and its width is its block extent.
-    let containing = if root.writing_mode == WritingMode::HorizontalTb {
-        (Some(geometry.width), geometry.definite_height)
-    } else {
+    let vertical = root.writing_mode != WritingMode::HorizontalTb;
+    let containing = if vertical {
         (geometry.vertical_width, Some(geometry.width))
+    } else {
+        (Some(geometry.width), geometry.definite_height)
     };
     for generated in root.generated_boxes.iter() {
         sizes.insert(
@@ -1704,14 +1713,36 @@ pub(crate) fn measure_atomics(
     let mut outputs = Vec::new();
     for b in root.boxes.iter().filter(|b| b.kind == IfcBoxKind::Atomic) {
         let node = b.node;
-        // A child's percentages resolve against the paragraph's content width.
+        // A child's margins and padding resolve their percentages against the
+        // paragraph's inline extent (CSS 2.1 8.3).
         let margin = resolved_margins(tree, node, geometry.width);
         let available = (geometry.width - margin.left - margin.right).max(0.0);
+        // A vertical paragraph's inline extent is the box's height, so its
+        // percentages of the width resolve against the containing block's
+        // physical width, while the edges' percentages stay with the inline
+        // extent (CSS Writing Modes 4 §7.2).
+        let known_width = containing
+            .0
+            .filter(|_| vertical)
+            .and_then(|physical_width| {
+                used_block_width_with_edge_basis(tree, node, physical_width, geometry.width).map(
+                    |width| {
+                        clamp_block_width_with_edge_basis(
+                            tree,
+                            node,
+                            physical_width,
+                            geometry.width,
+                            width,
+                        )
+                    },
+                )
+            });
         let output = perform_box_layout(
             tree,
             node,
             geometry.width,
             geometry.definite_height,
+            known_width,
             available,
         );
         let id = shodo::node::NodeId(node as u64);
@@ -3169,12 +3200,16 @@ impl BoxIntrinsics {
 /// `percent_height` is the root's definite content-box height, the basis a
 /// box's percentage height resolves against while its width is measured: it
 /// sizes a replaced box through its aspect ratio. A vertical paragraph
-/// measures along the block axis of its boxes and passes none.
+/// measures along the block axis of its boxes and passes none; it passes the
+/// root's definite physical content width as `physical_width` instead, the
+/// basis a box's percentage width resolves against while its height is
+/// measured.
 pub(crate) fn intrinsics_of_boxes(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     basis: f32,
     percent_height: Option<f32>,
+    physical_width: Option<f32>,
 ) -> BoxIntrinsics {
     let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
         matches!(
@@ -3269,7 +3304,13 @@ pub(crate) fn intrinsics_of_boxes(
             IfcBoxKind::Block => {
                 let margin = resolved_margins(tree, b.node, basis);
                 let (min_content, max_content) = if vertical {
-                    content_heights(tree, b.node, basis, margin.top + margin.bottom)
+                    content_heights(
+                        tree,
+                        b.node,
+                        basis,
+                        physical_width,
+                        margin.top + margin.bottom,
+                    )
                 } else {
                     content_widths(
                         tree,
@@ -3284,13 +3325,23 @@ pub(crate) fn intrinsics_of_boxes(
             }
             IfcBoxKind::Atomic => {
                 let margin = resolved_margins(tree, b.node, basis);
-                let (min_content, max_content) = content_widths(
-                    tree,
-                    b.node,
-                    basis,
-                    percent_height,
-                    margin.left + margin.right,
-                );
+                let (min_content, max_content) = if vertical {
+                    content_heights(
+                        tree,
+                        b.node,
+                        basis,
+                        physical_width,
+                        margin.top + margin.bottom,
+                    )
+                } else {
+                    content_widths(
+                        tree,
+                        b.node,
+                        basis,
+                        percent_height,
+                        margin.left + margin.right,
+                    )
+                };
                 intrinsics.engine.insert_atomic(
                     shodo::node::NodeId(b.node as u64),
                     AtomicIntrinsic {
@@ -3330,10 +3381,11 @@ fn content_heights(
     tree: &mut LayoutSession<'_>,
     node: usize,
     basis: f32,
+    physical_width: Option<f32>,
     margins_y: f32,
 ) -> (f32, f32) {
     let parent_size = Size {
-        width: None,
+        width: physical_width,
         height: Some(basis),
     };
     content_sizes_on_axis(tree, node, parent_size, margins_y, RequestedAxis::Vertical)

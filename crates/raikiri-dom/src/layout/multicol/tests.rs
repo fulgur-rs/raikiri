@@ -3378,13 +3378,30 @@ fn ancestor_width_table_ignores_a_keyword_width_the_layout_does_not_use() {
         Style::default(),
         Some("display:flex;width:400px"),
     );
-    // A replaced element and a multicol container take their natural and
-    // their authored sizes, as if the width were `auto`.
+    // A replaced element takes its natural size, as if the width were `auto`.
     let image = doc.append_element(
         Some(body),
         "img",
         Style::default(),
         Some("display:block;width:max-content"),
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
+    assert!(!widths.in_intrinsic_width(image));
+}
+
+#[test]
+fn ancestor_width_table_counts_a_keyword_width_on_a_multicol_container() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:flex;width:400px"),
     );
     let columns = doc.append_element(
         Some(body),
@@ -3396,9 +3413,8 @@ fn ancestor_width_table_ignores_a_keyword_width_the_layout_does_not_use() {
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
     let widths = AncestorFacts::new(&doc, &cascade, 800.0);
-    assert!(!widths.in_intrinsic_width(image));
-    assert!(!widths.in_intrinsic_width(columns));
-    assert!(!widths.in_intrinsic_width(text));
+    assert!(widths.in_intrinsic_width(columns));
+    assert!(widths.in_intrinsic_width(text));
 }
 
 #[test]

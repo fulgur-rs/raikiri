@@ -12,7 +12,7 @@ fn descendant_declarations_ignore_properties_outside_the_svg_contract() {
         }];
         let mut budget = 1024;
         assert_eq!(
-            node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap(),
+            node_declarations(&ComputedValues::initial(), &properties, &[], &mut budget).unwrap(),
             ""
         );
     }
@@ -26,7 +26,9 @@ fn descendant_declaration_budget_rejects_before_serializing() {
         expression: None,
     }];
     let mut remaining = 128;
-    assert!(node_declarations(&ComputedValues::initial(), &properties, &mut remaining).is_err());
+    assert!(
+        node_declarations(&ComputedValues::initial(), &properties, &[], &mut remaining).is_err()
+    );
 }
 
 #[test]
@@ -40,9 +42,12 @@ fn descendant_declaration_budget_counts_the_text_of_a_painting_property() {
     // The declaration's own 128 bytes, then the text's 128 and its two copies.
     let needed = 128 + 128 + 2 * text.len();
     let mut remaining = needed - 1;
-    assert!(node_declarations(&ComputedValues::initial(), &properties, &mut remaining).is_err());
+    assert!(
+        node_declarations(&ComputedValues::initial(), &properties, &[], &mut remaining).is_err()
+    );
     let mut remaining = needed;
-    let css = node_declarations(&ComputedValues::initial(), &properties, &mut remaining).unwrap();
+    let css =
+        node_declarations(&ComputedValues::initial(), &properties, &[], &mut remaining).unwrap();
     assert_eq!(css, format!("fill:{text}!important;"));
     assert_eq!(remaining, 0);
 }
@@ -63,7 +68,7 @@ fn descendant_declarations_keep_relative_expressions_and_literal_inherit() {
     ];
     let mut remaining = 1024;
     assert_eq!(
-        node_declarations(&ComputedValues::initial(), &properties, &mut remaining).unwrap(),
+        node_declarations(&ComputedValues::initial(), &properties, &[], &mut remaining).unwrap(),
         "font-size:2em!important;color:inherit!important;"
     );
 }
@@ -89,7 +94,7 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
         })
         .collect();
     let mut budget = 4096;
-    let css = node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap();
+    let css = node_declarations(&ComputedValues::initial(), &properties, &[], &mut budget).unwrap();
     for declaration in [
         "color:rgba(0,0,0,1.000000)!important;",
         "display:inline!important;",
@@ -111,7 +116,7 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
         })
         .collect();
     let mut budget = 4096;
-    let css = node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap();
+    let css = node_declarations(&ComputedValues::initial(), &properties, &[], &mut budget).unwrap();
     // Inherited font sizes use `100%` so renderers do not reapply a relative
     // ancestor size.
     assert_eq!(css.matches(":inherit!important;").count(), 7, "{css}");
@@ -142,7 +147,7 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
         }];
         let mut budget = 1024;
         assert_eq!(
-            node_declarations(&ComputedValues::initial(), &declared, &mut budget).unwrap(),
+            node_declarations(&ComputedValues::initial(), &declared, &[], &mut budget).unwrap(),
             format!("{name}:{value}!important;")
         );
 
@@ -153,7 +158,7 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
         }];
         let mut budget = 1024;
         assert_eq!(
-            node_declarations(&ComputedValues::initial(), &inherited, &mut budget).unwrap(),
+            node_declarations(&ComputedValues::initial(), &inherited, &[], &mut budget).unwrap(),
             format!("{name}:inherit!important;")
         );
 
@@ -166,8 +171,50 @@ fn descendant_declarations_carry_painting_properties_as_declared() {
         }];
         let mut budget = 1024;
         assert_eq!(
-            node_declarations(&ComputedValues::initial(), &missing, &mut budget).unwrap(),
+            node_declarations(&ComputedValues::initial(), &missing, &[], &mut budget).unwrap(),
             ""
         );
     }
+}
+
+#[test]
+fn relative_presentation_attributes_resolve_against_the_declaring_font_size() {
+    let attributes = [
+        SvgStyleProperty {
+            property: PropertyKey::StrokeWidth,
+            inherited: false,
+            expression: Some("2em".into()),
+        },
+        SvgStyleProperty {
+            property: PropertyKey::StrokeDasharray,
+            inherited: false,
+            expression: Some("2em 1ex".into()),
+        },
+        SvgStyleProperty {
+            property: PropertyKey::StrokeDashoffset,
+            inherited: false,
+            expression: Some("-1em".into()),
+        },
+    ];
+    let mut style = ComputedValues::initial();
+    style.font_size.0 = 20.0;
+    let mut budget = 4096;
+    assert_eq!(
+        node_declarations(&style, &[], &attributes, &mut budget).unwrap(),
+        "stroke-width:40px!important;stroke-dasharray:40px 10px!important;stroke-dashoffset:-20px!important;"
+    );
+}
+
+#[test]
+fn absolute_presentation_attributes_need_no_declaration() {
+    let attributes = [SvgStyleProperty {
+        property: PropertyKey::StrokeWidth,
+        inherited: false,
+        expression: Some("3px".into()),
+    }];
+    let mut budget = 4096;
+    assert_eq!(
+        node_declarations(&ComputedValues::initial(), &[], &attributes, &mut budget).unwrap(),
+        ""
+    );
 }

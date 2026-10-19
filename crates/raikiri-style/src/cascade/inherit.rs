@@ -269,6 +269,7 @@ pub(crate) struct WalkOutputs {
     pub(crate) page_values: Vec<crate::property::PageValue>,
     pub(crate) pseudo: HashMap<(StyleNodeId, PseudoElem), PseudoValueArc<ComputedValues>>,
     pub(crate) svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    pub(crate) svg_relative_presentation_attributes: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     pub(crate) first_letter_inputs: HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
     /// The resolve context of each element with a `::first-line` style, for
     /// recomputing the styles of the first line's descendants.
@@ -308,6 +309,7 @@ impl WalkOutputs {
             page_values: try_filled(node_count, crate::property::PageValue::Auto)?,
             pseudo: HashMap::new(),
             svg_properties: HashMap::new(),
+            svg_relative_presentation_attributes: HashMap::new(),
             first_letter_inputs: HashMap::new(),
             first_line_contexts: HashMap::new(),
             typographic_inheritance: HashMap::new(),
@@ -570,6 +572,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             .as_element()
             .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
         let mut node_svg_properties = Vec::new();
+        let mut node_svg_relative_presentation_attributes = Vec::new();
         // The stroke lengths a presentation attribute of the element sets.
         let mut attribute_declared = [false; STROKE_LENGTHS.len()];
         let parent_computed =
@@ -644,6 +647,9 @@ pub(crate) fn walk_from<D: StyleDom>(
             if let Some(properties) = out.svg_properties.get(&source) {
                 node_svg_properties = properties.clone();
             }
+            if let Some(properties) = out.svg_relative_presentation_attributes.get(&source) {
+                node_svg_relative_presentation_attributes = properties.clone();
+            }
             // The pseudo-element and first-letter copies are counted as
             // resolving the node would count its own entries, before they are
             // made. The SVG property list, one entry per SVG paint property at
@@ -708,6 +714,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                     Some(&mut out.page_values[idx]),
                     Some(&mut out.authored_writing_modes[idx]),
                     is_svg.then_some(&mut node_svg_properties),
+                    is_svg.then_some(&mut node_svg_relative_presentation_attributes),
                 );
             }
 
@@ -856,6 +863,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                             None,
                             None,
                             None,
+                            None,
                         );
                     }
 
@@ -958,6 +966,22 @@ pub(crate) fn walk_from<D: StyleDom>(
                     .saturating_add(expression_bytes),
             ))?;
             try_insert(&mut out.svg_properties, id, node_svg_properties)?;
+        }
+        if !node_svg_relative_presentation_attributes.is_empty() {
+            let expression_bytes = node_svg_relative_presentation_attributes
+                .iter()
+                .filter_map(|property| property.expression.as_ref())
+                .fold(0u64, |bytes, text| bytes.saturating_add(text.len() as u64));
+            budget.output(entry_bytes(
+                &out.svg_relative_presentation_attributes,
+                bytes_of::<SvgStyleProperty>(node_svg_relative_presentation_attributes.len())
+                    .saturating_add(expression_bytes),
+            ))?;
+            try_insert(
+                &mut out.svg_relative_presentation_attributes,
+                id,
+                node_svg_relative_presentation_attributes,
+            )?;
         }
 
         let mut computed = computed;
@@ -1387,6 +1411,7 @@ pub(crate) fn apply_winners(
     mut page_value: Option<&mut crate::property::PageValue>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
+    mut svg_relative_presentation_attributes: Option<&mut Vec<SvgStyleProperty>>,
 ) {
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
     let flow = flow_mapping(candidates, inherited, |key, idx| {
@@ -1545,17 +1570,25 @@ pub(crate) fn apply_winners(
             // stylesheet declaration, a rollback to the attribute, or an
             // attribute written with `var()` is exported. The SVG renderer
             // cannot substitute a variable, so that attribute is exported
-            // with its resolved value. A font-relative stroke length is
-            // exported as well, so that a descendant that inherits it can find
-            // its declaration.
+            // with its resolved value.
             let winning_paint_hint = winner.rank
                 == cascade_rank(crate::ruletree::Origin::AuthorPresentationalHint, false)
                 && winner_key.is_svg_presentation()
                 && !matches!(
                     candidates.value(winner.idx),
                     PropertyValue::Deferred(deferred) if references_variable(&deferred.value)
-                )
-                && !is_font_relative_stroke_length(candidates.value(winner.idx));
+                );
+            if winning_paint_hint
+                && svg_presentation_value_has_font_relative_length(value.as_ref())
+                && let Some(attributes) = svg_relative_presentation_attributes.as_deref_mut()
+                && let Some(expression) = value.as_ref().and_then(svg_property_expression)
+            {
+                attributes.push(SvgStyleProperty {
+                    property: winner_key,
+                    inherited: false,
+                    expression: Some(expression),
+                });
+            }
             if let Some(properties) = svg_properties.as_deref_mut()
                 && svg_property_is_exported(winner_key)
                 && !winning_paint_hint
@@ -1618,20 +1651,6 @@ pub(crate) fn apply_winners(
     if let Some(wrap) = wrap {
         specified.effective_text_wrap_mode = wrap;
     }
-}
-
-/// Whether `value` is a stroke length with an `em` or `ex` term.
-fn is_font_relative_stroke_length(value: &PropertyValue) -> bool {
-    match value {
-        PropertyValue::StrokeWidth(text)
-        | PropertyValue::StrokeDasharray(text)
-        | PropertyValue::StrokeDashoffset(text) => has_font_relative_unit(text),
-        _ => false,
-    }
-}
-
-fn has_font_relative_unit(text: &str) -> bool {
-    text.contains("em") || text.contains("ex")
 }
 
 /// Whether the value text `raw` substitutes a custom property.
@@ -1751,7 +1770,7 @@ fn absolutize_inherited_lengths(
 /// `ex` is half an `em`, as for [`Length::Ex`]. A percentage refers to the
 /// SVG viewport and an absolute unit needs no conversion.
 fn svg_lengths_in_px(text: &str, font_size_px: f32) -> Option<String> {
-    if !has_font_relative_unit(text) {
+    if !text.contains("em") && !text.contains("ex") {
         return None;
     }
     let font_size = f64::from(font_size_px);
@@ -1821,6 +1840,19 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         PropertyValue::FontSizeKeyword(_) => None,
         _ => None,
     }
+}
+
+fn svg_presentation_value_has_font_relative_length(value: Option<&PropertyValue>) -> bool {
+    let text = match value {
+        Some(
+            PropertyValue::StrokeWidth(text)
+            | PropertyValue::StrokeDasharray(text)
+            | PropertyValue::StrokeDashoffset(text),
+        ) => text,
+        _ => return false,
+    };
+    text.split_ascii_whitespace()
+        .any(|part| part.ends_with("em") || part.ends_with("ex"))
 }
 
 /// Whether `a` comes after `b` in cascade order: rank, specificity and source

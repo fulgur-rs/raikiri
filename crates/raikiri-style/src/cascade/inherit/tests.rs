@@ -8589,6 +8589,7 @@ fn apply_winners_deferred_border_radius_resolving_to_inherit() {
         None,
         None,
         None,
+        None,
     );
     assert_eq!(
         specified.border_radius.top_left.horizontal,
@@ -8638,6 +8639,7 @@ fn apply_winners_direct_border_radius_inherit() {
         None,
         None,
         None,
+        None,
     );
     assert_eq!(
         specified.border_radius.top_left,
@@ -8679,6 +8681,7 @@ fn apply_winners_direct_page_value() {
         &inherited,
         &custom_properties,
         Some(&mut page_value),
+        None,
         None,
         None,
     );
@@ -12101,51 +12104,23 @@ fn an_ancestor_that_took_px_hands_them_on_with_inherit() {
 }
 
 #[test]
-fn a_descendant_that_inherits_takes_the_px_of_an_ancestor_that_sets_it_by_attribute() {
-    let properties = svg_rect_in(
-        "svg { font-size: 30px; stroke-width: 1em } g { font-size: 20px } \
-         rect { font-size: 10px; stroke-width: inherit }",
-        Some(&[("stroke-width", "3em")]),
-        &[],
-        None,
-    );
-    assert_eq!(
-        exported(&properties, PropertyKey::StrokeWidth),
-        Some((false, Some("60px".into())))
-    );
-}
-
-#[test]
-fn a_descendant_that_inherits_from_a_plain_attribute_keeps_inherit() {
-    // The attribute is in the SVG source, so the renderer copies it as it is.
-    let properties = svg_rect_in(
-        "svg { font-size: 30px; stroke-width: 1em } g { font-size: 20px } \
-         rect { font-size: 10px; stroke-width: inherit }",
-        Some(&[("stroke-width", "3")]),
-        &[],
-        None,
-    );
-    assert_eq!(
-        exported(&properties, PropertyKey::StrokeWidth),
-        Some((true, Some("inherit".into())))
-    );
-}
-
-#[test]
-fn a_winning_attribute_is_exported_only_when_its_length_is_font_relative() {
-    let width = |value| {
-        exported(
-            &svg_rect_properties("", &[("stroke-width", value)], None),
-            PropertyKey::StrokeWidth,
-        )
-    };
-    assert_eq!(width("2EM"), Some((false, Some("2em".into()))));
-    assert_eq!(width("2"), None);
-    let dasharray = svg_rect_properties("", &[("stroke-dasharray", "1ex 3")], None);
-    assert_eq!(
-        exported(&dasharray, PropertyKey::StrokeDasharray),
-        Some((false, Some("1ex 3".into())))
-    );
+fn a_descendant_that_inherits_from_an_attribute_keeps_inherit() {
+    // The attribute is in the SVG source, so the renderer copies what the
+    // element carries and the declaration further up is not the one to take.
+    for value in ["3", "3em"] {
+        let properties = svg_rect_in(
+            "svg { font-size: 30px; stroke-width: 1em } g { font-size: 20px } \
+             rect { font-size: 10px; stroke-width: inherit }",
+            Some(&[("stroke-width", value)]),
+            &[],
+            None,
+        );
+        assert_eq!(
+            exported(&properties, PropertyKey::StrokeWidth),
+            Some((true, Some("inherit".into()))),
+            "{value}"
+        );
+    }
 }
 
 #[test]

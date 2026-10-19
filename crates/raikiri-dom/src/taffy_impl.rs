@@ -1542,7 +1542,22 @@ fn measure_ifc_root(
             _ => 0.0,
         };
         let percent_height = measure.definite_height.filter(|_| !vertical);
-        crate::layout::ifc::boxes::intrinsics_of_boxes(tree, idx, basis, percent_height)
+        // A vertical paragraph's boxes are measured along their heights, and
+        // their percentage widths refer to the physical width the root has
+        // when it is known or stretched.
+        let physical_width = known_width
+            .or(match available.width {
+                AvailableSpace::Definite(size) if measure.stretched_width => Some(size),
+                _ => None,
+            })
+            .filter(|_| vertical);
+        crate::layout::ifc::boxes::intrinsics_of_boxes(
+            tree,
+            idx,
+            basis,
+            percent_height,
+            physical_width,
+        )
     } else {
         crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };
@@ -1568,6 +1583,14 @@ fn measure_ifc_root(
         min_content.max(box_intrinsics.blocks.0),
         max_content.max(box_intrinsics.blocks.1),
     );
+    // The lines of a multicol container are laid out in its columns, so the
+    // widths of the container repeat the widths of its lines.
+    let (min_content, max_content) = tree.nodes[idx]
+        .multicol
+        .filter(|style| style.horizontal && !vertical)
+        .map_or((min_content, max_content), |style| {
+            style.intrinsic_inline_sizes((min_content, max_content), (0.0, 0.0))
+        });
     let width = match inline_available {
         AvailableSpace::Definite(width) if inline_stretched => width,
         AvailableSpace::Definite(width) => width.max(min_content).min(max_content),

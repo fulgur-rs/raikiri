@@ -100,6 +100,60 @@ fn stroke_and_rule_properties_are_listed_as_declarations() {
 }
 
 #[test]
+fn relative_presentation_lengths_are_resolved_at_their_declaring_font_size() {
+    let elements = declarations(
+        "<svg width=50 height=50><g style='font-size:20px' stroke-width='2em' \
+         stroke-dasharray='2em 1ex' stroke-dashoffset='-1em'><path \
+         style='font-size:10px;stroke-width:inherit;stroke-dasharray:inherit;stroke-dashoffset:inherit' /></g></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (
+                1,
+                "font-size:20px!important;stroke-width:40px!important;stroke-dasharray:40px 10px!important;stroke-dashoffset:-20px!important;"
+            ),
+            (
+                2,
+                "font-size:10px!important;stroke-width:inherit!important;stroke-dasharray:inherit!important;stroke-dashoffset:inherit!important;"
+            ),
+        ]
+    );
+}
+
+#[test]
+fn stylesheet_winners_still_beat_relative_presentation_attributes() {
+    let elements = declarations(
+        "<svg width=50 height=50><style>g{stroke-width:5px}</style>\
+         <g style='font-size:20px' stroke-width='2em'><path \
+         style='font-size:10px;stroke-width:inherit' /></g></svg>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (2, "font-size:20px!important;stroke-width:5px!important;"),
+            (
+                3,
+                "font-size:10px!important;stroke-width:inherit!important;"
+            ),
+        ]
+    );
+}
+
+#[test]
+fn absolute_presentation_attributes_are_not_exported_as_declarations() {
+    assert!(declarations("<svg width=50 height=50><g stroke-width='3px' /></svg>").is_empty());
+}
+
+#[test]
 fn css_wide_stroke_keywords_are_listed_as_declarations() {
     let elements = declarations(
         "<style>path{stroke-dasharray:initial;stroke-linecap:inherit;stroke-miterlimit:unset;\

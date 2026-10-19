@@ -15,7 +15,7 @@ use sizing::Metrics;
 use taffy::{
     AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutBlockContainer,
     LayoutInput, LayoutOutput, LayoutPartialTree, Line, NodeId, Position, Rect, RequestedAxis,
-    RunMode, Size, SizingMode, Style, TraversePartialTree,
+    ResolveOrZero, RunMode, Size, SizingMode, Style, TraversePartialTree,
 };
 
 /// How far block flow moves a child of a left-to-right container to the
@@ -79,17 +79,55 @@ fn child_inputs(parent: Size<Option<f32>>, width: Option<f32>, run_mode: RunMode
     }
 }
 
-/// The width of the content of `node` under `space`. `percent_height` is the
-/// definite height of its content box, against which a child's percentage
-/// height resolves while the child's width is measured.
-fn intrinsic_width(
+/// Whether a spanner lies below `node` in blocks that share its formatting
+/// context, so that it spans the columns of the multicol container around
+/// `node` all the same.
+fn contains_spanner(tree: &LayoutSession<'_>, node: NodeId) -> bool {
+    tree.child_ids(node).any(|child| {
+        let style = child_style(tree, child);
+        shares_context(&style)
+            && (crate::layout::is_spanner(tree, usize::from(child))
+                || contains_spanner(tree, child))
+    })
+}
+
+/// The width of the margin box of `child` under `space`, measured as a whole.
+fn outer_width(
     tree: &mut LayoutSession<'_>,
-    node: NodeId,
+    child: NodeId,
+    margin: f32,
     space: AvailableSpace,
     percent_height: Option<f32>,
 ) -> f32 {
+    let parent_size = Size {
+        width: None,
+        height: percent_height,
+    };
+    let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
+    inputs.available_space.width = space;
+    let measured =
+        measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
+            tree.compute_child_layout_with_block_ctx(child, inputs, None)
+        });
+    measured.size.width + margin
+}
+
+/// The width of the content of `node` under `space`, as `(columns, spanners)`:
+/// of what flows in the columns of a multicol container, and of what spans
+/// them. Any other container has no spanners. `multicol` tells that `node` is
+/// a multicol container or a block below one that shares its columns.
+/// `percent_height` is the definite height of its content box, against which
+/// a child's percentage height resolves while the child's width is measured.
+fn intrinsic_widths(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    multicol: bool,
+    space: AvailableSpace,
+    percent_height: Option<f32>,
+) -> (f32, f32) {
     let children: Vec<_> = tree.child_ids(node).collect();
     let mut width = 0.0_f32;
+    let mut spanning = 0.0_f32;
     let mut floats = taffy::FloatIntrinsicWidthCalculator::new(space);
     for child in children {
         let style = child_style(tree, child);
@@ -98,29 +136,62 @@ fn intrinsic_width(
         {
             continue;
         }
-        let parent_size = Size {
-            width: None,
-            height: percent_height,
-        };
-        let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
-        inputs.available_space.width = space;
-        let measured =
-            measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
-                tree.compute_child_layout_with_block_ctx(child, inputs, None)
-            });
         let margin = style
             .margin
             .map(|edge| edge.resolve_to_option(0.0, resolve_calc).unwrap_or(0.0));
-        let child_width = measured.size.width + margin.horizontal_axis_sum();
+        let spans = multicol && style.float == Float::None;
+        if spans
+            && shares_context(&style)
+            && !crate::layout::is_spanner(tree, usize::from(child))
+            && contains_spanner(tree, child)
+        {
+            // The box holds both columns and spanners; its own edges are
+            // around each of them. A width of its own fixes what it adds to
+            // the columns, and leaves the spanners below it as they are.
+            let edges = margin.horizontal_axis_sum()
+                + style
+                    .padding
+                    .resolve_or_zero(None, resolve_calc)
+                    .horizontal_axis_sum()
+                + style
+                    .border
+                    .resolve_or_zero(None, resolve_calc)
+                    .horizontal_axis_sum();
+            let (inner, spanners) = intrinsic_widths(tree, child, true, space, percent_height);
+            let columns = if style.size.width.is_auto() {
+                inner + edges
+            } else {
+                outer_width(
+                    tree,
+                    child,
+                    margin.horizontal_axis_sum(),
+                    space,
+                    percent_height,
+                )
+            };
+            width = width.max(columns);
+            spanning = spanning.max(spanners + edges);
+            continue;
+        }
+        let child_width = outer_width(
+            tree,
+            child,
+            margin.horizontal_axis_sum(),
+            space,
+            percent_height,
+        );
         match style.float {
             Float::Left => floats.add_float(child_width, taffy::FloatDirection::Left, style.clear),
             Float::Right => {
                 floats.add_float(child_width, taffy::FloatDirection::Right, style.clear)
             }
+            Float::None if spans && crate::layout::is_spanner(tree, usize::from(child)) => {
+                spanning = spanning.max(child_width);
+            }
             Float::None => width = width.max(child_width),
         }
     }
-    width.max(floats.result())
+    (width.max(floats.result()), spanning)
 }
 
 pub(crate) fn compute_block_flow(
@@ -134,18 +205,33 @@ pub(crate) fn compute_block_flow(
     let width = if let Some(width) = metrics.preferred.width {
         width
     } else {
-        let maximum = intrinsic_width(
+        let multicol = tree.nodes[usize::from(node)]
+            .multicol
+            .filter(|style| style.horizontal);
+        let (maximum_columns, maximum_spanners) = intrinsic_widths(
             tree,
             node,
+            multicol.is_some(),
             AvailableSpace::MaxContent,
             metrics.percent_height,
-        ) + metrics.inset.horizontal_axis_sum();
-        let minimum = intrinsic_width(
+        );
+        let (minimum_columns, minimum_spanners) = intrinsic_widths(
             tree,
             node,
+            multicol.is_some(),
             AvailableSpace::MinContent,
             metrics.percent_height,
-        ) + metrics.inset.horizontal_axis_sum();
+        );
+        // The columns of a multicol container repeat the width of its content.
+        let (minimum, maximum) = match multicol {
+            Some(multicol) => multicol.intrinsic_inline_sizes(
+                (minimum_columns, maximum_columns),
+                (minimum_spanners, maximum_spanners),
+            ),
+            None => (minimum_columns, maximum_columns),
+        };
+        let maximum = maximum + metrics.inset.horizontal_axis_sum();
+        let minimum = minimum + metrics.inset.horizontal_axis_sum();
         let fit = |limit: f32| maximum.min(limit).max(minimum);
         let width = match style.size.width.expand() {
             taffy::ExpandedDimension::MinContent => minimum,
