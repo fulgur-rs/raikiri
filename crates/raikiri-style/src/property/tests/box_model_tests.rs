@@ -2073,10 +2073,15 @@ fn width_and_inline_size_keep_the_min_content_keyword() {
         parse("MIN-CONTENT", "inline-size"),
         Some(PropertyValue::InlineSize(LengthOrAuto::MinContent))
     );
-    // Height and the min/max sizes still fold the keyword into `auto`.
+    // Height and block-size keep it as well; the min/max sizes still fold the
+    // keyword into `auto`.
     assert_eq!(
         parse("min-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::MinContent))
+    );
+    assert_eq!(
+        parse("min-content", "block-size"),
+        Some(PropertyValue::BlockSize(LengthOrAuto::MinContent))
     );
 }
 
@@ -2091,10 +2096,13 @@ fn width_and_inline_size_keep_the_max_content_keyword() {
         parse("MAX-CONTENT", "inline-size"),
         Some(PropertyValue::InlineSize(LengthOrAuto::MaxContent))
     );
-    // Height and the min/max sizes still fold the keyword into `auto`.
     assert_eq!(
         parse("max-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::MaxContent))
+    );
+    assert_eq!(
+        parse("max-content", "block-size"),
+        Some(PropertyValue::BlockSize(LengthOrAuto::MaxContent))
     );
 }
 
@@ -2110,7 +2118,7 @@ fn width_and_inline_size_keep_the_fit_content_keyword() {
     );
     assert_eq!(
         parse("fit-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::FitContent))
     );
 }
 
@@ -2730,23 +2738,30 @@ fn height_rejects_negative_percentage() {
 }
 
 #[test]
-fn height_rejects_unsupported_sizing_keyword() {
+fn height_keeps_the_sizing_keywords() {
+    let limit = |length| LengthOrAuto::FitContentOf(LengthPercentageOrCalc::Length(length));
     assert_eq!(
         parse("min-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::MinContent))
     );
     assert_eq!(
-        parse("max-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
-    );
-    assert_eq!(
-        parse("fit-content(50%)", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        parse("MAX-CONTENT", "height"),
+        Some(PropertyValue::Height(LengthOrAuto::MaxContent))
     );
     assert_eq!(
         parse("fit-content", "height"),
-        Some(PropertyValue::Height(LengthOrAuto::Auto))
+        Some(PropertyValue::Height(LengthOrAuto::FitContent))
     );
+    assert_eq!(
+        parse("fit-content(50%)", "height"),
+        Some(PropertyValue::Height(limit(Length::Percent(50.0))))
+    );
+    assert_eq!(
+        parse("fit-content(2em)", "block-size"),
+        Some(PropertyValue::BlockSize(limit(Length::Em(2.0))))
+    );
+    // The limit of fit-content() is not negative.
+    assert_eq!(parse("fit-content(-1px)", "height"), None);
 }
 
 #[test]

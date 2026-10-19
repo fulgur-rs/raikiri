@@ -189,6 +189,8 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         padding: [0.0; 4],
         width: Some(100.0),
         height: None,
+        width_keyword: None,
+        height_keyword: None,
         text_color: CssColor::BLACK,
         text_shadows: Vec::new(),
         overflow: OverflowXY::both(OverflowValue::Visible),
@@ -294,7 +296,7 @@ fn vertical_margin_box_intrinsics_use_physical_axes() {
     spec.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
     spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
     assert_eq!(margin_box_text_width(&doc, &spec, None), 20.0);
-    assert_eq!(margin_box_intrinsic_height(&doc, &spec, 40.0), 30.0);
+    assert_eq!(edge_max_size(&doc, &spec, Axis::Vertical, 40.0), 30.0);
 }
 
 #[test]

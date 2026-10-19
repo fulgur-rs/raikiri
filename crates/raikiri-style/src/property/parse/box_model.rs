@@ -932,89 +932,19 @@ pub(crate) fn parse_border_left_shorthand(input: &mut Parser<'_, '_>) -> Option<
     })
 }
 
-/// Parse `height: <length-percentage [0,∞]> | auto`.
+/// Parse `height` / `block-size: auto | <length-percentage [0,∞]> | min-content | max-content |
+/// fit-content | fit-content(<length-percentage>)`.
 ///
 /// Grammar reference: CSS Sizing 3 §3.1.1 "Preferred Size Properties"
-/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>. The value grammar is `auto |
-/// <length-percentage [0,∞]> | min-content | max-content | fit-content(<length-percentage>)`;
-/// the initial value is `auto`, and inheritance is `No`.
+/// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>. It is the grammar of `width`, so
+/// this is [`parse_width`]: the sizing keywords stay in the value, as they do for `width`. Along the
+/// block axis they have no intrinsic size of their own to take, so a box that lays its content out in
+/// normal flow sizes itself to its content like `auto`; the boxes that tell them apart from `auto`
+/// (a page-margin box, which fills its page margin for `auto`) read the keyword.
 ///
-/// # Scope carving
-///
-/// - **(a) spec-invalid → drop**: Negative value (`height: -10px`) violates grammar `[0,∞]`, rejected by
-///   `>= 0.0` post-filter for every [`Length`] variant payload, as in
-///   [`parse_padding_side`].
-/// - **(b) Unsupported sizing forms**: `min-content`, `max-content`, and
-///   `fit-content(<length-percentage>)` are outside the current scope and are silently dropped. They fail
-///   `expect_ident_matching("auto")`, then the length parser rejects their keyword or function tokens
-///   rather than matching a Dimension / Percentage.
-/// - **(b) Unsupported — CSS-wide keywords**: Not yet implemented. The identifier parser silently
-///   drops them like other unknown keywords. The "CSS-wide keyword" section of the [`PropertyValue`]
-///   doc lists the five keywords and explains why.
-/// - **calc() / var()**: Not implemented, outside this task scope (for `Token::Function`,
-///   `parse_length_value` silently drops anything other than Dimension / Percentage).
-///
-/// # Order of alternative (sibling: [`parse_margin_side`])
-///
-/// Try the `auto` identifier branch **first**. [`parse_length_value`] consumes `input.next()` even on
-/// failure; trying length first would discard the identifier in `height: auto` before the `auto` match
-/// could run. `try_parse` establishes a checkpoint and rewinds on failure. This follows
-/// [`parse_margin_side`], whose `<length-percentage> | auto` grammar also uses a `LengthOrAuto` payload.
-///
-/// `expect_ident_matching` is ASCII case-insensitive, so `AUTO` and `Auto`
-/// are accepted as well.
-///
-/// # Non-negative filter (sibling: [`parse_padding_side`])
-///
-/// To enforce the specification's `<length-percentage [0,∞]>` constraint (§3.1.1), use
-/// [`Length::payload`] to check every [`Length`] variant's payload against `>= 0.0`. This matches the nonnegative filter
-/// in [`parse_padding_side`]. It also rejects `Percent(-10.0)` (`-10%`).
+/// Negative values (`height: -10px`) violate the `[0,∞]` grammar and are dropped.
 pub(super) fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
-    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("min-content"))
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("max-content"))
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("fit-content"))
-        .is_ok()
-    {
-        let _ = input.try_parse(|i| {
-            i.expect_parenthesis_block()?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
-        });
-        return Some(LengthOrAuto::Auto);
-    }
-    if input
-        .try_parse(|i| {
-            i.expect_function_matching("fit-content")?;
-            i.parse_nested_block(|nested| {
-                parse_length_value(nested, true)
-                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
-                nested.expect_exhausted()?;
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            })
-        })
-        .is_ok()
-    {
-        return Some(LengthOrAuto::Auto);
-    }
-    let length = parse_length_value(input, true)?;
-    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
+    parse_width(input)
 }
 
 /// Parse `min-width` / `min-height` / `min-block-size: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content`.

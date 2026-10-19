@@ -294,7 +294,9 @@ fn a_center_box_is_sized_against_double_the_larger_side_box() {
 #[test]
 fn an_auto_center_box_stays_centered_between_fixed_side_boxes() {
     // The 150px side box is the larger one, so the center box is sized as if
-    // it had one of 150px on each side and is centered at x = 200.
+    // it had one of 150px on each side and is centered at x = 200. Fixed
+    // sides have no space to give, so the center box takes all that is left
+    // of the 320px: 20px.
     let boxes = boxes_for(&format!(
         "@page {{ margin: 40px; {AHEM} \
            @top-left {{ content: 'x'; width: 50px }} \
@@ -305,7 +307,7 @@ fn an_auto_center_box_stays_centered_between_fixed_side_boxes() {
         rects(&boxes),
         [
             (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 50.0, 40.0]),
-            (PageMarginBoxSlot::TopCenter, [194.84, 0.0, 10.32, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [190.0, 0.0, 20.0, 40.0]),
             (PageMarginBoxSlot::TopRight, [210.0, 0.0, 150.0, 40.0]),
         ]
     );
@@ -1289,6 +1291,80 @@ fn an_overflowing_lime_content_image_keeps_its_intrinsic_extent() {
 }
 
 #[test]
+fn a_content_image_counts_in_the_sizes_of_the_box_along_a_top_edge() {
+    // The image is 100px wide after the 20px of 'ab', and cannot be broken.
+    let row = |width: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: 'ab' url(green.png); width: {width} }} \
+               @top-right {{ content: 'x' }} }}"
+        )))
+    };
+    for width in ["max-content", "min-content"] {
+        let expected_width = if width == "max-content" { 120.0 } else { 100.0 };
+        assert_eq!(
+            row(width),
+            [
+                (
+                    PageMarginBoxSlot::TopLeft,
+                    [40.0, 0.0, expected_width, 40.0]
+                ),
+                (
+                    PageMarginBoxSlot::TopRight,
+                    [40.0 + expected_width, 0.0, 320.0 - expected_width, 40.0]
+                ),
+            ],
+            "{width}"
+        );
+    }
+    // A box with nothing but the image is as wide as the image.
+    assert_eq!(
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: url(green.png); width: max-content }} }}"
+        ))),
+        [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 100.0, 40.0])]
+    );
+}
+
+#[test]
+fn a_content_image_counts_in_the_height_of_a_left_box() {
+    // The 50px of the image is taller than the 10px line of text next to it.
+    for content in ["url(green.png)", "'a' url(green.png)"] {
+        for height in ["max-content", "min-content"] {
+            assert_eq!(
+                rects(&boxes_for(&format!(
+                    "@page {{ margin: 40px; {AHEM} \
+                       @left-top {{ content: {content}; height: {height} }} }}"
+                ))),
+                [(PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 50.0])],
+                "{content} {height}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_sizing_keyword_ignores_negative_margins_that_empty_the_outer_size() {
+    // The outer size of the 10px line is below zero with these margins, but
+    // the box still has the content of one line.
+    let height = |keyword: &str| {
+        let boxes = boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: 'x'; height: {keyword}; \
+                 margin-top: -20px; margin-bottom: -20px }} }}"
+        ));
+        let [margin_box] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        margin_box.rect.height
+    };
+    for keyword in ["max-content", "min-content", "fit-content"] {
+        assert_eq!(height(keyword), 10.0, "{keyword}");
+    }
+}
+
+#[test]
 fn named_values_follow_document_order_after_the_tree_changes() {
     // Moving the first heading after the second, and detaching a third,
     // leaves the arena order unlike the document order.
@@ -1379,5 +1455,269 @@ fn margin_box_overflow_clip_margin_moves_the_clip_edge() {
     assert_eq!(
         [clip.rect.x, clip.rect.y, clip.rect.width, clip.rect.height],
         [-3.0, -3.0, 46.0, 46.0]
+    );
+}
+
+/// Text properties that make lines 10px tall and keep line feeds.
+const PRE_WRAP: &str = "line-height: 10px; white-space: pre-wrap;";
+
+#[test]
+fn a_fit_content_corner_box_with_auto_margins_is_centered_in_the_corner() {
+    // Three lines of up to 'x x' (30px): 30px by 30px in a 40px corner.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} {PRE_WRAP} \
+           @top-left-corner {{ content: 'x x\\a \\a0x\\a x x'; margin: auto; \
+             width: fit-content; height: fit-content }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::TopLeftCorner, [5.0, 5.0, 30.0, 30.0])]
+    );
+}
+
+#[test]
+fn width_keywords_size_a_box_along_a_top_edge_from_its_text() {
+    // 'xxxx xx' is 70px on one line and 40px broken at its space. A box with
+    // a size of its own leaves the rest of the 320px to the auto box.
+    let row = |width: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: 'xxxx xx'; width: {width} }} \
+               @top-right {{ content: 'x' }} }}"
+        )))
+    };
+    assert_eq!(
+        row("max-content"),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 70.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [110.0, 0.0, 250.0, 40.0]),
+        ]
+    );
+    assert_eq!(
+        row("min-content"),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 40.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [80.0, 0.0, 280.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn fit_content_keeps_the_space_between_the_min_and_max_content_sizes() {
+    // 390px on one line, 40px broken at every space, in 320px less the margin.
+    let long = "xxxx xxxx xxxx xxxx xxxx xxxx xxxx xxxx";
+    let alone = |css: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} @top-left {{ content: '{long}'; {css} }} }}"
+        )))
+    };
+    assert_eq!(
+        alone("width: fit-content; margin-left: 20px"),
+        [(PageMarginBoxSlot::TopLeft, [60.0, 0.0, 300.0, 40.0])]
+    );
+    // The limit of fit-content() stands in for the room the box has, and
+    // never goes below the min-content size.
+    assert_eq!(
+        alone("width: fit-content(100px)"),
+        [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 100.0, 40.0])]
+    );
+    assert_eq!(
+        alone("width: fit-content(30px)"),
+        [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 40.0, 40.0])]
+    );
+    // Short text stays at its max-content size in any room.
+    let short = rects(&boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'xxxx xx'; width: fit-content }} }}"
+    )));
+    assert_eq!(
+        short,
+        [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 70.0, 40.0])]
+    );
+}
+
+#[test]
+fn a_height_keyword_sizes_a_top_box_to_the_lines_at_its_width() {
+    // 'xxx xxx' breaks into two lines in 40px, so the box is 20px tall; an
+    // `auto` height would fill the 40px of the page margin. The auto bottom
+    // margin leaves the 5px top margin as it is.
+    let top = |height: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} {PRE_WRAP} \
+               @top-center {{ content: 'xxx xxx'; width: 40px; margin-top: 5px; \
+                 margin-bottom: auto; height: {height} }} }}"
+        )))
+    };
+    for height in ["min-content", "max-content", "fit-content"] {
+        assert_eq!(
+            top(height),
+            [(PageMarginBoxSlot::TopCenter, [180.0, 5.0, 40.0, 20.0])],
+            "height: {height}"
+        );
+    }
+    assert_eq!(
+        top("auto"),
+        [(PageMarginBoxSlot::TopCenter, [180.0, 5.0, 40.0, 35.0])]
+    );
+}
+
+#[test]
+fn a_height_keyword_follows_the_width_the_edge_gives_the_box() {
+    // The auto box takes the 50px the fixed one leaves of the 320px, which
+    // hold 'xxxx xxxx' on two lines, so it is 20px tall and not as tall as
+    // the page margin.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} {PRE_WRAP} \
+           @top-left {{ content: 'xxxx xxxx'; height: max-content; margin-bottom: auto }} \
+           @top-right {{ content: 'x'; width: 270px; height: max-content; \
+             margin-bottom: auto }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 50.0, 20.0]),
+            (PageMarginBoxSlot::TopRight, [90.0, 0.0, 270.0, 10.0]),
+        ]
+    );
+}
+
+#[test]
+fn a_height_keyword_sizes_a_left_box_along_the_column() {
+    // Two lines of 10px in the 40px column; the auto box below takes the
+    // rest of the 220px between the corners.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} {PRE_WRAP} \
+           @left-top {{ content: 'x\\a x'; height: max-content }} \
+           @left-bottom {{ content: 'x' }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::LeftBottom, [0.0, 60.0, 40.0, 200.0]),
+            (PageMarginBoxSlot::LeftTop, [0.0, 40.0, 40.0, 20.0]),
+        ]
+    );
+}
+
+#[test]
+fn a_width_keyword_sizes_a_left_box_across_the_column() {
+    // 'xx' is 20px wide in the 40px column, so the box is pushed against the
+    // page area like any box that is too narrow for its margins.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} @left-top {{ content: 'xx'; width: max-content }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::LeftTop, [20.0, 40.0, 20.0, 220.0])]
+    );
+}
+
+#[test]
+fn sizing_keywords_follow_the_direction_the_text_runs_in() {
+    // Vertical text runs along the height, so the 'xxxx' of the box is 40px
+    // tall however wide the box becomes, and its three lines make columns 30px
+    // wide in all.
+    let tall = boxes_for(&format!(
+        "@page {{ margin: 60px 40px; {AHEM} {PRE_WRAP} \
+           @top-left {{ content: 'xxxx'; writing-mode: vertical-rl; \
+             height: max-content; margin-bottom: auto }} }}"
+    ));
+    assert_eq!(
+        rects(&tall),
+        [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 320.0, 40.0])]
+    );
+    let columns = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} {PRE_WRAP} \
+           @top-left {{ content: 'x\\a x\\a x'; writing-mode: vertical-rl; \
+             width: max-content }} }}"
+    ));
+    assert_eq!(
+        rects(&columns),
+        [(PageMarginBoxSlot::TopLeft, [40.0, 0.0, 30.0, 40.0])]
+    );
+}
+
+#[test]
+fn an_auto_center_box_takes_what_a_larger_fixed_side_box_leaves() {
+    // In the 200px between the corners, the 40px fixed box is larger than the
+    // 'x' box of its own size, even when that one shares out the space (to
+    // 57.14px as a double). The sides count as one box of 80px, and the
+    // center box gets the other 120px.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px 100px; {AHEM} \
+           @top-left {{ content: 'x' }} \
+           @top-center {{ content: 'xxxxx' }} \
+           @top-right {{ content: 'x'; width: 40px }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [100.0, 0.0, 40.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [140.0, 0.0, 120.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [260.0, 0.0, 40.0, 40.0]),
+        ]
+    );
+    // With 320px to share out, the same box doubled grows past 80px, and the
+    // side boxes flex like the middle one: 'x' and 'xxxxx' split the space.
+    let wide = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'x' }} \
+           @top-center {{ content: 'xxxxx' }} \
+           @top-right {{ content: 'x'; width: 40px }} }}"
+    ));
+    assert_eq!(
+        rects(&wide),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 45.71, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [85.71, 0.0, 228.57, 40.0]),
+            (PageMarginBoxSlot::TopRight, [320.0, 0.0, 40.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn an_auto_center_box_shares_the_space_with_a_larger_auto_side_box() {
+    // The 60px of the left text is more than the 20px of the fixed box, so
+    // the sides count as one box of 120px that shares the 320px with the
+    // 40px of the center text, in proportion: 240px and 80px.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left {{ content: 'xxxxxx' }} \
+           @top-center {{ content: 'xxxx' }} \
+           @top-right {{ content: 'x'; width: 20px }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [
+            (PageMarginBoxSlot::TopLeft, [40.0, 0.0, 120.0, 40.0]),
+            (PageMarginBoxSlot::TopCenter, [160.0, 0.0, 80.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [340.0, 0.0, 20.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
+fn percentages_of_a_corner_box_resolve_against_the_corner() {
+    // The 40px by 40px corner is the containing block: 50% is 20px and 25% is
+    // 10px, and the box is pushed against the page area at both its inner
+    // sides like any box with no margin to spare.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left-corner {{ content: 'x'; width: 50%; height: 25% }} }}"
+    ));
+    assert_eq!(
+        rects(&boxes),
+        [(PageMarginBoxSlot::TopLeftCorner, [20.0, 30.0, 20.0, 10.0])]
+    );
+    // The limit of fit-content() is a percentage of the corner as well: 20px
+    // of the 80px the text takes on one line, which is 20px broken at spaces.
+    let fit = boxes_for(&format!(
+        "@page {{ margin: 40px; {AHEM} \
+           @top-left-corner {{ content: 'xx xx xx'; width: fit-content(50%); \
+             height: 10px }} }}"
+    ));
+    assert_eq!(
+        rects(&fit),
+        [(PageMarginBoxSlot::TopLeftCorner, [20.0, 30.0, 20.0, 10.0])]
     );
 }

@@ -4940,3 +4940,10 @@ css/CSS2/visudet/content-height-004.html
 css/css-fonts/first-available-font-002.html
 css/css-fonts/font-face-unicode-range-nbsp.html
 css/css-fonts/font-synthesis-08.html
+
+# --- margin box sizes by size keywords and a fixed side box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# 011 and 012 pass once page-margin boxes take min-content, max-content and fit-content as sizes along both axes, a corner included, and an auto middle box takes what a larger side box with a size of its own leaves; 006 and 009 (auto size distribution with the min-content sizes) already passed and were not recorded; KEEP in two audit-vacuous-passes runs.
+css/css-page/margin-boxes/dimensions-006-print.html
+css/css-page/margin-boxes/dimensions-009-print.html
+css/css-page/margin-boxes/dimensions-011-print.html
+css/css-page/margin-boxes/dimensions-012-print.html

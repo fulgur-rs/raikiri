@@ -2007,6 +2007,9 @@ fn computed_over(
     normal_line_height: Option<&dyn NormalLineHeight>,
 ) -> ComputedValues {
     let mut specified = SpecifiedValues::inherit_from(parent);
+    // A page-margin box fills its page margin for a `height` of `auto`, so it
+    // has to tell that from the sizing keywords, which size it to its content.
+    specified.keeps_block_size_keywords = true;
     for value in values {
         let (value, border_width_is_computed) = match value {
             ComputedOverValue::Resolved(resolved) => {

@@ -55,6 +55,7 @@ use crate::property::{
     WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
+use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc};
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 use std::sync::Arc;
@@ -1378,6 +1379,46 @@ fn margin_box_inherits_the_monospace_keyword_page_font_size() {
     let style = page.margin_box_style(&rule, None);
     assert_eq!(style.font_size.0, 6.5);
     assert_eq!(style.padding.top.resolve(0.0), 13.0);
+}
+
+#[test]
+fn a_margin_box_keeps_the_block_size_keywords() {
+    // A margin box fills its page margin for `height: auto`, so it has to see
+    // the keywords that size it to its content, which an element computes to
+    // `auto`.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { @top-left { content: 'x'; height: max-content } \
+         @top-center { content: 'x'; height: fit-content(2em); font-size: 10px } \
+         @top-right { content: 'x'; block-size: min-content } \
+         @bottom-left { content: 'x' } }",
+        Origin::Author,
+    );
+    let page = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&ComputedValues::initial()),
+    );
+    let height = |slot| {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        page.margin_box_style(&rule, None).height
+    };
+    assert_eq!(
+        height(PageMarginBoxSlot::TopLeft),
+        ComputedLengthPercentageOrAuto::MaxContent
+    );
+    assert_eq!(
+        height(PageMarginBoxSlot::TopCenter),
+        ComputedLengthPercentageOrAuto::FitContentOf(ComputedLengthPercentageOrCalc::Px(20.0))
+    );
+    assert_eq!(
+        height(PageMarginBoxSlot::TopRight),
+        ComputedLengthPercentageOrAuto::MinContent
+    );
+    assert_eq!(
+        height(PageMarginBoxSlot::BottomLeft),
+        ComputedLengthPercentageOrAuto::Auto
+    );
 }
 
 #[test]

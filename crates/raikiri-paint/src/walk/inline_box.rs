@@ -2,7 +2,7 @@
 //! borders and outline.
 
 use super::{
-    BackgroundEnv, ImageBrushCache, InlineProgression, VisibleArea, paint_border_image_within,
+    BackgroundEnv, BorderImage, ImageBrushCache, InlineProgression, VisibleArea,
     paint_element_background_layers, paint_element_border_image, paint_element_border_rounded,
     paint_element_box_shadows, paint_element_outline, paintable_border_radius,
 };
@@ -383,29 +383,28 @@ impl InlineBox<'_> {
                 &progression.rect((low, high), (-UNBOUNDED, UNBOUNDED)),
             );
             let joined_box = progression.with_span(self.outer, progression.span(joined.outer));
-            let drawn = paint_border_image_within(
+            let visible = if progression.vertical {
+                VisibleArea {
+                    x: VisibleArea::UNBOUNDED.x,
+                    y: (low, high),
+                }
+            } else {
+                VisibleArea {
+                    x: (low, high),
+                    y: VisibleArea::UNBOUNDED.y,
+                }
+            };
+            let drawn = BorderImage::new(
                 env.image_cache,
-                scene,
                 (joined_box.width, joined_box.height),
                 (self.x + joined_box.x, self.y + joined_box.y),
                 cv,
                 &cv.border_image,
                 &cv.border,
-                env.pixel_source,
-                warnings,
                 env.transform,
-                if progression.vertical {
-                    VisibleArea {
-                        x: VisibleArea::UNBOUNDED.x,
-                        y: (low, high),
-                    }
-                } else {
-                    VisibleArea {
-                        x: (low, high),
-                        y: VisibleArea::UNBOUNDED.y,
-                    }
-                },
-            );
+            )
+            .within(visible)
+            .paint(scene, env.pixel_source, warnings);
             scene.pop_layer();
             drawn
         } else {
