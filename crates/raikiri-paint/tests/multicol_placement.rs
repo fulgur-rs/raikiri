@@ -448,6 +448,23 @@ fn a_spanner_leaves_a_right_to_left_line_visible_past_the_left_edge_of_its_colum
 }
 
 #[test]
+fn a_spanner_leaves_the_shadows_of_a_line_visible_past_its_column() {
+    // The shadows fall 90px to the right, past the 80px column.
+    for p in [
+        "<p style='text-shadow:90px 0 red'>AB</p>",
+        "<p>A<span style='box-shadow:90px 0 blue'>B</span></p>",
+    ] {
+        compare(
+            &format!("<div class=mc>{p}<div style='column-span:all'>x</div><p>B</p></div>"),
+            ".mc{width:80px;column-count:auto;column-width:80px}",
+            &format!(
+                "<div style='position:absolute;left:0;top:0;width:80px'>{p}</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px'>B</div>"
+            ),
+        );
+    }
+}
+
+#[test]
 fn a_constrained_wrapper_background_includes_its_last_child_margin() {
     compare(
         "<div class=mc><div style='width:80px;overflow:hidden;background:lime'><p style='margin-bottom:20px'>A</p></div></div><p>B</p>",
