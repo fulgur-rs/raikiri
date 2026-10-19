@@ -96,7 +96,7 @@ fn depth_exit() {
 // Transient grid
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TableGrid {
     n_cols: u16,
     rows: Vec<usize>, // node ids
@@ -149,42 +149,75 @@ fn caption_minimum_inline_size(doc: &mut LayoutSession<'_>, table: usize, vertic
     else {
         return 0.0;
     };
-    let output = doc.compute_child_layout(
-        NodeId::from(caption),
-        LayoutInput {
-            run_mode: RunMode::ComputeSize,
-            sizing_mode: SizingMode::InherentSize,
-            axis: if vertical {
-                taffy::tree::RequestedAxis::Vertical
-            } else {
-                taffy::tree::RequestedAxis::Horizontal
-            },
-            known_dimensions: Size::NONE,
-            parent_size: Size::NONE,
-            available_space: Size {
-                width: if vertical {
-                    AvailableSpace::MaxContent
-                } else {
-                    AvailableSpace::MinContent
-                },
-                height: if vertical {
-                    AvailableSpace::MinContent
-                } else {
-                    AvailableSpace::MaxContent
-                },
-            },
-            known_dimensions_are_definite: Size {
-                width: false,
-                height: false,
-            },
-            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+    let probe = |available_space| LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: if vertical {
+            taffy::tree::RequestedAxis::Vertical
+        } else {
+            taffy::tree::RequestedAxis::Horizontal
         },
-    );
-    let margins = doc.layout_node_with_style(caption).unwrap().style.margin;
-    let (minimum, start, end) = if vertical {
-        (output.size.height, margins.top, margins.bottom)
+        known_dimensions: Size::NONE,
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: if vertical {
+                AvailableSpace::MaxContent
+            } else {
+                available_space
+            },
+            height: if vertical {
+                available_space
+            } else {
+                AvailableSpace::MaxContent
+            },
+        },
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+    };
+    let min_inputs = probe(AvailableSpace::MinContent);
+    let max_inputs = probe(AvailableSpace::MaxContent);
+    let minimum = doc.compute_child_layout(NodeId::from(caption), min_inputs);
+    let maximum = doc.compute_child_layout(NodeId::from(caption), max_inputs);
+    let limits = doc.nodes[caption].content_limits;
+    let min_content = if vertical {
+        minimum.size.height
     } else {
-        (output.size.width, margins.left, margins.right)
+        minimum.size.width
+    };
+    let max_content = if vertical {
+        maximum.size.height
+    } else {
+        maximum.size.width
+    };
+    let (min_limit, max_limit, available) = if vertical {
+        (
+            limits.min.height,
+            limits.max.height,
+            min_inputs.available_space.height,
+        )
+    } else {
+        (
+            limits.min.width,
+            limits.max.width,
+            min_inputs.available_space.width,
+        )
+    };
+    let context = IntrinsicSizeContext {
+        min_content,
+        max_content,
+        inputs: &min_inputs,
+        available_space: available,
+        horizontal: !vertical,
+    };
+    let (minimum, _) = constrain_intrinsic_sizes(doc, caption, min_limit, max_limit, context);
+    let margins = doc.layout_node_with_style(caption).unwrap().style.margin;
+    let (start, end) = if vertical {
+        (margins.top, margins.bottom)
+    } else {
+        (margins.left, margins.right)
     };
     minimum
         + super::used_style_length_percentage_auto(start, 0.0).unwrap_or(0.0)
@@ -800,15 +833,116 @@ fn compute_table_layout_checked(
     // container, §17.5.2.2) instead of stretch-to-fill. A specified width
     // keeps the previous basis (`effective_known`, the taffy-resolved outer
     // width — subtracting insets recovers the content box).
+    let intrinsic_grid = if columns_collapse {
+        without_collapsed_columns(&grid, &collapsed_cols, false)
+    } else {
+        grid.clone()
+    };
+    let intrinsic_inputs = LayoutInput {
+        known_dimensions: Size {
+            width: None,
+            height: inputs.known_dimensions.height,
+        },
+        ..inputs
+    };
+    let measure_intrinsic_grid = |doc: &mut LayoutSession<'_>, available_space| {
+        let probe = LayoutInput {
+            available_space: Size {
+                width: available_space,
+                height: intrinsic_inputs.available_space.height,
+            },
+            ..intrinsic_inputs
+        };
+        resolve_column_widths(
+            doc,
+            &intrinsic_grid,
+            probe,
+            Size {
+                width: distrib_insets.width,
+                height: 0.0,
+            },
+            border_spacing.0,
+        )
+        .iter()
+        .sum::<f32>()
+            + distrib_insets.width
+    };
+    let grid_minimum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+        measure_intrinsic_grid(doc, AvailableSpace::MinContent)
+    });
+    let grid_maximum = measured_in_place(doc, columns_in_place.as_ref(), |doc| {
+        measure_intrinsic_grid(doc, AvailableSpace::MaxContent)
+    });
+    let intrinsic_minimum = grid_minimum.max(caption_minimum);
+    let intrinsic_maximum = grid_maximum.max(caption_minimum).max(intrinsic_minimum);
+    let wrapper_limits = doc.nodes[table_idx].content_limits;
+    let wrapper_context = IntrinsicSizeContext {
+        min_content: intrinsic_minimum,
+        max_content: intrinsic_maximum,
+        inputs: &inputs,
+        available_space: inputs.available_space.width,
+        horizontal: true,
+    };
+    let wrapper_minimum =
+        resolve_intrinsic_limit(doc, table_idx, wrapper_limits.min.width, wrapper_context)
+            .map(|minimum| minimum.max(intrinsic_minimum));
+    let authored_wrapper_maximum =
+        resolve_intrinsic_limit(doc, table_idx, wrapper_limits.max.width, wrapper_context);
+    let wrapper_maximum = authored_wrapper_maximum
+        .map(|maximum| maximum.min(intrinsic_maximum).max(intrinsic_minimum));
+    let wrapper_maximum = if wrapper_minimum
+        .zip(authored_wrapper_maximum)
+        .is_some_and(|(minimum, maximum)| minimum > maximum)
+    {
+        None
+    } else {
+        wrapper_maximum
+    };
+    let constrained_available_space = match inputs.available_space.width {
+        AvailableSpace::MinContent => {
+            let target =
+                apply_wrapper_width_bounds(intrinsic_minimum, wrapper_minimum, wrapper_maximum);
+            if target != intrinsic_minimum {
+                AvailableSpace::Definite(target)
+            } else {
+                inputs.available_space.width
+            }
+        }
+        AvailableSpace::MaxContent => {
+            let target =
+                apply_wrapper_width_bounds(intrinsic_maximum, wrapper_minimum, wrapper_maximum);
+            if target != intrinsic_maximum {
+                AvailableSpace::Definite(target)
+            } else {
+                inputs.available_space.width
+            }
+        }
+        AvailableSpace::Definite(room) => {
+            let target = apply_wrapper_width_bounds(room, wrapper_minimum, wrapper_maximum);
+            if target != room {
+                AvailableSpace::Definite(target)
+            } else {
+                inputs.available_space.width
+            }
+        }
+    };
     let inputs_for_columns = LayoutInput {
         known_dimensions: Size {
             width: match (specified_width, parent_is_flex_or_grid) {
-                (Some(_), _) | (_, true) => effective_known
-                    .width
-                    .map(|width| width.max(caption_minimum)),
+                (Some(_), _) | (_, true) => effective_known.width.map(|width| {
+                    apply_wrapper_width_bounds(
+                        width.max(caption_minimum),
+                        wrapper_minimum,
+                        wrapper_maximum,
+                    )
+                }),
                 (None, false) => None,
             },
             height: effective_known.height,
+        },
+        available_space: Size {
+            width: constrained_available_space,
+            height: inputs.available_space.height,
         },
         ..inputs
     };
@@ -816,6 +950,8 @@ fn compute_table_layout_checked(
         table_layout,
         specified_width,
         caption_minimum,
+        wrapper_minimum,
+        wrapper_maximum,
         inputs: inputs_for_columns,
         border_spacing_x: border_spacing.0,
     };
@@ -889,11 +1025,14 @@ fn compute_table_layout_checked(
     // Extra min-width grows columns (mirrors the min-height→rows path
     // below, and the definite-width distribution above). Must run before
     // row heights are measured so cells lay out at final column widths.
+    let minimum_table_width = [min_w_outer, wrapper_minimum, Some(caption_minimum)]
+        .into_iter()
+        .flatten()
+        .reduce(f32::max);
     let grow_columns = |widths: &mut [f32], insets_width: f32, hidden: Option<&[bool]>| {
-        if let Some(mn) = min_w_outer {
-            distribute_extra(widths, hidden, f32_max_compat(mn - insets_width, 0.0));
+        if let Some(minimum) = minimum_table_width {
+            distribute_extra(widths, hidden, f32_max_compat(minimum - insets_width, 0.0));
         }
-        distribute_extra(widths, hidden, (caption_minimum - insets_width).max(0.0));
     };
     grow_columns(
         &mut column_widths,
@@ -1009,11 +1148,23 @@ fn compute_table_layout_checked(
         } else {
             table_width_basis
                 .map(|w| {
-                    clamp_min_max(f32_max_compat(w, min_table_width), min_w_outer, max_w_outer)
+                    let width = apply_wrapper_width_bounds(w, wrapper_minimum, wrapper_maximum);
+                    clamp_min_max(
+                        f32_max_compat(width, min_table_width),
+                        min_w_outer,
+                        max_w_outer,
+                    )
                 })
                 .unwrap_or_else(|| {
                     clamp_min_max(
-                        content_width + padding_border_size.width,
+                        f32_max_compat(
+                            apply_wrapper_width_bounds(
+                                content_width + padding_border_size.width,
+                                wrapper_minimum,
+                                wrapper_maximum,
+                            ),
+                            min_table_width,
+                        ),
                         min_w_outer,
                         max_w_outer,
                     )
@@ -2126,41 +2277,66 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
     output.size.width
 }
 
-/// Resolve a cell's intrinsic width limits against the min/max-content border-box
-/// measurements that the table column algorithm already computed.
-fn resolve_cell_intrinsic_limit(
-    doc: &LayoutSession<'_>,
-    cell_id: usize,
-    limit: Dimension,
+#[derive(Clone, Copy)]
+struct IntrinsicSizeContext<'a> {
     min_content: f32,
     max_content: f32,
-    inputs: &LayoutInput,
+    inputs: &'a LayoutInput,
     available_space: AvailableSpace,
+    horizontal: bool,
+}
+
+/// Resolve a cell's intrinsic width limits against the min/max-content border-box
+/// measurements that the table column algorithm already computed.
+fn resolve_intrinsic_limit(
+    doc: &LayoutSession<'_>,
+    node_id: usize,
+    limit: Dimension,
+    context: IntrinsicSizeContext<'_>,
 ) -> Option<f32> {
     let expanded = limit.expand();
     match expanded {
-        ExpandedDimension::MinContent => Some(min_content),
-        ExpandedDimension::MaxContent => Some(max_content),
+        ExpandedDimension::MinContent => Some(context.min_content),
+        ExpandedDimension::MaxContent => Some(context.max_content),
         ExpandedDimension::FitContent
         | ExpandedDimension::FitContentPx(_)
         | ExpandedDimension::FitContentPercent(_)
         | ExpandedDimension::FitContentCalc(_) => {
+            let basis = if context.horizontal {
+                context.inputs.parent_size.width
+            } else {
+                context.inputs.parent_size.height
+            };
             let fit_room = crate::taffy_impl::fit_content_room(
                 doc,
-                cell_id,
+                node_id,
                 expanded,
-                inputs.parent_size.width,
-                true,
+                basis,
+                context.horizontal,
             )
-            .or_else(|| match available_space {
-                AvailableSpace::MinContent => Some(min_content),
-                AvailableSpace::MaxContent => Some(max_content),
+            .or_else(|| match context.available_space {
+                AvailableSpace::MinContent => Some(context.min_content),
+                AvailableSpace::MaxContent => Some(context.max_content),
                 AvailableSpace::Definite(room) => Some(room.max(0.0)),
             })?;
-            Some(max_content.min(fit_room).max(min_content))
+            Some(context.max_content.min(fit_room).max(context.min_content))
         }
         _ => None,
     }
+}
+
+fn constrain_intrinsic_sizes(
+    doc: &LayoutSession<'_>,
+    node_id: usize,
+    min_limit: Dimension,
+    max_limit: Dimension,
+    context: IntrinsicSizeContext<'_>,
+) -> (f32, f32) {
+    let min = resolve_intrinsic_limit(doc, node_id, min_limit, context)
+        .map_or(context.min_content, |limit| context.min_content.max(limit));
+    let max = resolve_intrinsic_limit(doc, node_id, max_limit, context)
+        .map_or(context.max_content, |limit| context.max_content.min(limit));
+    (min, max.max(min))
 }
 
 /// The table's column track room, before adding a spanning cell's internal gaps.
@@ -2185,27 +2361,14 @@ fn constrain_cell_intrinsic_widths(
     inputs: &LayoutInput,
     available_space: AvailableSpace,
 ) -> (f32, f32) {
-    let min = resolve_cell_intrinsic_limit(
-        doc,
-        cell_id,
-        limits.min.width,
+    let context = IntrinsicSizeContext {
         min_content,
         max_content,
         inputs,
         available_space,
-    )
-    .map_or(min_content, |limit| min_content.max(limit));
-    let max = resolve_cell_intrinsic_limit(
-        doc,
-        cell_id,
-        limits.max.width,
-        min_content,
-        max_content,
-        inputs,
-        available_space,
-    )
-    .map_or(max_content, |limit| max_content.min(limit));
-    (min, max.max(min))
+        horizontal: true,
+    };
+    constrain_intrinsic_sizes(doc, cell_id, limits.min.width, limits.max.width, context)
 }
 
 /// What the column pass needs besides the grid and the room the tracks share.
@@ -2213,8 +2376,15 @@ struct ColumnPass {
     table_layout: TableLayoutValue,
     specified_width: Option<f32>,
     caption_minimum: f32,
+    wrapper_minimum: Option<f32>,
+    wrapper_maximum: Option<f32>,
     inputs: LayoutInput,
     border_spacing_x: f32,
+}
+
+fn apply_wrapper_width_bounds(width: f32, minimum: Option<f32>, maximum: Option<f32>) -> f32 {
+    let width = minimum.map_or(width, |minimum| width.max(minimum));
+    maximum.map_or(width, |maximum| width.min(maximum))
 }
 
 /// Column widths for `grid` by the automatic or fixed algorithm (CSS 2.1
@@ -2238,9 +2408,14 @@ fn resolve_table_columns(
     // Crucially the container width is NOT a substitute basis: a
     // fixed+auto table shrink-wraps like an auto table (WPT
     // table_grid_size_col_colspan), it does not fill its container.
-    let avail = pass
-        .specified_width
-        .map(|w| f32_max_compat(w.max(pass.caption_minimum) - insets_width, 0.0));
+    let avail = pass.specified_width.map(|width| {
+        let width = apply_wrapper_width_bounds(
+            width.max(pass.caption_minimum),
+            pass.wrapper_minimum,
+            pass.wrapper_maximum,
+        );
+        f32_max_compat(width - insets_width, 0.0)
+    });
     let Some(avail) = avail else {
         return resolve_column_widths(doc, grid, pass.inputs, insets, pass.border_spacing_x);
     };

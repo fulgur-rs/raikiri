@@ -46,6 +46,12 @@ fn resolve_cell_width(doc: &mut Document, cell: usize, available_space: Availabl
     )[0]
 }
 
+fn finish_ahem_layout(doc: &mut Document) {
+    doc.mark_in_document_flags();
+    let computed = cascade(doc, &build_rule_tree(doc)).unwrap();
+    crate::layout::layout_single_page(doc, &computed, PageBox::A4).unwrap();
+}
+
 #[test]
 fn cell_min_width_max_content_raises_column_minimum() {
     let (mut doc, cell) = cell_with_text("min-width:max-content");
@@ -135,5 +141,125 @@ fn cell_min_width_keyword_counts_padding_and_border_once() {
     assert_eq!(
         minimum, 102.0,
         "90px content plus 10px padding and 2px border"
+    );
+}
+
+#[test]
+fn wrapper_max_width_min_content_bounds_columns_before_distribution() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:200px"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;border-spacing:0;max-width:min-content"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(cell, "AAAA BBBB");
+
+    finish_ahem_layout(&mut doc);
+
+    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 40.0);
+    assert_eq!(doc.nodes[table].unrounded_layout.size.width, 40.0);
+}
+
+#[test]
+fn wrapper_min_width_max_content_wins_over_max_min_content() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:200px"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;border-spacing:0;min-width:max-content;max-width:min-content"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(cell, "AAAA BBBB");
+
+    finish_ahem_layout(&mut doc);
+
+    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 90.0);
+    assert_eq!(doc.nodes[table].unrounded_layout.size.width, 90.0);
+}
+
+#[test]
+fn caption_min_width_max_content_contributes_to_table_minimum() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:200px"),
+    );
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    let caption = doc.append_element(
+        Some(table),
+        "caption",
+        Style::default(),
+        Some("display:table-caption;min-width:max-content;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    doc.append_text(caption, "AAAA BBBB");
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;width:10px;height:10px;padding:0"),
+    );
+
+    finish_ahem_layout(&mut doc);
+
+    assert!(
+        doc.nodes[table].unrounded_layout.size.width >= 90.0,
+        "caption min-width:max-content should raise table CAPMIN to 90px, got {}",
+        doc.nodes[table].unrounded_layout.size.width
     );
 }
