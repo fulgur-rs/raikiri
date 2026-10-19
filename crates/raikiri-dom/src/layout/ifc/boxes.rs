@@ -2,7 +2,9 @@
 
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
+use super::generated_atomics::logical_box;
 use super::generated_blocks;
+use super::geometry::IfcAxes;
 use super::inline_boxes::{for_each_atomic, placed};
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
@@ -1600,20 +1602,24 @@ pub(crate) fn measure_atomics(
         // no longer fitting it). Round the margin box as a whole and give the
         // border box what is left after the rounded margins.
         let snap = |value: f32| (value * 64.0).round() / 64.0;
-        let outer = snap(output.size.width + margin.left + margin.right);
-        let inline_size = (outer - snap(margin.left) - snap(margin.right)).max(0.0);
+        // The lines of a vertical paragraph run along the box's height. A
+        // horizontal paragraph takes the line-left margin as the inline-start
+        // one whatever its direction.
+        let (inline_size, block_size, margins) = logical_box(
+            (output.size.width, output.size.height),
+            (margin.top, margin.right, margin.bottom, margin.left),
+            root.writing_mode,
+            root.rtl && root.writing_mode != WritingMode::HorizontalTb,
+        );
+        let outer = snap(inline_size + margins.inline_start + margins.inline_end);
+        let inline_size = (outer - snap(margins.inline_start) - snap(margins.inline_end)).max(0.0);
         sizes.insert(
             id,
             AtomicSize {
                 inline_size,
-                block_size: output.size.height,
+                block_size,
                 baseline,
-                margins: shodo::node::Sides {
-                    inline_start: margin.left,
-                    inline_end: margin.right,
-                    block_start: margin.top,
-                    block_end: margin.bottom,
-                },
+                margins,
             },
         );
         outputs.push((node, output));
@@ -2473,16 +2479,20 @@ fn place_atomics(
             );
             // An atomic in a ruby annotation is placed with its annotation.
             let rect = placed(atomic.border_rect, line_top, placement);
-            // A right-to-left line runs from the right edge: its inline axis
-            // is mirrored inside the content box.
-            let start = if rtl {
-                geometry.width - (rect.inline_start + rect.inline_size)
-            } else {
-                rect.inline_start
-            };
+            // The rectangle is logical: its inline axis runs along the line
+            // and its block axis across the lines, which a vertical paragraph
+            // draws down and from the right (or left) edge. A right-to-left
+            // line runs from the far edge, so its inline axis is mirrored
+            // inside the content box.
+            let mut size = geometry.content_size;
+            if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+                size.width = geometry.width;
+            }
+            let direction = if rtl { Direction::Rtl } else { Direction::Ltr };
+            let physical = IfcAxes::new(geometry.axes.writing_mode(), direction).rect(size, rect);
             let location = taffy::Point {
-                x: geometry.edges.0 + start + dx,
-                y: geometry.top_edge + rect.block_start + dy,
+                x: geometry.edges.0 + physical.x + dx,
+                y: geometry.top_edge + physical.y + dy,
             };
             commit_child_layout(tree, node, output, location, geometry.width);
         }
@@ -2560,7 +2570,7 @@ fn relative_inset(
     node: usize,
     basis: f32,
     height: Option<f32>,
-    axes: super::geometry::IfcAxes,
+    axes: IfcAxes,
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.layout_node_with_style(node).unwrap().style;
