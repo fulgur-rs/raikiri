@@ -3422,11 +3422,23 @@ pub(crate) fn prepare_authored_block_widths(
             && !ancestors.non_block_flow_ancestor[idx]
             && let Some(width) = ancestors.authored_containing_width(idx)
         {
+            let used_width = {
+                let style = &doc.layout_node_with_style(idx).unwrap().style;
+                if style.box_sizing == TaffyBoxSizing::BorderBox {
+                    width
+                } else {
+                    let horizontal = multicol_resolve_inset(doc, style.padding.left, width)
+                        + multicol_resolve_inset(doc, style.padding.right, width)
+                        + multicol_resolve_inset(doc, style.border.left, width)
+                        + multicol_resolve_inset(doc, style.border.right, width);
+                    (width - horizontal).max(0.0)
+                }
+            };
             doc.layout_node_with_style_mut(idx)
                 .unwrap()
                 .style
                 .size
-                .width = Dimension::length(width);
+                .width = Dimension::length(used_width);
         }
     }
 }

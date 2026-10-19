@@ -4498,3 +4498,40 @@ fn a_relative_column_child_that_holds_boxes_is_placed_without_its_inset() {
         assert_eq!(layout.size.width, 40.0, "{inner_style}");
     }
 }
+
+#[test]
+fn authored_auto_block_width_accounts_for_box_sizing_and_decorations() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    for css in [
+        "padding:0 10px",
+        "padding:0 10%",
+        "border-left:5px solid;border-right:5px solid",
+        "box-sizing:border-box;padding:0 10px;border-left:5px solid;border-right:5px solid",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("margin:0;width:100px"),
+        );
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(format!("display:block;width:auto;{css}").as_str()),
+        );
+        doc.append_element(Some(block), "div", Style::default(), Some("height:1px"));
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+        assert_eq!(doc.nodes[block].unrounded_layout.size.width, 100.0, "{css}");
+    }
+}
