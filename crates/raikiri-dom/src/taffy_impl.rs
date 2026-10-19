@@ -459,6 +459,20 @@ impl Document {
             && container.display() != DisplayValue::Contents;
         Some(if lifted { top } else { parent })
     }
+
+    /// The style of the flex container with a vertical main axis that holds
+    /// box `node` as an item, if there is one.
+    pub(crate) fn column_flex_container_of(&self, node: usize) -> Option<&taffy::Style> {
+        let style = self
+            .layout_node_with_style(self.taffy_parent_of(node)?)?
+            .style;
+        (style.display == taffy::Display::Flex
+            && matches!(
+                style.flex_direction,
+                taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse
+            ))
+        .then_some(style)
+    }
 }
 
 impl Iterator for TaffyChildIter<'_> {
@@ -673,6 +687,7 @@ impl LayoutSession<'_> {
         let dispatch = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
             let idx = usize::from(node_id);
             let inputs = with_fit_content_room(tree, idx, inputs);
+            let inputs = with_column_flex_keyword_room(tree, idx, inputs);
             let empty = tree.context.size_contained_measure.last() == Some(&idx);
             let inputs = if empty {
                 inputs
@@ -960,6 +975,8 @@ impl LayoutSession<'_> {
     }
 }
 
+#[cfg(test)]
+mod item_width_tests;
 #[cfg(test)]
 mod tests;
 
@@ -2365,6 +2382,38 @@ fn with_fit_content_room(
     });
     if let Some(room) = room {
         inputs.available_space.width = AvailableSpace::Definite(room);
+    }
+    inputs
+}
+
+/// Offer an item of a column flex container with a `min-content` or
+/// `max-content` width that room, instead of the room of its container.
+///
+/// Taffy measures such an item along the main axis, its height, in the room of
+/// its container, which the keyword width ignores; the lines of the item would
+/// then break at another width than the item gets. A parent that asks for the
+/// min-content or max-content size of the content (the automatic minimum size
+/// of a flex item, say) gets what it asks for.
+fn with_column_flex_keyword_room(
+    tree: &LayoutSession<'_>,
+    idx: usize,
+    mut inputs: LayoutInput,
+) -> LayoutInput {
+    if inputs.known_dimensions.width.is_some()
+        || !matches!(inputs.available_space.width, AvailableSpace::Definite(_))
+    {
+        return inputs;
+    }
+    let room = tree
+        .layout_node_with_style(idx)
+        .and_then(|node| match node.style.size.width.expand() {
+            taffy::ExpandedDimension::MinContent => Some(AvailableSpace::MinContent),
+            taffy::ExpandedDimension::MaxContent => Some(AvailableSpace::MaxContent),
+            _ => None,
+        })
+        .filter(|_| tree.column_flex_container_of(idx).is_some());
+    if let Some(room) = room {
+        inputs.available_space.width = room;
     }
     inputs
 }

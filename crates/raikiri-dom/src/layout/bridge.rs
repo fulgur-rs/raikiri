@@ -489,6 +489,12 @@ fn apply_computed_to_style_in_session_inner(
                 .style
                 .aspect_ratio = None;
         }
+        if is_stretched_by_keyword_width(doc, cascade, idx) {
+            doc.layout_node_with_style_mut(idx)
+                .unwrap()
+                .style
+                .align_self = Some(TaffyAlignItems::FLEX_START);
+        }
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
     // root stays one flex or grid item when `order` sorts the items.
@@ -752,8 +758,8 @@ fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
 ///   is placed by its container before it is laid out;
 /// - a box in a multicol flow is fragmented across the columns, so its
 ///   automatic height is not the height of one fragment;
-/// - flex, grid and table containers and inline-level boxes measure
-///   themselves by algorithms of their own;
+/// - flex, grid and table containers, their items and inline-level boxes
+///   measure themselves by algorithms of their own;
 /// - a vertical box swaps the axes a keyword refers to.
 fn honors_content_limits(
     doc: &Document,
@@ -772,7 +778,7 @@ fn honors_content_limits(
     {
         return false;
     }
-    true
+    !is_flex_or_grid_item(doc, cascade, idx)
 }
 
 /// Whether the width of element `idx` is a sizing keyword its layout sizes the
@@ -799,14 +805,17 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// Whether the layout of element `idx`, whose computed values are `cv`, sizes
 /// it by a `max-content` or `fit-content` size (CSS Sizing 3 §3.1.1).
 ///
-/// A box in a block formatting context and an absolutely positioned box are;
-/// so are flex, grid and table containers the block algorithm measures. The
-/// others keep sizing themselves as if the size were `auto`:
+/// A box in a block formatting context, an absolutely positioned box and a flex
+/// or grid item are; so are flex, grid and table containers the block algorithm
+/// measures. The others keep sizing themselves as if the size were `auto`:
 /// - a replaced element takes its natural size, and an `auto` size is what
 ///   transfers its aspect ratio;
 /// - a multicol container has no intrinsic inline size yet;
-/// - a flex or grid item is sized by the Taffy algorithm, which reads such a
-///   keyword as `auto` yet no longer stretches the item.
+/// - a vertical flex or grid item takes its inline size from the height, which
+///   the container's algorithm sizes along its physical axes;
+/// - a flex or grid item with a `min-width` or `max-width` is measured by Taffy
+///   at the keyword size before that size is clamped, so the lines of its
+///   content break at a width the box does not keep.
 fn sized_by_content_keyword(
     doc: &Document,
     cascade: &CascadeResult,
@@ -821,8 +830,32 @@ fn sized_by_content_keyword(
     if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
         return true;
     }
-    let container = layout_container(doc, cascade, idx).map(|id| cascade.computed[id].display);
-    !container.is_some_and(|display| display.is_flex_or_grid_container())
+    // Only a `min-width` that is not `auto` or zero clamps the keyword.
+    let unclamped = matches!(cv.max_width, ComputedLengthPercentageOrAuto::Auto)
+        && (matches!(cv.min_width, ComputedLengthPercentageOrAuto::Auto)
+            || is_zero_length(cv.min_width));
+    !is_flex_or_grid_item(doc, cascade, idx) || (unclamped && !lays_out_vertically(cascade, idx))
+}
+
+/// Whether `size` is zero whatever it refers to: a zero length, a zero
+/// percentage, or a `calc()` whose terms are both zero.
+fn is_zero_length(size: ComputedLengthPercentageOrAuto) -> bool {
+    match size {
+        ComputedLengthPercentageOrAuto::Px(px) => matches!(px, 0.0),
+        ComputedLengthPercentageOrAuto::Percent(percent) => matches!(percent, 0.0),
+        ComputedLengthPercentageOrAuto::Calc(calc) => {
+            matches!((calc.percent, calc.px), (0.0, 0.0))
+        }
+        _ => false,
+    }
+}
+
+/// Whether the box of element `idx` is an item of a flex or grid container:
+/// the element that contains it lays its boxes out by the flex or grid
+/// algorithm.
+fn is_flex_or_grid_item(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    layout_container(doc, cascade, idx)
+        .is_some_and(|id| cascade.computed[id].display.is_flex_or_grid_container())
 }
 
 /// The element whose box contains the box of element `idx`: its nearest
@@ -1084,6 +1117,37 @@ fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues)
         .unwrap()
         .style
         .size = Size { width, height };
+}
+
+/// Whether item `idx` of a column flex container has a `width` that is a sizing
+/// keyword although the container's alignment would stretch it.
+///
+/// Only an `auto` cross size stretches (CSS Flexbox 1 §9.4 step 11). Taffy
+/// settles that when it places the item, yet it measures the item's height at
+/// the stretched width first, so a keyword width that is narrower or wider than
+/// the container leaves the height of another line count. Aligning the item at
+/// the start of the cross axis measures it at its own width. Taffy places a
+/// stretched item that it does not stretch exactly like a `flex-start` one, so
+/// nothing else moves.
+fn is_stretched_by_keyword_width(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> bool {
+    use taffy::AlignItemsKeyword;
+    let style = &doc.layout_node_with_style(idx).unwrap().style;
+    if !style.size.width.is_sizing_keyword()
+        || style.size.width.is_stretch()
+        || lays_out_vertically(cascade, idx)
+    {
+        return false;
+    }
+    doc.column_flex_container_of(idx).is_some_and(|container| {
+        matches!(
+            style.align_self.unwrap_or(container.align_items).keyword,
+            AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+        )
+    })
 }
 
 /// Whether in-flow replaced grid item `idx` with auto width and height is
