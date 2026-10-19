@@ -7,13 +7,13 @@ use taffy::Style;
 fn percentage_width_under_page_positioned_box_uses_its_owner_page() {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
     document.append_element(
-        Some(body),
+        Some(html),
         "div",
         Style::default(),
-        Some("display:block;margin-top:20px;height:1px"),
+        Some("display:block;height:20px"),
     );
+    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
     let positioned = document.append_element(
         Some(body),
         "div",
