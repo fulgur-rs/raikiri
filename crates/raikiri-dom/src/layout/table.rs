@@ -41,13 +41,14 @@ use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
 use taffy::tree::{RunMode, SizingMode};
 use taffy::{
-    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CoreStyle, Layout as TaffyLayout,
-    LayoutInput, LayoutOutput, LayoutPartialTree, LengthPercentage, NodeId, OofCandidate,
-    OofCandidates, OofPositioningArea, Point, Position, Rect, Size,
+    AvailableSpace, AxisStaticEdge, AxisStaticPosition, CoreStyle, ExpandedDimension,
+    Layout as TaffyLayout, LayoutInput, LayoutOutput, LayoutPartialTree, LengthPercentage, NodeId,
+    OofCandidate, OofCandidates, OofPositioningArea, Point, Position, Rect, Size,
 };
 
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
+use crate::taffy_impl::content_limits::ContentLimits;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
@@ -2125,6 +2126,88 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
     output.size.width
 }
 
+/// Resolve a cell's intrinsic width limits against the min/max-content border-box
+/// measurements that the table column algorithm already computed.
+fn resolve_cell_intrinsic_limit(
+    doc: &LayoutSession<'_>,
+    cell_id: usize,
+    limit: Dimension,
+    min_content: f32,
+    max_content: f32,
+    inputs: &LayoutInput,
+    available_space: AvailableSpace,
+) -> Option<f32> {
+    let expanded = limit.expand();
+    match expanded {
+        ExpandedDimension::MinContent => Some(min_content),
+        ExpandedDimension::MaxContent => Some(max_content),
+        ExpandedDimension::FitContent
+        | ExpandedDimension::FitContentPx(_)
+        | ExpandedDimension::FitContentPercent(_)
+        | ExpandedDimension::FitContentCalc(_) => {
+            let fit_room = crate::taffy_impl::fit_content_room(
+                doc,
+                cell_id,
+                expanded,
+                inputs.parent_size.width,
+                true,
+            )
+            .or_else(|| match available_space {
+                AvailableSpace::MinContent => Some(min_content),
+                AvailableSpace::MaxContent => Some(max_content),
+                AvailableSpace::Definite(room) => Some(room.max(0.0)),
+            })?;
+            Some(max_content.min(fit_room).max(min_content))
+        }
+        _ => None,
+    }
+}
+
+/// The table's column track room, before adding a spanning cell's internal gaps.
+fn table_column_available_space(inputs: &LayoutInput, insets_width: f32) -> AvailableSpace {
+    if let Some(width) = inputs.known_dimensions.width {
+        return AvailableSpace::Definite((width - insets_width).max(0.0));
+    }
+    match inputs.available_space.width {
+        AvailableSpace::Definite(width) => {
+            AvailableSpace::Definite((width - insets_width).max(0.0))
+        }
+        intrinsic => intrinsic,
+    }
+}
+
+fn constrain_cell_intrinsic_widths(
+    doc: &LayoutSession<'_>,
+    cell_id: usize,
+    limits: ContentLimits,
+    min_content: f32,
+    max_content: f32,
+    inputs: &LayoutInput,
+    available_space: AvailableSpace,
+) -> (f32, f32) {
+    let min = resolve_cell_intrinsic_limit(
+        doc,
+        cell_id,
+        limits.min.width,
+        min_content,
+        max_content,
+        inputs,
+        available_space,
+    )
+    .map_or(min_content, |limit| min_content.max(limit));
+    let max = resolve_cell_intrinsic_limit(
+        doc,
+        cell_id,
+        limits.max.width,
+        min_content,
+        max_content,
+        inputs,
+        available_space,
+    )
+    .map_or(max_content, |limit| max_content.min(limit));
+    (min, max.max(min))
+}
+
 /// What the column pass needs besides the grid and the room the tracks share.
 struct ColumnPass {
     table_layout: TableLayoutValue,
@@ -2204,12 +2287,30 @@ fn resolve_column_widths(
     spacing: f32,
 ) -> Vec<f32> {
     let n = grid.n_cols as usize;
+    let column_space = table_column_available_space(&inputs, padding_border_size.width);
     // (B) Measure each cell
     let mut cell_min = vec![0.0f32; grid.cells.len()];
     let mut cell_max = vec![0.0f32; grid.cells.len()];
     for (i, cell) in grid.cells.iter().enumerate() {
-        cell_min[i] = measure_cell_inline(doc, cell.node_id, AvailableSpace::MIN_CONTENT);
-        cell_max[i] = measure_cell_inline(doc, cell.node_id, AvailableSpace::MAX_CONTENT);
+        let min_content = measure_cell_inline(doc, cell.node_id, AvailableSpace::MIN_CONTENT);
+        let max_content = measure_cell_inline(doc, cell.node_id, AvailableSpace::MAX_CONTENT);
+        let cell_space = match column_space {
+            AvailableSpace::Definite(room) => AvailableSpace::Definite(
+                room + spacing * usize::from(cell.col_span).saturating_sub(1) as f32,
+            ),
+            intrinsic => intrinsic,
+        };
+        let (min, max) = constrain_cell_intrinsic_widths(
+            doc,
+            cell.node_id,
+            doc.nodes[cell.node_id].content_limits,
+            min_content,
+            max_content,
+            &inputs,
+            cell_space,
+        );
+        cell_min[i] = min;
+        cell_max[i] = max;
     }
 
     // (C.1) Aggregate colspan==1
