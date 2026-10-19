@@ -614,6 +614,40 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         placement: &Placement<'w>,
         cut: &FragmentCut,
     ) -> PageExtent {
+        let FragmentCut {
+            paint_y,
+            paint_height,
+            paint_background_height,
+            ..
+        } = *cut;
+        let mut extent = PageExtent {
+            paint_y,
+            paint_height,
+            paint_background_height,
+            paints_on_page: self.paints_on_page(inputs, node, layout, placement, paint_y),
+            paints_as_absolute_continuation: false,
+            // Where the box's border box starts on this page's coordinates
+            // before it is cut into a continuation fragment.
+            unfragmented_top: paint_y,
+        };
+        if is_absolute_fragment_candidate(placement.cv) {
+            self.continue_absolute_fragment(inputs.node_id, node, placement, &mut extent);
+            self.extend_absolute_fragment(node, placement, &mut extent);
+        }
+        extent
+    }
+
+    /// Whether the box of the element `inputs.node_id`, laid out as `layout`
+    /// and placed by `placement`, paints on this page once the clips of the
+    /// fragmentainers have cut its top down to `paint_y`.
+    fn paints_on_page(
+        &self,
+        inputs: &BoxInputs,
+        node: &'w Node,
+        layout: taffy::Layout,
+        placement: &Placement<'w>,
+        paint_y: f32,
+    ) -> bool {
         let BoxInputs {
             node_id,
             inside_fixed,
@@ -622,46 +656,22 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let Placement {
             cv,
             abs_y,
-            pos_dy,
-            child_transform_y,
             fixed_in_viewport,
             paint_x,
             ..
         } = *placement;
-        let FragmentCut {
-            mut paint_y,
-            mut paint_height,
-            mut paint_background_height,
-            ..
-        } = *cut;
-        let (document, cascade, root_id, active_page_name) = (
-            self.document,
-            self.cascade,
-            self.root_id,
-            self.active_page_name,
-        );
         let scene_transform = self.scene.transform;
         let PageGeometry {
-            margins,
-            insets,
             page_top,
             page_bottom,
             flow_band,
             ..
         } = self.geometry;
-        let named_page_matches = |node_id: usize| {
-            raikiri_dom::paint_rules::named_page_matches(
-                document,
-                cascade,
-                node_id,
-                active_page_name,
-            )
-        };
         // A hidden table must not paint its own collapsed border.
         let visibility_hidden_table = raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
-        let mut paints_on_page = !visibility_hidden_table
-            && (node_id == root_id
-                || ((fixed_in_viewport || named_page_matches(node_id))
+        !visibility_hidden_table
+            && (node_id == self.root_id
+                || ((fixed_in_viewport || self.named_page_matches(node_id))
                     && (fixed_in_viewport
                         || inside_fixed
                         || (box_intersects_page(
@@ -679,85 +689,130 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                                 },
                             );
                             band.holds_box(scene_transform, own_box)
-                        })))));
-        // An absolutely positioned containing block can own a child
-        // fragment on a later page even when its first layout box ends
-        // before that page.  Preserve the parent's border/background
-        // continuation for this narrow OOF shape.  Full OOF
-        // fragmentation remains outside this painter; the gate avoids
-        // changing ordinary flow, fixed-position, transformed, or
-        // borderless absolute boxes.
-        let is_absolute_fragment_candidate = matches!(cv.position, PositionValue::Absolute)
-            && cv.transform.is_empty()
-            && (cv.border.top.width().px() > 0.0
-                || cv.border.right.width().px() > 0.0
-                || cv.border.bottom.width().px() > 0.0
-                || cv.border.left.width().px() > 0.0)
-            && cv.background_color.a != 0;
-        let descendant_end_on_page = if is_absolute_fragment_candidate {
-            in_flow_child_end(document, cascade, node, abs_y, |child_y, child_height| {
-                box_intersects_page(child_y, child_height, page_top, page_bottom)
-                    .then_some(child_y + child_height)
-            })
-        } else {
-            None
-        };
-        let mut paints_as_absolute_continuation = false;
-        // Where the box's border box starts on this page's coordinates
-        // before it is cut into a continuation fragment.
-        let mut unfragmented_top = paint_y;
+                        })))))
+    }
+
+    /// Whether the page named by the `page` property of the element
+    /// `node_id` is the page being painted.
+    fn named_page_matches(&self, node_id: usize) -> bool {
+        raikiri_dom::paint_rules::named_page_matches(
+            self.document,
+            self.cascade,
+            node_id,
+            self.active_page_name,
+        )
+    }
+
+    /// Give the box of the element `node_id` the continuation of its border
+    /// on this page when it has no part here but a child fragment of it
+    /// does.
+    fn continue_absolute_fragment(
+        &self,
+        node_id: usize,
+        node: &Node,
+        placement: &Placement<'w>,
+        extent: &mut PageExtent,
+    ) {
+        let Placement {
+            cv,
+            abs_y,
+            pos_dy,
+            child_transform_y,
+            ..
+        } = *placement;
+        let PageGeometry {
+            margins,
+            insets,
+            page_top,
+            page_bottom,
+            flow_band,
+            ..
+        } = self.geometry;
         // Continuations cut boxes along y; a page that follows the x
         // axis holds only the boxes across its page area.
-        if !paints_on_page
+        if !extent.paints_on_page
             && flow_band.is_none()
-            && is_absolute_fragment_candidate
-            && let Some(descendant_end) = descendant_end_on_page
+            && let Some(descendant_end) = in_flow_child_end(
+                self.document,
+                self.cascade,
+                node,
+                abs_y,
+                |child_y, child_height| {
+                    box_intersects_page(child_y, child_height, page_top, page_bottom)
+                        .then_some(child_y + child_height)
+                },
+            )
         {
             let fragment_top = page_top - margins.top - insets.top;
             let continuation_height =
                 (descendant_end - fragment_top + cv.border.bottom.width().px()).max(0.0);
             if continuation_height > 0.0 {
-                unfragmented_top = paint_y;
-                paint_y =
+                extent.paint_y =
                     fragment_top + margins.top + insets.top - page_top + pos_dy + child_transform_y;
-                paint_height = continuation_height;
+                extent.paint_height = continuation_height;
                 // The local reftest oracle carries only the
                 // continuation border; the ancestor background is
                 // not repeated behind the child fragment.
-                paint_background_height = 0.0;
-                paints_on_page = named_page_matches(node_id);
-                paints_as_absolute_continuation = paints_on_page;
+                extent.paint_background_height = 0.0;
+                extent.paints_on_page = self.named_page_matches(node_id);
+                extent.paints_as_absolute_continuation = extent.paints_on_page;
             }
         }
-        // The first fragment of the same containing block extends to
-        // the page boundary when a direct in-flow child starts on the
-        // next page.  Its normal layout height only covers the first
-        // one-pass OOF content box, so preserve the border/background
-        // through the break without changing descendant coordinates.
-        if paints_on_page
-            && !paints_as_absolute_continuation
-            && is_absolute_fragment_candidate
-            && let Some(descendant_end) =
-                in_flow_child_end(document, cascade, node, abs_y, |child_y, child_height| {
-                    (child_y >= page_bottom).then_some(child_y + child_height)
-                })
+    }
+
+    /// Stretch the box of the element `node`, which paints on this page, to
+    /// the page boundary when a direct in-flow child starts on the next page.
+    ///
+    /// The first fragment of the same containing block extends that far. Its
+    /// normal layout height only covers the first one-pass OOF content box,
+    /// so the border and background continue through the break without
+    /// changing descendant coordinates.
+    fn extend_absolute_fragment(
+        &self,
+        node: &Node,
+        placement: &Placement<'w>,
+        extent: &mut PageExtent,
+    ) {
+        let Placement { cv, abs_y, .. } = *placement;
+        let page_bottom = self.geometry.page_bottom;
+        if extent.paints_on_page
+            && !extent.paints_as_absolute_continuation
+            && let Some(descendant_end) = in_flow_child_end(
+                self.document,
+                self.cascade,
+                node,
+                abs_y,
+                |child_y, child_height| (child_y >= page_bottom).then_some(child_y + child_height),
+            )
         {
-            paint_height =
-                paint_height.max((descendant_end - abs_y + cv.border.bottom.width().px()).max(0.0));
+            extent.paint_height = extent
+                .paint_height
+                .max((descendant_end - abs_y + cv.border.bottom.width().px()).max(0.0));
             // Keep the element background inside the current page's
             // content extent.  The border continuation is painted
             // separately and may reach the page edge.
-            paint_background_height = (page_bottom - abs_y).max(0.0);
-        }
-        PageExtent {
-            paint_y,
-            paint_height,
-            paint_background_height,
-            paints_on_page,
-            paints_as_absolute_continuation,
-            unfragmented_top,
+            extent.paint_background_height = (page_bottom - abs_y).max(0.0);
         }
     }
+}
+
+/// Whether `cv` is an absolutely positioned box with a border and a
+/// background that a child fragment on another page can continue.
+///
+/// An absolutely positioned containing block can own a child fragment on a
+/// later page even when its first layout box ends before that page. The
+/// parent's border and background continue for this narrow OOF shape. Full
+/// OOF fragmentation remains outside this painter, so the gate leaves
+/// ordinary flow, fixed-position, transformed, and borderless absolute boxes
+/// alone.
+fn is_absolute_fragment_candidate(cv: &ComputedValues) -> bool {
+    matches!(cv.position, PositionValue::Absolute)
+        && cv.transform.is_empty()
+        && (cv.border.top.width().px() > 0.0
+            || cv.border.right.width().px() > 0.0
+            || cv.border.bottom.width().px() > 0.0
+            || cv.border.left.width().px() > 0.0)
+        && cv.background_color.a != 0
 }
 
 /// The farthest bottom edge, among the in-flow children of `node` laid out
