@@ -31,6 +31,21 @@ use raikiri_style::property::BreakInside;
 /// columns as well. Such a child may also hold plain blocks with no
 /// content (see [`wrapped_blocks`]), which take its place in the stream.
 pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Option<Vec<usize>> {
+    supported_with_wrapped_blocks(tree, parent, out_of_flow, false)
+}
+
+/// [`supported`] for an outer auto-height multicol that balances its columns.
+/// Such a stream may also flatten eligible block-only wrappers.
+pub(super) fn supported_for_auto_balance(tree: &Document, parent: usize) -> Option<Vec<usize>> {
+    supported_with_wrapped_blocks(tree, parent, true, true)
+}
+
+fn supported_with_wrapped_blocks(
+    tree: &Document,
+    parent: usize,
+    out_of_flow: bool,
+    allow_wrapped_blocks: bool,
+) -> Option<Vec<usize>> {
     let container = &tree.layout_node_with_style(parent).unwrap();
     if container.ifc.is_some()
         || !inherits_horizontal(tree, parent)
@@ -43,7 +58,11 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
     for child in rendered_elements(tree, parent) {
         let node = &tree.layout_node_with_style(child).unwrap();
         let has_inset = node.style.inset != Rect::auto();
-        if !is_plain_block_ignoring_insets(tree, child)
+        let plain_block = is_plain_block_ignoring_insets(tree, child);
+        let plain_wrapper = allow_wrapped_blocks
+            && is_plain_wrapper_ignoring_insets(tree, child)
+            && has_rendered_content(tree, child, false);
+        if !(plain_block || plain_wrapper)
             || has_inset
                 && (!super::insets_are_a_relative_inline_offset(tree, child)
                     || has_rendered_content(tree, child, false))
@@ -51,10 +70,11 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
             return None;
         }
         if has_rendered_content(tree, child, out_of_flow && node.contains_absolute_boxes) {
-            let leaves = (out_of_flow && node.contains_absolute_boxes)
-                .then(|| wrapped_blocks(tree, child))
+            let leaves = ((out_of_flow && node.contains_absolute_boxes)
+                || (allow_wrapped_blocks && plain_wrapper))
+                .then(|| wrapped_blocks(tree, child, allow_wrapped_blocks))
                 .flatten()?;
-            boxes.extend(leaves);
+            boxes.extend(leaves.leaf_ids());
         } else {
             boxes.push(child);
         }
@@ -120,9 +140,18 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
 
 /// [`is_plain_block`] for a box whose insets the caller accepts.
 fn is_plain_block_ignoring_insets(tree: &Document, child: usize) -> bool {
+    is_plain_block_with_display(tree, child, false)
+}
+
+fn is_plain_wrapper_ignoring_insets(tree: &Document, child: usize) -> bool {
+    is_plain_block_with_display(tree, child, true)
+}
+
+fn is_plain_block_with_display(tree: &Document, child: usize, allow_flow_root: bool) -> bool {
     let node = &tree.layout_node_with_style(child).unwrap();
     let defaults: taffy::Style = taffy::Style::default();
-    !(node.display() != DisplayValue::Block
+    let display = node.display();
+    !(display != DisplayValue::Block && !(allow_flow_root && display == DisplayValue::FlowRoot)
         // An orthogonal flow is monolithic in the column's block axis.
         || !is_horizontal(node)
         // So is a box with size containment (CSS Contain 2, 3.1).
@@ -146,17 +175,97 @@ fn is_plain_block_ignoring_insets(tree: &Document, child: usize) -> bool {
         || is_right_aligned_in_parent(tree, child))
 }
 
-/// The in-flow children of `wrapper`, when they are plain blocks with no
-/// content that the column stream can hold in its place.
-///
-/// The wrapper must be sliceable at any column end and must not hold its
-/// block size apart from its children: with no block-axis borders or
-/// padding, an automatic block size and no effects sized from the whole
-/// box, its margins collapse with theirs (CSS 2, 8.3.1) and its pieces span
-/// exactly the pieces of its children.
-fn wrapped_blocks(tree: &Document, wrapper: usize) -> Option<Vec<usize>> {
+/// A block-only wrapper tree whose leaves can be placed in the column stream.
+struct WrappedBlockTree {
+    node: usize,
+    children: Vec<WrappedBlockChild>,
+    leaf_count: usize,
+    layout: Option<WrapperLayout>,
+}
+
+enum WrappedBlockChild {
+    Leaf(usize),
+    Wrapper(Box<WrappedBlockTree>),
+}
+
+impl WrappedBlockTree {
+    fn leaf_ids(&self) -> Vec<usize> {
+        let mut leaves = Vec::with_capacity(self.leaf_count);
+        self.append_leaf_ids(&mut leaves);
+        leaves
+    }
+
+    fn append_leaf_ids(&self, leaves: &mut Vec<usize>) {
+        for child in &self.children {
+            match child {
+                WrappedBlockChild::Leaf(leaf) => leaves.push(*leaf),
+                WrappedBlockChild::Wrapper(wrapper) => wrapper.append_leaf_ids(leaves),
+            }
+        }
+    }
+
+    fn append_leaf_adjustments(
+        &self,
+        leading: f32,
+        trailing: f32,
+        adjustments: &mut Vec<(usize, f32, f32)>,
+    ) -> Option<()> {
+        let layout = self.layout?;
+        let last = self.children.len().checked_sub(1)?;
+        for (index, child) in self.children.iter().enumerate() {
+            let leading = if index == 0 {
+                leading + layout.stream_leading
+            } else {
+                0.0
+            };
+            let trailing = if index == last {
+                trailing + layout.stream_trailing
+            } else {
+                0.0
+            };
+            match child {
+                WrappedBlockChild::Leaf(leaf) => adjustments.push((*leaf, leading, trailing)),
+                WrappedBlockChild::Wrapper(wrapper) => {
+                    wrapper.append_leaf_adjustments(leading, trailing, adjustments)?;
+                }
+            }
+        }
+        Some(())
+    }
+}
+
+// Keep candidate discovery bounded so very deep wrapper trees fall back safely.
+const MAX_WRAPPED_BLOCK_DEPTH: usize = 32;
+
+fn wrapped_blocks(
+    tree: &Document,
+    wrapper: usize,
+    allow_sliced_wrappers: bool,
+) -> Option<WrappedBlockTree> {
+    wrapped_block_tree(tree, wrapper, allow_sliced_wrappers, true, true, 0)
+}
+
+fn wrapped_block_tree(
+    tree: &Document,
+    wrapper: usize,
+    allow_sliced_wrappers: bool,
+    is_root: bool,
+    in_multicol_context: bool,
+    depth: usize,
+) -> Option<WrappedBlockTree> {
+    if depth >= MAX_WRAPPED_BLOCK_DEPTH {
+        return None;
+    }
     let node = &tree.layout_node_with_style(wrapper).unwrap();
-    if has_block_edge_decorations(node.style)
+    if in_multicol_context && node.column_span_all {
+        return None;
+    }
+    let children_in_multicol_context =
+        in_multicol_context && node.display() != DisplayValue::FlowRoot;
+    let has_edges = has_block_edge_decorations(node.style);
+    if node.display() == DisplayValue::FlowRoot && !allow_sliced_wrappers
+        || has_edges
+            && (!allow_sliced_wrappers || node.clones_box_decorations || !is_root)
         || node.paints_whole_box_effects
         || matches!(
             node.break_inside,
@@ -170,20 +279,97 @@ fn wrapped_blocks(tree: &Document, wrapper: usize) -> Option<Vec<usize>> {
             minimum != Dimension::auto() && style_dimension_length(minimum) != Some(0.0)
         }
         || node.style.max_size.height != LengthPercentageAuto::auto()
+        || node.style.aspect_ratio.is_some()
+        || node.style.contain != taffy::Contain::NONE
     {
         return None;
     }
-    let mut leaves = Vec::new();
+    let mut children = Vec::new();
+    let mut leaf_count = 0usize;
     for child in rendered_elements(tree, wrapper) {
         if is_absolute_box(&tree.nodes[child]) {
+            if !is_root {
+                return None;
+            }
             continue;
         }
-        if !is_plain_block(tree, child) || has_rendered_content(tree, child, false) {
-            return None;
+        if is_plain_block(tree, child) && !has_rendered_content(tree, child, false) {
+            children.push(WrappedBlockChild::Leaf(child));
+            leaf_count += 1;
+        } else {
+            if !allow_sliced_wrappers
+                || tree.layout_node_with_style(child).unwrap().style.inset != Rect::auto()
+                || !is_plain_wrapper_ignoring_insets(tree, child)
+            {
+                return None;
+            }
+            let nested = wrapped_block_tree(
+                tree,
+                child,
+                true,
+                false,
+                children_in_multicol_context,
+                depth + 1,
+            )?;
+            leaf_count = leaf_count.checked_add(nested.leaf_count)?;
+            children.push(WrappedBlockChild::Wrapper(Box::new(nested)));
         }
-        leaves.push(child);
     }
-    (!leaves.is_empty()).then_some(leaves)
+    (leaf_count > 0).then_some(WrappedBlockTree {
+        node: wrapper,
+        children,
+        leaf_count,
+        layout: None,
+    })
+}
+
+fn apply_wrapped_layout(
+    tree: &Document,
+    wrapped: &mut WrappedBlockTree,
+    items: &mut [Item],
+    first_item: usize,
+    column_width: f32,
+) -> Option<WrapperLayout> {
+    let mut child_layouts = Vec::with_capacity(wrapped.children.len());
+    let mut item_index = first_item;
+    for child in &mut wrapped.children {
+        match child {
+            WrappedBlockChild::Leaf(_) => {
+                let item = items.get(item_index)?;
+                child_layouts.push(WrapperLayout {
+                    margin_top: item.margin_top,
+                    margin_bottom: item.margin_bottom,
+                    ..WrapperLayout::default()
+                });
+                item_index += 1;
+            }
+            WrappedBlockChild::Wrapper(nested) => {
+                child_layouts.push(apply_wrapped_layout(
+                    tree,
+                    nested,
+                    items,
+                    item_index,
+                    column_width,
+                )?);
+                item_index += nested.leaf_count;
+            }
+        }
+    }
+    let first = *child_layouts.first()?;
+    let last = *child_layouts.last()?;
+    let layout = wrapper_layout(tree, wrapped.node, first, last, column_width);
+    let last_item = item_index.checked_sub(1)?;
+    if layout.collapses_margins {
+        items[first_item].margin_top = layout.margin_top;
+        items[last_item].margin_bottom = layout.margin_bottom;
+    } else {
+        items[first_item].height += layout.stream_leading;
+        items[first_item].margin_top = layout.margin_top;
+        items[last_item].height += layout.stream_trailing;
+        items[last_item].margin_bottom = layout.margin_bottom;
+    }
+    wrapped.layout = Some(layout);
+    Some(layout)
 }
 
 /// Whether the bridged CSS writing mode of `id` is horizontal.
@@ -213,6 +399,60 @@ fn has_block_edge_decorations(style: &taffy::Style) -> bool {
     let zero = LengthPercentage::length(0.0);
     let (padding, border) = (style.padding, style.border);
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
+}
+
+#[derive(Clone, Copy, Default)]
+struct WrapperLayout {
+    leading: f32,
+    trailing: f32,
+    stream_leading: f32,
+    stream_trailing: f32,
+    margin_top: f32,
+    margin_bottom: f32,
+    collapses_margins: bool,
+}
+
+/// Compute a wrapper's internal edges and margins from its first and last
+/// child boundaries.
+fn wrapper_layout(
+    tree: &Document,
+    wrapper: usize,
+    first: WrapperLayout,
+    last: WrapperLayout,
+    column_width: f32,
+) -> WrapperLayout {
+    let node = &tree.layout_node_with_style(wrapper).unwrap();
+    let style = node.style;
+    let (margin_top, margin_bottom) = block_margins(style).unwrap_or_default();
+    let top_inset = super::multicol_resolve_inset(tree, style.padding.top, column_width)
+        + super::multicol_resolve_inset(tree, style.border.top, column_width);
+    let bottom_inset = super::multicol_resolve_inset(tree, style.padding.bottom, column_width)
+        + super::multicol_resolve_inset(tree, style.border.bottom, column_width);
+    let collapses_margins =
+        node.display() == DisplayValue::Block && !has_block_edge_decorations(style);
+    if collapses_margins {
+        WrapperLayout {
+            leading: first.leading,
+            trailing: last.trailing,
+            stream_leading: 0.0,
+            stream_trailing: 0.0,
+            margin_top: margin_top.max(first.margin_top),
+            margin_bottom: margin_bottom.max(last.margin_bottom),
+            collapses_margins: true,
+        }
+    } else {
+        let stream_leading = first.margin_top + top_inset;
+        let stream_trailing = last.margin_bottom + bottom_inset;
+        WrapperLayout {
+            leading: stream_leading + first.leading,
+            trailing: last.trailing + stream_trailing,
+            stream_leading,
+            stream_trailing,
+            margin_top,
+            margin_bottom,
+            collapses_margins: false,
+        }
+    }
 }
 
 /// Whether `id` has content of its own, other than the absolutely
@@ -801,30 +1041,229 @@ fn balance_rows(
     }
 }
 
-/// The pieces of a wrapper whose blocks start with the piece `first` and
-/// end with the piece `last`. A piece runs from the top of its first block,
-/// or the top of a column it continues in, to the bottom of its last block,
-/// or the end of a column it breaks at.
-fn wrapper_pieces(first: &Piece, last: &Piece, column_height: f32) -> Vec<Piece> {
-    (first.column..=last.column)
-        .map(|column| {
-            let top = if column == first.column {
-                first.top
-            } else {
-                0.0
-            };
-            let bottom = if column == last.column {
-                last.top + last.height
-            } else {
-                column_height
-            };
-            Piece {
-                column,
-                top,
-                height: (bottom - top).max(0.0),
+fn make_wrapped_leaf_pieces(
+    wrapped: &WrappedBlockTree,
+    stream_pieces: &[Vec<Piece>],
+) -> Option<Vec<Vec<Piece>>> {
+    let mut adjustments = Vec::with_capacity(wrapped.leaf_count);
+    wrapped.append_leaf_adjustments(0.0, 0.0, &mut adjustments)?;
+    if adjustments.len() != stream_pieces.len() {
+        return None;
+    }
+    Some(
+        stream_pieces
+            .iter()
+            .zip(adjustments)
+            .map(|(pieces, (_, leading, trailing))| trim_wrapped_pieces(pieces, leading, trailing))
+            .collect(),
+    )
+}
+
+fn wrapper_pieces_for_tree(
+    wrapped: &WrappedBlockTree,
+    leaf_pieces: &[Vec<Piece>],
+    column_height: f32,
+) -> Option<Vec<Piece>> {
+    let layout = wrapped.layout?;
+    let first = leaf_pieces
+        .iter()
+        .flat_map(|pieces| pieces.iter())
+        .find(|piece| piece.height > 0.0)?;
+    let last = leaf_pieces
+        .iter()
+        .rev()
+        .flat_map(|pieces| pieces.iter().rev())
+        .find(|piece| piece.height > 0.0)?;
+    wrapper_pieces(first, last, layout.leading, layout.trailing, column_height)
+}
+
+fn wrapper_pieces(
+    first: &Piece,
+    last: &Piece,
+    leading: f32,
+    trailing: f32,
+    column_height: f32,
+) -> Option<Vec<Piece>> {
+    let start = first.column as f32 * column_height + first.top - leading;
+    let end = last.column as f32 * column_height + last.top + last.height + trailing;
+    if !start.is_finite() || !end.is_finite() || start < 0.0 || end < start {
+        return None;
+    }
+    let first_column = (start / column_height).floor() as usize;
+    let last_column = if end - start <= EPSILON {
+        first_column
+    } else {
+        ((end - EPSILON).max(start) / column_height).floor() as usize
+    };
+    Some(
+        (first_column..=last_column)
+            .map(|column| {
+                let top = if column == first_column {
+                    start - column as f32 * column_height
+                } else {
+                    0.0
+                };
+                let bottom = if column == last_column {
+                    end - column as f32 * column_height
+                } else {
+                    column_height
+                };
+                Piece {
+                    column,
+                    top,
+                    height: (bottom - top).max(0.0),
+                }
+            })
+            .collect(),
+    )
+}
+
+fn count_wrapped_fragments(
+    wrapped: &WrappedBlockTree,
+    leaf_pieces: &[Vec<Piece>],
+    column_height: f32,
+) -> Option<usize> {
+    let mut count = wrapper_pieces_for_tree(wrapped, leaf_pieces, column_height)?.len();
+    let mut offset = 0usize;
+    for child in &wrapped.children {
+        match child {
+            WrappedBlockChild::Leaf(_) => offset += 1,
+            WrappedBlockChild::Wrapper(nested) => {
+                let end = offset.checked_add(nested.leaf_count)?;
+                count = count.checked_add(count_wrapped_fragments(
+                    nested,
+                    leaf_pieces.get(offset..end)?,
+                    column_height,
+                )?)?;
+                offset = end;
             }
-        })
-        .collect()
+        }
+    }
+    (offset == leaf_pieces.len()).then_some(count)
+}
+
+fn push_wrapped_children(
+    tree: &mut LayoutSession<'_>,
+    wrapped: &WrappedBlockTree,
+    leaf_pieces: &[Vec<Piece>],
+    parent_pieces: &[Piece],
+    parent_records: &[usize],
+    context: FragmentationContext,
+    column_height: f32,
+) -> Option<()> {
+    let mut offset = 0usize;
+    for child in &wrapped.children {
+        match child {
+            WrappedBlockChild::Leaf(leaf) => {
+                push_wrapped_block(
+                    tree,
+                    *leaf,
+                    leaf_pieces.get(offset)?,
+                    parent_pieces,
+                    parent_records,
+                    context,
+                    column_height,
+                )?;
+                offset += 1;
+            }
+            WrappedBlockChild::Wrapper(nested) => {
+                let end = offset.checked_add(nested.leaf_count)?;
+                let nested_leaf_pieces = leaf_pieces.get(offset..end)?;
+                let pieces = wrapper_pieces_for_tree(nested, nested_leaf_pieces, column_height)?;
+                let records = push_wrapped_wrapper(
+                    tree,
+                    nested.node,
+                    &pieces,
+                    parent_pieces,
+                    parent_records,
+                    context,
+                    column_height,
+                )?;
+                push_wrapped_children(
+                    tree,
+                    nested,
+                    nested_leaf_pieces,
+                    &pieces,
+                    &records,
+                    context,
+                    column_height,
+                )?;
+                offset = end;
+            }
+        }
+    }
+    (offset == leaf_pieces.len()).then_some(())
+}
+
+fn push_wrapped_wrapper(
+    tree: &mut LayoutSession<'_>,
+    wrapper: usize,
+    pieces: &[Piece],
+    parents: &[Piece],
+    parent_records: &[usize],
+    context: FragmentationContext,
+    column_height: f32,
+) -> Option<Vec<usize>> {
+    let first = pieces.first()?;
+    let parent_first = parents.first()?;
+    let mut layout = tree.nodes[wrapper].unrounded_layout;
+    let x = layout.location.x;
+    let size = layout.size;
+    layout.location = Point {
+        x: x + context.column_offset_x(first.column) - context.column_offset_x(parent_first.column),
+        y: first.top - parent_first.top,
+    };
+    tree.set_unrounded_layout(TaffyNodeId::from(wrapper), &layout);
+    let mut records = Vec::with_capacity(pieces.len());
+    for (index, piece) in pieces.iter().enumerate() {
+        let parent_index = parents
+            .iter()
+            .position(|parent| parent.column == piece.column)?;
+        let parent = &parents[parent_index];
+        let x_offset =
+            context.column_offset_x(piece.column) - context.column_offset_x(parent.column);
+        let record = tree.fragment_tree.try_push(LayoutFragment {
+            node_id: wrapper,
+            parent: Some(parent_records[parent_index]),
+            fragmentainer: context.column_index + piece.column,
+            rect: FragmentRect {
+                x: x + x_offset,
+                y: piece.top - parent.top,
+                width: size.width,
+                height: piece.height,
+            },
+            fragmentainer_clip: (pieces.len() > 1).then_some(FragmentRect {
+                x: x_offset,
+                y: -parent.top,
+                width: (x + size.width).max(context.column_width),
+                height: column_height,
+            }),
+            fragment_index: index,
+            fragment_count: pieces.len(),
+            line_start: None,
+            line_end: None,
+        })?;
+        records.push(record);
+    }
+    Some(records)
+}
+
+/// Remove the wrapper's leading and trailing insets from a leaf's stream
+/// pieces so the leaf fragments keep their own border-box geometry.
+fn trim_wrapped_pieces(pieces: &[Piece], mut leading: f32, mut trailing: f32) -> Vec<Piece> {
+    let mut pieces = pieces.to_vec();
+    for piece in &mut pieces {
+        let trim = leading.min(piece.height);
+        piece.top += trim;
+        piece.height -= trim;
+        leading -= trim;
+    }
+    for piece in pieces.iter_mut().rev() {
+        let trim = trailing.min(piece.height);
+        piece.height -= trim;
+        trailing -= trim;
+    }
+    pieces
 }
 
 /// Record the pieces `pieces` of `leaf`, a block a wrapper holds, under the
@@ -1123,6 +1562,7 @@ pub(super) fn layout(
     definite: bool,
     maximum: Option<f32>,
     outer_height: Option<f32>,
+    allow_wrapped_blocks: bool,
 ) -> Option<f32> {
     // A definite container uses the content height layout gave it, which
     // already reflects min/max constraints and stretching by its parent.
@@ -1145,30 +1585,26 @@ pub(super) fn layout(
     }
     // A wrapper that holds blocks puts them in the stream in its place, so
     // each child has a range of stream items.
-    let wrapped: Vec<Option<Vec<usize>>> = children
+    let mut wrapped: Vec<Option<WrappedBlockTree>> = children
         .iter()
-        .map(|&child| wrapped_blocks(tree, child))
+        .map(|&child| wrapped_blocks(tree, child, allow_wrapped_blocks))
         .collect();
     let mut items = Vec::new();
     let mut spans = Vec::with_capacity(children.len());
-    for ((&child, size), leaves) in children.iter().zip(&sizes).zip(&wrapped) {
+    for ((&child, size), wrapped_tree) in children.iter().zip(&sizes).zip(&mut wrapped) {
         let first = items.len();
-        match leaves {
-            None => items.push(item(tree, child, size.height)),
-            Some(leaves) => {
+        match wrapped_tree {
+            None => {
+                items.push(item(tree, child, size.height));
+            }
+            Some(wrapped_tree) => {
+                let leaves = wrapped_tree.leaf_ids();
                 items.extend(
                     leaves.iter().map(|&leaf| {
                         item(tree, leaf, tree.nodes[leaf].unrounded_layout.size.height)
                     }),
                 );
-                // The wrapper's margins collapse with those of its first
-                // and last blocks.
-                let (top, bottom) =
-                    block_margins(tree.layout_node_with_style(child).unwrap().style)
-                        .unwrap_or_default();
-                let last = items.len() - 1;
-                items[first].margin_top = items[first].margin_top.max(top);
-                items[last].margin_bottom = items[last].margin_bottom.max(bottom);
+                apply_wrapped_layout(tree, wrapped_tree, &mut items, first, context.column_width)?;
             }
         }
         spans.push(first..items.len());
@@ -1216,24 +1652,42 @@ pub(super) fn layout(
         }
     };
     let mut child_pieces: Vec<Vec<Piece>> = Vec::with_capacity(children.len());
-    for (span, leaves) in spans.iter().zip(&wrapped) {
+    let mut wrapped_leaf_pieces: Vec<Option<Vec<Vec<Piece>>>> = Vec::with_capacity(children.len());
+    for (span, wrapped_tree) in spans.iter().zip(&wrapped) {
         let pieces = &placements.pieces[span.clone()];
-        child_pieces.push(match leaves {
-            None => pieces.first()?.clone(),
-            Some(_) => wrapper_pieces(
-                pieces.first()?.first()?,
-                pieces.last()?.last()?,
-                column_height,
-            ),
-        });
+        match wrapped_tree {
+            None => {
+                child_pieces.push(pieces.first()?.clone());
+                wrapped_leaf_pieces.push(None);
+            }
+            Some(wrapped_tree) => {
+                let leaf_pieces = make_wrapped_leaf_pieces(wrapped_tree, pieces)?;
+                child_pieces.push(wrapper_pieces_for_tree(
+                    wrapped_tree,
+                    &leaf_pieces,
+                    column_height,
+                )?);
+                wrapped_leaf_pieces.push(Some(leaf_pieces));
+            }
+        }
     }
-    let planned = placements.pieces.iter().map(Vec::len).sum::<usize>()
-        + wrapped
-            .iter()
-            .zip(&child_pieces)
-            .filter(|(leaves, _)| leaves.is_some())
-            .map(|(_, pieces)| pieces.len())
-            .sum::<usize>();
+    let wrapped_fragments =
+        wrapped.iter().zip(&wrapped_leaf_pieces).try_fold(
+            0usize,
+            |count, (wrapped_tree, leaf_pieces)| match (wrapped_tree, leaf_pieces) {
+                (Some(wrapped_tree), Some(leaf_pieces)) => count.checked_add(
+                    count_wrapped_fragments(wrapped_tree, leaf_pieces, column_height)?,
+                ),
+                (None, None) => Some(count),
+                _ => None,
+            },
+        )?;
+    let planned = placements
+        .pieces
+        .iter()
+        .map(Vec::len)
+        .sum::<usize>()
+        .checked_add(wrapped_fragments)?;
     let absolute = absolute_pieces(
         tree,
         children,
@@ -1346,21 +1800,18 @@ pub(super) fn layout(
             })?;
             records.push(record);
         }
-        if let Some(leaves) = &wrapped[order] {
-            let leaf_pieces = &placements.pieces[spans[order].clone()];
-            let pushed = leaves.iter().zip(leaf_pieces).all(|(&leaf, leaf_pieces)| {
-                push_wrapped_block(
-                    tree,
-                    leaf,
-                    leaf_pieces,
-                    pieces,
-                    &records,
-                    context,
-                    column_height,
-                )
-                .is_some()
-            });
-            pushed.then_some(())?;
+        if let (Some(wrapped_tree), Some(leaf_pieces)) =
+            (&wrapped[order], &wrapped_leaf_pieces[order])
+        {
+            push_wrapped_children(
+                tree,
+                wrapped_tree,
+                leaf_pieces,
+                pieces,
+                &records,
+                context,
+                column_height,
+            )?;
         }
         for piece in absolute {
             tree.fragment_tree.try_push(LayoutFragment {
