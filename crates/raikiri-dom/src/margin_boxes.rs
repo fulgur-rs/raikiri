@@ -460,11 +460,6 @@ enum MarginTextVerticalAlign {
 struct MarginBoxSpec {
     slot: PageMarginBoxSlot,
     content: String,
-    /// Whether `content` ends in a line feed that `margin_box_content` kept
-    /// as a line of its own: a lone line feed, or one that ends a deferred
-    /// slot's placeholder. The shaper's empty line after it is not a line of
-    /// the box.
-    ends_in_kept_feed: bool,
     deferred: Vec<DeferredSlot>,
     background: Option<CssColor>,
     background_clip: VisualBox,
@@ -1066,9 +1061,9 @@ fn margin_box_content(
     style: &ComputedValues,
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
-) -> (String, Vec<DeferredSlot>, bool) {
+) -> (String, Vec<DeferredSlot>) {
     let quotes = margin_box_quotes(style);
-    let (mut text, deferred) = resolved_margin_content(
+    let (text, deferred) = resolved_margin_content(
         &style.content,
         document,
         cascade,
@@ -1078,19 +1073,6 @@ fn margin_box_content(
         &quotes,
         values,
     );
-    let mut ends_in_kept_feed = text.ends_with('\n');
-    // A line feed that ends the text ends its last line; it does not start
-    // another one, which the shaper would count as an empty line. A text of
-    // nothing but a line feed keeps it, as the line it makes, and so does one
-    // that a deferred slot's placeholder ends with. The last of them is
-    // reported: the shaper's empty line after it is not one of the lines.
-    if text.len() > 1
-        && text.ends_with('\n')
-        && deferred.iter().all(|(range, _)| range.end < text.len())
-    {
-        text.pop();
-        ends_in_kept_feed = false;
-    }
     let registry = (!deferred.is_empty()).then(|| {
         Arc::new(fallback_chains(
             &cascade.counter_styles,
@@ -1106,7 +1088,7 @@ fn margin_box_content(
             registry: Arc::clone(registry.as_ref().expect("created for deferred slots")),
         })
         .collect();
-    (text, deferred, ends_in_kept_feed)
+    (text, deferred)
 }
 
 /// The rules of `registry` that formatting in `styles` can reach: each named
@@ -1189,7 +1171,7 @@ fn margin_box_spec(
                 if url.ends_with("/green.png") || url == "green.png"
         )
     });
-    let (content, deferred, ends_in_kept_feed) =
+    let (content, deferred) =
         margin_box_content(document, cascade, page, rule, &style, context, values);
     // A zero size still shapes, at a size too small to see.
     let font_size = style.font_size.px().max(0.1);
@@ -1276,7 +1258,6 @@ fn margin_box_spec(
     Some(MarginBoxSpec {
         slot: rule.slot,
         content,
-        ends_in_kept_feed,
         deferred,
         background,
         background_clip: style.final_background_clip(),
@@ -1542,13 +1523,13 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
                 StandaloneAlign::Start,
             )
             .map_or(explicit_lines, |text| {
-                // The shaper counts a line feed that ends the text as the
-                // start of one more line, with no height. A feed that
-                // `margin_box_content` kept as a line of its own is the one
-                // such feed; the empty line the shaper adds after any other
-                // trailing feed is a line of the box.
-                let ends_in_feed = spec.ends_in_kept_feed && text.lines().len() > 1;
-                (text.lines().len() - usize::from(ends_in_feed)).max(1) as f32
+                // A line feed that ends the text ends its last line; it does
+                // not start another one. The shaper still adds an empty line
+                // after it, with no height, which is not a line of the box.
+                // An empty line between two feeds has a height and is one.
+                let after_last_feed = text.lines().len() > 1
+                    && text.lines().last().is_some_and(|line| line.is_empty());
+                (text.lines().len() - usize::from(after_last_feed)).max(1) as f32
             });
         let font_size = spec.text_style.font_size.max(0.0);
         // Unitless numbers were already resolved against the box's own font

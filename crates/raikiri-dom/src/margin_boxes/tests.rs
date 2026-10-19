@@ -171,7 +171,6 @@ fn fixed_margin_spec() -> MarginBoxSpec {
     MarginBoxSpec {
         slot: PageMarginBoxSlot::TopCenter,
         content: String::new(),
-        ends_in_kept_feed: false,
         deferred: Vec::new(),
         background: Some(CssColor {
             r: 255,

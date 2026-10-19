@@ -129,6 +129,15 @@ fn a_line_feed_that_ends_the_text_does_not_start_another_line() {
     // Only the last of two line feeds ends the text; the first ends the line
     // before the empty one, which is as tall as the line of 'b'.
     assert_eq!(left("a\\A\\A "), left("a\\A b"));
+    // Where the line feed collapses, the shaper adds no empty line after it.
+    let collapsed = |content: &str| {
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @left-top {{ content: '{content}' }} \
+               @left-bottom {{ content: 'c' }} }}"
+        )))
+    };
+    assert_eq!(collapsed("a\\A "), collapsed("a"));
     // Vertical lines share a row the same way: one column per line.
     let top = |content: &str| {
         rects(&boxes_for(&format!(
@@ -138,6 +147,8 @@ fn a_line_feed_that_ends_the_text_does_not_start_another_line() {
         )))
     };
     assert_eq!(top("a\\A b\\A "), top("a\\A b"));
+    // The empty column between two line feeds is one of the columns.
+    assert_eq!(top("a\\A\\A "), top("a\\A b"));
     // A line feed that does not end the text still counts: three lines
     // against the one line of the lower box, shared in the ratio of 3 to 1.
     assert_eq!(
