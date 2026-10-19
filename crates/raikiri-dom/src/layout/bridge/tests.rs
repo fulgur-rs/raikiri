@@ -3375,5 +3375,6 @@ fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
     }
 }
 
+mod aspect_ratio_tests;
 mod content_limit_bridge_tests;
 mod replaced_sizing_tests;

@@ -1516,6 +1516,30 @@ pub(super) fn parse_column_count(input: &mut Parser<'_, '_>) -> Option<ColumnCou
     Some(ColumnCountValue::Count(u32::try_from(count).ok()?))
 }
 
+/// `aspect-ratio: auto || <ratio>` (CSS Box Sizing 4 §5.1
+/// <https://www.w3.org/TR/css-sizing-4/#aspect-ratio>). The two components
+/// may come in either order; `<ratio>` is `<number [0,∞]> [ / <number [0,∞]> ]?`.
+pub(super) fn parse_aspect_ratio(input: &mut Parser<'_, '_>) -> Option<AspectRatioValue> {
+    let mut auto = input.try_parse(|i| i.expect_ident_matching("auto")).is_ok();
+    let ratio = input.try_parse(parse_ratio).ok();
+    if !auto && ratio.is_some() {
+        auto = input.try_parse(|i| i.expect_ident_matching("auto")).is_ok();
+    }
+    (auto || ratio.is_some()).then_some(AspectRatioValue { auto, ratio })
+}
+
+/// `<ratio>`: a width, and a height that defaults to 1.
+fn parse_ratio<'i>(input: &mut Parser<'i, '_>) -> Result<(f32, f32), ParseError<'i, ()>> {
+    let width = super::border_image::parse_non_negative_number(input)?;
+    let height = input
+        .try_parse(|i| {
+            i.expect_delim('/')?;
+            super::border_image::parse_non_negative_number(i)
+        })
+        .unwrap_or(1.0);
+    Ok((width, height))
+}
+
 /// `column-fill: auto | balance | balance-all`.
 pub(super) fn parse_column_fill(input: &mut Parser<'_, '_>) -> Option<ColumnFillValue> {
     ColumnFillValue::from_css_ident(input.expect_ident().ok()?)

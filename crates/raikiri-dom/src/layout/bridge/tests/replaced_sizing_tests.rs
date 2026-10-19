@@ -241,7 +241,6 @@ fn a_grid_image_stretched_on_one_axis_keeps_its_ratio() {
     let doc = laid_out(|doc, body| {
         for image_css in [
             "justify-self:stretch",
-            "align-self:stretch;justify-self:stretch;width:40px",
             "align-self:stretch;justify-self:stretch;position:absolute",
             "align-self:stretch;justify-self:stretch;margin-bottom:auto",
         ] {
@@ -256,9 +255,28 @@ fn a_grid_image_stretched_on_one_axis_keeps_its_ratio() {
     });
     let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
     assert_eq!(sizes[0], (100.0, 200.0));
-    assert_eq!(sizes[1], (40.0, 80.0));
-    assert_eq!(sizes[2].0 / sizes[2].1, 0.5);
-    assert_eq!(sizes[3], (100.0, 200.0));
+    assert_eq!(sizes[1].0 / sizes[1].1, 0.5);
+    assert_eq!(sizes[2], (100.0, 200.0));
+}
+
+#[test]
+fn a_grid_image_with_a_definite_width_and_stretch_alignment_ignores_its_ratio() {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-rows:100px;grid-template-columns:100px;height:100px"),
+        );
+        image = doc.append_element(
+            Some(grid),
+            "img",
+            Style::default(),
+            Some("align-self:stretch;justify-self:stretch;width:40px"),
+        );
+    });
+    assert_eq!(size(&doc, image), (40.0, 100.0));
 }
 
 #[test]

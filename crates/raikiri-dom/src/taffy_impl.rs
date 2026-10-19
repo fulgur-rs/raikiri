@@ -825,7 +825,23 @@ impl LayoutSession<'_> {
                 .unwrap()
                 .style
                 .item_is_replaced;
+            // An empty box that is not replaced content, yet has a preferred
+            // aspect ratio, is a block container like any other: its sizes
+            // follow block flow, including the automatic minimum size and the
+            // way a minimum or maximum carries across the ratio.
+            let ratio_block = !empty
+                && formatting_context == FormattingContext::Block
+                && !item_is_replaced
+                && leaf_intrinsic_size(&tree.nodes[idx]).is_none()
+                && !tree.nodes[idx].is_inline_svg_root()
+                && tree
+                    .layout_node_with_style(idx)
+                    .unwrap()
+                    .style
+                    .aspect_ratio
+                    .is_some();
             let is_leaf = (tree.nodes[idx].children.is_empty()
+                && !ratio_block
                 && (!matches!(
                     formatting_context,
                     FormattingContext::Flex | FormattingContext::Grid

@@ -117,6 +117,7 @@ fn parse_value_with_black_currentcolor(
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
                 | PropertyKey::ColumnSpan
+                | PropertyKey::AspectRatio
                 | PropertyKey::TextGroupAlign
                 | PropertyKey::BorderImage
                 | PropertyKey::BorderImageSource
@@ -1049,6 +1050,8 @@ pub(crate) fn parse_property_grammar(
         "grid-gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
         // CSS Multi-column Layout Module Level 1.
         "column-count" => parse_column_count(input).map(PropertyValue::ColumnCount),
+        // CSS Box Sizing 4 §5.1 <https://www.w3.org/TR/css-sizing-4/#aspect-ratio>.
+        "aspect-ratio" => parse_aspect_ratio(input).map(PropertyValue::AspectRatio),
         "column-fill" => parse_column_fill(input).map(PropertyValue::ColumnFill),
         "column-span" => ColumnSpanValue::from_css_ident(input.expect_ident().ok()?)
             .map(PropertyValue::ColumnSpan),

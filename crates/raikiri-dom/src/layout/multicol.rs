@@ -3158,6 +3158,17 @@ fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
     !is_zero(cv.margin.left) || !is_zero(cv.margin.right)
 }
 
+/// Whether `id` has an `auto` width that follows from a definite height through
+/// a preferred aspect ratio, so the box does not stretch to its container.
+fn width_follows_height(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let cv = &cascade.computed[id];
+    matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+        && !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        && doc
+            .layout_node_with_style(id)
+            .is_some_and(|node| node.style.aspect_ratio.is_some())
+}
+
 /// Ancestor-chain facts for every node of the arena, derived once with each
 /// parent resolved before its children. The multicol preparation pass asks
 /// these questions of every element; walking to the root for each one would
@@ -3170,7 +3181,8 @@ pub(crate) struct AncestorFacts {
     vertical: Vec<bool>,
     /// A strict ancestor is absolutely or fixed positioned.
     out_of_flow_ancestor: Vec<bool>,
-    /// A strict ancestor establishes a flex, grid, or table formatting context.
+    /// A strict ancestor establishes a flex, grid, or table formatting context,
+    /// or takes its width from its height through an aspect ratio.
     non_block_flow_ancestor: Vec<bool>,
     /// A definite width resolved against the parent, else the parent width;
     /// measured `ch` widths include their calc percentage and `contents` inherits.
@@ -3248,6 +3260,7 @@ impl AncestorFacts {
                 PositionValue::Absolute | PositionValue::Fixed
             );
         self.non_block_flow_ancestor[id] = self.non_block_flow_ancestor[parent]
+            || width_follows_height(doc, cascade, parent)
             || (doc.nodes[parent].display().is_flex_or_grid_container()
                 || matches!(
                     doc.nodes[parent].display(),
@@ -3407,6 +3420,8 @@ pub(crate) fn prepare_authored_block_widths(
                 .unwrap()
                 .style
                 .item_is_replaced
+            && !width_follows_height(doc, cascade, idx)
+            && doc.layout_node_with_style(idx).unwrap().style.float == taffy::Float::None
             && !ancestors.out_of_flow_ancestor[idx]
             && !ancestors.non_block_flow_ancestor[idx]
             && let Some(width) = ancestors.authored_containing_width(idx)

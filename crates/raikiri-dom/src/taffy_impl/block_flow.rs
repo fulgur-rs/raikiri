@@ -14,8 +14,8 @@ use shodo::style::TextGroupAlign;
 use sizing::Metrics;
 use taffy::{
     AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutBlockContainer,
-    LayoutInput, LayoutOutput, LayoutPartialTree, Line, NodeId, Position, Rect, RequestedAxis,
-    ResolveOrZero, RunMode, Size, SizingMode, Style, TraversePartialTree,
+    LayoutInput, LayoutOutput, LayoutPartialTree, Line, MaybeMath, NodeId, Position, Rect,
+    RequestedAxis, ResolveOrZero, RunMode, Size, SizingMode, Style, TraversePartialTree,
 };
 
 /// How far block flow moves a child of a left-to-right container to the
@@ -194,6 +194,33 @@ fn intrinsic_widths(
     (width.max(floats.result()), spanning)
 }
 
+/// The min-content width of the content of `node`, which a multicol container
+/// counts across its columns.
+fn min_content_width(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    percent_height: Option<f32>,
+) -> f32 {
+    let multicol = tree.nodes[usize::from(node)]
+        .multicol
+        .filter(|style| style.horizontal);
+    let (columns, spanners) = intrinsic_widths(
+        tree,
+        node,
+        multicol.is_some(),
+        AvailableSpace::MinContent,
+        percent_height,
+    );
+    match multicol {
+        Some(multicol) => {
+            multicol
+                .intrinsic_inline_sizes((columns, columns), (spanners, spanners))
+                .0
+        }
+        None => columns,
+    }
+}
+
 pub(crate) fn compute_block_flow(
     tree: &mut LayoutSession<'_>,
     node: NodeId,
@@ -201,9 +228,18 @@ pub(crate) fn compute_block_flow(
     context: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let style = tree.get_block_container_style(node).clone();
-    let metrics = Metrics::resolve(&style, inputs);
+    let replaced = crate::paint_rules::is_replaced_element(tree, usize::from(node));
+    let metrics = Metrics::resolve(&style, replaced, inputs);
     let width = if let Some(width) = metrics.preferred.width {
-        width
+        if metrics.ratio_width {
+            let minimum = min_content_width(tree, node, metrics.percent_height)
+                + metrics.inset.horizontal_axis_sum();
+            // The width the content asks for is capped by the maximum the
+            // box states, not by one carried over from its height.
+            metrics.clamp_width(width.max(minimum.maybe_clamp(None, metrics.own_max.width)))
+        } else {
+            width
+        }
     } else {
         let multicol = tree.nodes[usize::from(node)]
             .multicol
@@ -245,6 +281,18 @@ pub(crate) fn compute_block_flow(
             },
         };
         metrics.clamp_width(width)
+    };
+    // A width the content settled, with no height to go by, gives the height
+    // through the aspect ratio.
+    let metrics = if style.aspect_ratio.is_some()
+        && metrics.preferred.width.is_none()
+        && metrics.preferred.height.is_none()
+    {
+        let mut sized = inputs;
+        sized.known_dimensions.width = Some(width);
+        Metrics::resolve(&style, replaced, sized)
+    } else {
+        metrics
     };
     let align = tree.nodes[usize::from(node)].text_group_align;
     let mut shared = context.filter(|_| shares_context(&style));
@@ -332,10 +380,14 @@ fn layout_context(
     if ctx.is_bfc_root() {
         natural_end = natural_end.max(ctx.floated_content_height_contribution());
     }
-    let height = metrics
-        .preferred
-        .height
-        .unwrap_or_else(|| metrics.clamp_height(natural_end + metrics.inset.bottom));
+    let height = match metrics.preferred.height {
+        // The content raises the height up to the maximum the box states,
+        // not one carried over from its width.
+        Some(height) if metrics.ratio_height => height
+            .max((natural_end + metrics.inset.bottom).maybe_clamp(None, metrics.own_max.height)),
+        Some(height) => height,
+        None => metrics.clamp_height(natural_end + metrics.inset.bottom),
+    };
     // When `min-height` raises the used height above the content, the last
     // child's bottom margin no longer adjoins the bottom edge. As in
     // browsers, it then neither escapes nor adds to the height that

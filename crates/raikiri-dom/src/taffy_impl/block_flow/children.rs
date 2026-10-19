@@ -365,10 +365,22 @@ pub(super) fn layout(
         room.available_space.width =
             AvailableSpace::Definite((content_width - margin.horizontal_axis_sum()).max(0.0));
         crate::taffy_impl::content_limits::resolve_width_in_style(tree, child, &mut style, &room);
-        let child_metrics = Metrics::resolve(&style, child_input);
-        child_input.known_dimensions.height = child_metrics.preferred.height;
+        let child_metrics = Metrics::resolve(
+            &style,
+            crate::paint_rules::is_replaced_element(tree, usize::from(child)),
+            child_input,
+        );
+        // A size that only follows from the aspect ratio is left for the child
+        // to resolve, since its content may raise it.
+        child_input.known_dimensions.height = child_metrics
+            .preferred
+            .height
+            .filter(|_| !child_metrics.ratio_height);
         if style.float != Float::None {
-            child_input.known_dimensions.width = child_metrics.preferred.width;
+            child_input.known_dimensions.width = child_metrics
+                .preferred
+                .width
+                .filter(|_| !child_metrics.ratio_width);
             child_input.available_space.width =
                 AvailableSpace::Definite((content_width - margin.horizontal_axis_sum()).max(0.0));
             if child_input.known_dimensions.width.is_none() {
@@ -439,10 +451,12 @@ pub(super) fn layout(
         // resolves to `stretch`. `Height`: its border-box height at `width`.
         let mut measure = |probe: BoxProbe| match probe {
             BoxProbe::Width { stretch } => {
-                if let Some(preferred) = child_metrics.preferred.width {
+                if let Some(preferred) = child_metrics.preferred.width
+                    && !child_metrics.ratio_width
+                {
                     return preferred;
                 }
-                if stretches {
+                if stretches && !child_metrics.ratio_width {
                     return child_metrics.clamp_width(stretch.max(0.0));
                 }
                 let mut measure = child_input;

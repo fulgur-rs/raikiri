@@ -7926,6 +7926,7 @@ impl DeferredValue {
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
                 | PropertyKey::ColumnSpan
+                | PropertyKey::AspectRatio
                 | PropertyKey::TextGroupAlign
                 | PropertyKey::BorderImage
                 | PropertyKey::BorderImageSource
@@ -9209,6 +9210,53 @@ css_keywords!(ObjectFit {
     None => "none",
     ScaleDown => "scale-down",
 });
+
+/// Specified and computed value of `aspect-ratio`.
+///
+/// CSS Box Sizing Module Level 4 §5.1
+/// <https://www.w3.org/TR/css-sizing-4/#aspect-ratio>. Grammar: `auto ||
+/// <ratio>`, where `<ratio>` is `<number [0,∞]> [ / <number [0,∞]> ]?`.
+/// **Non-inherited**, initial `auto`. The computed value keeps the keyword
+/// and the ratio as two numbers (a lone number is `<number> / 1`).
+///
+/// The preferred aspect ratio a box uses is decided by [`Self::preferred`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AspectRatioValue {
+    /// Whether `auto` was given. With a `<ratio>` as well, a replaced box
+    /// with a natural ratio keeps that ratio and the `<ratio>` stands in for
+    /// a box without one.
+    pub auto: bool,
+    /// The `<ratio>` as (width, height). `None` for a lone `auto`. A term of
+    /// zero makes the ratio degenerate, which behaves as `auto`.
+    pub ratio: Option<(f32, f32)>,
+}
+
+impl AspectRatioValue {
+    /// The initial value, `auto`.
+    pub const AUTO: Self = Self {
+        auto: true,
+        ratio: None,
+    };
+
+    /// The preferred aspect ratio (width divided by height) of a box whose
+    /// natural ratio is `natural`, `None` for a box without one.
+    ///
+    /// A `<ratio>` without `auto` replaces the natural ratio. With `auto`,
+    /// the natural ratio is kept when there is one. A degenerate or missing
+    /// `<ratio>` leaves the natural ratio, as `auto` does.
+    pub fn preferred(self, natural: Option<f32>) -> Option<f32> {
+        let natural = natural.filter(|ratio| ratio.is_finite() && *ratio > 0.0);
+        let specified = self.ratio.and_then(|(width, height)| {
+            let ratio = width / height;
+            (width > 0.0 && height > 0.0 && ratio.is_finite() && ratio > 0.0).then_some(ratio)
+        });
+        match specified {
+            Some(_) if self.auto && natural.is_some() => natural,
+            Some(ratio) => Some(ratio),
+            None => natural,
+        }
+    }
+}
 
 /// Specified value of `isolation`.
 ///
@@ -11670,6 +11718,11 @@ pub enum PropertyValue {
     /// is a number, percentage or length an SVG renderer resolves; same shape
     /// as [`PropertyValue::Fill`].
     StrokeDashoffset(Box<str>),
+    /// `aspect-ratio` — **non-inherited**, initial `auto` (CSS Box Sizing 4
+    /// §5.1; see [`AspectRatioValue`]). Appended as a new field disjoint
+    /// one-to-one from existing fields, under the placement rule in
+    /// [`PropertyKey`].
+    AspectRatio(AspectRatioValue),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12303,6 +12356,10 @@ pub enum PropertyKey {
     StrokeMiterlimit,
     StrokeDasharray,
     StrokeDashoffset,
+    // CSS Box Sizing 4 aspect-ratio (semantics on the matching
+    // PropertyValue::AspectRatio variant); appended to preserve existing key
+    // slots.
+    AspectRatio,
 }
 
 impl PropertyValue {
@@ -12587,6 +12644,7 @@ impl PropertyValue {
             PropertyValue::StrokeMiterlimit(_) => PropertyKey::StrokeMiterlimit,
             PropertyValue::StrokeDasharray(_) => PropertyKey::StrokeDasharray,
             PropertyValue::StrokeDashoffset(_) => PropertyKey::StrokeDashoffset,
+            PropertyValue::AspectRatio(_) => PropertyKey::AspectRatio,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
             PropertyValue::BorderSpacing(_) => PropertyKey::BorderSpacing,
@@ -13750,6 +13808,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "stroke-miterlimit" => PropertyKey::StrokeMiterlimit,
         "stroke-dasharray" => PropertyKey::StrokeDasharray,
         "stroke-dashoffset" => PropertyKey::StrokeDashoffset,
+        "aspect-ratio" => PropertyKey::AspectRatio,
         _ => return None,
     })
 }

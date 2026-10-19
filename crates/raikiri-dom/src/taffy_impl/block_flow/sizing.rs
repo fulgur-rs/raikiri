@@ -3,7 +3,7 @@
 use crate::taffy_impl::resolve_calc;
 use taffy::{
     BoxSizing, CoreStyle, LayoutInput, MaybeMath, MaybeResolve, Overflow, Rect, ResolveOrZero,
-    Size, SizingMode,
+    Size, SizingMode, Style,
 };
 
 #[derive(Clone, Copy)]
@@ -15,11 +15,35 @@ pub(super) struct Metrics {
     pub preferred: Size<Option<f32>>,
     pub min: Size<Option<f32>>,
     pub max: Size<Option<f32>>,
+    /// The maximum size the box states itself, without the part carried over
+    /// from the other axis through the aspect ratio.
+    pub own_max: Size<Option<f32>>,
     pub percent_height: Option<f32>,
+    /// The preferred height comes only from `aspect-ratio`, so the content may
+    /// raise it: an automatic `min-height` is the height of the content.
+    pub ratio_height: bool,
+    /// As `ratio_height`, for a width the box takes from its height.
+    pub ratio_width: bool,
+}
+
+/// The minimum and maximum size of one axis from the ones the box states,
+/// `[min, max]`, and the ones carried over from the other axis through the
+/// aspect ratio. A carried minimum never overrides a maximum the box states,
+/// nor a carried maximum a minimum it states.
+fn bounds(own: [Option<f32>; 2], carried: [Option<f32>; 2]) -> (Option<f32>, Option<f32>) {
+    let [own_min, own_max] = own;
+    let carried_min = carried[0].map(|size| own_max.map_or(size, |max| size.min(max)));
+    let carried_max = carried[1].map(|size| own_min.map_or(size, |min| size.max(min)));
+    // A bound is only carried into an axis that states none of its own, so at
+    // most one of each pair is set.
+    let min = own_min.or(carried_min);
+    let max = own_max.or(carried_max);
+    (min, max)
 }
 
 impl Metrics {
-    pub(super) fn resolve(style: &impl CoreStyle, inputs: LayoutInput) -> Self {
+    /// `replaced` is whether the box is a replaced element.
+    pub(super) fn resolve(style: &Style, replaced: bool, inputs: LayoutInput) -> Self {
         let padding = style
             .padding()
             .resolve_or_zero(inputs.parent_size.width, resolve_calc);
@@ -32,19 +56,55 @@ impl Metrics {
         } else {
             Size::ZERO
         };
-        let min = style
+        let specified = style.size().maybe_resolve(inputs.parent_size, resolve_calc);
+        let ratio = style.aspect_ratio();
+        // A minimum or maximum carries across the aspect ratio only into an
+        // axis whose preferred size is `auto`. Under `ContentSize` the
+        // authored size is ignored, so every axis is `auto`. Replaced content
+        // always carries them: an `auto` size of an inline `<svg>` is stood
+        // in for by a percentage.
+        let carried = |own: Size<Option<f32>>| {
+            let across = own.maybe_apply_aspect_ratio(ratio);
+            let auto = |preferred: Option<f32>| {
+                replaced || inputs.sizing_mode != SizingMode::InherentSize || preferred.is_none()
+            };
+            Size {
+                width: across
+                    .width
+                    .filter(|_| own.width.is_none() && auto(specified.width)),
+                height: across
+                    .height
+                    .filter(|_| own.height.is_none() && auto(specified.height)),
+            }
+        };
+        let own_min = style
             .min_size()
-            .maybe_resolve(inputs.parent_size, resolve_calc)
-            .maybe_apply_aspect_ratio(style.aspect_ratio())
-            .maybe_add(adjustment);
-        let max = style
+            .maybe_resolve(inputs.parent_size, resolve_calc);
+        let own_max = style
             .max_size()
-            .maybe_resolve(inputs.parent_size, resolve_calc)
-            .maybe_apply_aspect_ratio(style.aspect_ratio())
-            .maybe_add(adjustment);
-        let authored = style
-            .size()
-            .maybe_resolve(inputs.parent_size, resolve_calc)
+            .maybe_resolve(inputs.parent_size, resolve_calc);
+        let carried_min = carried(own_min);
+        let carried_max = carried(own_max);
+        let (min_width, max_width) = bounds(
+            [own_min.width, own_max.width],
+            [carried_min.width, carried_max.width],
+        );
+        let (min_height, max_height) = bounds(
+            [own_min.height, own_max.height],
+            [carried_min.height, carried_max.height],
+        );
+        let min = Size {
+            width: min_width,
+            height: min_height,
+        }
+        .maybe_add(adjustment);
+        let max = Size {
+            width: max_width,
+            height: max_height,
+        }
+        .maybe_add(adjustment);
+        let own_max = own_max.maybe_add(adjustment);
+        let authored = specified
             .maybe_apply_aspect_ratio(style.aspect_ratio())
             .maybe_add(adjustment);
         let preferred = inputs
@@ -56,8 +116,40 @@ impl Metrics {
             })
             .maybe_clamp(min, max)
             .maybe_max(padding_border.sum_axes())
+            .maybe_sub(adjustment)
             .maybe_apply_aspect_ratio(style.aspect_ratio())
+            .maybe_add(adjustment)
             .maybe_clamp(min, max);
+        // An axis is ratio-dependent when its size is not authored or imposed
+        // but follows from the other axis through the preferred aspect ratio.
+        // Unless the box scrolls or `min-*` says otherwise, it may then not
+        // end up smaller than its content on that axis.
+        let ratio_dependent = |known: Option<f32>,
+                               specified: Option<f32>,
+                               preferred: Option<f32>,
+                               min_is_auto: bool,
+                               overflow: Overflow| {
+            style.aspect_ratio().is_some()
+                && known.is_none()
+                && (inputs.sizing_mode != SizingMode::InherentSize || specified.is_none())
+                && preferred.is_some()
+                && min_is_auto
+                && !overflow.is_scroll_container()
+        };
+        let ratio_width = ratio_dependent(
+            inputs.known_dimensions.width,
+            specified.width,
+            preferred.width,
+            style.min_size().width.is_auto(),
+            style.overflow().x,
+        );
+        let ratio_height = ratio_dependent(
+            inputs.known_dimensions.height,
+            specified.height,
+            preferred.height,
+            style.min_size().height.is_auto(),
+            style.overflow().y,
+        );
         let gutter = |overflow| {
             if overflow == Overflow::Scroll {
                 style.scrollbar_width()
@@ -92,7 +184,10 @@ impl Metrics {
             preferred,
             min,
             max,
+            own_max,
             percent_height,
+            ratio_height,
+            ratio_width,
         }
     }
 

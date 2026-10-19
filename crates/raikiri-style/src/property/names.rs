@@ -21,6 +21,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "align-items",
         "align-self",
         "all",
+        "aspect-ratio",
         "background",
         "background-attachment",
         "background-clip",

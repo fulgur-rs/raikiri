@@ -672,6 +672,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_)
         | PropertyValue::ColumnSpan(_)
+        | PropertyValue::AspectRatio(_)
         | PropertyValue::ColumnRuleStyle(_)
         | PropertyValue::ColumnRuleColor(_)
         | PropertyValue::ColumnCount(_)
