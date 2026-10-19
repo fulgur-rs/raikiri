@@ -160,63 +160,97 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             inside_fixed_containing_block,
             ..
         } = inputs;
-        let (document, cascade, counter_snapshots) =
-            (self.document, self.cascade, self.counter_snapshots);
         let placement = self.placement(&inputs, node, layout);
         let Placement {
             cv,
-            abs_x,
-            abs_y,
-            generates_box,
             paint_padding,
-            paint_border_radius,
-            child_shift_y,
-            pos_dx,
-            pos_dy,
-            transformable,
-            child_transform_x,
-            child_transform_y,
-            placed_in_column,
-            fixed_in_viewport,
-            establishes_fixed_containing_block,
-            fixed_dx,
-            fixed_dy,
             paint_x,
             paint_y,
+            ..
         } = placement;
-        if transformable
+        if placement.transformable
             && !translation_only(cv)
             && !self.push_transform(cv, layout, paint_x, paint_y)
         {
             return None;
         }
         let cut = self.cut_by_fragmentainers(&inputs, layout, paint_x, paint_y);
-        let FragmentCut {
-            multicol_clip_pushed,
-            fragmentainer_clip_pushed,
-            ..
-        } = cut;
         // A collapsed-border table cell paints the borders that won
         // conflict resolution with its rows, neighbours and table.
-        let painted_border = document
+        let painted_border = self
+            .document
             .get_node(node_id)
             .and_then(|node| node.collapsed_border())
             .unwrap_or(&cv.border);
-        let PageExtent {
-            paint_y,
-            mut paint_height,
-            mut paint_background_height,
-            paints_on_page,
-            paints_as_absolute_continuation,
-            unfragmented_top,
-        } = self.page_extent(&inputs, node, layout, &placement, &cut);
-        // The pseudo is not an arena child yet, so Taffy cannot
-        // include its line box in an auto-height originating box.
-        // Expand only the auto-height paint geometry; fixed-height
-        // elements retain their normal overflow behavior. This is a
-        // paint-side bridge: the arena/Taffy flow remains unchanged
-        // until generated inline boxes can participate in layout.
-        if !paints_as_absolute_continuation
+        let mut extent = self.page_extent(&inputs, node, layout, &placement, &cut);
+        self.grow_for_generated_flow(node_id, layout, &placement, &mut extent);
+        let generated_x = paint_x + cv.border.left.width().px() + paint_padding.left;
+        let generated_y = extent.paint_y + cv.border.top.width().px() + paint_padding.top;
+        Some(ElementBox {
+            node,
+            node_id,
+            cv,
+            layout,
+            fragment_id,
+            inside_fixed,
+            inside_fixed_containing_block,
+            abs_x: placement.abs_x,
+            abs_y: placement.abs_y,
+            generates_box: placement.generates_box,
+            paint_padding,
+            paint_border_radius: placement.paint_border_radius,
+            child_shift_y: placement.child_shift_y,
+            pos_dx: placement.pos_dx,
+            pos_dy: placement.pos_dy,
+            fixed_dx: placement.fixed_dx,
+            fixed_dy: placement.fixed_dy,
+            child_transform_x: placement.child_transform_x,
+            child_transform_y: placement.child_transform_y,
+            placed_in_column: placement.placed_in_column,
+            fixed_in_viewport: placement.fixed_in_viewport,
+            establishes_fixed_containing_block: placement.establishes_fixed_containing_block,
+            paint_x,
+            paint_y: extent.paint_y,
+            paint_height: extent.paint_height,
+            paint_background_height: extent.paint_background_height,
+            multicol_clip_pushed: cut.multicol_clip_pushed,
+            fragmentainer_clip_pushed: cut.fragmentainer_clip_pushed,
+            painted_border,
+            paints_on_page: extent.paints_on_page,
+            paints_as_absolute_continuation: extent.paints_as_absolute_continuation,
+            unfragmented_top: extent.unfragmented_top,
+            generated_x,
+            generated_y,
+            generated_content_advance: generated_content_advance(
+                self.document,
+                node,
+                cv,
+                paint_padding,
+            ),
+        })
+    }
+
+    /// Grow the paint height of the auto-height element `node_id` to hold
+    /// the line boxes of its generated content.
+    ///
+    /// The pseudo is not an arena child yet, so Taffy cannot include its line
+    /// box in an auto-height originating box. Only the auto-height paint
+    /// geometry expands; fixed-height elements retain their normal overflow
+    /// behavior. This is a paint-side bridge: the arena/Taffy flow remains
+    /// unchanged until generated inline boxes can participate in layout.
+    fn grow_for_generated_flow(
+        &mut self,
+        node_id: usize,
+        layout: taffy::Layout,
+        placement: &Placement<'w>,
+        extent: &mut PageExtent,
+    ) {
+        let Placement {
+            cv, paint_padding, ..
+        } = *placement;
+        let (document, cascade, counter_snapshots) =
+            (self.document, self.cascade, self.counter_snapshots);
+        if !extent.paints_as_absolute_continuation
             && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
         {
             let pseudo_height = generated_flow_height(
@@ -231,70 +265,15 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 + pseudo_height
                 + paint_padding.bottom
                 + cv.border.bottom.width().px();
-            if pseudo_border_height > paint_height {
+            if pseudo_border_height > extent.paint_height {
                 let was_intrinsic_height =
-                    (paint_background_height - layout.size.height).abs() <= f32::EPSILON;
-                paint_height = pseudo_border_height;
+                    (extent.paint_background_height - layout.size.height).abs() <= f32::EPSILON;
+                extent.paint_height = pseudo_border_height;
                 if was_intrinsic_height {
-                    paint_background_height = paint_height;
+                    extent.paint_background_height = extent.paint_height;
                 }
             }
         }
-        let generated_x = paint_x + cv.border.left.width().px() + paint_padding.left;
-        let generated_y = paint_y + cv.border.top.width().px() + paint_padding.top;
-        // Direct text children are the only inline descendants whose
-        // current minimal layout path has a reliable horizontal box.
-        // Use their right edge for `::after`; element children stay
-        // on the existing block-flow path until a full IFC lands.
-        let generated_content_advance = node
-            .children
-            .iter()
-            .filter_map(|child_id| document.get_node(*child_id))
-            .filter(|child| child.kind() == NodeKind::Text)
-            .map(|child| {
-                (child.unrounded_layout.location.x + child.unrounded_layout.size.width
-                    - cv.border.left.width().px()
-                    - paint_padding.left)
-                    .max(0.0)
-            })
-            .fold(0.0, f32::max);
-        Some(ElementBox {
-            node,
-            node_id,
-            cv,
-            layout,
-            fragment_id,
-            inside_fixed,
-            inside_fixed_containing_block,
-            abs_x,
-            abs_y,
-            generates_box,
-            paint_padding,
-            paint_border_radius,
-            child_shift_y,
-            pos_dx,
-            pos_dy,
-            fixed_dx,
-            fixed_dy,
-            child_transform_x,
-            child_transform_y,
-            placed_in_column,
-            fixed_in_viewport,
-            establishes_fixed_containing_block,
-            paint_x,
-            paint_y,
-            paint_height,
-            paint_background_height,
-            multicol_clip_pushed,
-            fragmentainer_clip_pushed,
-            painted_border,
-            paints_on_page,
-            paints_as_absolute_continuation,
-            unfragmented_top,
-            generated_x,
-            generated_y,
-            generated_content_advance,
-        })
     }
 
     /// Where the box of the element `inputs.node_id` lies, before any
@@ -813,6 +792,32 @@ fn is_absolute_fragment_candidate(cv: &ComputedValues) -> bool {
             || cv.border.bottom.width().px() > 0.0
             || cv.border.left.width().px() > 0.0)
         && cv.background_color.a != 0
+}
+
+/// How far the direct text children of `node` reach along the line, from its
+/// content box.
+///
+/// Direct text children are the only inline descendants whose current minimal
+/// layout path has a reliable horizontal box. Their right edge places
+/// `::after`; element children stay on the existing block-flow path until a
+/// full IFC lands.
+fn generated_content_advance(
+    document: &Document,
+    node: &Node,
+    cv: &ComputedValues,
+    paint_padding: taffy::Rect<f32>,
+) -> f32 {
+    node.children
+        .iter()
+        .filter_map(|child_id| document.get_node(*child_id))
+        .filter(|child| child.kind() == NodeKind::Text)
+        .map(|child| {
+            (child.unrounded_layout.location.x + child.unrounded_layout.size.width
+                - cv.border.left.width().px()
+                - paint_padding.left)
+                .max(0.0)
+        })
+        .fold(0.0, f32::max)
 }
 
 /// The farthest bottom edge, among the in-flow children of `node` laid out
