@@ -109,6 +109,25 @@ fn the_maximum_width_the_block_states_caps_a_width_the_content_raised() {
 }
 
 #[test]
+fn a_size_contained_empty_block_keeps_the_ratio_it_states() {
+    assert_eq!(
+        ratio_box_size_with("contain:size;width:100px;aspect-ratio:1/1", None),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn a_size_contained_block_ignores_its_content_but_not_its_ratio() {
+    assert_eq!(
+        ratio_box_size(
+            "contain:size;width:100px;aspect-ratio:2/1",
+            "width:300px;height:300px"
+        ),
+        (100.0, 50.0)
+    );
+}
+
+#[test]
 fn a_floated_block_width_from_the_ratio_grows_to_its_min_content_width() {
     assert_eq!(
         ratio_box_size(

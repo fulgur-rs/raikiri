@@ -849,10 +849,10 @@ impl LayoutSession<'_> {
                 || tree.nodes[idx].is_inline_svg_root();
             if empty && is_leaf {
                 // Replaced content with size containment has no natural size
-                // or aspect ratio.
-                let mut style = tree.layout_node_with_style(idx).unwrap().style.clone();
-                style.aspect_ratio = None;
-                return compute_leaf_layout(inputs, &style, resolve_calc, |known, _| Size {
+                // or aspect ratio; the style bridge left only the ratio the
+                // box states itself.
+                let style = &tree.layout_node_with_style(idx).unwrap().style;
+                return compute_leaf_layout(inputs, style, resolve_calc, |known, _| Size {
                     width: known.width.unwrap_or(0.0),
                     height: known.height.unwrap_or(0.0),
                 });
