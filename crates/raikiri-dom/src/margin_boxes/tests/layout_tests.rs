@@ -1365,6 +1365,66 @@ fn a_sizing_keyword_ignores_negative_margins_that_empty_the_outer_size() {
 }
 
 #[test]
+fn a_box_sized_along_its_edge_keeps_its_size_whatever_its_negative_margins() {
+    // The margins take 40px off a 10px box, so its outer size is below zero.
+    // The border box is still the 10px the box asks for, and it sits where the
+    // margins put it: 20px before the start of the strip, or of the column.
+    for size in ["10px", "max-content"] {
+        assert_eq!(
+            rects(&boxes_for(&format!(
+                "@page {{ margin: 40px; {AHEM} \
+                   @top-left {{ content: 'x'; width: {size}; \
+                     margin-left: -20px; margin-right: -20px }} }}"
+            ))),
+            [(PageMarginBoxSlot::TopLeft, [20.0, 0.0, 10.0, 40.0])],
+            "width: {size}"
+        );
+        assert_eq!(
+            rects(&boxes_for(&format!(
+                "@page {{ margin: 40px; {AHEM} \
+                   @left-top {{ content: 'x'; height: {size}; \
+                     margin-top: -20px; margin-bottom: -20px }} }}"
+            ))),
+            [(PageMarginBoxSlot::LeftTop, [0.0, 20.0, 40.0, 10.0])],
+            "height: {size}"
+        );
+    }
+}
+
+#[test]
+fn a_centered_box_with_negative_margins_is_centered_by_its_negative_outer_size() {
+    // The margin box is 30px inverted around the middle of the 320px strip, so
+    // the 10px border box is centered on it too.
+    assert_eq!(
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-center {{ content: 'x'; width: 10px; \
+                 margin-left: -20px; margin-right: -20px }} }}"
+        ))),
+        [(PageMarginBoxSlot::TopCenter, [195.0, 0.0, 10.0, 40.0])]
+    );
+}
+
+#[test]
+fn a_box_next_to_one_with_negative_margins_takes_the_edge_space_they_free() {
+    // The 10px box has a margin box of -30px, so the `auto` box beside it
+    // takes the 320px of the strip and the 30px that box gives back, and the
+    // two margin boxes meet where the first one ends.
+    assert_eq!(
+        rects(&boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: 'x'; width: 10px; \
+                 margin-left: -20px; margin-right: -20px }} \
+               @top-right {{ content: 'y' }} }}"
+        ))),
+        [
+            (PageMarginBoxSlot::TopLeft, [20.0, 0.0, 10.0, 40.0]),
+            (PageMarginBoxSlot::TopRight, [10.0, 0.0, 350.0, 40.0]),
+        ]
+    );
+}
+
+#[test]
 fn named_values_follow_document_order_after_the_tree_changes() {
     // Moving the first heading after the second, and detaching a third,
     // leaves the arena order unlike the document order.
