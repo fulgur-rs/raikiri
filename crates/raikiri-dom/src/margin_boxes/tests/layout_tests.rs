@@ -1345,6 +1345,26 @@ fn a_content_image_counts_in_the_height_of_a_left_box() {
 }
 
 #[test]
+fn a_sizing_keyword_ignores_negative_margins_that_empty_the_outer_size() {
+    // The outer size of the 10px line is below zero with these margins, but
+    // the box still has the content of one line.
+    let height = |keyword: &str| {
+        let boxes = boxes_for(&format!(
+            "@page {{ margin: 40px; {AHEM} \
+               @top-left {{ content: 'x'; height: {keyword}; \
+                 margin-top: -20px; margin-bottom: -20px }} }}"
+        ));
+        let [margin_box] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        margin_box.rect.height
+    };
+    for keyword in ["max-content", "min-content", "fit-content"] {
+        assert_eq!(height(keyword), 10.0, "{keyword}");
+    }
+}
+
+#[test]
 fn named_values_follow_document_order_after_the_tree_changes() {
     // Moving the first heading after the second, and detaching a third,
     // leaves the arena order unlike the document order.

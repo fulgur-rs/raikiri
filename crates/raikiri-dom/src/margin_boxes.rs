@@ -1575,7 +1575,8 @@ fn text_width_floor(spec: &MarginBoxSpec) -> f32 {
     }
 }
 
-fn margin_box_intrinsic_width(
+/// The content width of `spec`: that of its text and image on a single line.
+fn margin_box_content_width(
     document: &Document,
     spec: &MarginBoxSpec,
     available_height: f32,
@@ -1585,17 +1586,15 @@ fn margin_box_intrinsic_width(
     let content_height = spec
         .fixed_content_size(Axis::Vertical, available_height)
         .max(0.0);
-    spec.frame(Axis::Horizontal)
-        .outer(margin_box_text_width(document, spec, Some(content_height)))
-        .max(0.0)
+    margin_box_text_width(document, spec, Some(content_height))
 }
 
-/// The outer height of `spec` with its text on as many lines as it takes at
-/// the width the box has in a column of `cross_size`.
-fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_size: f32) -> f32 {
+/// The content height of `spec`: its text on as many lines as it takes at the
+/// width the box has in a column of `cross_size`, or its image if taller.
+fn margin_box_content_height(document: &Document, spec: &MarginBoxSpec, cross_size: f32) -> f32 {
     let image_height = spec.content_image_size(Axis::Vertical);
     if spec.content.is_empty() {
-        return spec.frame(Axis::Vertical).outer(image_height).max(0.0);
+        return image_height;
     }
     let text_height = if spec.text_style.writing_mode.is_vertical() {
         document
@@ -1641,9 +1640,7 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec, cross_
         };
         line_count * line_height.max(0.0)
     };
-    spec.frame(Axis::Vertical)
-        .outer(text_height.max(image_height))
-        .max(0.0)
+    text_height.max(image_height)
 }
 
 /// One side of the page-margin area: the three slots along it, in
@@ -1718,20 +1715,37 @@ fn edge_max_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, cross_si
     if spec.size(axis).is_some() {
         return spec.outer_size(axis, 0.0);
     }
+    spec.frame(axis)
+        .outer(edge_max_content(document, spec, axis, cross_size))
+        .max(0.0)
+}
+
+/// The max-content size of the content box of `spec` along the `axis` of its
+/// edge, which a negative margin can leave below what the outer size shows.
+fn edge_max_content(document: &Document, spec: &MarginBoxSpec, axis: Axis, cross_size: f32) -> f32 {
     match axis {
-        Axis::Horizontal => margin_box_intrinsic_width(document, spec, cross_size),
-        Axis::Vertical => margin_box_intrinsic_height(document, spec, cross_size),
+        Axis::Horizontal => margin_box_content_width(document, spec, cross_size),
+        Axis::Vertical => margin_box_content_height(document, spec, cross_size),
     }
 }
 
 /// The outer min-content size of `spec` along the `axis` of its edge, given
 /// its `max` size: that of its text broken at every opportunity.
 fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32) -> f32 {
+    match edge_min_content(document, spec, axis) {
+        Some(content) => spec.frame(axis).outer(content).max(0.0).min(max),
+        None => max,
+    }
+}
+
+/// The content size of `spec` along the `axis` of its edge with its text
+/// broken at every opportunity, or `None` where that is its max-content size.
+fn edge_min_content(document: &Document, spec: &MarginBoxSpec, axis: Axis) -> Option<f32> {
     // Text can break at every opportunity along its inline axis. Across it,
     // the size is the same however narrow the box gets.
     let along_inline_axis = spec.text_style.writing_mode.is_vertical() == (axis == Axis::Vertical);
     if spec.size(axis).is_some() || !along_inline_axis || spec.content.is_empty() {
-        return max;
+        return None;
     }
     let image = spec.content_image_size(axis);
     let measured = document
@@ -1745,10 +1759,7 @@ fn edge_min_size(document: &Document, spec: &MarginBoxSpec, axis: Axis, max: f32
             Axis::Horizontal => text.width().max(text_width_floor(spec)),
             Axis::Vertical => text.height(),
         });
-    spec.frame(axis)
-        .outer(measured.max(image).max(0.0))
-        .max(0.0)
-        .min(max)
+    Some(measured.max(image).max(0.0))
 }
 
 /// The content size along `axis` that the sizing `keyword` of `spec` asks for
@@ -1765,15 +1776,16 @@ fn keyword_content_size(
     cross_size: f32,
 ) -> f32 {
     let frame = spec.frame(axis).outer(0.0);
-    let content_of = |outer: f32| (outer - frame).max(0.0);
-    let outer_max = edge_max_size(document, spec, axis, cross_size);
+    // Work on the content box throughout: an outer size clamped at zero by
+    // negative margins cannot be turned back into the content size.
+    let max = edge_max_content(document, spec, axis, cross_size).max(0.0);
     if keyword == SizeKeyword::MaxContent {
-        return content_of(outer_max);
+        return max;
     }
     // The text is measured once more, at its narrowest, only for the keywords
     // that can end up below the max-content size.
-    let min = content_of(edge_min_size(document, spec, axis, outer_max));
-    let fit = |space: f32| content_of(outer_max).min(min.max(space));
+    let min = edge_min_content(document, spec, axis).map_or(max, |min| min.max(0.0).min(max));
+    let fit = |space: f32| max.min(min.max(space));
     match keyword {
         SizeKeyword::FitContent => fit((available - frame).max(0.0)),
         SizeKeyword::FitContentOf(limit) => fit(limit),
