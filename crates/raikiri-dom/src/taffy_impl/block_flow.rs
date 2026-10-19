@@ -81,14 +81,35 @@ fn child_inputs(parent: Size<Option<f32>>, width: Option<f32>, run_mode: RunMode
 
 /// Whether a spanner lies below `node` in blocks that share its formatting
 /// context, so that it spans the columns of the multicol container around
-/// `node` all the same. A block with an authored width is measured as a whole.
+/// `node` all the same.
 fn contains_spanner(tree: &LayoutSession<'_>, node: NodeId) -> bool {
     tree.child_ids(node).any(|child| {
         let style = child_style(tree, child);
         shares_context(&style)
             && (crate::layout::is_spanner(tree, usize::from(child))
-                || style.size.width.is_auto() && contains_spanner(tree, child))
+                || contains_spanner(tree, child))
     })
+}
+
+/// The width of the margin box of `child` under `space`, measured as a whole.
+fn outer_width(
+    tree: &mut LayoutSession<'_>,
+    child: NodeId,
+    margin: f32,
+    space: AvailableSpace,
+    percent_height: Option<f32>,
+) -> f32 {
+    let parent_size = Size {
+        width: None,
+        height: percent_height,
+    };
+    let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
+    inputs.available_space.width = space;
+    let measured =
+        measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
+            tree.compute_child_layout_with_block_ctx(child, inputs, None)
+        });
+    measured.size.width + margin
 }
 
 /// The width of the content of `node` under `space`, as `(columns, spanners)`:
@@ -125,7 +146,8 @@ fn intrinsic_widths(
             && contains_spanner(tree, child)
         {
             // The box holds both columns and spanners; its own edges are
-            // around each of them.
+            // around each of them. A width of its own fixes what it adds to
+            // the columns, and leaves the spanners below it as they are.
             let edges = margin.horizontal_axis_sum()
                 + style
                     .padding
@@ -136,21 +158,28 @@ fn intrinsic_widths(
                     .resolve_or_zero(None, resolve_calc)
                     .horizontal_axis_sum();
             let (inner, spanners) = intrinsic_widths(tree, child, true, space, percent_height);
-            width = width.max(inner + edges);
+            let columns = if style.size.width.is_auto() {
+                inner + edges
+            } else {
+                outer_width(
+                    tree,
+                    child,
+                    margin.horizontal_axis_sum(),
+                    space,
+                    percent_height,
+                )
+            };
+            width = width.max(columns);
             spanning = spanning.max(spanners + edges);
             continue;
         }
-        let parent_size = Size {
-            width: None,
-            height: percent_height,
-        };
-        let mut inputs = child_inputs(parent_size, None, RunMode::ComputeSize);
-        inputs.available_space.width = space;
-        let measured =
-            measure_against_parent_height(tree, usize::from(child), percent_height, |tree| {
-                tree.compute_child_layout_with_block_ctx(child, inputs, None)
-            });
-        let child_width = measured.size.width + margin.horizontal_axis_sum();
+        let child_width = outer_width(
+            tree,
+            child,
+            margin.horizontal_axis_sum(),
+            space,
+            percent_height,
+        );
         match style.float {
             Float::Left => floats.add_float(child_width, taffy::FloatDirection::Left, style.clear),
             Float::Right => {

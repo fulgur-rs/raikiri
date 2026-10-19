@@ -2219,6 +2219,9 @@ fn a_spanner_in_plain_blocks_spans_the_columns_of_a_fit_content_container() {
         ("<div><div>{}</div></div>", 60),
         ("<div style='padding:0 10px'><div>{}</div></div>", 80),
         ("<div style='margin:0 5px'>{}</div>", 70),
+        // A width of the block sizes it as column content only.
+        ("<div style='width:20px'>{}</div>", 60),
+        ("<div style='width:20px'><div>{}</div></div>", 60),
     ] {
         let body = format!("<div class=f>{}</div>", wrapper.replace("{}", spanner));
         assert_eq!(yellow_width(&body, css), expected, "{wrapper}");
