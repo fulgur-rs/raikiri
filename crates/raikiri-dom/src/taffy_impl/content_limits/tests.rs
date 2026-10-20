@@ -3,6 +3,7 @@
 //! and §5). The text of the fixtures is `AAAA BBBB` in Ahem at 10px: 40px wide
 //! at its longest word, 90px wide on one line.
 
+mod cache_context_tests;
 mod style_view_tests;
 
 use super::{

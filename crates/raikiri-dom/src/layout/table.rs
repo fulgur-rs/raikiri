@@ -2159,7 +2159,7 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
     // intrinsic widths, without breaking it into lines; the size cached for
     // that probe would carry no height, so the cell's cache is restored.
     let width_only = is_plain_paragraph_cell(doc, cell_id);
-    let saved_cache = width_only.then(|| doc.table_layout_node_mut(cell_id).cache.clone());
+    let saved_cache = width_only.then(|| doc.clone_layout_cache(cell_id));
     doc.context.ifc_width_probe = width_only;
     // Use a fresh measure: indefinite parent size so that % widths resolve to auto (spec §2.3).
     // Height available is MAX_CONTENT (intrinsic).
@@ -2184,7 +2184,7 @@ fn measure_cell_inline(doc: &mut LayoutSession<'_>, cell_id: usize, axis: Availa
     );
     doc.context.ifc_width_probe = false;
     if let Some(cache) = saved_cache {
-        doc.table_layout_node_mut(cell_id).cache = cache;
+        doc.restore_layout_cache(cell_id, cache);
     }
     output.size.width
 }
@@ -3004,44 +3004,52 @@ fn measure_cell(doc: &mut LayoutSession<'_>, cell: &mut CellPlacement, cell_widt
         .size
         .height;
     if !authored_height.is_auto() {
+        doc.cache_override_changed(cell.node_id);
         doc.layout_style_for_key_mut(cell.node_id)
             .expect("table cell layout style")
             .size
             .height = Dimension::auto();
         doc.table_layout_node_mut(cell.node_id).cache.clear();
     }
-    let output = doc.compute_child_layout(
-        NodeId::from(cell.node_id),
-        LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: taffy::tree::RequestedAxis::Horizontal,
-            known_dimensions: Size {
-                width: Some(cell_width),
-                height: None,
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        doc.compute_child_layout(
+            NodeId::from(cell.node_id),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                axis: taffy::tree::RequestedAxis::Horizontal,
+                known_dimensions: Size {
+                    width: Some(cell_width),
+                    height: None,
+                },
+                parent_size: Size {
+                    width: Some(cell_width),
+                    height: None,
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(cell_width),
+                    height: AvailableSpace::MAX_CONTENT,
+                },
+                known_dimensions_are_definite: taffy::geometry::Size {
+                    width: true,
+                    height: true,
+                },
+                vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
-            parent_size: Size {
-                width: Some(cell_width),
-                height: None,
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(cell_width),
-                height: AvailableSpace::MAX_CONTENT,
-            },
-            known_dimensions_are_definite: taffy::geometry::Size {
-                width: true,
-                height: true,
-            },
-            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
-        },
-    );
+        )
+    }));
     if !authored_height.is_auto() {
+        doc.cache_override_changed(cell.node_id);
         doc.layout_style_for_key_mut(cell.node_id)
             .expect("table cell layout style")
             .size
             .height = authored_height;
         doc.table_layout_node_mut(cell.node_id).cache.clear();
     }
+    let output = match result {
+        Ok(output) => output,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
     cell.row_pass = (authored_height.is_auto() && row_pass_is_final(doc, cell.node_id)).then_some(
         RowPassLayout {
             width: cell_width,
@@ -4194,6 +4202,7 @@ fn resolve_collapsed_borders(
     index: &CellIndex,
     table_idx: usize,
 ) {
+    doc.layout_cache_context.invalidate();
     #[cfg(test)]
     BORDER_RESOLUTIONS.with(|count| count.set(count.get() + 1));
     resolve_collapsed_row_borders(doc, grid);
@@ -4207,6 +4216,7 @@ fn resolve_collapsed_borders(
 /// border. A grid resolved next then does not inherit what an earlier
 /// resolution of another grid left on them.
 fn reset_collapsed_borders(doc: &mut Document, grid: &TableGrid) {
+    doc.layout_cache_context.invalidate();
     for cell in &grid.cells {
         doc.table_layout_node_mut(cell.node_id).collapsed_border = None;
         let border = authored_border(doc, cell.node_id);
@@ -4405,6 +4415,14 @@ fn snapshot_borders(doc: &mut Document, grid: &TableGrid) -> BorderState {
 /// Give the cells and rows the borders `state` recorded, and drop the layouts
 /// the cells cached under other borders.
 fn apply_borders(doc: &mut Document, state: &BorderState) {
+    if state.cells.iter().any(|(cell, border, _)| {
+        doc.layout_style_for_key(*cell)
+            .expect("table cell layout style")
+            .border
+            != *border
+    }) {
+        doc.layout_cache_context.invalidate();
+    }
     for &(cell, border, painted) in &state.cells {
         let style = doc
             .layout_style_for_key_mut(cell)

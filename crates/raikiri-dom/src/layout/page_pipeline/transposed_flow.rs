@@ -302,6 +302,7 @@ impl TransposedDocument {
                 }
             })
             .collect();
+        document.document.layout_cache_context.invalidate();
         let mut styles = Vec::with_capacity(keys);
         for (key, &layout) in transposed.iter().enumerate() {
             document.table_layout_node_mut(key).unrounded_layout = layout;
@@ -343,6 +344,7 @@ impl TransposedDocument {
     /// pagination left alone, in a parent that kept its size, gets its
     /// original layout back exactly.
     pub(super) fn restore(self, document: &mut LayoutSession<'_>) {
+        document.document.layout_cache_context.invalidate();
         let keys = self.physical.len();
         let current: Vec<TaffyLayout> = (0..keys)
             .map(|key| document.table_layout_node_mut(key).unrounded_layout)

@@ -165,6 +165,7 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    doc.document.layout_cache_context.publish_source();
     #[cfg(test)]
     doc.begin_style_bridge();
     doc.context.table_cache.clear();
@@ -175,6 +176,13 @@ pub(crate) fn apply_computed_to_style_in_session(
     let old_calc_len = doc.document.retained_layout_styles.calc_values.len();
     let result = apply_computed_to_style_in_session_inner(doc, cascade);
     if result.is_ok() {
+        let expected = doc
+            .nodes
+            .iter()
+            .filter(|node| node.kind() == NodeKind::Element)
+            .count()
+            + 8;
+        doc.document.layout_cache_context.configure_nodes(expected);
         #[cfg(test)]
         doc.prepare_style_views();
         doc.document

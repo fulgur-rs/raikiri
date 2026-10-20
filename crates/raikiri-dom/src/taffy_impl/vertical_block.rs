@@ -162,17 +162,7 @@ impl LayoutSession<'_> {
         let physical_padding_basis = flows_horizontally(self, idx)
             .then_some(inputs.parent_size.height)
             .flatten();
-        #[cfg(not(test))]
-        let physical_padding = physical_padding_basis.map(|inline_size| {
-            let style = &mut self.layout_node_with_style_mut(idx).unwrap().style;
-            let resolved = style
-                .padding
-                .resolve_or_zero(Some(inline_size), resolve_calc)
-                .map(LengthPercentage::length);
-            std::mem::replace(&mut style.padding, resolved)
-        });
         let child_block_ctx = if share_context { block_ctx } else { None };
-        #[cfg(test)]
         let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some(basis) = physical_padding_basis {
                 self.with_resolved_edges(idx, basis, false, |tree| {
@@ -182,14 +172,7 @@ impl LayoutSession<'_> {
                 self.compute_child_layout_with_block_ctx(node_id, inputs, child_block_ctx)
             }
         }));
-        #[cfg(not(test))]
-        let output = self.compute_child_layout_with_block_ctx(node_id, inputs, child_block_ctx);
-        #[cfg(not(test))]
-        if let Some(padding) = physical_padding {
-            self.layout_node_with_style_mut(idx).unwrap().style.padding = padding;
-        }
         self.context.transposed_blocks.push(block);
-        #[cfg(test)]
         let output = match output {
             Ok(output) => output,
             Err(payload) => std::panic::resume_unwind(payload),

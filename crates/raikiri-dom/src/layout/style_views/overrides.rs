@@ -16,47 +16,34 @@ pub(super) struct SizeScope {
 }
 
 impl LayoutSession<'_> {
-    pub(crate) fn with_resolved_edges<R>(
+    pub(crate) fn begin_edge_recording(
         &mut self,
         idx: usize,
         basis: f32,
-        resolve_border: bool,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
+    ) -> Option<raikiri_layout_style::PercentBasis> {
         use raikiri_layout_style::PercentBasis;
         let key = self.nodes.box_key(idx).expect("edge scope has a box key");
-        let previous_basis = self.style_views.as_mut().map(|views| {
+        self.style_views.as_mut().map(|views| {
             let prepared = views
                 .boxes
                 .get_mut(&key)
                 .expect("edge scope has a prepared style");
             let previous = prepared.context.percent_basis;
-            // A surrounding edge scope has already turned these edges into pixels.
             if previous == PercentBasis::Taffy {
                 prepared.context.percent_basis = PercentBasis::Definite(basis);
             }
             prepared.was_scoped = true;
             previous
-        });
-        let style = self
-            .layout_style_for_key_mut(idx)
-            .expect("edge scope has a retained style");
-        let previous_edges = (style.padding, style.border);
-        let resolve = |edge| {
-            taffy::LengthPercentage::length(
-                crate::layout::used_style_length_percentage(edge, basis).unwrap_or(0.0),
-            )
-        };
-        style.padding = style.padding.map(resolve);
-        if resolve_border {
-            style.border = style.border.map(resolve);
-        }
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
-        let style = self
-            .layout_style_for_key_mut(idx)
-            .expect("edge scope has a retained style");
-        (style.padding, style.border) = previous_edges;
-        if let Some(previous) = previous_basis {
+        })
+    }
+
+    pub(crate) fn end_edge_recording(
+        &mut self,
+        idx: usize,
+        previous: Option<raikiri_layout_style::PercentBasis>,
+    ) {
+        if let Some(previous) = previous {
+            let key = self.nodes.box_key(idx).expect("edge scope has a box key");
             self.style_views
                 .as_mut()
                 .expect("edge scope has a session")
@@ -65,10 +52,6 @@ impl LayoutSession<'_> {
                 .expect("edge scope has a prepared style")
                 .context
                 .percent_basis = previous;
-        }
-        match result {
-            Ok(value) => value,
-            Err(payload) => std::panic::resume_unwind(payload),
         }
     }
 
@@ -84,7 +67,7 @@ impl LayoutSession<'_> {
             .layout_style_for_key(idx)
             .expect("size scope has a retained style");
         let (size, min, max) = (old.size, old.min_size, old.max_size);
-        let token = self.push_style_overrides(idx, Vec::new());
+        let token = self.record_style_overrides(idx, Vec::new());
         let views = self.style_views.as_mut().expect("checked session");
         let marker = views.size_scopes.len();
         views.size_scopes.push(SizeScope {
@@ -108,7 +91,7 @@ impl LayoutSession<'_> {
             "size scopes restore in reverse order"
         );
         let saved = views.size_scopes.pop().expect("active size scope");
-        self.restore_style_overrides(saved.token);
+        self.restore_recorded_style_overrides(saved.token);
         let style = self
             .layout_style_for_key_mut(saved.idx)
             .expect("size scope has a retained style");
@@ -146,7 +129,7 @@ impl LayoutSession<'_> {
         );
     }
 
-    pub(crate) fn push_style_overrides(
+    pub(crate) fn record_style_overrides(
         &mut self,
         idx: usize,
         entries: Vec<OwnedPropertyOverride>,
@@ -168,7 +151,7 @@ impl LayoutSession<'_> {
         Some(token)
     }
 
-    pub(crate) fn restore_style_overrides(&mut self, token: Option<OverrideToken>) {
+    pub(crate) fn restore_recorded_style_overrides(&mut self, token: Option<OverrideToken>) {
         let Some(token) = token else {
             return;
         };
@@ -186,6 +169,24 @@ impl LayoutSession<'_> {
         );
         assert_eq!(prepared.scopes.pop(), Some(token.length));
         prepared.scoped.truncate(token.length);
+    }
+
+    pub(crate) fn push_style_overrides(
+        &mut self,
+        idx: usize,
+        entries: Vec<OwnedPropertyOverride>,
+    ) -> Option<OverrideToken> {
+        self.cache_override_changed(idx);
+        self.record_style_overrides(idx, entries)
+    }
+
+    pub(crate) fn restore_style_overrides(&mut self, token: Option<OverrideToken>) {
+        if let Some(token) = token {
+            self.document
+                .layout_cache_context
+                .override_changed(token.key);
+        }
+        self.restore_recorded_style_overrides(token);
     }
 
     pub(crate) fn style_override_depth(&self, idx: usize) -> usize {

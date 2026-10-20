@@ -378,6 +378,7 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
     pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
+    pub(crate) layout_cache_context: crate::layout::cache_context::LayoutCacheContext,
     #[cfg(test)]
     pub(crate) synthetic_style_values: std::collections::HashMap<
         crate::node::arena::BoxKey,
@@ -671,6 +672,7 @@ impl Document {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
             retained_layout_styles,
+            layout_cache_context: Default::default(),
             #[cfg(test)]
             synthetic_style_values: Default::default(),
             #[cfg(test)]
@@ -2067,6 +2069,7 @@ impl Document {
             flags_dirty: _,
             stylesheets,
             retained_layout_styles: _,
+            layout_cache_context: _,
             #[cfg(test)]
                 synthetic_style_values: _,
             #[cfg(test)]
@@ -2971,6 +2974,7 @@ impl Document {
     }
 
     pub(crate) fn set_initial_containing_block(&mut self, node: Node, mut style: Style) -> usize {
+        self.layout_cache_context.publish_metadata();
         node.refresh_box_style(&mut style);
         let key = self.nodes.set_initial_containing_block(node);
         self.retained_layout_styles
@@ -2979,6 +2983,7 @@ impl Document {
     }
 
     pub(crate) fn set_anonymous_tables(&mut self, boxes: Vec<(Node, Style)>) {
+        self.layout_cache_context.publish_metadata();
         let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
         self.nodes.set_anonymous_tables(nodes);
         self.retained_layout_styles
@@ -2990,6 +2995,7 @@ impl Document {
     }
 
     pub(crate) fn set_anonymous_cells(&mut self, boxes: Vec<(Node, Style)>) {
+        self.layout_cache_context.publish_metadata();
         let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
         self.nodes.set_anonymous_cells(nodes);
         self.retained_layout_styles.retain_without_cells();
@@ -3057,8 +3063,8 @@ impl Document {
     }
 
     /// Mark the layout cache dirty after a tree mutation. The next
-    /// `compute_child_layout` (via taffy_impl) clears it lazily. Each mutation
-    /// costs O(1); each layout batch incurs amortized O(N) clearing.
+    /// `compute_child_layout` advances the document generation lazily. Each
+    /// mutation batch invalidates cache stamps in O(1).
     pub(crate) fn invalidate_layout_cache(&mut self) {
         self.page_projection.clear();
         self.counter_snapshot_cache.take();

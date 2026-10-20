@@ -5,13 +5,32 @@ use super::*;
 
 // Layout sessions own these entries. Bridging computed styles and changing
 // pagination axes clear them before retained styles or anonymous keys change.
+// Border preparation depends on authored border inputs, collapse/visibility,
+// writing mode, topology, parent width and the table border. Temporary size
+// probes do not change those inputs. External temporary table-border changes
+// must clear this cache; publishing resolved borders is an output, not an input.
 #[derive(Debug, Default)]
 pub(in crate::layout) struct TableCache {
+    publication_epoch: Option<crate::layout::cache_context::CacheEpoch>,
     grids: HashMap<usize, TableGrid>,
-    borders: HashMap<usize, (BorderKey, Rc<PreparedBorders>)>,
+    borders: HashMap<
+        usize,
+        (
+            BorderKey,
+            crate::layout::cache_context::CacheEpoch,
+            Rc<PreparedBorders>,
+        ),
+    >,
 }
 
 impl TableCache {
+    fn synchronize(&mut self, epoch: crate::layout::cache_context::CacheEpoch) {
+        if self.publication_epoch != Some(epoch) {
+            self.clear();
+            self.publication_epoch = Some(epoch);
+        }
+    }
+
     pub(in crate::layout) fn clear(&mut self) {
         self.grids.clear();
         self.borders.clear();
@@ -37,6 +56,10 @@ pub(super) fn table_grid(
     doc: &mut LayoutSession<'_>,
     table_idx: usize,
 ) -> Result<TableGrid, raikiri_traits::LayoutError> {
+    doc.sync_layout_cache_mutations();
+    doc.context
+        .table_cache
+        .synchronize(doc.document.layout_cache_context.publication_epoch());
     let Some(template) = doc.context.table_cache.grids.get(&table_idx) else {
         let grid = build_table_grid(doc, table_idx)?;
         doc.context
@@ -70,6 +93,11 @@ pub(super) fn prepared_borders(
     parent_width: Option<f32>,
     table_border: Rect<f32>,
 ) -> Rc<PreparedBorders> {
+    doc.sync_layout_cache_mutations();
+    doc.context
+        .table_cache
+        .synchronize(doc.document.layout_cache_context.publication_epoch());
+    let epoch = doc.document.layout_cache_context.publication_epoch();
     let key = BorderKey {
         parent_width: parent_width.map(f32::to_bits),
         table_border: [
@@ -80,8 +108,10 @@ pub(super) fn prepared_borders(
         ]
         .map(f32::to_bits),
     };
-    if let Some((cached_key, prepared)) = doc.context.table_cache.borders.get(&table_idx)
+    if let Some((cached_key, cached_epoch, prepared)) =
+        doc.context.table_cache.borders.get(&table_idx)
         && *cached_key == key
+        && *cached_epoch == epoch
     {
         let prepared = Rc::clone(prepared);
         if let Some(borders) = &prepared.borders {
@@ -223,6 +253,6 @@ pub(super) fn prepared_borders(
     doc.context
         .table_cache
         .borders
-        .insert(table_idx, (key, Rc::clone(&prepared)));
+        .insert(table_idx, (key, epoch, Rc::clone(&prepared)));
     prepared
 }
