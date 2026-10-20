@@ -2508,9 +2508,13 @@ fn resolve_column_widths(
     let mut col_min = vec![0.0f32; n];
     let mut col_max = vec![0.0f32; n];
     let mut col_pct = vec![0.0f32; n];
+    let mut authored_length = vec![false; n];
     for (i, cell) in grid.cells.iter().enumerate() {
+        #[cfg(test)]
+        tests::AUTHORED_LENGTH_CELL_VISITS.with(|count| count.set(count.get() + 1));
         let c = cell.col_start as usize;
         if cell.col_span == 1 && c < n {
+            authored_length[c] |= cell.specified_width.tag() == CompactLength::LENGTH_TAG;
             col_min[c] = f32_max_compat(col_min[c], cell_min[i]);
             col_max[c] = f32_max_compat(col_max[c], cell_max[i]);
             if cell.specified_width.tag() == CompactLength::PERCENT_TAG {
@@ -2525,15 +2529,6 @@ fn resolve_column_widths(
     // definite single-column width already constrains that track, so a
     // spanning cell's excess is assigned to the remaining tracks whenever
     // possible (CSS Tables track sizing, intrinsic minimum phase).
-    let authored_length = (0..n)
-        .map(|column| {
-            grid.cells.iter().any(|cell| {
-                cell.col_span == 1
-                    && usize::from(cell.col_start) == column
-                    && cell.specified_width.tag() == CompactLength::LENGTH_TAG
-            })
-        })
-        .collect::<Vec<_>>();
     let mut spans: Vec<(usize, u16, u16)> = grid
         .cells
         .iter()
