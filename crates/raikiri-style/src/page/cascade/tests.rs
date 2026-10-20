@@ -8757,6 +8757,74 @@ fn margin_box_min_block_size_competes_with_the_physical_minimum_in_declaration_o
     );
 }
 
+/// A declaration that failed to substitute a `var()` still takes its place in
+/// the order, and computes to `auto`, whichever of the two sizes it is.
+#[test]
+fn margin_box_size_invalid_at_computed_value_time_keeps_its_place_in_the_order() {
+    let style = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        result.margin_box_style(&rule, None)
+    };
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let min = |css: &str| {
+        let style = style(css);
+        (style.min_height, style.min_block_size)
+    };
+    assert_eq!(
+        min(
+            "@page { @top-left { content: 'X'; min-height: 10px; min-block-size: var(--missing) } }"
+        ),
+        (Auto, None)
+    );
+    assert_eq!(
+        min(
+            "@page { @top-left { content: 'X'; min-block-size: 5px; min-height: var(--missing) } }"
+        ),
+        (Auto, None)
+    );
+    // The other size on the axis is still untouched by a declaration that
+    // lost for another property.
+    assert_eq!(
+        min("@page { @top-left { content: 'X'; min-height: 10px; min-width: var(--missing) } }"),
+        (Px(10.0), None)
+    );
+    // In `vertical-rl` the inline size is the height.
+    let vertical = "@page { @top-left { content: 'X'; writing-mode: vertical-rl; ";
+    assert_eq!(
+        style(&format!(
+            "{vertical}height: 5px; inline-size: var(--missing) }} }}"
+        ))
+        .height,
+        Auto
+    );
+    assert_eq!(
+        style(&format!(
+            "{vertical}inline-size: 20px; height: var(--missing) }} }}"
+        ))
+        .height,
+        Auto
+    );
+}
+
+/// The page context orders its own sizes the same way, though only its
+/// margin boxes see the result.
+#[test]
+fn page_context_size_invalid_at_computed_value_time_keeps_its_place_in_the_order() {
+    let result = page(
+        "@page { min-height: 10px; min-block-size: var(--missing); @top-left { content: 'X' } }",
+        &ComputedValues::initial(),
+    );
+    let page_style = result.page_style.as_deref().unwrap();
+    assert_eq!(
+        page_style.computed.min_height,
+        ComputedLengthPercentageOrAuto::Auto
+    );
+    assert_eq!(page_style.computed.min_block_size, None);
+}
+
 #[test]
 fn cascade_page_border_image_computes_its_longhands() {
     let root = ComputedValues::initial();

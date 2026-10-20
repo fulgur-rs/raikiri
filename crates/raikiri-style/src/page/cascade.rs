@@ -146,8 +146,11 @@ pub struct PageMarginBoxCascadeResult {
     /// Properties whose winning declaration was invalid at computed-value
     /// time (a `var()` that failed to substitute) and was therefore left out
     /// of [`Self::declarations`]. Such a declaration behaves as `unset`, so
-    /// the slot's default values must not stand in for it.
-    invalid_at_computed_value_time: Vec<PropertyKey>,
+    /// the slot's default values must not stand in for it. Each entry also
+    /// holds the number of [`Self::declarations`] that precede the declaration
+    /// in cascade order, which is the place it keeps for deciding between a
+    /// logical size and the physical one on its axis.
+    invalid_at_computed_value_time: Vec<(PropertyKey, usize)>,
 }
 
 impl PageMarginBoxCascadeResult {
@@ -397,15 +400,17 @@ impl PageMarginBoxCascadeResult {
             )
         });
         let mut invalid_at_computed_value_time = Vec::new();
+        let mut kept = 0;
         merged.declarations = winners
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
                 let Some(resolved) = resolved_value(&decl.value) else {
-                    invalid_at_computed_value_time.push(decl.value.key());
+                    invalid_at_computed_value_time.push((decl.value.key(), kept));
                     return None;
                 };
                 let value = margin_box_text_shadow_default(resolved)?;
                 let value = margin_box_font_size_default(value)?;
+                kept += 1;
                 Some(Declaration::new(
                     resolve_css_wide_color_font(
                         value,
@@ -954,17 +959,29 @@ impl PageCascadeResult {
             PropertyValue::TextAlign(text_align),
             PropertyValue::VerticalAlign(vertical_align),
         ];
+        let mut values: Vec<_> = slot_defaults
+            .into_iter()
+            .filter(|value| {
+                !rule
+                    .invalid_at_computed_value_time
+                    .iter()
+                    .any(|&(key, _)| key == value.key())
+            })
+            .map(ComputedOverValue::Specified)
+            .collect();
+        // A declaration that failed to substitute keeps its place among the
+        // others, which decides whether it beats a size on the same axis.
+        let mut invalid = rule.invalid_at_computed_value_time.iter().peekable();
+        for (index, declaration) in rule.declarations.iter().enumerate() {
+            while let Some(&(key, _)) = invalid.next_if(|&&(_, before)| before <= index) {
+                values.push(ComputedOverValue::Invalid(key));
+            }
+            values.push(ComputedOverValue::Specified(declaration.value.clone()));
+        }
+        values.extend(invalid.map(|&(key, _)| ComputedOverValue::Invalid(key)));
         computed_over(
             &page.computed,
-            slot_defaults
-                .into_iter()
-                .filter(|value| !rule.invalid_at_computed_value_time.contains(&value.key()))
-                .chain(
-                    rule.declarations
-                        .iter()
-                        .map(|declaration| declaration.value.clone()),
-                )
-                .map(ComputedOverValue::Specified),
+            values.into_iter(),
             &page.context,
             normal_line_height,
         )
@@ -2035,8 +2052,10 @@ pub(crate) fn cascade_page_with_normal_line_height(
             inherited,
             cascade_order
                 .iter()
-                .filter_map(|(_, key)| resolved.get(key).cloned())
-                .map(ComputedOverValue::Resolved),
+                .map(|(_, key)| match resolved.get(key) {
+                    Some(value) => ComputedOverValue::Resolved(value.clone()),
+                    None => ComputedOverValue::Invalid(*key),
+                }),
             &ctx,
             normal_line_height,
         );
@@ -2115,6 +2134,10 @@ fn margin_box_default_alignment(slot: PageMarginBoxSlot) -> (TextAlign, Vertical
 enum ComputedOverValue {
     Resolved(ResolvedAgainstInherited),
     Specified(PropertyValue),
+    /// The winning declaration of this property was invalid at computed-value
+    /// time. It computes to the initial value, which is what the box starts
+    /// from, so it only keeps its place in the cascade order.
+    Invalid(PropertyKey),
 }
 
 fn computed_over(
@@ -2135,6 +2158,10 @@ fn computed_over(
     // of a value stands for its precedence.
     for (position, value) in values.enumerate() {
         let (value, border_width_is_computed) = match value {
+            ComputedOverValue::Invalid(key) => {
+                specified.size_precedence.record_in_order(key, position);
+                continue;
+            }
             ComputedOverValue::Resolved(resolved) => {
                 let border_width_is_computed =
                     std::array::from_fn(|index| resolved.border_width_is_computed(index));
