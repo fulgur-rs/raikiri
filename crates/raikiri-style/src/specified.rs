@@ -68,12 +68,12 @@ use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent,
     NormalLineHeight, ResolveContext, empty_computed_box_shadow_list,
     empty_computed_text_shadow_list, lift_border_spacing, lift_font_size, lift_letter_spacing,
-    lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing, resolve_background_image,
-    resolve_background_size, resolve_border_radius, resolve_border_spacing,
-    resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_column_width,
-    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_font_size_calc,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
+    lift_line_height, lift_tab_size, lift_text_indent, lift_text_underline_offset,
+    lift_word_spacing, resolve_background_image, resolve_background_size, resolve_border_radius,
+    resolve_border_spacing, resolve_border_with_width_provenance, resolve_box_shadow_item,
+    resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
+    resolve_font_size_calc, resolve_grid_auto_track_list, resolve_grid_template_tracks,
+    resolve_length, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
     resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
@@ -1298,23 +1298,7 @@ impl SpecifiedValues {
             // lifted back into specified items and resolved again on every node.
             text_shadow: SpecifiedTextShadow::Inherited(parent.text_shadow.clone()),
             // CSS Text Decoration 4 §2.8: text-underline-offset is inherited.
-            text_underline_offset: match parent.text_underline_offset {
-                crate::resolve::ComputedTextUnderlineOffset::Auto => TextUnderlineOffset::Auto,
-                crate::resolve::ComputedTextUnderlineOffset::Length(value) => {
-                    TextUnderlineOffset::Length(Length::Px(value.px()))
-                }
-                crate::resolve::ComputedTextUnderlineOffset::Percent(percent) => {
-                    TextUnderlineOffset::Length(Length::Percent(percent))
-                }
-                crate::resolve::ComputedTextUnderlineOffset::Calc(value) => {
-                    TextUnderlineOffset::Calc(crate::property::LengthPercentageCalc {
-                        percent: value.percent,
-                        px: value.px,
-                        em: 0.0,
-                        ch: 0.0,
-                    })
-                }
-            },
+            text_underline_offset: lift_text_underline_offset(parent.text_underline_offset),
             text_underline_position: parent.text_underline_position,
             text_emphasis_position: parent.text_emphasis_position,
             text_emphasis_style: parent.text_emphasis_style.clone(),

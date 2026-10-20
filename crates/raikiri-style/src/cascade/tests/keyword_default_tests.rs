@@ -219,6 +219,22 @@ const CASES: &[(&str, bool, &[&str])] = &[
     ("column-width", false, &["30px", "50px", "auto"]),
     ("overflow-x", false, &["hidden", "scroll", "auto"]),
     ("overflow-y", false, &["hidden", "scroll", "auto"]),
+    (
+        "text-indent",
+        true,
+        &["10px", "5%", "2em hanging each-line"],
+    ),
+    (
+        "text-underline-offset",
+        true,
+        &["3px", "20%", "calc(10% + 4px)"],
+    ),
+    (
+        "text-decoration-thickness",
+        false,
+        &["3px", "from-font", "5px"],
+    ),
+    ("text-decoration-inset", false, &["3px 4px", "auto", "5px"]),
 ];
 
 /// The shorthands over properties of the table, with the same three kinds of
@@ -473,4 +489,24 @@ fn float_takes_the_computed_none_of_an_absolutely_positioned_parent() {
         let values = child(parent, &[], "#target { float: inherit }");
         assert_eq!(values.float, expected, "{parent}");
     }
+}
+
+#[test]
+fn inherit_keeps_the_keyword_values_of_the_text_decoration_lengths() {
+    use crate::resolve::{ComputedTextDecorationInset, ComputedTextDecorationThickness};
+    // `from-font` and `auto` are not lengths: the lift back to the specified
+    // value must not turn them into one.
+    let values = child(
+        "text-decoration-thickness: from-font; text-decoration-inset: auto",
+        &[],
+        "#target { text-decoration-thickness: inherit; text-decoration-inset: inherit }",
+    );
+    assert_eq!(
+        values.text_decoration_thickness,
+        ComputedTextDecorationThickness::FromFont
+    );
+    assert_eq!(
+        values.text_decoration_inset,
+        ComputedTextDecorationInset::Auto
+    );
 }
