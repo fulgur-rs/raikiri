@@ -53,6 +53,10 @@ pub(crate) struct PageProjection {
     /// Whether any style can decorate the text of each paragraph, by root,
     /// found when first read.
     pub(crate) decorated_paragraphs: std::cell::RefCell<HashMap<usize, bool>>,
+    /// Nodes and ancestors represented after a paragraph's first line.
+    /// Source ancestry, line membership or generated-piece changes must clear
+    /// the projection; a rebuilt projection starts with an empty index.
+    pub(crate) later_line_membership: std::cell::RefCell<HashMap<usize, HashSet<usize>>>,
     column_rules: crate::column_rules::PageColumnRules,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
@@ -77,6 +81,7 @@ impl PageProjection {
         self.inline_boxes.clear();
         self.letter_groups.clear();
         self.decorated_paragraphs.get_mut().clear();
+        self.later_line_membership.get_mut().clear();
         self.column_rules.clear();
         self.overflow_clips.clear();
         self.placement_overflow_clips.clear();
@@ -360,6 +365,7 @@ impl Document {
             inline_boxes,
             letter_groups: Default::default(),
             decorated_paragraphs: Default::default(),
+            later_line_membership: Default::default(),
             column_rules,
             overflow_clips,
             placement_overflow_clips,
