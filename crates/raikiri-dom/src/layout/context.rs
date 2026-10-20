@@ -87,7 +87,6 @@ pub(crate) enum TextGroupScope {
 #[derive(Debug)]
 pub(crate) struct NodeLayoutState {
     pub(crate) box_key: BoxKey,
-    pub(super) publication_epoch: super::cache_context::CacheEpoch,
     pub(crate) taffy_child_walks: Option<Vec<taffy::NodeId>>,
 }
 

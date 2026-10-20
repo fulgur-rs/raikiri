@@ -89,7 +89,6 @@ impl CacheNodeState {
             walk_session: 0,
             layout: super::context::NodeLayoutState {
                 box_key: key,
-                publication_epoch: publication,
                 taffy_child_walks: None,
             },
         }
@@ -98,6 +97,7 @@ impl CacheNodeState {
         if self.publication != publication {
             self.context = None;
             self.overrides = 0;
+            self.layout.taffy_child_walks = None;
             self.publication = publication;
         }
     }
@@ -270,12 +270,9 @@ impl LayoutCacheContext {
         let session = self.walk_session;
         RefMut::map(self.entries.borrow_mut(), |entries| {
             let state = entries.get_or_insert(key, publication);
-            if state.layout.publication_epoch != publication
-                || state.walk_session != session
-                || dirty
-            {
+            state.synchronize(publication);
+            if state.walk_session != session || dirty {
                 state.layout.taffy_child_walks = None;
-                state.layout.publication_epoch = publication;
                 state.walk_session = session;
             }
             &mut state.layout

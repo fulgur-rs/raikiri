@@ -488,3 +488,56 @@ fn publications_preserve_key_identity_across_large_and_small_worksets() {
     }
     assert_eq!(cache.epoch(), epoch);
 }
+
+#[test]
+fn publication_sync_preserves_new_walk_in_either_query_order() {
+    let key = BoxKey::Source(0);
+    let child = taffy::NodeId::from(2usize);
+    for walk_first in [true, false] {
+        let mut cache = LayoutCacheContext::default();
+        cache.begin_session();
+        store_view(&mut cache, key, ViewContext::default());
+        cache.node_state(key, false).taffy_child_walks = Some(vec![taffy::NodeId::from(1usize)]);
+        cache.publish_metadata();
+        let epoch = cache.epoch();
+        if walk_first {
+            assert!(cache.node_state(key, false).taffy_child_walks.is_none());
+            cache.node_state(key, false).taffy_child_walks = Some(vec![child]);
+        }
+        let frame = cache.enter_view(key, ViewContext::default());
+        if !walk_first {
+            assert!(cache.node_state(key, false).taffy_child_walks.is_none());
+            cache.node_state(key, false).taffy_child_walks = Some(vec![child]);
+        }
+        assert_eq!(
+            cache.node_state(key, false).taffy_child_walks,
+            Some(vec![child])
+        );
+        cache.mark_stored(key);
+        cache.leave(frame);
+        assert_eq!(cache.epoch(), epoch);
+        assert!(cache.can_read(key));
+    }
+}
+
+#[test]
+fn transient_override_keeps_walk_and_session_change_keeps_cache() {
+    let mut cache = LayoutCacheContext::default();
+    let key = BoxKey::Source(0);
+    let child = taffy::NodeId::from(1usize);
+    cache.begin_session();
+    cache.publish_metadata();
+    cache.override_changed(key);
+    let fingerprint = cache.fingerprint(key, ViewContext::default());
+    cache.node_state(key, false).taffy_child_walks = Some(vec![child]);
+    assert_eq!(cache.fingerprint(key, ViewContext::default()), fingerprint);
+    cache.override_changed(key);
+    assert_eq!(
+        cache.node_state(key, false).taffy_child_walks,
+        Some(vec![child])
+    );
+    store_view(&mut cache, key, ViewContext::default());
+    cache.begin_session();
+    assert!(cache.node_state(key, false).taffy_child_walks.is_none());
+    assert!(cache.can_read(key));
+}
