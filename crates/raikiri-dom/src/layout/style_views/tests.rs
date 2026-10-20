@@ -406,6 +406,11 @@ fn source_metadata_covers_hidden_logical_and_keyword_policies() {
             "display:flex;width:max-content;min-block-size:min-content",
         ),
         ("display:flex", "min-block-size:min-content"),
+        ("display:flex", "width:max-content;min-width:1px"),
+        (
+            "display:flex",
+            "writing-mode:vertical-rl;inline-size:max-content;block-size:max-content",
+        ),
         (
             "display:block",
             "writing-mode:vertical-rl;inline-size:max-content;block-size:max-content",

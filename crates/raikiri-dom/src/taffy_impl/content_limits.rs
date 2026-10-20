@@ -404,10 +404,16 @@ pub(crate) fn with_oof_content_limits<R>(
                 style.min_size = Size::auto();
                 style.max_size = Size::auto();
                 #[cfg(test)]
-                {
-                    use raikiri_layout_style::LengthProperty::*;
-                    record_neutral_sizes(tree, idx, &[MinWidth, MinHeight, MaxWidth, MaxHeight]);
-                }
+                record_neutral_sizes(
+                    tree,
+                    idx,
+                    &[
+                        raikiri_layout_style::LengthProperty::MinWidth,
+                        raikiri_layout_style::LengthProperty::MinHeight,
+                        raikiri_layout_style::LengthProperty::MaxWidth,
+                        raikiri_layout_style::LengthProperty::MaxHeight,
+                    ],
+                );
             }
             let inputs = capture_oof_layout_inputs(tree, &mut dispatch, suppress_nested_prepasses);
             for (idx, saved) in saved_sizes.into_iter().rev() {
