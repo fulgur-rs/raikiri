@@ -170,8 +170,7 @@ impl<'doc> LayoutSession<'doc> {
         {
             view.percent_basis = raikiri_layout_style::PercentBasis::Definite(*basis);
         }
-        let fingerprint = self.document.layout_cache_context.fingerprint(key, view);
-        let frame = self.document.layout_cache_context.enter(key, fingerprint);
+        let frame = self.document.layout_cache_context.enter_view(key, view);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(self)));
         self.document.layout_cache_context.leave(frame);
         match result {

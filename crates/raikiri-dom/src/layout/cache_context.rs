@@ -262,21 +262,19 @@ impl LayoutCacheContext {
         key: BoxKey,
         dirty: bool,
     ) -> RefMut<'_, super::context::NodeLayoutState> {
-        let mut entries = self.entries.borrow_mut();
-        let state = entries.get_or_insert(key, self.publication_epoch);
-        if state.layout.publication_epoch != self.publication_epoch
-            || state.walk_session != self.walk_session
-            || dirty
-        {
-            state.layout.taffy_child_walks = None;
-            state.layout.publication_epoch = self.publication_epoch;
-            state.walk_session = self.walk_session;
-        }
-        RefMut::map(entries, |entries| {
-            &mut entries
-                .get_mut(&key)
-                .expect("state was inserted above")
-                .layout
+        let publication = self.publication_epoch;
+        let session = self.walk_session;
+        RefMut::map(self.entries.borrow_mut(), |entries| {
+            let state = entries.get_or_insert(key, publication);
+            if state.layout.publication_epoch != publication
+                || state.walk_session != session
+                || dirty
+            {
+                state.layout.taffy_child_walks = None;
+                state.layout.publication_epoch = publication;
+                state.walk_session = session;
+            }
+            &mut state.layout
         })
     }
 
@@ -332,6 +330,7 @@ impl LayoutCacheContext {
         state.context = None;
     }
 
+    #[cfg(test)]
     pub(crate) fn fingerprint(&self, key: BoxKey, view: ViewContext) -> CacheFingerprint {
         let overrides = self
             .entries
@@ -342,12 +341,30 @@ impl LayoutCacheContext {
         CacheFingerprint::new(view, self.source, self.metadata, overrides)
     }
 
+    #[cfg(test)]
     pub(crate) fn enter(&mut self, key: BoxKey, fingerprint: CacheFingerprint) -> CacheFrame {
+        self.enter_with(key, |_| fingerprint)
+    }
+
+    pub(crate) fn enter_view(&mut self, key: BoxKey, view: ViewContext) -> CacheFrame {
+        let source = self.source;
+        let metadata = self.metadata;
+        self.enter_with(key, |overrides| {
+            CacheFingerprint::new(view, source, metadata, overrides)
+        })
+    }
+
+    fn enter_with(
+        &mut self,
+        key: BoxKey,
+        fingerprint: impl FnOnce(u64) -> CacheFingerprint,
+    ) -> CacheFrame {
         let state = self
             .entries
             .get_mut()
             .get_or_insert(key, self.publication_epoch);
         state.synchronize(self.publication_epoch);
+        let fingerprint = fingerprint(state.overrides);
         let changed = state.context.is_some_and(|last| last != fingerprint);
         state.context = Some(fingerprint);
         if changed {
