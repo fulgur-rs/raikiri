@@ -2527,8 +2527,8 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
 /// `inherit`. Unlike a margin, it can compute to a sizing keyword.
 ///
 /// A parent's `height` has already lost a sizing keyword to `auto`
-/// (see `without_sizing_keyword`), so `height: inherit` cannot recover which one
-/// it was, only that there was one ([`inherited_height`]).
+/// (see `without_sizing_keyword`); [`inherited_height`] puts back the keyword
+/// the parent was declared with.
 fn inherited_box_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
@@ -2653,16 +2653,17 @@ pub(crate) fn resolve_logical_size_keyword(
 
 /// The `height` a child inherits when `physical_height`, the physical height of
 /// `inherited`, is `auto`: the sizing keyword that `auto` stands for, if
-/// `inherited` was declared one (see [`ComputedValues::height_keyword`]), so
+/// `inherited` was declared with (see [`ComputedValues::height_keyword`]), so
 /// that the child is marked in turn.
 fn inherited_height(
     inherited: &ComputedValues,
     physical_height: ComputedLengthPercentageOrAuto,
 ) -> ComputedLengthPercentageOrAuto {
-    if inherited.height_keyword && physical_height == ComputedLengthPercentageOrAuto::Auto {
-        ComputedLengthPercentageOrAuto::MaxContent
-    } else {
-        physical_height
+    match inherited.height_keyword {
+        Some(keyword) if physical_height == ComputedLengthPercentageOrAuto::Auto => {
+            keyword.as_length()
+        }
+        _ => physical_height,
     }
 }
 

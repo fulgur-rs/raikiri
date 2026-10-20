@@ -19,7 +19,7 @@
 //! Implementation follows the spec; this test asserts UA `!important` wins.
 
 use super::*;
-use crate::computed::INITIAL_FONT_SIZE_PX;
+use crate::computed::{ContentSizeKeyword, INITIAL_FONT_SIZE_PX};
 use crate::property::LengthPercentageOrCalc;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundLayerSpec, BackgroundRepeat,
@@ -1468,7 +1468,50 @@ fn a_margin_box_keeps_the_block_size_keywords() {
         PageMarginBoxSlot::TopRight,
     ] {
         let rule = page.cascade_margin_box(slot).expect("margin box");
-        assert!(!page.margin_box_style(&rule, None).height_keyword);
+        assert_eq!(page.margin_box_style(&rule, None).height_keyword, None);
+    }
+}
+
+#[test]
+fn a_page_and_its_margin_box_inherit_the_height_keyword_of_the_root() {
+    // The root's `height` computed to `auto`, and what it was declared with is
+    // marked apart. Both the page context and a margin box under it hand the
+    // same keyword on.
+    for (mark, keyword) in [
+        (
+            ContentSizeKeyword::MinContent,
+            ComputedLengthPercentageOrAuto::MinContent,
+        ),
+        (
+            ContentSizeKeyword::MaxContent,
+            ComputedLengthPercentageOrAuto::MaxContent,
+        ),
+        (
+            ContentSizeKeyword::FitContent,
+            ComputedLengthPercentageOrAuto::FitContent,
+        ),
+    ] {
+        let root = ComputedValues {
+            height_keyword: Some(mark),
+            ..ComputedValues::initial()
+        };
+        for height in ["height", "block-size"] {
+            let result = page(
+                &format!(
+                    "@page {{ {height}: inherit; \
+                     @top-left {{ content: 'x'; {height}: inherit }} }}"
+                ),
+                &root,
+            );
+            let rule = result
+                .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+                .expect("margin box");
+            assert_eq!(
+                result.margin_box_style(&rule, None).height,
+                keyword,
+                "{height} {mark:?}"
+            );
+        }
     }
 }
 

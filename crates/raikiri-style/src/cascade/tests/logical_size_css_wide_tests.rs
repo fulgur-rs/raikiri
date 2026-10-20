@@ -3,6 +3,7 @@
 //! ones by CSS Logical Properties 1 §4.1).
 
 use super::*;
+use crate::computed::ContentSizeKeyword;
 use crate::resolve::ComputedLengthPercentageOrAuto as Size;
 
 /// A parent whose physical sizes are all away from the initial `auto`.
@@ -198,15 +199,21 @@ fn substituted_keywords_apply() {
 #[test]
 fn inherit_takes_the_block_size_keyword_of_the_parent() {
     // The parent's `height` computed to `auto`, and the mark of the keyword it
-    // was declared with is what `inherit` hands on.
-    for css in [
-        "#target { height: inherit }",
-        "#target { block-size: inherit }",
+    // was declared with is what `inherit` hands on, whichever keyword it was.
+    for (keyword, mark) in [
+        ("min-content", ContentSizeKeyword::MinContent),
+        ("max-content", ContentSizeKeyword::MaxContent),
+        ("fit-content", ContentSizeKeyword::FitContent),
     ] {
-        let (parent, child) = pair("height: max-content", &[], css);
-        assert!(parent.height_keyword, "{css}");
-        assert_eq!(child.height, Size::Auto, "{css}");
-        assert!(child.height_keyword, "{css}");
+        for css in [
+            "#target { height: inherit }",
+            "#target { block-size: inherit }",
+        ] {
+            let (parent, child) = pair(&format!("height: {keyword}"), &[], css);
+            assert_eq!(parent.height_keyword, Some(mark), "{keyword} {css}");
+            assert_eq!(child.height, Size::Auto, "{keyword} {css}");
+            assert_eq!(child.height_keyword, Some(mark), "{keyword} {css}");
+        }
     }
     // The other keywords give the initial value, and the property is not
     // inherited.
@@ -218,27 +225,33 @@ fn inherit_takes_the_block_size_keyword_of_the_parent() {
         "#target { height: inherit; height: auto }",
     ] {
         let (_, child) = pair("height: max-content", &[], css);
-        assert!(!child.height_keyword, "{css}");
+        assert_eq!(child.height_keyword, None, "{css}");
     }
     // A parent that was declared no keyword hands on none.
     let (_, child) = pair("height: 40px", &[], "#target { height: inherit }");
     assert_eq!(child.height, px(40.0));
-    assert!(!child.height_keyword);
+    assert_eq!(child.height_keyword, None);
 }
 
 #[test]
 fn inherit_takes_the_inline_size_keyword_of_a_vertical_parent_as_its_height() {
-    let (parent, child) = pair(
-        "writing-mode: vertical-rl; inline-size: max-content",
-        &[],
-        "#target { height: inherit }",
-    );
-    assert!(parent.height_keyword);
-    assert!(child.height_keyword);
+    for (keyword, mark) in [
+        ("min-content", ContentSizeKeyword::MinContent),
+        ("max-content", ContentSizeKeyword::MaxContent),
+        ("fit-content", ContentSizeKeyword::FitContent),
+    ] {
+        let (parent, child) = pair(
+            &format!("writing-mode: vertical-rl; inline-size: {keyword}"),
+            &[],
+            "#target { height: inherit }",
+        );
+        assert_eq!(parent.height_keyword, Some(mark), "{keyword}");
+        assert_eq!(child.height_keyword, Some(mark), "{keyword}");
+    }
     let (_, child) = pair(
         "writing-mode: vertical-rl; block-size: max-content",
         &[],
         "#target { height: inherit }",
     );
-    assert!(!child.height_keyword);
+    assert_eq!(child.height_keyword, None);
 }

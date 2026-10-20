@@ -2,7 +2,9 @@ use super::*;
 use crate::cascade::candidate::{OwnedCandidates, Precedence};
 use crate::cascade::test_support::*;
 use crate::cascade::{cascade, cascade_with_media_context_for_page, cascade_with_options};
-use crate::computed::{ComputedValues, INITIAL_FONT_SIZE_PX, VerticalLogicalSize};
+use crate::computed::{
+    ComputedValues, ContentSizeKeyword, INITIAL_FONT_SIZE_PX, VerticalLogicalSize,
+};
 use crate::media::MediaContext;
 use crate::property::CssColor;
 use crate::property::DisplayValue;
@@ -490,8 +492,19 @@ fn a_block_size_keyword_leaves_a_mark_on_the_computed_values() {
             true,
         ),
     ] {
+        // Each marking declaration names exactly one of the keywords.
+        let expected = keyword.then(|| {
+            [
+                ("min-content", ContentSizeKeyword::MinContent),
+                ("max-content", ContentSizeKeyword::MaxContent),
+                ("fit-content", ContentSizeKeyword::FitContent),
+            ]
+            .into_iter()
+            .find_map(|(name, mark)| declaration.contains(name).then_some(mark))
+            .expect("a marking declaration names a keyword")
+        });
         let values = cascade_doc("", "div", Some(declaration));
-        assert_eq!(values.height_keyword, keyword, "{declaration}");
+        assert_eq!(values.height_keyword, expected, "{declaration}");
     }
     // The keyword computes to `auto` for a horizontal element, and a length
     // stays a length.

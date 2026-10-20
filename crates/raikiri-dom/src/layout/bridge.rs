@@ -1312,7 +1312,7 @@ fn unstretched_keyword_height_alignment(
 ) -> Option<TaffyAlignItems> {
     use taffy::AlignItemsKeyword;
     let values = &cascade.computed[idx];
-    if !values.height_keyword
+    if values.height_keyword.is_none()
         || matches!(values.display, DisplayValue::Contents | DisplayValue::None)
     {
         return None;
@@ -1362,7 +1362,7 @@ fn stretches_on_both_grid_axes(doc: &LayoutSession<'_>, idx: usize, cv: &Compute
         || style.position == taffy::Position::Absolute
         || !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
         || !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
-        || cv.height_keyword
+        || cv.height_keyword.is_some()
         || [
             style.margin.left,
             style.margin.right,

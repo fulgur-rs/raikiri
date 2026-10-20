@@ -27,8 +27,8 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{
-    ChFontKey, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues, FontSizeKeywordInfo,
-    RunningTemplate, VerticalLogicalSize, initial_background_layers,
+    ChFontKey, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues, ContentSizeKeyword,
+    FontSizeKeywordInfo, RunningTemplate, VerticalLogicalSize, initial_background_layers,
 };
 use crate::property::{
     AlignSelfValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
@@ -341,11 +341,10 @@ pub struct SpecifiedValues {
     /// axis for all of them (CSS Sizing 3 §5.1), so they compute to `auto` unless the box is one
     /// that fills the space it is given for `auto`, as a page-margin box does.
     pub(crate) keeps_block_size_keywords: bool,
-    /// Whether the `height` that wins, or the `block-size` that maps onto it, was declared
-    /// `min-content`, `max-content` or `fit-content` and computed to `auto` for want of
-    /// [`Self::keeps_block_size_keywords`]. Set in phase 3; see
-    /// [`ComputedValues::height_keyword`].
-    pub(crate) height_keyword: bool,
+    /// The keyword that the `height` that wins, or the `block-size` that maps onto it, was
+    /// declared with, if it computed to `auto` for want of [`Self::keeps_block_size_keywords`].
+    /// Set in phase 3; see [`ComputedValues::height_keyword`].
+    pub(crate) height_keyword: Option<ContentSizeKeyword>,
     /// Cascade precedence of the winning `width` / `height` / `inline-size` /
     /// `block-size` declarations. Phase 3 lets the logical and physical
     /// declaration that map onto the same axis compete in cascade order.
@@ -786,13 +785,16 @@ fn without_sizing_keyword(size: LengthOrAuto) -> LengthOrAuto {
     }
 }
 
-/// Whether `size` is `min-content`, `max-content` or `fit-content`, the keywords a block
-/// size drops to `auto` because the content of a box has no size of its own along that axis.
-fn is_content_keyword(size: LengthOrAuto) -> bool {
-    matches!(
-        size,
-        LengthOrAuto::MinContent | LengthOrAuto::MaxContent | LengthOrAuto::FitContent
-    )
+/// The keyword `size` is, when it is `min-content`, `max-content` or `fit-content`, the
+/// keywords a block size drops to `auto` because the content of a box has no size of its own
+/// along that axis.
+fn content_keyword(size: LengthOrAuto) -> Option<ContentSizeKeyword> {
+    match size {
+        LengthOrAuto::MinContent => Some(ContentSizeKeyword::MinContent),
+        LengthOrAuto::MaxContent => Some(ContentSizeKeyword::MaxContent),
+        LengthOrAuto::FitContent => Some(ContentSizeKeyword::FitContent),
+        _ => None,
+    }
 }
 
 impl SpecifiedValues {
@@ -904,7 +906,7 @@ impl SpecifiedValues {
             preferred_size_precedence: PreferredSizePrecedence::default(),
             block_size: None,
             keeps_block_size_keywords: false,
-            height_keyword: false,
+            height_keyword: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1362,7 +1364,7 @@ impl SpecifiedValues {
             preferred_size_precedence: PreferredSizePrecedence::default(),
             block_size: None,
             keeps_block_size_keywords: false,
-            height_keyword: false,
+            height_keyword: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1933,7 +1935,13 @@ impl SpecifiedValues {
         let declared_height = self.height;
         let declared_block_size = self.block_size;
         let keeps_keywords = self.keeps_block_size_keywords;
-        let marks_keyword = |size| !keeps_keywords && is_content_keyword(size);
+        let marks_keyword = |size| {
+            if keeps_keywords {
+                None
+            } else {
+                content_keyword(size)
+            }
+        };
         if !self.keeps_block_size_keywords {
             self.height = without_sizing_keyword(self.height);
             self.block_size = self.block_size.map(without_sizing_keyword);

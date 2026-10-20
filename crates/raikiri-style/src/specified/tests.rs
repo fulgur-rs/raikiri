@@ -1,5 +1,5 @@
 use super::*;
-use crate::computed::INITIAL_FONT_SIZE_PX;
+use crate::computed::{ContentSizeKeyword, INITIAL_FONT_SIZE_PX};
 use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
 use crate::property::{
@@ -201,7 +201,7 @@ fn parent_fixture() -> ComputedValues {
         writing_mode: WritingMode::VerticalRl,
         cssom_writing_mode: WritingMode::VerticalRl,
         multicol_flow: true,
-        height_keyword: true,
+        height_keyword: Some(ContentSizeKeyword::FitContent),
         horizontal_children: true,
         ruby_writing_mode: WritingMode::VerticalLr,
         ruby_position: RubyPosition::Under,
