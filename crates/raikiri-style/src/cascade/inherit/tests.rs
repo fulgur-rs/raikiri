@@ -469,6 +469,49 @@ fn min_block_size_competes_with_the_minimum_size_on_its_axis_in_cascade_order() 
     );
 }
 
+/// A size that rolls back stands in the order for the declaration it rolled
+/// back to, whichever of the logical and the physical size rolls back.
+#[test]
+fn a_size_that_rolled_back_competes_as_the_declaration_it_rolled_back_to() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let min = |css: &str| {
+        let cv = cascade_doc(css, "div", None);
+        (cv.min_width, cv.min_height, cv.min_block_size)
+    };
+    // The later `min-block-size` of the lower layer beats the `min-height`
+    // that layer holds, though the rollback itself sits in a higher layer.
+    assert_eq!(
+        min(
+            "@layer a, b; @layer a { div { min-height: 7px; min-block-size: 8px } } \
+             @layer b { div { min-height: revert-layer } }"
+        ),
+        (Auto, Px(8.0), Some(Px(8.0)))
+    );
+    // Nothing is left to roll back to, so only the logical size is declared.
+    assert_eq!(
+        min("@layer a, b; @layer a { div { min-block-size: 8px } } \
+             @layer b { div { min-height: revert-layer } }"),
+        (Auto, Px(8.0), Some(Px(8.0)))
+    );
+    // The logical size rolls back to a declaration of a lower layer, which
+    // loses to the `min-height` of the layer above it.
+    assert_eq!(
+        min("@layer a, b; @layer a { div { min-block-size: 3px } } \
+             @layer b { div { min-height: 9px; min-block-size: revert-layer } }"),
+        (Auto, Px(9.0), None)
+    );
+    // The preferred sizes follow the same rule.
+    let height = |css: &str| cascade_doc(css, "div", None).height;
+    assert_eq!(
+        height(
+            "@layer a, b, c; @layer a { div { height: 10px } } \
+             @layer b { div { block-size: 5px } } \
+             @layer c { div { height: revert-layer } }"
+        ),
+        Px(5.0)
+    );
+}
+
 #[test]
 fn block_size_keywords_compute_to_auto_for_an_element() {
     // An element sizes itself to its content along the block axis for
