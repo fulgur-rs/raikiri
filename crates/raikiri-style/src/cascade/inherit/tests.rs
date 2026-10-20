@@ -12059,6 +12059,35 @@ fn a_descendant_that_inherits_with_another_font_size_takes_the_ancestors_px() {
 }
 
 #[test]
+fn an_inherit_resolved_to_px_names_the_ancestor_that_declares_the_length() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(
+        style,
+        "g { font-size: 20px; stroke-width: 2em } \
+         rect { font-size: 10px; stroke-width: inherit }",
+    );
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let group = doc.push_element_with_namespace(svg, "g", "http://www.w3.org/2000/svg", &[]);
+    let rect = doc.push_element_with_namespace(group, "rect", "http://www.w3.org/2000/svg", &[]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    let width = |node: usize| {
+        result
+            .svg_style_properties(StyleNodeId(node as u64))
+            .iter()
+            .find(|property| property.property == PropertyKey::StrokeWidth)
+            .cloned()
+            .expect("a stroke width")
+    };
+    let taken = width(rect);
+    assert_eq!(taken.expression.as_deref(), Some("40px"));
+    assert_eq!(taken.inherited_from, Some(StyleNodeId(group as u64)));
+    // The declaration itself has no source to name.
+    assert_eq!(width(group).inherited_from, None);
+}
+
+#[test]
 fn a_descendant_that_inherits_with_the_same_font_size_keeps_inherit() {
     let properties = nested_rect_properties(
         "g { font-size: 20px; stroke-width: 2em; stroke-dasharray: 4px 2px } \

@@ -517,6 +517,86 @@ fn a_used_definition_resolves_a_font_relative_stroke_width_for_each_instance() {
 }
 
 #[test]
+fn an_inherited_stroke_width_in_a_used_definition_comes_from_the_use_element() {
+    assert_paints_like(
+        "<style>use{stroke:black;stroke-width:2em;font-size:20px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><path id=p d='M25 0V50' /></defs><use href='#p' /></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_in_a_used_definition_skips_the_ancestors_of_the_definition() {
+    assert_paints_like(
+        "<style>defs{font-size:5px;stroke-width:3em}use{stroke:black;stroke-width:2em;font-size:20px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><path id=p d='M25 0V50' /></defs><use href='#p' /></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_in_a_used_definition_comes_from_the_group_around_the_use() {
+    assert_paints_like(
+        "<style>g{stroke:black;stroke-width:2em;font-size:20px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><path id=p d='M25 0V50' /></defs><g><use href='#p' /></g></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn each_use_instance_inherits_the_stroke_width_of_its_own_use_element() {
+    assert_paints_like(
+        "<style>path{stroke:black;font-size:10px;stroke-width:inherit}#a{stroke-width:1em;font-size:10px}#b{stroke-width:1em;font-size:20px}</style><svg width=50 height=50><defs><path id=p d='M0 10h50' /></defs><use href='#p' id='a' /><use href='#p' id='b' y='20' /></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 30h50' stroke=black stroke-width=20 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_dasharray_in_a_used_definition_comes_from_the_use_element() {
+    assert_paints_like(
+        "<style>use{stroke:black;stroke-width:4px;stroke-dasharray:1em 3em;font-size:5px}path{font-size:10px;stroke-dasharray:inherit}</style><svg width=50 height=50><defs><path id=p d='M0 25h50' /></defs><use href='#p' /></svg>",
+        "<svg width=50 height=50><path d='M0 25h50' stroke=black stroke-width=4 stroke-dasharray='5 15' /></svg>",
+    );
+}
+
+#[test]
+fn a_presentation_attribute_of_the_use_element_gives_an_inheriting_definition_its_stroke_width() {
+    assert_paints_like(
+        "<style>path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><path id=p d='M25 0V50' /></defs><use href='#p' stroke='black' stroke-width='2em' style='font-size:20px' /></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn a_use_element_written_with_xlink_href_gives_an_inheriting_definition_its_stroke_width() {
+    assert_paints_like(
+        "<style>defs{font-size:5px;stroke-width:3em}use{stroke:black;stroke-width:2em;font-size:20px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><path id=p d='M25 0V50' /></defs><use xlink:href='#p' /></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn an_element_drawn_in_place_and_by_a_use_inherits_in_each_place() {
+    assert_paints_like(
+        "<style>path{stroke:black;font-size:10px;stroke-width:inherit}.a{stroke-width:.5em;font-size:20px}.b{stroke-width:.5em;font-size:40px}</style><svg width=50 height=50><g class=a><path id=p d='M0 10h50' /></g><g class=b><use href='#p' y='20' /></g></svg>",
+        "<svg width=50 height=50><path d='M0 10h50' stroke=black stroke-width=10 /><path d='M0 30h50' stroke=black stroke-width=20 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_comes_from_a_group_nested_deeper_in_the_used_definition() {
+    assert_paints_like(
+        "<style>.x{stroke:black;stroke-width:2em;font-size:20px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><g id=d><g class=x><path d='M25 0V50' /></g></g></defs><use href='#d' /></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
+fn an_inherited_stroke_width_inside_a_used_definition_comes_from_the_group_in_the_definition() {
+    assert_paints_like(
+        "<style>g{stroke:black;stroke-width:2em;font-size:20px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=50><defs><g id=d><path d='M25 0V50' /></g></defs><use href='#d' /></svg>",
+        "<svg width=50 height=50><path d='M25 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
 fn an_inherited_stroke_width_comes_from_the_nearest_ancestor_that_sets_it_by_attribute() {
     assert_paints_like(
         "<style>svg{font-size:30px;stroke:black;stroke-width:1em}g{font-size:4px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=20><g stroke-width='2em'><path d='M0 10h50' fill=none /></g></svg>",

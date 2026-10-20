@@ -10,8 +10,11 @@ use raikiri_style::cascade::SvgStyleProperty;
 use raikiri_style::property::{FontFamilyKind, PropertyKey};
 use raikiri_style::{CascadeResult, ComputedValues, StyleNodeId};
 use raikiri_traits::NodeKind;
+use std::borrow::Cow;
+use std::collections::HashSet;
 
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+const XLINK_NAMESPACE: &str = "http://www.w3.org/1999/xlink";
 
 /// Upper bound on the declaration text the descendants of one SVG may add.
 const DECLARATION_BYTE_LIMIT: usize = 32 * 1024 * 1024;
@@ -46,10 +49,21 @@ pub fn inline_svg_element_declarations(
     };
     let mut elements = Vec::new();
     let mut remaining_bytes = DECLARATION_BYTE_LIMIT;
-    let mut stack = vec![(root, root_node)];
+    let use_targets = use_targets(document, root);
+    // Each entry carries the outermost element above it that a `use` element
+    // instantiates, which stands for the subtree a renderer clones under the
+    // `use` element.
+    let mut stack = vec![(root, root_node, None)];
     let mut element_index = 0;
-    while let Some((node_id, node)) = stack.pop() {
+    while let Some((node_id, node, mut instance_root)) = stack.pop() {
         if node.kind() == NodeKind::Element {
+            if instance_root.is_none()
+                && node
+                    .attribute("id")
+                    .is_some_and(|id| use_targets.contains(id))
+            {
+                instance_root = Some(node_id);
+            }
             let style_node = StyleNodeId(node_id as u64);
             let properties = cascade.svg_style_properties(style_node);
             let relative_attributes = cascade.svg_relative_presentation_attributes(style_node);
@@ -74,26 +88,115 @@ pub fn inline_svg_element_declarations(
                 && (!properties.is_empty() || !relative_attributes.is_empty())
                 && let Some(style) = cascade.computed.get(node_id)
             {
+                let properties = match instance_root {
+                    Some(instance_root) => {
+                        inherit_from_instantiating_use(document, properties, instance_root)
+                    }
+                    None => Cow::Borrowed(properties),
+                };
                 elements.push(InlineSvgElementDeclarations {
                     element_index,
                     declarations: node_declarations(
                         style,
-                        properties,
+                        &properties,
                         relative_attributes,
+                        instance_root.is_some(),
                         &mut remaining_bytes,
                     )?,
                 });
             }
             element_index += 1;
         }
-        stack.extend(
-            node.children
-                .iter()
-                .rev()
-                .filter_map(|&child| document.get_node(child).map(|node| (child, node))),
-        );
+        stack.extend(node.children.iter().rev().filter_map(|&child| {
+            document
+                .get_node(child)
+                .map(|node| (child, node, instance_root))
+        }));
     }
     Ok(elements)
+}
+
+/// The ids that the `use` elements of the SVG rooted at `root` reference.
+fn use_targets(document: &Document, root: usize) -> HashSet<&str> {
+    let mut targets = HashSet::new();
+    let mut stack = vec![root];
+    while let Some(node_id) = stack.pop() {
+        let Some(node) = document.get_node(node_id) else {
+            continue;
+        };
+        if node.kind() == NodeKind::Element
+            && node.namespace_uri() == Some(SVG_NAMESPACE)
+            && node.tag_name() == Some("use")
+            && let Some(id) = node
+                .attribute("href")
+                .or_else(|| node.attribute_ns(XLINK_NAMESPACE, "href"))
+                .and_then(iri_fragment)
+        {
+            targets.insert(id);
+        }
+        stack.extend(node.children.iter().copied());
+    }
+    targets
+}
+
+/// The id of a local reference such as `#shape`, read as the renderer reads
+/// it: leading spaces are skipped, the id ends at the next space, and
+/// nothing but spaces may follow.
+fn iri_fragment(href: &str) -> Option<&str> {
+    const SPACES: [char; 4] = [' ', '\t', '\n', '\r'];
+    let rest = href.trim_start_matches(SPACES).strip_prefix('#')?;
+    let (id, tail) = rest.split_once(' ').unwrap_or((rest, ""));
+    (!id.is_empty() && tail.trim_matches(SPACES).is_empty()).then_some(id)
+}
+
+/// `properties` of an element in the subtree that a `use` element
+/// instantiates at `instance_root`, with every `inherit` that the cascade
+/// resolved against an ancestor outside that subtree left as `inherit`.
+///
+/// The cascade resolves `inherit` against the source tree, but the instance
+/// inherits from the `use` element and its ancestors, which the renderer
+/// reaches by itself.
+fn inherit_from_instantiating_use<'a>(
+    document: &Document,
+    properties: &'a [SvgStyleProperty],
+    instance_root: usize,
+) -> Cow<'a, [SvgStyleProperty]> {
+    let outside = |property: &SvgStyleProperty| {
+        property.inherited_from.is_some_and(|source| {
+            !is_inclusive_descendant(document, source.0 as usize, instance_root)
+        })
+    };
+    if !properties.iter().any(outside) {
+        return Cow::Borrowed(properties);
+    }
+    Cow::Owned(
+        properties
+            .iter()
+            .map(|property| {
+                if outside(property) {
+                    SvgStyleProperty {
+                        inherited: true,
+                        inherited_from: None,
+                        ..property.clone()
+                    }
+                } else {
+                    property.clone()
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Whether `node` is `ancestor` or one of its descendants.
+fn is_inclusive_descendant(document: &Document, node: usize, ancestor: usize) -> bool {
+    let mut current = Some(node);
+    while let Some(id) = current {
+        if id == ancestor {
+            return true;
+        }
+        current = document.parent_of(id);
+    }
+    false
 }
 
 /// The CSS `font-family` list of `style`, with every non-generic name quoted.
@@ -120,10 +223,20 @@ fn svg_presentation_name(key: PropertyKey) -> &'static str {
     key.svg_presentation_name().unwrap_or_default()
 }
 
+/// The declarations of one element. `in_instance` tells that the element is
+/// part of a subtree a `use` element instantiates.
+///
+/// A font-relative stroke length that an element outside such a subtree
+/// declares is written in px at that element's font size. A renderer copies
+/// the text of an `inherit` and resolves it at the inheriting element, which
+/// has another font size when it is instantiated below the `use` element.
+/// Inside an instantiated subtree the length is left as written, so that each
+/// instance resolves it against its own font size.
 fn node_declarations(
     style: &ComputedValues,
     properties: &[SvgStyleProperty],
     relative_attributes: &[SvgStyleProperty],
+    in_instance: bool,
     remaining_bytes: &mut usize,
 ) -> Result<String, String> {
     let mut css = String::new();
@@ -210,6 +323,15 @@ fn node_declarations(
             .as_ref()
             .filter(|_| !property.inherited)
             .unwrap_or(&value);
+        let in_px = if in_instance || property.inherited {
+            None
+        } else {
+            resolve_relative_svg_presentation_value(property.property, value, style.font_size.0)
+        };
+        if let Some(in_px) = &in_px {
+            consume(128usize.saturating_add(in_px.len().saturating_mul(2)))?;
+        }
+        let value = in_px.as_ref().unwrap_or(value);
         css.push_str(name);
         css.push(':');
         css.push_str(value);

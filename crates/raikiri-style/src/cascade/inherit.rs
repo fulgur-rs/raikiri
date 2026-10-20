@@ -1619,6 +1619,7 @@ pub(crate) fn apply_winners(
                     property: winner_key,
                     inherited: false,
                     expression: Some(expression),
+                    inherited_from: None,
                 });
             }
             if let Some(collector) = svg_properties.as_mut()
@@ -1634,6 +1635,7 @@ pub(crate) fn apply_winners(
                                 && svg_color_is_current_color(&color.source))
                         || (value.is_none() && svg_property_is_inherited(winner_key)),
                     expression: value.as_ref().and_then(svg_property_expression),
+                    inherited_from: None,
                 });
             }
             if let Some(value) = value {
@@ -1740,6 +1742,7 @@ fn inherit_ancestor_paint(
                 property: entry.property,
                 inherited: false,
                 expression: in_px.or_else(|| entry.expression.clone()),
+                inherited_from: None,
             };
             match properties
                 .iter_mut()
@@ -1852,6 +1855,11 @@ impl StrokeDeclarers {
 /// against its own font size. A declaration by a presentation attribute is
 /// not exported with its text here: it only ends the search, and the length
 /// is resolved where the attribute sits.
+///
+/// The search follows the ancestors in the source tree, which is not where an
+/// element that a `<use>` instantiates inherits from. The converted entry
+/// records the declaring ancestor in [`SvgStyleProperty::inherited_from`] so
+/// that the consumer, which knows the instances, can fall back to `inherit`.
 fn absolutize_inherited_lengths(
     properties: &mut [SvgStyleProperty],
     parent_declarers: StrokeDeclarers,
@@ -1875,6 +1883,7 @@ fn absolutize_inherited_lengths(
         {
             property.inherited = false;
             property.expression = Some(text);
+            property.inherited_from = Some(declarer);
         }
     }
 }
