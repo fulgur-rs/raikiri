@@ -12,7 +12,8 @@
 //!
 //! This module records the inline extent such a container would fill, gives
 //! it to the out-of-flow children as their available inline size, and moves
-//! their static position to the block-start edge.
+//! their static position to the block-start edge. Its `alignment` submodule
+//! aligns them by the axes of the writing mode.
 
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{AvailableSpace, LayoutInput, Position as TaffyPosition, Size};
@@ -22,6 +23,10 @@ use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::node::NodeFlags;
 use raikiri_style::property::WritingMode;
+
+mod alignment;
+
+pub(super) use alignment::align_hoisted_children;
 
 /// The writing mode resolved against the DOM by the last style bridge.
 pub(crate) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {

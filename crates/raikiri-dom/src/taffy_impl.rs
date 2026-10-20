@@ -1385,8 +1385,14 @@ fn compute_ifc_root(
         escaping_margin
     };
     if inputs.run_mode == RunMode::PerformLayout {
+        let in_flow_overflow = output.scrollable_overflow_rect;
         oof::layout_local_oof(tree, node_id, &mut output);
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
+        if let Some(area) = output.oof_positioning_area
+            && let Some(hoisted_overflow) = vertical_oof::align_hoisted_children(tree, idx, area)
+        {
+            output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
+        }
     }
     output
 }
@@ -2560,10 +2566,17 @@ pub(crate) fn block_layout(
     if let Some(right_to_left) = vertical_block::block_right_to_left(tree, idx) {
         let mut output =
             vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left);
+        let in_flow_overflow = output.scrollable_overflow_rect;
         if inputs.run_mode == RunMode::PerformLayout {
             oof::layout_local_oof(tree, node_id, &mut output);
         }
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
+        if let Some(area) = output.oof_positioning_area
+            && let Some(hoisted_overflow) = vertical_oof::align_hoisted_children(tree, idx, area)
+            && inputs.run_mode == RunMode::PerformLayout
+        {
+            output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
+        }
         return output;
     }
     let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
@@ -2628,6 +2641,19 @@ fn size_contained_inputs(
         inputs.known_dimensions_are_definite.height = false;
     }
     inputs
+}
+
+/// The absolutely positioned boxes that `idx` is the containing block of and
+/// that generate a box, as the last positioning pass hoisted them.
+fn hoisted_children(tree: &LayoutSession<'_>, idx: usize) -> Vec<usize> {
+    tree.context
+        .taffy_hoisted_children
+        .get(&idx)
+        .into_iter()
+        .flatten()
+        .map(|child| usize::from(*child))
+        .filter(|&child| !tree.nodes[child].is_display_none())
+        .collect()
 }
 
 /// Split negative free space between the two auto block-axis margins of
@@ -2695,15 +2721,7 @@ fn center_absolute_children_in_block_axis(
             bottom: size.height - border.bottom - gutter_y,
         }
     };
-    let children: Vec<usize> = tree
-        .context
-        .taffy_hoisted_children
-        .get(&idx)
-        .into_iter()
-        .flatten()
-        .map(|child| usize::from(*child))
-        .filter(|&child| !tree.nodes[child].is_display_none())
-        .collect();
+    let children = hoisted_children(tree, idx);
     for child in children.iter().copied() {
         let node = &tree.layout_node_with_style(child).unwrap();
         let style = &node.style;
