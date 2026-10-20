@@ -103,7 +103,10 @@ fn supported_with_wrapped_blocks(
 /// The rendered element children of `parent`, with those of a `display:
 /// contents` child in its place. Text that renders gives a box lines, which
 /// the callers refuse, so any other node is collapsible white space.
-fn rendered_elements(tree: &Document, parent: usize) -> impl Iterator<Item = usize> + '_ {
+pub(super) fn rendered_elements(
+    tree: &Document,
+    parent: usize,
+) -> impl Iterator<Item = usize> + '_ {
     tree.children_through_contents(parent)
         .into_iter()
         .filter(|&child| {
@@ -142,14 +145,25 @@ fn is_plain_block(tree: &Document, child: usize) -> bool {
 
 /// [`is_plain_block`] for a box whose insets the caller accepts.
 fn is_plain_block_ignoring_insets(tree: &Document, child: usize) -> bool {
-    is_plain_block_with_display(tree, child, false)
+    is_plain_block_with_display(tree, child, false, false)
 }
 
 fn is_plain_wrapper_ignoring_insets(tree: &Document, child: usize) -> bool {
-    is_plain_block_with_display(tree, child, true)
+    is_plain_block_with_display(tree, child, true, false)
 }
 
-fn is_plain_block_with_display(tree: &Document, child: usize, allow_flow_root: bool) -> bool {
+/// [`is_plain_block`] for a box that may hold lines of text, and whose insets
+/// the caller accepts.
+pub(super) fn is_plain_block_holding_lines(tree: &Document, child: usize) -> bool {
+    is_plain_block_with_display(tree, child, false, true)
+}
+
+fn is_plain_block_with_display(
+    tree: &Document,
+    child: usize,
+    allow_flow_root: bool,
+    allow_lines: bool,
+) -> bool {
     let node = &tree.layout_node_with_style(child).unwrap();
     let defaults: taffy::Style = taffy::Style::default();
     let display = node.display();
@@ -173,7 +187,7 @@ fn is_plain_block_with_display(tree: &Document, child: usize, allow_flow_root: b
         || node.break_after != BreakBetween::Auto
         || node.has_before_or_after_content
         || node.multicol.is_some()
-        || node.ifc.is_some()
+        || node.ifc.is_some() && !allow_lines
         || is_right_aligned_in_parent(tree, child))
 }
 
