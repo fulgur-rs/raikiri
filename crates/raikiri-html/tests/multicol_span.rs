@@ -610,6 +610,32 @@ fn a_spanner_with_content_at_the_page_end_moves_whole_to_the_next_page() {
     }
 }
 
+#[test]
+fn a_spanner_is_cut_only_where_every_page_end_it_crosses_allows() {
+    // The first page is 100px tall and the next ones 50px. The spanner is 80px
+    // tall and starts at 80px, so it crosses the page ends at 100px and 150px.
+    // Cut at both, a plain spanner stays, and the paragraph after the
+    // container starts at 160px, 10px into the third page. The border of the
+    // other one would be cut at 150px, so it moves whole to the top of the
+    // second page and the paragraph starts at 180px.
+    for (spanner, expected) in [
+        ("<div class=span style='height:80px'></div>", 26.0),
+        (
+            "<div class=span style='height:60px;border-bottom:20px solid'></div>",
+            46.0,
+        ),
+    ] {
+        let document = lay_out(
+            &format!(
+                "<div class=mc><p>A<br>B<br>C<br>D<br>E<br>F<br>G<br>H</p>{spanner}</div><p>K</p>"
+            ),
+            "@page{size:180px 50px}@page:first{size:180px 100px}",
+        );
+        assert_eq!(document.page_count(), 3, "{spanner}");
+        assert_page_runs(&document, 2, &[("K", (0.0, expected))]);
+    }
+}
+
 fn assert_page_runs(document: &DocumentLayout, number: u32, expected: &[(&str, (f32, f32))]) {
     let runs = document.page(number).unwrap().text_runs();
     assert_eq!(

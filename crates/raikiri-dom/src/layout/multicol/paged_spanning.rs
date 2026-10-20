@@ -150,12 +150,12 @@ pub(in crate::layout) fn paginate_spanning_columns(
             let layout = tree.nodes[id].unrounded_layout;
             let y = owner_y + layout.location.y;
             let (_, origin, height) = page_for(y);
-            // A spanner that can be cut where the page ends continues on the
+            // A spanner that can be cut where each page ends continues on the
             // next page, as a block of the flow does; the others move whole.
             if layout.size.height <= height
                 && y > origin + 0.001
                 && y + layout.size.height > origin + height + 0.001
-                && !breaks_at(tree, id, origin + height - y)
+                && !breaks_at_every_page_end(tree, id, y, origin + height, page_for)
             {
                 let shift = origin + height - y;
                 shift_child(tree, &mut shifts, id, shift);
@@ -172,6 +172,28 @@ pub(in crate::layout) fn paginate_spanning_columns(
     tree.nodes[owner].unrounded_layout.size.height += delta;
     edits.grow(owner, delta);
     Ok(delta)
+}
+
+/// Whether the spanner `id`, whose border box starts at `y`, may be cut at
+/// each page end it crosses, the first of them at `page_end`. Pages differ in
+/// height when a page rule or a named page sizes them, so a spanner that fits
+/// the page it starts on may cross more than one page end.
+fn breaks_at_every_page_end(
+    tree: &Document,
+    id: usize,
+    y: f32,
+    mut page_end: f32,
+    page_for: &impl Fn(f32) -> (u32, f32, f32),
+) -> bool {
+    let bottom = y + tree.nodes[id].unrounded_layout.size.height;
+    while page_end < bottom - EPSILON {
+        if !breaks_at(tree, id, page_end - y) {
+            return false;
+        }
+        let (_, origin, height) = page_for(page_end + EPSILON);
+        page_end = origin + height;
+    }
+    true
 }
 
 /// Whether a page may end `cut` below the top of the border box of `id`, as it
