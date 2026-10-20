@@ -248,13 +248,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
         let ElementBox {
             node_id,
             cv,
-            inside_fixed,
-            inside_fixed_containing_block,
-            paint_padding,
             paint_border_radius,
-            fixed_in_viewport,
-            establishes_fixed_containing_block,
-            painted_border,
             ..
         } = *element;
         let OwnBox {
@@ -262,23 +256,51 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             y: own_paint_y,
             width: own_paint_width,
             height: own_paint_height,
-            background_height: own_background_height,
+            ..
         } = *own;
-        let (document, image_cache, pixel_source, root_transform, canvas_owner) = (
-            self.document,
-            self.image_cache,
-            self.pixel_source,
-            self.root_transform,
-            self.canvas_owner,
+        let document = self.document;
+        let clipped_to_page_content = self.push_background_page_clip(element);
+        paint_element_box_shadows(
+            &mut *self.scene,
+            own_paint_width,
+            own_paint_height,
+            own_paint_x,
+            own_paint_y,
+            &paint_border_radius,
+            &cv.box_shadow,
+            cv.color,
         );
+        let table_part_clip = document.anonymous_table_part_background_cells(node_id);
+        if let Some(cells) = table_part_clip {
+            self.push_table_part_clip(cells, own);
+        }
+        // Propagation transfers only the background to the canvas;
+        // shadows and borders still belong to the element's box.
+        if self.canvas_owner != Some(node_id) {
+            self.paint_background_layers(element, own);
+        }
+        if table_part_clip.is_some() {
+            self.scene.pop_layer();
+        }
+        if clipped_to_page_content {
+            self.scene.pop_layer();
+        }
+    }
+
+    /// Clip the shadows and the background of `element` to the page content
+    /// box, if they are clipped to it, and return whether a clip was pushed.
+    fn push_background_page_clip(&mut self, element: &ElementBox<'w>) -> bool {
+        let ElementBox {
+            cv,
+            inside_fixed,
+            fixed_in_viewport,
+            ..
+        } = *element;
         let PageGeometry {
-            page_area,
             page_clip_transform,
             page_content_clip,
             ..
         } = self.geometry;
-        let scene = &mut *self.scene;
-        let warnings = &mut *self.warnings;
         // Paint element background (CSS Backgrounds 3 §2.2).
         // Shift applies to the box itself per CSS 2.1 §10.8.1.
         let clip_background = page_content_clip.filter(|_| {
@@ -290,72 +312,87 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 )
         });
         if let Some(clip) = clip_background {
-            scene.scene.push_clip_layer(page_clip_transform, &clip);
+            self.scene.scene.push_clip_layer(page_clip_transform, &clip);
         }
-        paint_element_box_shadows(
-            scene,
+        clip_background.is_some()
+    }
+
+    /// Clip to the cell areas of a source row or row group, which the box
+    /// `own` of the part positions.
+    fn push_table_part_clip(&mut self, cells: &[PaintRect], own: &OwnBox) {
+        let mut path = BezPath::new();
+        for cell in cells {
+            let x = f64::from(cell.x);
+            let y = f64::from(cell.y);
+            let right = x + f64::from(cell.width);
+            let bottom = y + f64::from(cell.height);
+            path.move_to((x, y));
+            path.line_to((right, y));
+            path.line_to((right, bottom));
+            path.line_to((x, bottom));
+            path.close_path();
+        }
+        self.scene.scene.push_clip_layer(
+            Affine::translate((f64::from(own.x), f64::from(own.y))),
+            &path,
+        );
+    }
+
+    /// Paint the background color and layers of the box `own` of `element`.
+    fn paint_background_layers(&mut self, element: &ElementBox<'w>, own: &OwnBox) {
+        let ElementBox {
+            cv,
+            paint_padding,
+            paint_border_radius,
+            painted_border,
+            ..
+        } = *element;
+        let OwnBox {
+            x: own_paint_x,
+            y: own_paint_y,
+            width: own_paint_width,
+            background_height: own_background_height,
+            ..
+        } = *own;
+        let env = self.background_env(element);
+        paint_element_background(
+            self.image_cache,
+            &mut *self.scene,
             own_paint_width,
-            own_paint_height,
+            own_background_height,
             own_paint_x,
             own_paint_y,
-            &paint_border_radius,
-            &cv.box_shadow,
+            cv.background_color,
+            cv.background_layers(),
             cv.color,
+            &paint_border_radius,
+            painted_border,
+            &paint_padding,
+            env,
+            self.pixel_source,
+            &mut *self.warnings,
         );
-        let table_part_clip = document.anonymous_table_part_background_cells(node_id);
-        if let Some(cells) = table_part_clip {
-            let mut path = BezPath::new();
-            for cell in cells {
-                let x = f64::from(cell.x);
-                let y = f64::from(cell.y);
-                let right = x + f64::from(cell.width);
-                let bottom = y + f64::from(cell.height);
-                path.move_to((x, y));
-                path.line_to((right, y));
-                path.line_to((right, bottom));
-                path.line_to((x, bottom));
-                path.close_path();
-            }
-            scene.scene.push_clip_layer(
-                Affine::translate((f64::from(own_paint_x), f64::from(own_paint_y))),
-                &path,
-            );
-        }
-        // Propagation transfers only the background to the canvas;
-        // shadows and borders still belong to the element's box.
-        if canvas_owner != Some(node_id) {
-            paint_element_background(
-                image_cache,
-                scene,
-                own_paint_width,
-                own_background_height,
-                own_paint_x,
-                own_paint_y,
-                cv.background_color,
-                cv.background_layers(),
-                cv.color,
-                &paint_border_radius,
-                painted_border,
-                &paint_padding,
-                BackgroundEnv {
-                    border_hides_edge: matches!(cv.border_image.source, BackgroundImage::None)
-                        && border_hides_background_edge(painted_border, cv.color),
-                    device_grid: image_cache.device_grid(scene.transform),
-                    fixed_viewport: fixed_background_viewport(
-                        page_area,
-                        root_transform,
-                        inside_fixed_containing_block || establishes_fixed_containing_block,
-                    ),
-                },
-                pixel_source,
-                warnings,
-            );
-        }
-        if table_part_clip.is_some() {
-            scene.pop_layer();
-        }
-        if clip_background.is_some() {
-            scene.pop_layer();
+    }
+
+    /// What surrounds the box of `element` and shapes how its background is
+    /// painted.
+    fn background_env(&self, element: &ElementBox<'w>) -> BackgroundEnv {
+        let ElementBox {
+            cv,
+            inside_fixed_containing_block,
+            establishes_fixed_containing_block,
+            painted_border,
+            ..
+        } = *element;
+        BackgroundEnv {
+            border_hides_edge: matches!(cv.border_image.source, BackgroundImage::None)
+                && border_hides_background_edge(painted_border, cv.color),
+            device_grid: self.image_cache.device_grid(self.scene.transform),
+            fixed_viewport: fixed_background_viewport(
+                self.geometry.page_area,
+                self.root_transform,
+                inside_fixed_containing_block || establishes_fixed_containing_block,
+            ),
         }
     }
 
