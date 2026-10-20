@@ -363,8 +363,8 @@ fn the_px_text_of_a_stroke_length_counts_against_the_budget() {
     let mut style = ComputedValues::initial();
     style.font_size.0 = 20.0;
     // The declaration's own 128 bytes, the text's 128 and its two copies, and
-    // 128 and two copies of the `40px` that replaces it.
-    let needed = 128 + (128 + 2 * 3) + (128 + 2 * 4);
+    // two copies of the `40px` that replaces it.
+    let needed = 128 + (128 + 2 * 3) + 2 * 4;
     let mut remaining = needed - 1;
     assert!(node_declarations(&style, &declared, &[], false, &mut remaining).is_err());
     let mut remaining = needed;
@@ -395,6 +395,8 @@ fn an_inherited_stroke_length_stays_inherit_in_any_place() {
 fn a_local_reference_is_read_as_the_renderer_reads_it() {
     assert_eq!(iri_fragment("#shape"), Some("shape"));
     assert_eq!(iri_fragment(" \n#shape  "), Some("shape"));
+    // Only a space ends the id.
+    assert_eq!(iri_fragment("#a\tb"), Some("a\tb"));
     for unreadable in ["", "#", "shape", "shape#", "#a b", "file.svg#shape"] {
         assert_eq!(iri_fragment(unreadable), None, "{unreadable:?}");
     }
