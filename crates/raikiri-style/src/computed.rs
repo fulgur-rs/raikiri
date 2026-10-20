@@ -517,6 +517,28 @@ impl ComputedBorderImage {
     }
 }
 
+/// A sizing keyword that stands for the content size of a box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentSizeKeyword {
+    /// `min-content`
+    MinContent,
+    /// `max-content`
+    MaxContent,
+    /// `fit-content` without an argument
+    FitContent,
+}
+
+impl ContentSizeKeyword {
+    /// The value of a length property that the keyword is.
+    pub(crate) fn as_length(self) -> ComputedLengthPercentageOrAuto {
+        match self {
+            Self::MinContent => ComputedLengthPercentageOrAuto::MinContent,
+            Self::MaxContent => ComputedLengthPercentageOrAuto::MaxContent,
+            Self::FitContent => ComputedLengthPercentageOrAuto::FitContent,
+        }
+    }
+}
+
 /// Per-node computed style. See the field documentation below for supported
 /// properties and their inheritance behavior (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_feature_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position;
 /// non-inherited: background-color / display / counter-* / content / string-set /
@@ -841,6 +863,14 @@ pub struct ComputedValues {
     /// the flow-relative margins and padding of their children keep the
     /// `horizontal-tb` mapping. Not a CSS property.
     pub multicol_flow: bool,
+    /// The keyword that the `height` that wins, or the `block-size` that maps onto it, was
+    /// declared with: `min-content`, `max-content` or `fit-content`. [`Self::height`] is
+    /// `auto` then, as a box sizes itself to its content along the block axis whatever the
+    /// keyword says, so the keyword is the only trace of a height that is not `auto`. A box in
+    /// a grid or a flex container is told from an `auto` one by it: only an `auto` height is
+    /// stretched (CSS Box Alignment 3 §6.1). `fit-content(<length>)` is not recorded, as
+    /// browsers treat it like `auto`. Not a CSS property.
+    pub height_keyword: Option<ContentSizeKeyword>,
     /// Whether the box this element's children are placed in lays them out
     /// on horizontal axes in every writing mode: a flex, grid or table box,
     /// or a multicol flow. A `display: contents` or `display: none` element
@@ -2110,6 +2140,7 @@ impl ComputedValues {
             writing_mode: WritingMode::HorizontalTb,
             cssom_writing_mode: WritingMode::HorizontalTb,
             multicol_flow: false,
+            height_keyword: None,
             horizontal_children: false,
             ruby_writing_mode: WritingMode::HorizontalTb,
             ruby_position: RubyPosition::Over,

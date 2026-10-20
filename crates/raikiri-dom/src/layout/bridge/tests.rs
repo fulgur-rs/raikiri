@@ -3151,6 +3151,160 @@ fn an_item_that_is_not_stretched_keeps_its_alignment() {
 }
 
 #[test]
+fn an_item_with_a_keyword_height_is_aligned_at_the_start_of_the_block_axis() {
+    // The cascade computes the keyword to `auto`, which a stretch would fill;
+    // only the mark it leaves tells the item from one with an `auto` height.
+    let start = Some(taffy::AlignItems::START);
+    let flex_start = Some(taffy::AlignItems::FLEX_START);
+    for keyword in ["min-content", "max-content", "fit-content"] {
+        let item = format!("display:block;height:{keyword}");
+        for wrapped in [false, true] {
+            assert_eq!(
+                bridged_align_selves(
+                    &[
+                        ("display:grid", "div", &item),
+                        ("display:inline-grid", "div", &item),
+                        ("display:flex", "div", &item),
+                        ("display:flex;flex-direction:row-reverse", "div", &item),
+                        ("display:inline-flex", "div", &item),
+                        (
+                            "display:flex;align-items:stretch",
+                            "img",
+                            &format!("{item};align-self:normal"),
+                        ),
+                        ("display:grid", "img", &format!("{item};align-self:stretch")),
+                        (
+                            "display:flex;align-items:center",
+                            "div",
+                            &format!("{item};align-self:stretch"),
+                        ),
+                    ],
+                    wrapped
+                ),
+                [
+                    start, start, flex_start, flex_start, flex_start, flex_start, start, flex_start
+                ],
+                "{keyword} wrapped: {wrapped}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_item_without_a_stretched_keyword_height_keeps_its_alignment() {
+    use taffy::AlignItems;
+
+    let keyword = "display:block;height:max-content";
+    let cases = [
+        // An alignment of its own, or the container's, that is no stretch.
+        (
+            "display:flex",
+            "div",
+            format!("{keyword};align-self:center"),
+        ),
+        (
+            "display:grid",
+            "div",
+            format!("{keyword};align-self:baseline"),
+        ),
+        (
+            "display:flex;align-items:center",
+            "div",
+            keyword.to_string(),
+        ),
+        // A height that is no keyword; `fit-content(<length>)` is stretched
+        // like `auto`.
+        (
+            "display:flex",
+            "div",
+            "display:block;height:auto".to_string(),
+        ),
+        (
+            "display:flex",
+            "div",
+            "display:block;height:100px".to_string(),
+        ),
+        (
+            "display:grid",
+            "div",
+            "display:block;height:fit-content(50px)".to_string(),
+        ),
+        // A keyword width does not stop a stretch of the height.
+        (
+            "display:flex",
+            "div",
+            "display:block;width:max-content".to_string(),
+        ),
+        // A container whose cross axis is not the height, or no layout of items.
+        (
+            "display:flex;flex-direction:column",
+            "div",
+            keyword.to_string(),
+        ),
+        ("display:block", "div", keyword.to_string()),
+        // An absolutely positioned box is no item of the alignment.
+        (
+            "display:grid",
+            "div",
+            format!("{keyword};position:absolute"),
+        ),
+        // Neither is a box that generates no box of its own.
+        (
+            "display:grid",
+            "div",
+            "display:contents;height:max-content".to_string(),
+        ),
+        (
+            "display:flex",
+            "div",
+            "display:none;height:max-content".to_string(),
+        ),
+    ];
+    let borrowed: Vec<(&str, &str, &str)> = cases
+        .iter()
+        .map(|(parent, tag, css)| (*parent, *tag, css.as_str()))
+        .collect();
+    assert_eq!(
+        bridged_align_selves(&borrowed, false),
+        [
+            Some(AlignItems::CENTER),
+            Some(AlignItems::BASELINE),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ]
+    );
+}
+
+#[test]
+fn an_item_inherits_the_keyword_height_of_its_container() {
+    // `height: inherit` takes the keyword of the parent although the cascade
+    // computes it to `auto`, so the item is held at the start like the parent.
+    let start = Some(taffy::AlignItems::START);
+    let flex_start = Some(taffy::AlignItems::FLEX_START);
+    let inherit = "display:block;height:inherit";
+    assert_eq!(
+        bridged_align_selves(
+            &[
+                ("display:grid;height:min-content", "div", inherit),
+                ("display:flex;height:max-content", "div", inherit),
+                ("display:grid;height:auto", "div", inherit),
+                ("display:flex;height:100px", "div", inherit),
+            ],
+            false
+        ),
+        [start, flex_start, None, None]
+    );
+}
+
+#[test]
 fn a_sizing_keyword_is_no_min_max_constraint_and_no_margin() {
     // Taffy's min and max sizes hold no sizing keyword (the node's content
     // limits do) and a margin never computes to one; where one reaches either,

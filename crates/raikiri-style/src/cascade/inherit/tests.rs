@@ -2,7 +2,9 @@ use super::*;
 use crate::cascade::candidate::{OwnedCandidates, Precedence};
 use crate::cascade::test_support::*;
 use crate::cascade::{cascade, cascade_with_media_context_for_page, cascade_with_options};
-use crate::computed::{ComputedValues, INITIAL_FONT_SIZE_PX, VerticalLogicalSize};
+use crate::computed::{
+    ComputedValues, ContentSizeKeyword, INITIAL_FONT_SIZE_PX, VerticalLogicalSize,
+};
 use crate::media::MediaContext;
 use crate::property::CssColor;
 use crate::property::DisplayValue;
@@ -545,6 +547,74 @@ fn block_size_keywords_compute_to_auto_for_an_element() {
             width: ComputedLengthPercentageOrAuto::Auto,
             height: ComputedLengthPercentageOrAuto::MaxContent,
         })
+    );
+}
+
+#[test]
+fn a_block_size_keyword_leaves_a_mark_on_the_computed_values() {
+    // The keyword computes to `auto` for an element, but only `auto` is
+    // stretched by an alignment, so what was declared is kept apart.
+    for (declaration, keyword) in [
+        ("height: min-content", true),
+        ("height: max-content", true),
+        ("height: fit-content", true),
+        ("block-size: max-content", true),
+        // The function form, `auto` and lengths are not one of the keywords.
+        ("height: fit-content(10px)", false),
+        ("block-size: fit-content(10px)", false),
+        ("height: auto", false),
+        ("height: 10px", false),
+        ("width: max-content", false),
+        ("inline-size: max-content", false),
+        // The declaration that wins in cascade order decides.
+        ("block-size: max-content; height: auto", false),
+        ("height: max-content; block-size: auto", false),
+        ("height: max-content; block-size: 10px", false),
+        ("block-size: 10px; height: max-content", true),
+        ("height: auto; block-size: max-content", true),
+        // The physical height is the inline size in a vertical writing mode.
+        ("writing-mode: vertical-rl; inline-size: max-content", true),
+        ("writing-mode: vertical-rl; height: max-content", true),
+        ("writing-mode: vertical-lr; inline-size: min-content", true),
+        ("writing-mode: sideways-lr; inline-size: fit-content", true),
+        ("writing-mode: vertical-rl; block-size: max-content", false),
+        ("writing-mode: vertical-rl; width: max-content", false),
+        (
+            "writing-mode: vertical-rl; inline-size: fit-content(10px)",
+            false,
+        ),
+        (
+            "writing-mode: vertical-rl; height: max-content; inline-size: 10px",
+            false,
+        ),
+        (
+            "writing-mode: vertical-rl; inline-size: 10px; height: max-content",
+            true,
+        ),
+    ] {
+        // Each marking declaration names exactly one of the keywords.
+        let expected = keyword.then(|| {
+            [
+                ("min-content", ContentSizeKeyword::MinContent),
+                ("max-content", ContentSizeKeyword::MaxContent),
+                ("fit-content", ContentSizeKeyword::FitContent),
+            ]
+            .into_iter()
+            .find_map(|(name, mark)| declaration.contains(name).then_some(mark))
+            .expect("a marking declaration names a keyword")
+        });
+        let values = cascade_doc("", "div", Some(declaration));
+        assert_eq!(values.height_keyword, expected, "{declaration}");
+    }
+    // The keyword computes to `auto` for a horizontal element, and a length
+    // stays a length.
+    assert_eq!(
+        cascade_doc("", "div", Some("height: max-content")).height,
+        ComputedLengthPercentageOrAuto::Auto
+    );
+    assert_eq!(
+        cascade_doc("", "div", Some("height: max-content; block-size: 10px")).height,
+        ComputedLengthPercentageOrAuto::Px(10.0)
     );
 }
 

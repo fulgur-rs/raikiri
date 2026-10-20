@@ -27,8 +27,8 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{
-    ChFontKey, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues, FontSizeKeywordInfo,
-    RunningTemplate, VerticalLogicalSize, initial_background_layers,
+    ChFontKey, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues, ContentSizeKeyword,
+    FontSizeKeywordInfo, RunningTemplate, VerticalLogicalSize, initial_background_layers,
 };
 use crate::property::{
     AlignSelfValue, AspectRatioValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
@@ -341,6 +341,10 @@ pub struct SpecifiedValues {
     /// axis for all of them (CSS Sizing 3 §5.1), so they compute to `auto` unless the box is one
     /// that fills the space it is given for `auto`, as a page-margin box does.
     pub(crate) keeps_block_size_keywords: bool,
+    /// The keyword that the `height` that wins, or the `block-size` that maps onto it, was
+    /// declared with, if it computed to `auto` for want of [`Self::keeps_block_size_keywords`].
+    /// Set in phase 3; see [`ComputedValues::height_keyword`].
+    pub(crate) height_keyword: Option<ContentSizeKeyword>,
     /// Cascade precedence of the winning size declarations (`width`,
     /// `height`, `inline-size`, `block-size` and the minimum sizes). Phase 3
     /// lets the logical and physical declaration that map onto the same axis
@@ -849,6 +853,18 @@ fn without_sizing_keyword(size: LengthOrAuto) -> LengthOrAuto {
     }
 }
 
+/// The keyword `size` is, when it is `min-content`, `max-content` or `fit-content`, the
+/// keywords a block size drops to `auto` because the content of a box has no size of its own
+/// along that axis.
+fn content_keyword(size: LengthOrAuto) -> Option<ContentSizeKeyword> {
+    match size {
+        LengthOrAuto::MinContent => Some(ContentSizeKeyword::MinContent),
+        LengthOrAuto::MaxContent => Some(ContentSizeKeyword::MaxContent),
+        LengthOrAuto::FitContent => Some(ContentSizeKeyword::FitContent),
+        _ => None,
+    }
+}
+
 impl SpecifiedValues {
     /// Inherit marker text with the UA defaults required by CSS Lists 3 §3.1.1.
     pub(crate) fn inherit_marker_from(parent: &ComputedValues) -> Self {
@@ -958,6 +974,7 @@ impl SpecifiedValues {
             size_precedence: SizePrecedence::default(),
             block_size: None,
             keeps_block_size_keywords: false,
+            height_keyword: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1417,6 +1434,7 @@ impl SpecifiedValues {
             size_precedence: SizePrecedence::default(),
             block_size: None,
             keeps_block_size_keywords: false,
+            height_keyword: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1985,6 +2003,16 @@ impl SpecifiedValues {
     /// size on the same axis compete in cascade order, as `min-block-size`
     /// does below.
     fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
+        let declared_height = self.height;
+        let declared_block_size = self.block_size;
+        let keeps_keywords = self.keeps_block_size_keywords;
+        let marks_keyword = |size| {
+            if keeps_keywords {
+                None
+            } else {
+                content_keyword(size)
+            }
+        };
         if !self.keeps_block_size_keywords {
             self.height = without_sizing_keyword(self.height);
             self.block_size = self.block_size.map(without_sizing_keyword);
@@ -1997,6 +2025,7 @@ impl SpecifiedValues {
             && precedence.inline_size.is_none()
             && precedence.block_size.is_none()
         {
+            self.height_keyword = marks_keyword(declared_height);
             return None;
         }
         let pick = |physical, physical_rank, logical, logical_rank| {
@@ -2036,6 +2065,21 @@ impl SpecifiedValues {
             block_size,
             precedence.block_size,
         );
+        // The physical height: the block size in a horizontal writing mode, the inline size
+        // in a vertical one. Layout of a vertical box reads `self.height` above instead, which
+        // keeps the horizontal mapping, but the stretch the mark stands for follows the
+        // physical height.
+        let (logical, logical_rank) = if self.writing_mode.is_vertical() {
+            (inline_size, precedence.inline_size)
+        } else {
+            (declared_block_size, precedence.block_size)
+        };
+        self.height_keyword = marks_keyword(pick(
+            declared_height,
+            precedence.height,
+            logical,
+            logical_rank,
+        ));
         vertical
     }
 
@@ -2816,6 +2860,7 @@ impl SpecifiedValues {
             },
             column_width,
             multicol_flow,
+            height_keyword: self.height_keyword,
             horizontal_children,
             ruby_writing_mode,
             custom_properties: crate::computed::empty_custom_properties(),
