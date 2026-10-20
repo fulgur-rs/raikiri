@@ -1411,6 +1411,11 @@ fn text_indent_rejects_unsupported_unit() {
 }
 
 #[test]
+fn text_indent_keeps_the_css_wide_keywords() {
+    assert_css_wide_keywords_deferred("text-indent");
+}
+
+#[test]
 fn text_indent_rejects_auto() {
     // Unlike `margin` / `width`, `text-indent`'s grammar has no `auto`
     // alternative — the `hanging`/`each-line` keywords are the only
@@ -2255,12 +2260,22 @@ fn text_decoration_thickness_parses_all_forms() {
 }
 
 #[test]
+fn text_decoration_thickness_keeps_the_css_wide_keywords() {
+    assert_css_wide_keywords_deferred("text-decoration-thickness");
+}
+
+#[test]
 fn text_decoration_thickness_key_maps_to_property_key() {
     let v = PropertyValue::TextDecorationThickness(TextDecorationThickness::Auto);
     assert_eq!(v.key(), PropertyKey::TextDecorationThickness);
 }
 
 // ── text-decoration-inset (ED §2.9.1) ──
+
+#[test]
+fn text_decoration_inset_keeps_the_css_wide_keywords() {
+    assert_css_wide_keywords_deferred("text-decoration-inset");
+}
 
 #[test]
 fn text_decoration_inset_parses_auto_and_one_or_two_lengths() {
@@ -2674,6 +2689,11 @@ fn text_underline_offset_parses_lengths_percentages_and_auto() {
         serialize_value(&parse_entire("calc(200% - 8px)", "text-underline-offset").unwrap()),
         Some("calc(200% - 8px)".to_owned())
     );
+}
+
+#[test]
+fn text_underline_offset_keeps_the_css_wide_keywords() {
+    assert_css_wide_keywords_deferred("text-underline-offset");
 }
 
 #[test]

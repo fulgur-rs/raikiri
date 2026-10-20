@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use raikiri_dom::FontFaceLoader;
 use raikiri_traits::{
-    FetchOutcome, NetworkError, NetworkProvider, PolicyViolation, RenderWarning, Request,
-    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    FetchOutcome, FetchedResource, NetworkError, NetworkProvider, PolicyViolation, RenderWarning,
+    Request, ResourceKind, ResourcePolicy, ViolationType, WarningKind,
 };
 use url::Url;
 
@@ -60,50 +60,27 @@ impl ResourceNetworkProvider<'_> {
         }
     }
 
-    fn byte_limit(&self, kind: ResourceKind) -> Option<u64> {
-        min_limit(
-            self.limits.max_resource_bytes,
-            self.policy.and_then(|policy| policy.max_fetch_bytes(kind)),
-        )
-    }
-}
-
-impl NetworkProvider for ResourceNetworkProvider<'_> {
-    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        self.check_url_policy(&request, &request.url)?;
-
-        // Drives `inner.fetch_one_hop` itself rather than delegating to
-        // `inner.fetch()`, so every hop's target is checked against policy
-        // *before* any request reaches it — not only the initial URL and
-        // the final response's URL after the fact, by which point a
-        // provider that follows redirects internally (e.g. `ureq`'s
-        // default behavior) would have already sent every intermediate
-        // request. `hop` here is the real count of redirects actually
-        // taken, unlike a fixed `1` passed to every `allow_redirect` call.
+    /// Follows the redirects of `request` one hop at a time and returns the
+    /// body that ends the chain.
+    ///
+    /// Drives `inner.fetch_one_hop` itself rather than delegating to
+    /// `inner.fetch()`, so every hop's target is checked against policy
+    /// *before* any request reaches it — not only the initial URL and
+    /// the final response's URL after the fact, by which point a
+    /// provider that follows redirects internally (e.g. `ureq`'s
+    /// default behavior) would have already sent every intermediate
+    /// request. `hop` here is the real count of redirects actually
+    /// taken, unlike a fixed `1` passed to every `allow_redirect` call.
+    fn fetch_checked_hops(&self, request: &Request) -> Result<FetchedResource, NetworkError> {
         let mut current = request.clone();
         let mut hop = 0u32;
-        let fetched = loop {
+        loop {
             match self.inner.fetch_one_hop(current.clone())? {
-                FetchOutcome::Body(fetched) => break fetched,
+                FetchOutcome::Body(fetched) => return Ok(fetched),
                 FetchOutcome::Redirect { location, .. } => {
-                    if let Some(policy) = self.policy
-                        && (hop >= policy.max_redirect_hops(request.kind)
-                            || !policy.allow_redirect(&current.url, &location, hop + 1))
-                    {
-                        return Err(Self::violation(
-                            &request,
-                            &location,
-                            ViolationType::RedirectDenied,
-                            "resource redirect is denied by policy",
-                        ));
-                    }
-                    // This adapter consumes redirects internally, so the
-                    // outer NetworkProvider::fetch loop cannot enforce its cap.
-                    if self.policy.is_none() && hop >= raikiri_traits::MAX_AUTO_REDIRECT_HOPS {
-                        return Err(NetworkError::Other("too many redirects".to_owned()));
-                    }
+                    self.check_redirect(request, &current.url, &location, hop)?;
                     hop += 1;
-                    self.check_url_policy(&request, &location)?;
+                    self.check_url_policy(request, &location)?;
                     current.url = location;
                 }
                 // cov:ignore: `FetchOutcome` is `#[non_exhaustive]`; this
@@ -115,50 +92,93 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
                     ));
                 }
             }
-        };
+        }
+    }
 
-        let actual = fetched.bytes.len() as u64;
+    /// Checks the redirect from `from` to `location`, which would be hop
+    /// number `hop + 1` of the chain, against the redirect cap and policy.
+    fn check_redirect(
+        &self,
+        request: &Request,
+        from: &Url,
+        location: &Url,
+        hop: u32,
+    ) -> Result<(), NetworkError> {
+        if let Some(policy) = self.policy
+            && (hop >= policy.max_redirect_hops(request.kind)
+                || !policy.allow_redirect(from, location, hop + 1))
+        {
+            return Err(Self::violation(
+                request,
+                location,
+                ViolationType::RedirectDenied,
+                "resource redirect is denied by policy",
+            ));
+        }
+        // This adapter consumes redirects internally, so the
+        // outer NetworkProvider::fetch loop cannot enforce its cap.
+        if self.policy.is_none() && hop >= raikiri_traits::MAX_AUTO_REDIRECT_HOPS {
+            return Err(NetworkError::Other("too many redirects".to_owned()));
+        }
+        Ok(())
+    }
+
+    fn check_response_size(&self, request: &Request, actual: u64) -> Result<(), NetworkError> {
         if let Some(limit) = self.byte_limit(request.kind)
             && actual > limit
         {
             return Err(Self::violation(
-                &request,
+                request,
                 &request.url,
                 ViolationType::FetchTooLarge { limit, actual },
                 "resource response exceeded its byte limit",
             ));
         }
+        Ok(())
+    }
 
-        if let Some(policy) = self.policy {
-            let allowed = policy.allowed_mime_types(request.kind);
-            if !allowed.is_empty() {
-                let content_type = fetched.content_type.as_deref().ok_or_else(|| {
-                    Self::violation(
-                        &request,
-                        &request.url,
-                        ViolationType::MimeNotAllowed {
-                            mime: "<missing>".to_owned(),
-                        },
-                        "resource response did not include a required MIME type",
-                    )
-                })?;
-                let mime = mime_essence(content_type);
-                if !allowed
-                    .iter()
-                    .any(|candidate| candidate.eq_ignore_ascii_case(mime))
-                {
-                    return Err(Self::violation(
-                        &request,
-                        &request.url,
-                        ViolationType::MimeNotAllowed {
-                            mime: mime.to_owned(),
-                        },
-                        "resource MIME type is denied by policy",
-                    ));
-                }
-            }
+    fn check_response_mime(
+        &self,
+        request: &Request,
+        fetched: &FetchedResource,
+    ) -> Result<(), NetworkError> {
+        let Some(policy) = self.policy else {
+            return Ok(());
+        };
+        let allowed = policy.allowed_mime_types(request.kind);
+        if allowed.is_empty() {
+            return Ok(());
         }
+        let content_type = fetched.content_type.as_deref().ok_or_else(|| {
+            Self::violation(
+                request,
+                &request.url,
+                ViolationType::MimeNotAllowed {
+                    mime: "<missing>".to_owned(),
+                },
+                "resource response did not include a required MIME type",
+            )
+        })?;
+        let mime = mime_essence(content_type);
+        if !allowed
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(mime))
+        {
+            return Err(Self::violation(
+                request,
+                &request.url,
+                ViolationType::MimeNotAllowed {
+                    mime: mime.to_owned(),
+                },
+                "resource MIME type is denied by policy",
+            ));
+        }
+        Ok(())
+    }
 
+    /// Adds `actual` bytes to the budget shared by every fetch of this
+    /// render, unless that would pass the aggregate limit.
+    fn charge_aggregate_budget(&self, request: &Request, actual: u64) -> Result<(), NetworkError> {
         let mut used = self
             .budget
             .lock()
@@ -168,7 +188,7 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
             && total > limit
         {
             return Err(Self::violation(
-                &request,
+                request,
                 &request.url,
                 ViolationType::FetchTooLarge {
                     limit,
@@ -178,6 +198,25 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
             ));
         }
         *used = total;
+        Ok(())
+    }
+
+    fn byte_limit(&self, kind: ResourceKind) -> Option<u64> {
+        min_limit(
+            self.limits.max_resource_bytes,
+            self.policy.and_then(|policy| policy.max_fetch_bytes(kind)),
+        )
+    }
+}
+
+impl NetworkProvider for ResourceNetworkProvider<'_> {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        self.check_url_policy(&request, &request.url)?;
+        let fetched = self.fetch_checked_hops(&request)?;
+        let actual = fetched.bytes.len() as u64;
+        self.check_response_size(&request, actual)?;
+        self.check_response_mime(&request, &fetched)?;
+        self.charge_aggregate_budget(&request, actual)?;
         Ok(FetchOutcome::Body(fetched))
     }
 

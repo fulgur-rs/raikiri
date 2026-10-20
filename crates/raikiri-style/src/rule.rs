@@ -906,7 +906,6 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
         | PropertyValue::TextDecorationThickness(_)
-        | PropertyValue::TextDecorationThicknessInherit
         | PropertyValue::TextDecorationSkipInk(_)
         | PropertyValue::TextDecorationSkipSpaces(_)
         | PropertyValue::TextDecorationInset(_)
