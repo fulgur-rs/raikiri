@@ -204,7 +204,8 @@ pub(crate) fn layout_with_boxes_in(
         None => {
             let mut bfc = BlockFormattingContext::new();
             let mut ctx = bfc.root_block_context();
-            ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
+            let inline_insets = geometry.inline_axis_insets();
+            ctx.set_width(geometry.width + inline_insets.0 + inline_insets.1);
             join_group(tree, &mut root);
             if own_group {
                 root.options.group_padding = own_group_padding(
@@ -434,7 +435,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         };
         let mut bfc = BlockFormattingContext::new();
         let mut ctx = bfc.root_block_context();
-        ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
+        let inline_insets = geometry.inline_axis_insets();
+        ctx.set_width(geometry.width + inline_insets.0 + inline_insets.1);
         let carried_placements = if perform {
             carried_float_placements(
                 tree,
@@ -725,7 +727,8 @@ fn run_boxes_segment(
     // depend on the line they land in.
     let atomics = measure_atomics(tree, root, geometry);
     // Keeps the paragraph's own floats inside its content box.
-    ctx.apply_content_box_inset([edges.0, edges.1]);
+    let inline_insets = geometry.inline_axis_insets();
+    ctx.apply_content_box_inset([inline_insets.0, inline_insets.1]);
 
     if !top_margin_escapes {
         ctx.commit_strut();
@@ -789,14 +792,14 @@ fn run_boxes_segment(
         } else {
             y + pending.resolve()
         };
-        let base = if root.writing_mode == WritingMode::HorizontalTb {
-            line_space(ctx, edges.0, top_edge, width, line_y, assumed_height)
-        } else {
-            LineSpace {
-                inline_start: 0.0,
-                inline_size: width,
-            }
-        };
+        let base = line_space(
+            ctx,
+            inline_insets.0,
+            top_edge,
+            width,
+            line_y,
+            assumed_height,
+        );
         let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
         // The lines of a generated block take its own alignment and indent.
         // Its content is part of the paragraph's text, so its lines keep the
@@ -896,14 +899,7 @@ fn run_boxes_segment(
                 // The line may span more of an outer float than the height it
                 // was assumed to have; lay it out again if the space for its
                 // real height differs.
-                let real_base = if root.writing_mode == WritingMode::HorizontalTb {
-                    line_space(ctx, edges.0, top_edge, width, line_y, height)
-                } else {
-                    LineSpace {
-                        inline_start: 0.0,
-                        inline_size: width,
-                    }
-                };
+                let real_base = line_space(ctx, inline_insets.0, top_edge, width, line_y, height);
                 let real =
                     narrow_to_block(shorten(real_base, &tentative), open_block.as_ref(), width);
                 if retries < MAX_SPACE_RETRIES && real != space {
@@ -1644,7 +1640,13 @@ fn measure_float(
     geometry: FlowGeometry,
 ) -> TentativeFloat {
     let margin = resolved_margins(tree, node, geometry.width);
-    let available = (geometry.width - margin.left - margin.right).max(0.0);
+    let vertical = geometry.axes.writing_mode() != WritingMode::HorizontalTb;
+    let (inline_margin, block_margin) = if vertical {
+        (margin.top + margin.bottom, margin.left + margin.right)
+    } else {
+        (margin.left + margin.right, margin.top + margin.bottom)
+    };
+    let available = (geometry.width - inline_margin).max(0.0);
     let output = perform_box_layout(
         tree,
         node,
@@ -1654,6 +1656,10 @@ fn measure_float(
         available,
     );
     let style = &tree.layout_node_with_style(node).unwrap().style;
+    let output_size = shodo::geometry::PhysicalSize {
+        width: output.size.width,
+        height: output.size.height,
+    };
     TentativeFloat {
         node,
         // The projection accepts only left and right floats.
@@ -1663,8 +1669,8 @@ fn measure_float(
             .unwrap_or(FloatDirection::Left),
         clear: style.clear,
         margin_box: Size {
-            width: output.size.width + margin.left + margin.right,
-            height: output.size.height + margin.top + margin.bottom,
+            width: geometry.axes.inline_extent(output_size) + inline_margin,
+            height: geometry.axes.block_extent(output_size) + block_margin,
         },
         margin,
         output,
@@ -1838,7 +1844,16 @@ fn layout_block_child(
     collapse_top: bool,
 ) -> BlockChild {
     if geometry.axes.writing_mode() != WritingMode::HorizontalTb {
-        return layout_vertical_block_child(tree, node, y, pending, geometry, perform);
+        return layout_vertical_block_child(
+            tree,
+            ctx,
+            node,
+            y,
+            pending,
+            geometry,
+            perform,
+            collapse_top,
+        );
     }
     if !in_the_roots_formatting_context(tree, node) {
         return layout_formatting_context_child(
@@ -2037,13 +2052,16 @@ fn layout_block_child(
 }
 
 /// Lay out an ordinary block child along a vertical root's block axis.
+#[allow(clippy::too_many_arguments)]
 fn layout_vertical_block_child(
     tree: &mut LayoutSession<'_>,
+    ctx: &mut BlockContext<'_>,
     node: usize,
     y: f32,
     pending: CollapsibleMarginSet,
     geometry: FlowGeometry,
     perform: bool,
+    collapse_top: bool,
 ) -> BlockChild {
     let basis = geometry.axes.block_extent(geometry.content_size);
     let inline_basis = geometry.axes.inline_extent(geometry.content_size);
@@ -2058,72 +2076,298 @@ fn layout_vertical_block_child(
     } else {
         (margin.left, margin.right)
     };
-    let block_start = y + pending.collapse_with_margin(block_start_margin).resolve();
     let width = used_block_width_with_edge_basis(tree, node, basis, inline_basis)
         .map(|width| clamp_block_width_with_edge_basis(tree, node, basis, inline_basis, width));
     let parent_size = Size {
         width: Some(geometry.content_size.width),
         height: Some(inline_basis),
     };
-    let stretch = (inline_basis - margin.top - margin.bottom).max(0.0);
-    let height = used_block_height(tree, node, inline_basis)
-        .or_else(|| {
-            content_keyword_width(tree, node, false, parent_size).map(|own| own.at(stretch))
-        })
-        .unwrap_or(stretch);
-    let height = clamp_block_height(tree, node, inline_basis, height);
-    let inputs = LayoutInput {
-        run_mode: if perform {
-            RunMode::PerformLayout
-        } else {
-            RunMode::ComputeSize
-        },
-        sizing_mode: SizingMode::InherentSize,
-        axis: RequestedAxis::Both,
-        known_dimensions: Size {
-            width,
-            height: Some(height),
-        },
-        known_dimensions_are_definite: Size {
-            width: width.is_some(),
-            height: true,
-        },
-        parent_size,
-        available_space: Size {
-            width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
-            height: AvailableSpace::Definite(height),
-        },
-        vertical_margins_are_collapsible: Line::FALSE,
-    };
-    let node_id = taffy::NodeId::from(node);
-    let output = if in_the_roots_formatting_context(tree, node) {
-        // A group reaching the child is laid out through it, not answered
-        // from the size cache.
-        tree.context.keep_text_group = !matches!(tree.context.text_group, TextGroupScope::None);
-        tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
+    let own_inline_size = used_block_height(tree, node, inline_basis)
+        .map(OwnWidth::Fixed)
+        .or_else(|| content_keyword_width(tree, node, false, parent_size));
+    let shares_context = in_the_roots_formatting_context(tree, node)
+        && tree
+            .layout_node_with_style(node)
+            .unwrap()
+            .style
+            .align_content
+            .keyword
+            == taffy::AlignContentKeyword::Normal
+        && crate::taffy_impl::block_right_to_left(tree, node).is_some_and(|node_direction| {
+            node_direction
+                == matches!(
+                    geometry.axes.writing_mode(),
+                    WritingMode::VerticalRl | WritingMode::SidewaysRl
+                )
+        });
+    let clear = tree.layout_node_with_style(node).unwrap().style.clear;
+    let clear_y = ctx
+        .cleared_threshold(clear)
+        .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
+    let clears_adjoining_float =
+        clear != taffy::Clear::None && collapse_top && ctx.has_top_adjoining_float(clear);
+    let origin_resolved = ctx.origin_resolved();
+    let top_margin = pending.collapse_with_margin(block_start_margin);
+    let hypothetical = if collapse_top {
+        ctx.hypothetical_top_position(top_margin)
+            .unwrap_or(geometry.top_edge + y + top_margin.resolve())
     } else {
-        tree.compute_child_layout(node_id, inputs)
+        geometry.top_edge + y + top_margin.resolve()
     };
-    let inline_free = inline_basis - output.size.height - margin.top - margin.bottom;
-    match (style_margin.top.is_auto(), style_margin.bottom.is_auto()) {
-        (true, true) if inline_free >= 0.0 => {
-            margin.top = inline_free / 2.0;
-            margin.bottom = inline_free / 2.0;
+    let adjoining_float = collapse_top && ctx.has_top_adjoining_float(taffy::Clear::Both);
+    let forced_clearance = clears_adjoining_float;
+    let min_y = if forced_clearance {
+        ctx.cleared_threshold(clear).unwrap_or(hypothetical)
+    } else if adjoining_float {
+        geometry.top_edge + y
+    } else {
+        hypothetical
+    };
+    // An independent vertical context still avoids the parent's floats, while
+    // its descendants lay out without receiving that context.
+    let mut slot = None;
+    let mut slot_separated = false;
+    let mut inline_stretch = (inline_basis - margin.top - margin.bottom).max(0.0);
+    let height = if !shares_context && (forced_clearance || ctx.has_active_floats(min_y)) {
+        let node_id = taffy::NodeId::from(node);
+        let placed = ctx.find_box_slot(
+            min_y,
+            [margin.top, margin.bottom],
+            if geometry.axes.direction() == Direction::Ltr {
+                taffy::Direction::Ltr
+            } else {
+                taffy::Direction::Rtl
+            },
+            clear,
+            |probe| match probe {
+                BoxProbe::Width { stretch } => {
+                    let stretch = stretch.max(-(margin.top + margin.bottom));
+                    clamp_block_height(
+                        tree,
+                        node,
+                        inline_basis,
+                        own_inline_size.map_or(stretch, |own| own.at(stretch)),
+                    )
+                }
+                BoxProbe::Height { width: inline_size } => {
+                    let inputs = LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        sizing_mode: SizingMode::InherentSize,
+                        axis: RequestedAxis::Both,
+                        known_dimensions: Size {
+                            width,
+                            height: Some(inline_size),
+                        },
+                        known_dimensions_are_definite: Size {
+                            width: width.is_some(),
+                            height: true,
+                        },
+                        parent_size,
+                        available_space: Size {
+                            width: width
+                                .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+                            height: AvailableSpace::Definite(inline_size),
+                        },
+                        vertical_margins_are_collapsible: Line::FALSE,
+                    };
+                    tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
+                        .size
+                        .width
+                }
+            },
+        );
+        let separation_origin = if adjoining_float {
+            geometry.top_edge + y
+        } else {
+            hypothetical
+        };
+        slot_separated = forced_clearance || placed.slot.y > separation_origin + 0.001;
+        inline_stretch = placed.slot.stretch_width;
+        slot = Some(placed.slot);
+        placed.width
+    } else {
+        own_inline_size.map_or(inline_stretch, |own| own.at(inline_stretch))
+    };
+    let height = clamp_block_height(tree, node, inline_basis, height);
+    let inline_free = inline_stretch - height;
+    let auto_margins =
+        u8::from(style_margin.top.is_auto()) + u8::from(style_margin.bottom.is_auto());
+    let auto_top = if style_margin.top.is_auto() {
+        inline_free.max(0.0) / f32::from(auto_margins.max(1))
+    } else {
+        0.0
+    };
+    let auto_bottom = if style_margin.bottom.is_auto() {
+        inline_free.max(0.0) / f32::from(auto_margins.max(1))
+    } else {
+        0.0
+    };
+    if slot.is_none() {
+        if style_margin.top.is_auto() {
+            margin.top = auto_top;
         }
-        // CSS 2.1 10.3.3 treats auto margins as zero when the non-auto
-        // dimensions already overflow the containing block.
-        (true, true) => {
-            margin.top = 0.0;
-            margin.bottom = 0.0;
+        if style_margin.bottom.is_auto() {
+            margin.bottom = auto_bottom;
         }
-        (true, false) => margin.top = inline_free.max(0.0),
-        (false, true) => margin.bottom = inline_free.max(0.0),
-        (false, false) => {}
     }
-    let inline_start = match geometry.axes.direction() {
-        Direction::Ltr => margin.top,
-        Direction::Rtl => margin.bottom,
+    let inline_insets = geometry.inline_axis_insets();
+    let inline_start = slot.map_or_else(
+        || match geometry.axes.direction() {
+            Direction::Ltr => margin.top,
+            Direction::Rtl => margin.bottom,
+        },
+        |slot| {
+            let slot_start = slot.x - inline_insets.0;
+            match geometry.axes.direction() {
+                Direction::Ltr => slot_start + auto_top,
+                // RTL inline-start is the slot's far edge; its auto margin moves inward.
+                Direction::Rtl => inline_basis - slot_start - slot.border_width + auto_bottom,
+            }
+        },
+    );
+    let mut guess = if origin_resolved && collapse_top {
+        y.max(clear_y)
+    } else {
+        (y + pending.collapse_with_margin(block_start_margin).resolve()).max(clear_y)
     };
+    let snapshot = (shares_context && origin_resolved).then(|| ctx.snapshot());
+    let (
+        output,
+        floats_bottom,
+        block_start,
+        after,
+        has_clearance,
+        top_set,
+        margins_can_collapse_through,
+    ) = loop {
+        let (output, floats_bottom, adjoining) = {
+            let mut child_ctx = shares_context.then(|| {
+                let mut child_ctx = ctx.sub_context_for_collapsing_child(
+                    geometry.top_edge + guess,
+                    [
+                        inline_insets.0 + margin.top,
+                        inline_basis - margin.top - height + inline_insets.1,
+                    ],
+                    geometry.top_edge + y,
+                    pending.collapse_with_margin(block_start_margin),
+                    collapse_top,
+                );
+                child_ctx.set_origin_resolved(origin_resolved);
+                child_ctx
+            });
+            let inputs = LayoutInput {
+                run_mode: if perform {
+                    RunMode::PerformLayout
+                } else {
+                    RunMode::ComputeSize
+                },
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size {
+                    width,
+                    height: Some(height),
+                },
+                known_dimensions_are_definite: Size {
+                    width: width.is_some(),
+                    height: true,
+                },
+                parent_size,
+                available_space: Size {
+                    width: width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+                    height: AvailableSpace::Definite(height),
+                },
+                vertical_margins_are_collapsible: if shares_context {
+                    Line::TRUE
+                } else {
+                    Line::FALSE
+                },
+            };
+            let node_id = taffy::NodeId::from(node);
+            let output = if shares_context {
+                tree.context.keep_text_group =
+                    !matches!(tree.context.text_group, TextGroupScope::None);
+                tree.compute_child_layout_with_block_ctx(node_id, inputs, child_ctx.as_mut())
+            } else {
+                tree.compute_child_layout(node_id, inputs)
+            };
+            let floats_bottom = child_ctx.as_ref().map_or(
+                f32::NEG_INFINITY,
+                BlockContext::floated_content_height_contribution,
+            );
+            let adjoining = child_ctx
+                .as_ref()
+                .map_or([false; 2], BlockContext::top_adjoining_floats);
+            (output, floats_bottom, adjoining)
+        };
+        // Taffy's collapse-through flag follows physical height; a vertical
+        // block's extent is its physical width, which must also be empty.
+        let margins_can_collapse_through =
+            output.margins_can_collapse_through && output.size.width == 0.0;
+        ctx.merge_adjoining_floats(adjoining);
+        let top_set = output.top_margin.collapse_with_margin(block_start_margin);
+        let bottom_set = output.bottom_margin.collapse_with_margin(block_end_margin);
+        let hypothetical = if origin_resolved && collapse_top {
+            ctx.hypothetical_top_position(pending.collapse_with_set(top_set))
+                .unwrap_or(y)
+        } else {
+            y + pending.collapse_with_set(top_set).resolve()
+        };
+        let has_clearance = slot_separated
+            || clear != taffy::Clear::None && (clears_adjoining_float || hypothetical < clear_y);
+        let (block_start, after) = if let Some(slot) = slot {
+            let block_start = if collapse_top && !slot_separated {
+                y
+            } else {
+                slot.y - geometry.top_edge
+            };
+            (block_start, (block_start + output.size.width, bottom_set))
+        } else if has_clearance {
+            let block_start = clear_y
+                - if collapse_top && !origin_resolved {
+                    pending.resolve()
+                } else {
+                    0.0
+                };
+            (block_start, (block_start + output.size.width, bottom_set))
+        } else if margins_can_collapse_through {
+            let through = pending
+                .collapse_with_set(top_set)
+                .collapse_with_set(bottom_set);
+            (
+                if collapse_top {
+                    y
+                } else {
+                    y + pending.collapse_with_set(top_set).resolve()
+                },
+                (y, through),
+            )
+        } else {
+            let block_start = if collapse_top {
+                y
+            } else {
+                y + pending.collapse_with_set(top_set).resolve()
+            };
+            (block_start, (block_start + output.size.width, bottom_set))
+        };
+        if let Some(snapshot) = &snapshot
+            && ctx.has_floats()
+            && (block_start - guess).abs() > 0.001
+        {
+            ctx.restore(snapshot);
+            guess = block_start;
+            continue;
+        }
+        break (
+            output,
+            floats_bottom,
+            block_start,
+            after,
+            has_clearance,
+            top_set,
+            margins_can_collapse_through,
+        );
+    };
+    ctx.add_child_floated_content_height_contribution(geometry.top_edge + guess + floats_bottom);
     let physical = geometry.axes.rect(
         geometry.content_size,
         shodo::geometry::LogicalRect {
@@ -2143,14 +2387,21 @@ fn layout_vertical_block_child(
         child_candidates = translated_child_oof_candidates(&output, location);
         commit_child_layout(tree, node, &output, location, inline_basis);
     }
+    let collapses_through = !has_clearance && margins_can_collapse_through;
     BlockChild {
         oof_candidates: child_candidates,
         top: block_start,
-        next_y: block_start + output.size.width,
-        pending: CollapsibleMarginSet::from_margin(block_end_margin),
-        floats_bottom: f32::NEG_INFINITY,
-        top_margin: None,
-        collapses_through: false,
+        next_y: after.0,
+        pending: after.1,
+        floats_bottom: floats_bottom + (guess - block_start),
+        top_margin: (!has_clearance).then(|| {
+            if margins_can_collapse_through {
+                after.1
+            } else {
+                pending.collapse_with_set(top_set)
+            }
+        }),
+        collapses_through,
     }
 }
 
@@ -2163,6 +2414,7 @@ fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> boo
     let style = tree.get_block_container_style(taffy::NodeId::from(node));
     let overflow = style.overflow();
     tree.nodes[node].taffy_display() == taffy::Display::Block
+        && !crate::taffy_impl::is_table_box(tree.nodes[node].display())
         && !overflow.x.is_scroll_container()
         && !overflow.y.is_scroll_container()
         && !style.contain().establishes_independent_formatting_context()
@@ -2683,7 +2935,7 @@ fn place_atomics(
             let physical = IfcAxes::new(geometry.axes.writing_mode(), direction).rect(size, rect);
             let location = taffy::Point {
                 x: geometry.edges.0 + physical.x + dx,
-                y: geometry.top_edge + physical.y + dy,
+                y: geometry.insets.top + physical.y + dy,
             };
             let mut child_candidates = translated_child_oof_candidates(output, location);
             candidates.append(&mut child_candidates);
@@ -2837,9 +3089,32 @@ pub(crate) fn commit_float(
         adjoins_top_margin,
     );
     if perform {
+        let (x, y) = if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+            (position.x, position.y)
+        } else {
+            // FloatContext reports physical coordinates from the top of the
+            // inline axis; the converter expects an offset from inline-start.
+            let inline_start = if geometry.axes.direction() == Direction::Rtl {
+                geometry.axes.inline_extent(geometry.border_box_size())
+                    - position.x
+                    - float.margin_box.width
+            } else {
+                position.x
+            };
+            let physical = geometry.axes.rect(
+                geometry.border_box_size(),
+                shodo::geometry::LogicalRect {
+                    inline_start,
+                    block_start: position.y,
+                    inline_size: float.margin_box.width,
+                    block_size: float.margin_box.height,
+                },
+            );
+            (physical.x, physical.y)
+        };
         let location = taffy::Point {
-            x: position.x + float.margin.left,
-            y: position.y + float.margin.top,
+            x: x + float.margin.left,
+            y: y + float.margin.top,
         };
         let mut child_candidates = translated_child_oof_candidates(&float.output, location);
         oof_candidates.append(&mut child_candidates);

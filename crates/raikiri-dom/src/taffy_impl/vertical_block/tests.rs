@@ -89,6 +89,32 @@ fn vertical_rl_block_margins_follow_the_physical_sides() {
 }
 
 #[test]
+fn vertical_sibling_block_margins_collapse_to_the_larger_margin() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        for (end_margin, start_margin, collapsed_margin) in
+            [("10px", "20px", 20.0), ("10px", "-5px", 5.0)]
+        {
+            let first = format!("width:10px;height:10px;margin-block-end:{end_margin}");
+            let second = format!("width:10px;height:10px;margin-block-start:{start_margin}");
+            let rects = layout(
+                &format!("writing-mode:{writing_mode};width:100px;height:100px"),
+                &[&first, &second],
+            );
+            let distance = if writing_mode == "vertical-rl" {
+                rects[1].0 - rects[2].0
+            } else {
+                rects[2].0 - rects[1].0
+            };
+            assert_eq!(
+                distance,
+                10.0 + collapsed_margin,
+                "{writing_mode} end={end_margin} start={start_margin}: {rects:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn vertical_rl_container_padding_and_border_offset_its_children() {
     let rects = layout(
         "writing-mode:vertical-rl;width:300px;height:200px;box-sizing:border-box;\
@@ -323,6 +349,276 @@ fn layout_body_in(
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     (doc, ids)
+}
+
+fn vertical_document(writing_mode: &str, width: &str, height: &str) -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some(
+            format!(
+                "display:block;margin:0;writing-mode:{writing_mode};width:{width};height:{height};\
+                 font-family:Ahem;font-size:10px;line-height:10px"
+            )
+            .as_str(),
+        ),
+    );
+    (doc, body)
+}
+
+fn layout_vertical_document(doc: &mut Document) {
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(doc);
+    let cascade = raikiri_style::cascade(doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(doc), &cascade, page_box_800x600()).expect("layout");
+}
+
+#[test]
+fn same_mode_vertical_block_margins_collapse_through_a_child() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, body) = vertical_document(writing_mode, "200px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:200px;height:40px"),
+        );
+        let outer = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:40px;margin-block-start:10px"),
+        );
+        let inner = doc.append_element(
+            Some(outer),
+            "p",
+            Style::default(),
+            Some("display:block;width:20px;margin-block:20px"),
+        );
+        doc.append_text(inner, "a");
+
+        layout_vertical_document(&mut doc);
+
+        let outer = absolute_rect(&doc, outer);
+        let inner = absolute_rect(&doc, inner);
+        if writing_mode == "vertical-rl" {
+            assert_eq!(
+                inner.0 + inner.2,
+                outer.0 + outer.2,
+                "{writing_mode}: {outer:?} {inner:?}"
+            );
+            assert_eq!(inner.0, outer.0, "{writing_mode}: {outer:?} {inner:?}");
+        } else {
+            assert_eq!(inner.0, outer.0, "{writing_mode}: {outer:?} {inner:?}");
+            assert_eq!(
+                inner.0 + inner.2,
+                outer.0 + outer.2,
+                "{writing_mode}: {outer:?} {inner:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn vertical_content_min_width_prevents_the_last_child_margin_from_escaping() {
+    for (box_sizing, expected_width) in [
+        ("min-width:50px;padding-right:10px", 60.0),
+        (
+            "box-sizing:border-box;min-width:60px;padding-right:10px",
+            60.0,
+        ),
+    ] {
+        let (mut doc, body) = vertical_document("vertical-rl", "200px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:200px;height:40px"),
+        );
+        let wrapper = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(format!("display:block;width:auto;height:40px;{box_sizing}").as_str()),
+        );
+        doc.append_text(wrapper, "a");
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;width:20px;height:10px;margin-block-end:20px"),
+        );
+        let sibling = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:10px"),
+        );
+
+        layout_vertical_document(&mut doc);
+
+        let wrapper = absolute_rect(&doc, wrapper);
+        let sibling = absolute_rect(&doc, sibling);
+        assert_eq!(wrapper.2, expected_width, "{box_sizing}");
+        assert_eq!(
+            wrapper.0 - (sibling.0 + sibling.2),
+            0.0,
+            "{box_sizing}: {wrapper:?} {sibling:?}"
+        );
+    }
+}
+
+#[test]
+fn same_mode_vertical_descendant_clear_sees_an_ancestor_float() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, body) = vertical_document(writing_mode, "100px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:100px;height:40px"),
+        );
+        let float = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:10px;height:20px"),
+        );
+        let wrapper = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:100px;height:40px"),
+        );
+        let cleared = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;clear:both;width:20px;height:20px"),
+        );
+
+        layout_vertical_document(&mut doc);
+
+        let float = absolute_rect(&doc, float);
+        let cleared = absolute_rect(&doc, cleared);
+        if writing_mode == "vertical-rl" {
+            assert!(
+                cleared.0 + cleared.2 <= float.0,
+                "{writing_mode}: {float:?} {cleared:?}"
+            );
+        } else {
+            assert!(
+                float.0 + float.2 <= cleared.0,
+                "{writing_mode}: {float:?} {cleared:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn matching_vertical_and_sideways_block_axes_share_floats() {
+    for (parent_mode, child_mode) in [
+        ("vertical-rl", "sideways-rl"),
+        ("vertical-lr", "sideways-lr"),
+    ] {
+        let (mut doc, body) = vertical_document(parent_mode, "100px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:100px;height:40px"),
+        );
+        let float = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:10px;height:20px"),
+        );
+        let wrapper = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(
+                format!("display:block;writing-mode:{child_mode};width:100px;height:40px").as_str(),
+            ),
+        );
+        let cleared = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;clear:both;width:20px;height:20px"),
+        );
+
+        layout_vertical_document(&mut doc);
+
+        let float = absolute_rect(&doc, float);
+        let cleared = absolute_rect(&doc, cleared);
+        if parent_mode == "vertical-rl" {
+            assert!(
+                cleared.0 + cleared.2 <= float.0,
+                "parent={parent_mode}, child={child_mode}: {float:?} {cleared:?}"
+            );
+        } else {
+            assert!(
+                float.0 + float.2 <= cleared.0,
+                "parent={parent_mode}, child={child_mode}: {float:?} {cleared:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn vertical_inline_content_shares_ancestor_floats() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, body) = vertical_document(writing_mode, "100px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:100px;height:40px"),
+        );
+        let float = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:right;width:10px;height:20px"),
+        );
+        let paragraph = doc.append_element(
+            Some(root),
+            "p",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        doc.append_text(paragraph, "a a a a");
+
+        layout_vertical_document(&mut doc);
+
+        let lines = doc.nodes[paragraph]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .expect("paragraph lines");
+        assert!(
+            lines.beside_floats,
+            "{writing_mode} lines should use the shared float slots: float={:?}, paragraph={:?}, line_offsets={:?}, line_sizes={:?}",
+            absolute_rect(&doc, float),
+            absolute_rect(&doc, paragraph),
+            lines
+                .lines
+                .iter()
+                .map(|line| line.block_offset())
+                .collect::<Vec<_>>(),
+            lines
+                .lines
+                .iter()
+                .map(|line| line.block_size())
+                .collect::<Vec<_>>(),
+        );
+    }
 }
 
 #[test]

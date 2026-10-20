@@ -18,10 +18,9 @@
 //! back to physical coordinates, measured from the container's block-start
 //! edge.
 //!
-//! A vertical container establishes a block formatting context of its own
-//! and its children are laid out each in a fresh one, so margins collapse
-//! between adjacent siblings but not between a box and its children, and
-//! floats stay inside the box that holds them.
+//! Same-writing-mode block descendants keep sharing their parent's block
+//! formatting context on these transposed axes. Orthogonal flows and boxes
+//! that establish an independent formatting context still start their own.
 
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
@@ -137,6 +136,7 @@ impl LayoutSession<'_> {
         &mut self,
         node_id: NodeId,
         inputs: LayoutInput,
+        block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
     ) -> Option<LayoutOutput> {
         let idx = usize::from(node_id);
         self.context
@@ -145,8 +145,14 @@ impl LayoutSession<'_> {
             .filter(|block| block.child_styles.contains_key(&idx))?;
         let block = self.context.transposed_blocks.pop()?;
         let right_to_left = block_right_to_left(self, block.container).unwrap_or(false);
-        let inputs =
-            orthogonal_child_inputs(self, idx, transpose_inputs(inputs), block.block_space);
+        let share_context =
+            block_ctx.is_some() && same_vertical_block_mode(self, block.container, idx);
+        let inputs = orthogonal_child_inputs(
+            self,
+            idx,
+            transpose_inputs(inputs, share_context),
+            block.block_space,
+        );
         // Taffy resolves a box's percentage padding against the width of
         // its parent, but the containing block of a horizontally flowing
         // child is the vertical container, whose inline size is its
@@ -163,7 +169,8 @@ impl LayoutSession<'_> {
                     .map(LengthPercentage::length);
                 std::mem::replace(&mut style.padding, resolved)
             });
-        let output = self.compute_child_layout_with_block_ctx(node_id, inputs, None);
+        let child_block_ctx = if share_context { block_ctx } else { None };
+        let output = self.compute_child_layout_with_block_ctx(node_id, inputs, child_block_ctx);
         if let Some(padding) = physical_padding {
             self.layout_node_with_style_mut(idx).unwrap().style.padding = padding;
         }
@@ -173,8 +180,25 @@ impl LayoutSession<'_> {
             output,
             right_to_left,
             reverse_extent,
+            share_context,
         ))
     }
+}
+
+/// Whether two boxes use the same transposed vertical block coordinate space.
+fn same_vertical_block_mode(tree: &Document, parent: usize, child: usize) -> bool {
+    !flows_horizontally(tree, parent)
+        && !flows_horizontally(tree, child)
+        && block_right_to_left(tree, parent).is_some_and(|parent_direction| {
+            block_right_to_left(tree, child) == Some(parent_direction)
+        })
+}
+
+/// Whether `idx` has a parent whose block context uses the same transposed
+/// vertical coordinate space as `idx`.
+pub(crate) fn has_same_vertical_block_parent(tree: &LayoutSession<'_>, idx: usize) -> bool {
+    tree.taffy_parent_of(idx)
+        .is_some_and(|parent| same_vertical_block_mode(tree, parent, idx))
 }
 
 /// Whether the child `idx` of a vertical container lays its own content out
@@ -296,6 +320,7 @@ pub(super) fn compute_vertical_block(
     node_id: NodeId,
     inputs: LayoutInput,
     right_to_left: bool,
+    block_ctx: Option<&mut super::block_flow::context::BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let mut container_style = transpose_style(
@@ -331,7 +356,8 @@ pub(super) fn compute_vertical_block(
             )
         })
         .collect();
-    let mut inputs = transpose_inputs(inputs);
+    let shares_parent_context = block_ctx.is_some();
+    let mut inputs = transpose_inputs(inputs, shares_parent_context);
     let block_space = inputs.known_dimensions.height.map(|height| {
         let padding = container_style.padding.resolve_or_zero(None, resolve_calc);
         let border = container_style.border.resolve_or_zero(None, resolve_calc);
@@ -350,10 +376,11 @@ pub(super) fn compute_vertical_block(
     if let Some(width) = inputs.known_dimensions.width {
         resolve_child_padding(tree, width);
     }
-    let output = compute_block_flow(tree, node_id, inputs, None);
+    let output = compute_block_flow(tree, node_id, inputs, block_ctx);
     let mut block = tree.context.transposed_blocks.pop().expect("pushed above");
     let reverse_extent = output.size.height;
-    let output = transpose_output_to_physical(output, right_to_left, reverse_extent);
+    let output =
+        transpose_output_to_physical(output, right_to_left, reverse_extent, shares_parent_context);
     // Taffy may store a child's layout more than once; the last one stands.
     block.placed.sort_unstable();
     block.placed.dedup();
@@ -408,6 +435,7 @@ fn fit_content_inline_size(
                 width: available,
                 ..inputs.available_space
             },
+            vertical_margins_are_collapsible: Line::FALSE,
             ..inputs
         };
         compute_block_flow(tree, node_id, measure_inputs, None)
@@ -487,10 +515,9 @@ fn transpose_style(style: &Style, right_to_left: bool) -> Style {
     }
 }
 
-/// `inputs` with the axes swapped. Margins never collapse across the edges
-/// of a vertical container, whose block axis is not the one taffy's margin
-/// collapsing works along on the other side.
-fn transpose_inputs(inputs: LayoutInput) -> LayoutInput {
+/// `inputs` with the axes swapped. Margin collapsing is preserved only when
+/// the input and output stay within the same transposed vertical BFC.
+fn transpose_inputs(inputs: LayoutInput, preserve_margin_collapse: bool) -> LayoutInput {
     LayoutInput {
         axis: AbsoluteAxis::try_from(inputs.axis)
             .map_or(RequestedAxis::Both, |axis| axis.other_axis().into()),
@@ -498,7 +525,11 @@ fn transpose_inputs(inputs: LayoutInput) -> LayoutInput {
         known_dimensions_are_definite: swap(inputs.known_dimensions_are_definite),
         parent_size: swap(inputs.parent_size),
         available_space: swap(inputs.available_space),
-        vertical_margins_are_collapsible: Line::FALSE,
+        vertical_margins_are_collapsible: if preserve_margin_collapse {
+            inputs.vertical_margins_are_collapsible
+        } else {
+            Line::FALSE
+        },
         ..inputs
     }
 }
@@ -510,6 +541,7 @@ fn transpose_output_to_physical(
     mut output: LayoutOutput,
     right_to_left: bool,
     reverse_extent: f32,
+    preserve_margin_collapse: bool,
 ) -> LayoutOutput {
     let oof_positioning_area = output
         .oof_positioning_area
@@ -536,13 +568,24 @@ fn transpose_output_to_physical(
             y: inline_axis,
         };
     }
+    let top_margin = if preserve_margin_collapse {
+        output.top_margin
+    } else {
+        CollapsibleMarginSet::ZERO
+    };
+    let bottom_margin = if preserve_margin_collapse {
+        output.bottom_margin
+    } else {
+        CollapsibleMarginSet::ZERO
+    };
     LayoutOutput {
         size: swap(output.size),
         scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
         baselines: Baselines::NONE,
-        top_margin: CollapsibleMarginSet::ZERO,
-        bottom_margin: CollapsibleMarginSet::ZERO,
-        margins_can_collapse_through: false,
+        top_margin,
+        bottom_margin,
+        margins_can_collapse_through: preserve_margin_collapse
+            && output.margins_can_collapse_through,
         oof_positioning_area,
         ..output
     }
@@ -555,6 +598,7 @@ fn transpose_child_output_to_vertical(
     mut output: LayoutOutput,
     right_to_left: bool,
     reverse_extent: f32,
+    preserve_margin_collapse: bool,
 ) -> LayoutOutput {
     let oof_positioning_area = output
         .oof_positioning_area
@@ -581,13 +625,24 @@ fn transpose_child_output_to_vertical(
             },
         };
     }
+    let top_margin = if preserve_margin_collapse {
+        output.top_margin
+    } else {
+        CollapsibleMarginSet::ZERO
+    };
+    let bottom_margin = if preserve_margin_collapse {
+        output.bottom_margin
+    } else {
+        CollapsibleMarginSet::ZERO
+    };
     LayoutOutput {
         size: swap(output.size),
         scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
         baselines: Baselines::NONE,
-        top_margin: CollapsibleMarginSet::ZERO,
-        bottom_margin: CollapsibleMarginSet::ZERO,
-        margins_can_collapse_through: false,
+        top_margin,
+        bottom_margin,
+        margins_can_collapse_through: preserve_margin_collapse
+            && output.margins_can_collapse_through,
         oof_positioning_area,
         ..output
     }

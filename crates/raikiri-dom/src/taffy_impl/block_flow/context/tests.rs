@@ -132,6 +132,9 @@ fn committing_flow_freezes_the_leading_float_flags_before_later_children() {
     );
     root.commit_strut();
     assert!(!root.has_adjoining_float(Clear::Both));
+    assert!(!root.has_top_adjoining_float(Clear::None));
+    assert!(root.has_top_adjoining_float(Clear::Left));
+    assert!(!root.has_top_adjoining_float(Clear::Right));
     assert_eq!(root.top_adjoining_floats(), [true, false]);
     let flags = {
         let mut child = root.sub_context(0.0, [0.0, 0.0]);
