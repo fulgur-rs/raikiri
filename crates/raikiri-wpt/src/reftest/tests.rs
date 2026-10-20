@@ -2321,6 +2321,33 @@ fn viewport_expansion_preserves_string_and_invalid_escape_boundaries() {
 }
 
 #[test]
+fn viewport_expansion_resolves_an_at_rule_that_ends_the_input() {
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(
+            "@media (width:10vw)",
+            200.0,
+            100.0,
+            800.0,
+            600.0
+        ),
+        "@media (width:80.000000px)"
+    );
+}
+
+#[test]
+fn viewport_expansion_stops_entering_blocks_at_the_depth_limit() {
+    let nested = |depth: usize| format!("{}width:100vw{}", "a{".repeat(depth), "}".repeat(depth));
+    let expand = |source: &str| {
+        expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0)
+    };
+    assert_eq!(
+        expand(&nested(256)),
+        nested(256).replace("100vw", "200.000000px")
+    );
+    assert_eq!(expand(&nested(257)), nested(257));
+}
+
+#[test]
 fn print_probe_preserves_nominal_basis_for_unqualified_page_units() {
     let html = "<style>@page{size:50vw 50vh;margin:0}html,body{margin:0}.box{width:50vw;height:50vh;background:green}</style><div class=box></div>";
     let image = render_raikiri(html, 800, 600).unwrap();
