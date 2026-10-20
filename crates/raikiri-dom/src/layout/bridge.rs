@@ -292,7 +292,7 @@ fn apply_computed_to_style_in_session_inner(
         // A resolver may give the natural size and leave its ratio unset; the
         // ratio of that size is then the natural one.
         let natural_ratio = crate::taffy_impl::leaf_intrinsic_ratio(&doc.nodes[idx]);
-        let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio);
+        let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio, false);
         doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
         doc.nodes[idx].ratio_in_content_box =
             cv.aspect_ratio.auto && cv.aspect_ratio.ratio.is_some();
@@ -487,10 +487,11 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].text_group_align = shodo_group_align(cv.text_group_align);
         // Size containment removes the natural size and aspect ratio of
         // replaced content, so only an `aspect-ratio` of the box itself can
-        // stand in for an `auto` size.
+        // stand in for an `auto` size. Only a contained width keeps a content
+        // keyword width at the width of an empty box.
         if containment.width || containment.height {
             let style = &mut doc.layout_node_with_style_mut(idx).unwrap().style;
-            style.aspect_ratio = preferred_aspect_ratio(cv, None);
+            style.aspect_ratio = preferred_aspect_ratio(cv, None, containment.width);
             if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.width = Dimension::auto();
             }
@@ -1213,9 +1214,17 @@ fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues)
 /// the ratio the `aspect-ratio` property gives it, with `natural` standing for
 /// the natural ratio of replaced content. A ratio only participates when at
 /// least one preferred dimension is auto; Taffy's leaf sizing otherwise floors
-/// an explicit height to the ratio-derived height.
-fn preferred_aspect_ratio(cv: &ComputedValues, natural: Option<f32>) -> Option<f32> {
+/// an explicit height to the ratio-derived height. A width that is a content
+/// keyword is no more definite than `auto` for a box without a natural ratio:
+/// the ratio gives it the width of its height (CSS Sizing 4 §5.1). A box with
+/// size containment keeps the width of an empty box instead.
+fn preferred_aspect_ratio(
+    cv: &ComputedValues,
+    natural: Option<f32>,
+    size_contained: bool,
+) -> Option<f32> {
     if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+        || (natural.is_none() && !size_contained && cv.width.is_content_keyword())
         || matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
     {
         cv.aspect_ratio.preferred(natural)

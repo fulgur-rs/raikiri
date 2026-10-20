@@ -84,6 +84,8 @@ fn supported_with_wrapped_blocks(
         let style = &tree.layout_node_with_style(child).unwrap().style;
         style_dimension_length(style.size.height).is_some()
             || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
+            // The height of a box with an aspect ratio follows from its width.
+            || style.aspect_ratio.is_some()
     });
     // An empty containing block has no block size, but the absolutely
     // positioned boxes it holds still break across the columns, past the
