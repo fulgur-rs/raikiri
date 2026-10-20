@@ -424,6 +424,55 @@ fn same_mode_vertical_block_margins_collapse_through_a_child() {
 }
 
 #[test]
+fn vertical_content_min_width_prevents_the_last_child_margin_from_escaping() {
+    for (box_sizing, expected_width) in [
+        ("min-width:50px;padding-right:10px", 60.0),
+        (
+            "box-sizing:border-box;min-width:60px;padding-right:10px",
+            60.0,
+        ),
+    ] {
+        let (mut doc, body) = vertical_document("vertical-rl", "200px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:200px;height:40px"),
+        );
+        let wrapper = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(format!("display:block;width:auto;height:40px;{box_sizing}").as_str()),
+        );
+        doc.append_text(wrapper, "a");
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;width:20px;height:10px;margin-block-end:20px"),
+        );
+        let sibling = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:10px"),
+        );
+
+        layout_vertical_document(&mut doc);
+
+        let wrapper = absolute_rect(&doc, wrapper);
+        let sibling = absolute_rect(&doc, sibling);
+        assert_eq!(wrapper.2, expected_width, "{box_sizing}");
+        assert_eq!(
+            wrapper.0 - (sibling.0 + sibling.2),
+            0.0,
+            "{box_sizing}: {wrapper:?} {sibling:?}"
+        );
+    }
+}
+
+#[test]
 fn same_mode_vertical_descendant_clear_sees_an_ancestor_float() {
     for writing_mode in ["vertical-rl", "vertical-lr"] {
         let (mut doc, body) = vertical_document(writing_mode, "100px", "40px");

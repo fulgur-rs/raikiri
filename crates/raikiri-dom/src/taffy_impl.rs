@@ -1427,8 +1427,22 @@ fn compute_ifc_root(
     } else {
         output.size.width
     };
-    let constrained_by_min_block_size =
-        min_block_size.is_some_and(|min| min > 0.0 && min >= block_size);
+    let block_axis_insets = if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
+        measure.insets.top + measure.insets.bottom
+    } else {
+        measure.insets.left + measure.insets.right
+    };
+    // `output.size` is a border-box size; content-box minimums need the
+    // block-axis padding and border added before comparing them.
+    let constrained_by_min_block_size = min_block_size.is_some_and(|min| {
+        let min_border_box = min
+            + if style.box_sizing == taffy::BoxSizing::ContentBox {
+                block_axis_insets
+            } else {
+                0.0
+            };
+        min > 0.0 && min_border_box >= block_size
+    });
     output.bottom_margin = if constrained_by_min_block_size {
         CollapsibleMarginSet::ZERO
     } else {
