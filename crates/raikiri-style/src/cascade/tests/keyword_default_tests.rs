@@ -4,7 +4,7 @@
 use super::*;
 use crate::cascade::keyword_defaults::KEYS;
 use crate::property::{BoxSizing, FloatValue, TextTransform, WordBreak, property_key_for_name};
-use crate::resolve::ComputedLengthPercentageOrNormal;
+use crate::resolve::{ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal};
 
 /// A property, whether it is inherited, and values that compute apart: the
 /// first is the parent's, the second the user agent's, and a box `before`
@@ -473,4 +473,28 @@ fn float_takes_the_computed_none_of_an_absolutely_positioned_parent() {
         let values = child(parent, &[], "#target { float: inherit }");
         assert_eq!(values.float, expected, "{parent}");
     }
+}
+
+#[test]
+fn a_min_block_size_keyword_competes_with_min_height_in_cascade_order() {
+    let parent = "min-height: 30px";
+    let physical_last = child(
+        parent,
+        &[],
+        "#target { min-block-size: inherit; min-height: 10px }",
+    );
+    assert_eq!(
+        physical_last.min_height,
+        ComputedLengthPercentageOrAuto::Px(10.0)
+    );
+    assert_eq!(physical_last.min_block_size, None);
+    let keyword_last = child(
+        parent,
+        &[],
+        "#target { min-height: 10px; min-block-size: inherit }",
+    );
+    assert_eq!(
+        keyword_last.min_height,
+        ComputedLengthPercentageOrAuto::Px(30.0)
+    );
 }

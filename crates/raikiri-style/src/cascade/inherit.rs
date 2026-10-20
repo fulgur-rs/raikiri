@@ -1583,21 +1583,14 @@ pub(crate) fn apply_winners(
             };
             // Record the precedence even for a value invalid at computed-value
             // time: it still decides which of a physical and a logical size wins.
-            let rank = Some((
+            let rank = (
                 winner.rank,
                 winner.layer_priority,
                 winner.specificity,
                 winner.source_order,
                 winner.idx,
-            ));
-            let sizes = &mut specified.preferred_size_precedence;
-            match winner_key {
-                crate::property::PropertyKey::Width => sizes.width = rank,
-                crate::property::PropertyKey::Height => sizes.height = rank,
-                crate::property::PropertyKey::InlineSize => sizes.inline_size = rank,
-                crate::property::PropertyKey::BlockSize => sizes.block_size = rank,
-                _ => {}
-            }
+            );
+            specified.size_precedence.record(winner_key, rank);
             // A painting attribute that wins is already in the SVG source; only a
             // stylesheet declaration, a rollback to the attribute, or an
             // attribute written with `var()` is exported. The SVG renderer

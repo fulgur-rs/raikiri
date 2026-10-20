@@ -2130,7 +2130,11 @@ fn computed_over(
     // A CSS-wide keyword on a flow-relative size depends on the box's own
     // `writing-mode`, which may be declared after it.
     let mut logical_size_keywords = Vec::new();
-    for value in values {
+    // The values arrive in cascade order, which is what decides between a
+    // logical size and the physical one on its axis, so the position of a
+    // value stands for its precedence.
+    let precedence_of = |position: usize| (0, (false, 0), 0, 0, position);
+    for (position, value) in values.enumerate() {
         let (value, border_width_is_computed) = match value {
             ComputedOverValue::Resolved(resolved) => {
                 let border_width_is_computed =
@@ -2144,7 +2148,7 @@ fn computed_over(
                     ..
                 }),
             ) => {
-                logical_size_keywords.push(value);
+                logical_size_keywords.push((position, value));
                 continue;
             }
             ComputedOverValue::Specified(value) => {
@@ -2169,6 +2173,9 @@ fn computed_over(
                 }
             }
         };
+        specified
+            .size_precedence
+            .record(value.key(), precedence_of(position));
         apply_value(value, &mut specified);
         for (index, is_computed) in border_width_is_computed.into_iter().enumerate() {
             if is_computed {
@@ -2176,8 +2183,11 @@ fn computed_over(
             }
         }
     }
-    for value in logical_size_keywords {
+    for (position, value) in logical_size_keywords {
         let vertical = specified.writing_mode.is_vertical();
+        specified
+            .size_precedence
+            .record(value.key(), precedence_of(position));
         apply_value(
             crate::cascade::resolve_logical_size_keyword(value, parent, vertical),
             &mut specified,

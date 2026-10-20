@@ -413,6 +413,63 @@ fn min_block_size_maps_to_the_authored_block_axis() {
 }
 
 #[test]
+fn min_block_size_competes_with_the_minimum_size_on_its_axis_in_cascade_order() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let min = |css: &str, inline: &str| {
+        let cv = cascade_doc(css, "div", Some(inline));
+        (cv.min_width, cv.min_height, cv.min_block_size)
+    };
+    // The later of the two wins, and the logical value is kept only while it
+    // does.
+    assert_eq!(
+        min("", "min-block-size: 5px; min-height: 10px"),
+        (Auto, Px(10.0), None)
+    );
+    assert_eq!(
+        min("", "min-height: 10px; min-block-size: 5px"),
+        (Auto, Px(5.0), Some(Px(5.0)))
+    );
+    assert_eq!(
+        min(
+            "",
+            "writing-mode: vertical-rl; min-block-size: 5px; min-width: 10px"
+        ),
+        (Px(10.0), Auto, None)
+    );
+    assert_eq!(
+        min(
+            "",
+            "writing-mode: vertical-rl; min-width: 10px; min-block-size: 5px"
+        ),
+        (Px(5.0), Auto, Some(Px(5.0)))
+    );
+    // The minimum size on the other axis is not in the competition.
+    assert_eq!(
+        min("", "min-block-size: 5px; min-width: 10px"),
+        (Px(10.0), Px(5.0), Some(Px(5.0)))
+    );
+    // Importance and specificity decide before the order does.
+    assert_eq!(
+        min("div { min-block-size: 5px !important }", "min-height: 10px"),
+        (Auto, Px(5.0), Some(Px(5.0)))
+    );
+    assert_eq!(
+        min("div { min-height: 10px } * { min-block-size: 5px }", ""),
+        (Auto, Px(10.0), None)
+    );
+    // A value that is invalid at computed-value time still takes its place in
+    // the order and computes to `auto`.
+    assert_eq!(
+        min("", "min-height: 10px; min-block-size: var(--missing)"),
+        (Auto, Auto, None)
+    );
+    assert_eq!(
+        min("", "min-block-size: 5px; min-height: var(--missing)"),
+        (Auto, Auto, None)
+    );
+}
+
+#[test]
 fn block_size_keywords_compute_to_auto_for_an_element() {
     // An element sizes itself to its content along the block axis for
     // `min-content`, `max-content` and `fit-content` alike (CSS Sizing 3
