@@ -1579,23 +1579,96 @@ fn paint_list_marker_with_snapshots(
     snapshots: &CounterSnapshots,
     pixel_source: Option<&dyn ImagePixelSource>,
 ) {
+    let Some((computed, content)) =
+        list_marker_to_paint(document, cascade, node_id, snapshots, (width, height))
+    else {
+        return;
+    };
+    if let Some(decoded) = list_marker_image(
+        image_cache,
+        document,
+        cascade,
+        node_id,
+        computed,
+        pixel_source,
+    ) {
+        let transform = list_marker_image_transform(
+            document,
+            node_id,
+            computed,
+            (paint_x, paint_y),
+            padding_left,
+            &decoded,
+        );
+        let brush = image_cache.whole(&decoded);
+        scene.fill(
+            peniko::Fill::NonZero,
+            transform,
+            brush.as_ref(),
+            None,
+            &Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64),
+        );
+        return;
+    }
+    if content.is_empty() {
+        return;
+    }
+    let Some((shaped, offset_x)) =
+        document.shape_list_marker_text(&content, computed, padding_left)
+    else {
+        return;
+    };
+    let Some(top) = list_marker_text_top(document, cascade, node_id, page_flow, paint_y) else {
+        return;
+    };
+    crate::standalone_text::draw(
+        scene,
+        &shaped,
+        paint_x + offset_x,
+        top,
+        css_color(computed.color),
+    );
+}
+
+/// The style and content of the marker of the list item `node_id`, unless
+/// the marker paints nothing: it sits inside a paragraph that lays it out,
+/// its box `(width, height)` is empty, or it is not visible.
+fn list_marker_to_paint<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    node_id: usize,
+    snapshots: &CounterSnapshots,
+    (width, height): (f32, f32),
+) -> Option<(&'a ComputedValues, String)> {
     if raikiri_dom::generated_content::inside_marker_in_flow(cascade, node_id)
         && document
             .get_node(node_id)
             .is_some_and(|node| node.is_ifc_root())
     {
-        return;
+        return None;
     }
-    let Some((computed, content)) =
-        marker_render_info_with_snapshots(document, cascade, node_id, snapshots)
-    else {
-        return;
-    };
+    let (computed, content) =
+        marker_render_info_with_snapshots(document, cascade, node_id, snapshots)?;
     // The marker is visible by its own `visibility`, which it inherits from
     // its item unless `::marker` sets it; `collapse` hides it like `hidden`.
     if width <= 0.0 || height <= 0.0 || raikiri_dom::paint_rules::hides_own_box(computed) {
-        return;
+        return None;
     }
+    Some((computed, content))
+}
+
+/// The decoded `list-style-image` that the marker of `node_id` paints in
+/// place of its text: the one the document holds for it, or the one that
+/// `pixel_source` decoded. A `::marker` with its own `content` paints that
+/// content instead.
+fn list_marker_image(
+    image_cache: &crate::walk::ImageBrushCache,
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    computed: &ComputedValues,
+    pixel_source: Option<&dyn ImagePixelSource>,
+) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
     let explicit_content = cascade
         .pseudo
         .get(&(
@@ -1612,69 +1685,69 @@ fn paint_list_marker_with_snapshots(
     } else {
         None
     };
-    if !explicit_content
-        && let Some(decoded) = document
-            .list_marker_image_shared(node_id)
-            .or(resolved.as_ref())
-        && decoded.width > 0
-        && decoded.height > 0
-    {
-        let size = document.list_marker_image_size(node_id);
-        let marker_width = size.map_or(decoded.width as f32, |size| size.width);
-        let marker_height = size.map_or(decoded.height as f32, |size| size.height);
-        let marker_rect = document.standalone_marker_image_rect(
-            computed,
-            (paint_x, paint_y),
-            padding_left,
-            raikiri_traits::ImageRasterSize {
-                width: marker_width,
-                height: marker_height,
-            },
-        );
-        let brush = image_cache.whole(decoded);
-        scene.fill(
-            peniko::Fill::NonZero,
-            Affine::translate((marker_rect.x as f64, marker_rect.y as f64))
-                * Affine::scale_non_uniform(
-                    f64::from(marker_width) / f64::from(decoded.width),
-                    f64::from(marker_height) / f64::from(decoded.height),
-                ),
-            brush.as_ref(),
-            None,
-            &Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64),
-        );
-        return;
+    if explicit_content {
+        return None;
     }
-    if content.is_empty() {
-        return;
-    }
-    let Some((shaped, offset_x)) =
-        document.shape_list_marker_text(&content, computed, padding_left)
-    else {
-        return;
-    };
-    // The marker's baseline meets the item's first line (CSS Lists 3
-    // §3.1), where the page's text runs place it. It belongs to the item's
-    // first page, so the item's later pages draw none.
-    let (content_origin_y, page_bottom, repeated) = page_flow;
-    let top = match document.list_marker_text_top(
-        cascade,
-        node_id,
-        (content_origin_y, repeated),
-        paint_y,
-        page_bottom,
-    ) {
-        Some(Some(top)) => top,
-        Some(None) => return,
-        None => paint_y,
-    };
-    crate::standalone_text::draw(
-        scene,
-        &shaped,
-        paint_x + offset_x,
-        top,
-        css_color(computed.color),
+    document
+        .list_marker_image_shared(node_id)
+        .or(resolved.as_ref())
+        .filter(|decoded| decoded.width > 0 && decoded.height > 0)
+        .cloned()
+}
+
+/// The transform that maps the pixels of `decoded`, the image of the marker
+/// of `node_id`, onto the marker box placed from `origin` and the left
+/// padding of the item.
+fn list_marker_image_transform(
+    document: &Document,
+    node_id: usize,
+    computed: &ComputedValues,
+    origin: (f32, f32),
+    padding_left: f32,
+    decoded: &raikiri_traits::DecodedImage,
+) -> Affine {
+    let size = document.list_marker_image_size(node_id);
+    let marker_width = size.map_or(decoded.width as f32, |size| size.width);
+    let marker_height = size.map_or(decoded.height as f32, |size| size.height);
+    let marker_rect = document.standalone_marker_image_rect(
+        computed,
+        origin,
+        padding_left,
+        raikiri_traits::ImageRasterSize {
+            width: marker_width,
+            height: marker_height,
+        },
     );
+    Affine::translate((marker_rect.x as f64, marker_rect.y as f64))
+        * Affine::scale_non_uniform(
+            f64::from(marker_width) / f64::from(decoded.width),
+            f64::from(marker_height) / f64::from(decoded.height),
+        )
+}
+
+/// The top at which the text of the marker of `node_id` paints, or `None`
+/// when the item's page is not the one that draws it.
+///
+/// The marker's baseline meets the item's first line (CSS Lists 3 §3.1),
+/// where the page's text runs place it. It belongs to the item's first page,
+/// so the item's later pages draw none.
+fn list_marker_text_top(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    page_flow: (f32, f32, bool),
+    paint_y: f32,
+) -> Option<f32> {
+    let (content_origin_y, page_bottom, repeated) = page_flow;
+    document
+        .list_marker_text_top(
+            cascade,
+            node_id,
+            (content_origin_y, repeated),
+            paint_y,
+            page_bottom,
+        )
+        .unwrap_or(Some(paint_y))
 }
 
 /// Lay out the page-margin boxes of a page for the page context in
