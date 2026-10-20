@@ -1808,12 +1808,26 @@ fn an_auto_ratio_of_an_image_relates_the_content_box_of_its_natural_ratio() {
 }
 
 #[test]
+fn a_degenerate_aspect_ratio_keeps_the_content_box_ratio_of_the_natural_ratio() {
+    // `aspect-ratio: 0` behaves as `auto`: the natural 2:5 ratio of the
+    // content box, 20x50 of content plus 80x50 of padding.
+    for ratio in ["0", "0 / 1", "1 / 0"] {
+        let (doc, image) = natural_20x50_image(&format!(
+            "display:block;width:100px;aspect-ratio:{ratio};padding-right:80px;\
+             padding-bottom:50px;box-sizing:border-box"
+        ));
+        assert_eq!(size(&doc, image), (100.0, 100.0), "{ratio}");
+    }
+}
+
+#[test]
 fn the_ratio_of_an_aspect_ratio_relates_the_content_box_when_it_is_auto_or_natural() {
     // `ratio_in_content_box` is set for `auto` with a `<ratio>` or with the
     // natural ratio of the image, and for no other `aspect-ratio`.
     for (css, expected) in [
         ("aspect-ratio:auto", true),
         ("aspect-ratio:auto 2", true),
+        ("aspect-ratio:0", true),
         ("aspect-ratio:2", false),
     ] {
         let (doc, image) = natural_20x50_image(css);
