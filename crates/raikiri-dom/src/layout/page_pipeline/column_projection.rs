@@ -99,19 +99,6 @@ pub(super) struct ColumnProjection {
     pub(super) record_count: usize,
 }
 
-impl Clone for ColumnProjection {
-    fn clone(&self) -> Self {
-        #[cfg(test)]
-        crate::page_projection::work_tests::projection_cloned(self.record_count);
-        Self {
-            bounds: self.bounds.clone(),
-            fragmented: self.fragmented.clone(),
-            owners: self.owners.clone(),
-            record_count: self.record_count,
-        }
-    }
-}
-
 pub(crate) struct ParagraphProjection {
     pub(super) combined: Arc<ColumnProjection>,
     pub(super) columns: HashMap<usize, Arc<ColumnProjection>>,

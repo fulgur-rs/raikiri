@@ -283,3 +283,6 @@ fn push_line(page: &mut HashMap<usize, PageLines>, placement: usize, index: usiz
         lines.push(index);
     }
 }
+
+#[cfg(test)]
+mod tests;

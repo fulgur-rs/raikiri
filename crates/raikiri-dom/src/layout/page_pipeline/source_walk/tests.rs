@@ -2,7 +2,7 @@ use super::*;
 use crate::layout::ifc::test_support::block_fixture_with_ahem;
 
 #[test]
-fn selecting_a_column_does_not_clone_projection_records() {
+fn selecting_a_column_shares_the_prepared_projection() {
     let fixture = block_fixture_with_ahem("width:10px;line-height:10px", |doc, root| {
         doc.append_text(root, "A B C D");
     });
@@ -17,13 +17,11 @@ fn selecting_a_column_does_not_clone_projection_records() {
     let mut work = ProjectionWork::new(&control, 100_000);
     let prepared = ParagraphProjection::prepare(&doc, &cascade, root, 0, &mut work).unwrap();
     assert!(prepared.combined.record_count > 0);
-    crate::page_projection::work_tests::reset_projection_clones();
     for column in [2, 3, 2] {
         let selected = column_data(&prepared, Some(column), true, &mut work).unwrap();
         assert!(Arc::ptr_eq(&selected.data, &prepared.combined));
         assert_eq!(selected.column_override, Some(column as u32));
     }
-    assert_eq!(crate::page_projection::work_tests::projection_clones(), 0);
 }
 
 #[test]
@@ -71,4 +69,64 @@ fn a_text_node_that_is_its_own_ifc_root_keeps_prepared_lines() {
                 .is_some_and(|lines| !lines.is_empty())
         }));
     }
+}
+
+#[test]
+fn text_in_another_column_is_suppressed_and_consumption_resets_per_visit() {
+    let mut second = 0;
+    let fixture = block_fixture_with_ahem(
+        "width:30px;height:10px;column-count:2;column-gap:10px;column-fill:auto;line-height:10px",
+        |doc, root| {
+            doc.append_text(root, "A ");
+            second = doc.append_text(root, "B");
+        },
+    );
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    crate::layout_single_page(
+        &mut doc,
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let control = crate::PageLayoutControl::default();
+    let mut work = ProjectionWork::new(&control, 100_000);
+    let mut paragraphs = Paragraphs::default();
+    paragraphs
+        .take_column(&doc, &cascade, root, Some(0), false, &mut work)
+        .unwrap();
+    let node = doc.get_node(second).unwrap();
+    assert!(
+        paragraphs
+            .take_text_lines(&doc, second, node)
+            .unwrap()
+            .groups()
+            .is_none()
+    );
+    paragraphs
+        .take_column(&doc, &cascade, root, Some(1), false, &mut work)
+        .unwrap();
+    assert!(
+        paragraphs
+            .take_text_lines(&doc, second, node)
+            .unwrap()
+            .groups()
+            .is_some_and(|groups| !groups.is_empty())
+    );
+    assert!(
+        paragraphs
+            .take_text_lines(&doc, second, node)
+            .unwrap()
+            .groups()
+            .is_none()
+    );
+    paragraphs
+        .take_column(&doc, &cascade, root, Some(1), false, &mut work)
+        .unwrap();
+    assert!(
+        paragraphs
+            .take_text_lines(&doc, second, node)
+            .unwrap()
+            .groups()
+            .is_some_and(|groups| !groups.is_empty())
+    );
 }

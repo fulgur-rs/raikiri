@@ -161,3 +161,78 @@ fn a_first_letter_alone_keeps_its_holding_dom_group_reachable() {
     assert!(full.iter().any(|event| matches!(event, PaintEvent::GeneratedBox(generated) if generated.kind == GeneratedKind::FirstLetter)));
     assert_eq!(format!("{sparse:?}"), format!("{full:?}"));
 }
+
+#[test]
+fn cached_empty_child_presence_is_reused_without_listing_a_foreign_group() {
+    let mut groups = Vec::new();
+    let fixture = sheet_fixture(
+        "div::first-line{opacity:.5}",
+        "width:10px;line-height:10px",
+        |doc, root| {
+            let outer = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("opacity:.8"),
+            );
+            let inner = doc.append_element(
+                Some(outer),
+                "em",
+                taffy::Style::default(),
+                Some("opacity:.9"),
+            );
+            doc.append_text(inner, "X X");
+            groups.extend([outer, inner]);
+        },
+    );
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    doc.set_font_collection(ahem_fonts());
+    let mut page_box = PageBox::new();
+    page_box.width = 100.0;
+    page_box.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page_box).unwrap();
+    doc.project_pages(&cascade, page_box, &slices, &[]).unwrap();
+    let mut lines = TextLines::default();
+    lines.groups.insert(
+        NodeId::new(groups[1] as u64),
+        vec![crate::TextLineId {
+            root: NodeId::new(root as u64),
+            index: 1,
+        }],
+    );
+    let page = &doc.page_projection.pages[0];
+    let items = PageItems {
+        by_node: HashMap::new(),
+        content_box: page.content_box,
+        overflow_clips: Default::default(),
+        generated_boxes: doc.page_projection.generated_boxes.get(&0),
+        inline_boxes: doc.page_projection.inline_boxes.get(&0),
+        generated_images: None,
+        cascade: &cascade,
+        document: &doc,
+        page,
+        source_lines: Some(lines),
+        paragraph_presence: Default::default(),
+        full_paragraph_listing: false,
+        paragraph_listings: Default::default(),
+        paragraph_nodes: Default::default(),
+        paragraph_slots: Default::default(),
+    };
+    assert!(!doc.group_has_content(&items, root, groups[1], LinePart::First));
+    assert!(!doc.group_has_content(&items, root, groups[0], LinePart::First));
+    assert!(!doc.group_has_content(&items, root, groups[0], LinePart::First));
+    let mut events = Vec::new();
+    let unrelated = doc.document_element_index().unwrap();
+    assert!(
+        paragraph::push_paragraph(
+            &doc,
+            &items,
+            root,
+            Some(unrelated),
+            LinePart::All,
+            &mut events
+        )
+        .is_empty()
+    );
+    assert!(events.is_empty());
+}

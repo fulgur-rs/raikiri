@@ -129,3 +129,29 @@ fn prepared_geometry_keeps_line_shifts_in_each_writing_mode() {
         assert_eq!(view.line_offset(1), Some(block_shift(mode, 7.0)));
     }
 }
+
+#[test]
+fn replacing_whole_offset_ranges_keeps_only_the_uncovered_edges() {
+    let mut ranges = OffsetRanges::default();
+    ranges.insert(0..2, (1.0, 1.0));
+    ranges.insert(4..6, (2.0, 2.0));
+    ranges.insert(8..10, (3.0, 3.0));
+    ranges.insert(1..9, (4.0, 4.0));
+    let ranges = ranges.finish();
+    assert_eq!(ranges.len(), 3);
+    assert_eq!(
+        super::super::geometry::offset_at(&ranges, 0),
+        Some((1.0, 1.0))
+    );
+    for line in 1..9 {
+        assert_eq!(
+            super::super::geometry::offset_at(&ranges, line),
+            Some((4.0, 4.0))
+        );
+    }
+    assert_eq!(
+        super::super::geometry::offset_at(&ranges, 9),
+        Some((3.0, 3.0))
+    );
+    assert_eq!(super::super::geometry::offset_at(&ranges, 10), None);
+}

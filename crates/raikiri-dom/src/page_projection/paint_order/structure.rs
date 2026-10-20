@@ -149,10 +149,7 @@ impl Document {
                 let mut pending = vec![None];
                 while let Some(group) = pending.pop() {
                     let first = group.unwrap_or(root);
-                    let Some(node) = group.and_then(|id| self.get_node(id)).or(Some(root_node))
-                    else {
-                        continue;
-                    };
+                    let node = group.and_then(|id| self.get_node(id)).unwrap_or(root_node);
                     let content = collect_content(
                         self,
                         cascade,
@@ -416,3 +413,6 @@ fn nested_groups(
     }
     nested
 }
+
+#[cfg(test)]
+mod tests;

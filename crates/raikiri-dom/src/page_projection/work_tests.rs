@@ -9,7 +9,6 @@ struct Work {
     geometry_lines: usize,
     line_candidates: usize,
     paragraph_nodes: usize,
-    projection_clones: usize,
     clip_probes: usize,
 }
 
@@ -18,7 +17,6 @@ thread_local! {
         geometry_lines: 0,
         line_candidates: 0,
         paragraph_nodes: 0,
-        projection_clones: 0,
         clip_probes: 0,
     }) };
 }
@@ -53,24 +51,6 @@ pub(crate) fn clip_probe() {
         work.clip_probes += 1;
         counter.set(work);
     });
-}
-
-pub(crate) fn projection_cloned(records: usize) {
-    WORK.with(|counter| {
-        let mut work = counter.get();
-        work.projection_clones += records;
-        counter.set(work);
-    });
-}
-pub(crate) fn reset_projection_clones() {
-    WORK.with(|counter| {
-        let mut work = counter.get();
-        work.projection_clones = 0;
-        counter.set(work);
-    });
-}
-pub(crate) fn projection_clones() -> usize {
-    WORK.get().projection_clones
 }
 
 #[test]
