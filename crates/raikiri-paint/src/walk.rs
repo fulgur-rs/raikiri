@@ -3487,7 +3487,25 @@ pub(crate) fn paint_element_border_rounded(
         return;
     }
 
-    let stroke_width = widths[0];
+    fill_rounded_border_ring(
+        scene,
+        (abs_x, abs_y, width, height),
+        radii,
+        widths[0],
+        color,
+    );
+}
+
+/// Fill the ring that a border of `stroke_width` makes inside the rounded
+/// outer edge of the box at `(abs_x, abs_y)` of size `(width, height)`, and
+/// then the square corners of the ring that have no radius.
+fn fill_rounded_border_ring(
+    scene: &mut impl PaintScene,
+    (abs_x, abs_y, width, height): (f32, f32, f32, f32),
+    radii: [[f64; 2]; 4],
+    stroke_width: f64,
+    color: Color,
+) {
     let outer = rounded_rect_path(
         abs_x as f64,
         abs_y as f64,
