@@ -667,84 +667,12 @@ impl Quarantine {
     /// aborting on the first malformed row.
     pub fn parse(content: &str, file_name: &str) -> (Self, Vec<ExpectError>) {
         let mut entries = Vec::new();
-        let mut errors: Vec<ExpectError> = Vec::new();
+        let mut errors = Vec::new();
         for (line_no, line) in iter_data_lines(content) {
-            if has_trailing_whitespace(line) {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: format!("trailing whitespace on data line: {line:?}"),
-                });
-                continue;
+            match parse_quarantine_row(line, file_name, line_no) {
+                Ok(entry) => entries.push(entry),
+                Err(error) => errors.push(error),
             }
-            let cols: Vec<&str> = line.split('|').map(str::trim).collect();
-            if cols.len() != 8 {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: format!("expected 8 pipe-delimited columns, got {}", cols.len()),
-                });
-                continue;
-            }
-            let Some(platform) = PlatformFilter::parse_str(cols[1]) else {
-                errors.push(ExpectError::UnknownEnum {
-                    file: file_name.to_owned(),
-                    line_no,
-                    field: "platform",
-                    value: cols[1].to_owned(),
-                });
-                continue;
-            };
-            let Some(arch) = ArchFilter::parse_str(cols[2]) else {
-                errors.push(ExpectError::UnknownEnum {
-                    file: file_name.to_owned(),
-                    line_no,
-                    field: "arch",
-                    value: cols[2].to_owned(),
-                });
-                continue;
-            };
-            let Some(renderer) = RendererFilter::parse_str(cols[3]) else {
-                errors.push(ExpectError::UnknownEnum {
-                    file: file_name.to_owned(),
-                    line_no,
-                    field: "renderer",
-                    value: cols[3].to_owned(),
-                });
-                continue;
-            };
-            let Some(tolerance) = ToleranceFilter::parse_str(cols[4]) else {
-                errors.push(ExpectError::UnknownEnum {
-                    file: file_name.to_owned(),
-                    line_no,
-                    field: "tolerance",
-                    value: cols[4].to_owned(),
-                });
-                continue;
-            };
-            let added_date =
-                match Date::parse(cols[7], &format_description!("[year]-[month]-[day]")) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        errors.push(ExpectError::MalformedLine {
-                            file: file_name.to_owned(),
-                            line_no,
-                            reason: format!("added_date {:?} is not YYYY-MM-DD ({e})", cols[7]),
-                        });
-                        continue;
-                    }
-                };
-            entries.push(QuarantineEntry {
-                test_id: cols[0].to_owned(),
-                platform,
-                arch,
-                renderer,
-                tolerance,
-                reason: cols[5].to_owned(),
-                issue_link: cols[6].to_owned(),
-                added_date,
-                line_no,
-            });
         }
         (Self { entries }, errors)
     }
@@ -761,6 +689,67 @@ impl Quarantine {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+/// Parse one data row of `quarantine.txt`, reporting the first rule it breaks.
+fn parse_quarantine_row(
+    line: &str,
+    file_name: &str,
+    line_no: usize,
+) -> Result<QuarantineEntry, ExpectError> {
+    let malformed = |reason: String| ExpectError::MalformedLine {
+        file: file_name.to_owned(),
+        line_no,
+        reason,
+    };
+    let unknown_enum = |field: &'static str, value: &str| ExpectError::UnknownEnum {
+        file: file_name.to_owned(),
+        line_no,
+        field,
+        value: value.to_owned(),
+    };
+    if has_trailing_whitespace(line) {
+        return Err(malformed(format!(
+            "trailing whitespace on data line: {line:?}"
+        )));
+    }
+    let columns: Vec<&str> = line.split('|').map(str::trim).collect();
+    let [
+        test_id,
+        platform_text,
+        arch_text,
+        renderer_text,
+        tolerance_text,
+        reason,
+        issue_link,
+        added,
+    ] = columns[..]
+    else {
+        return Err(malformed(format!(
+            "expected 8 pipe-delimited columns, got {}",
+            columns.len()
+        )));
+    };
+    let platform = PlatformFilter::parse_str(platform_text)
+        .ok_or_else(|| unknown_enum("platform", platform_text))?;
+    let arch = ArchFilter::parse_str(arch_text).ok_or_else(|| unknown_enum("arch", arch_text))?;
+    let renderer = RendererFilter::parse_str(renderer_text)
+        .ok_or_else(|| unknown_enum("renderer", renderer_text))?;
+    let tolerance = ToleranceFilter::parse_str(tolerance_text)
+        .ok_or_else(|| unknown_enum("tolerance", tolerance_text))?;
+    let added_date = Date::parse(added, &format_description!("[year]-[month]-[day]"))
+        .map_err(|error| malformed(format!("added_date {added:?} is not YYYY-MM-DD ({error})")))?;
+    Ok(QuarantineEntry {
+        test_id: test_id.to_owned(),
+        platform,
+        arch,
+        renderer,
+        tolerance,
+        reason: reason.to_owned(),
+        issue_link: issue_link.to_owned(),
+        added_date,
+        line_no,
+    })
 }
 
 // ── ExpectError (hand-written Display + Error + From) ────────
