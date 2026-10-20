@@ -114,45 +114,49 @@ struct NodeStates {
 
 impl NodeStates {
     fn get(&self, key: &BoxKey) -> Option<&CacheNodeState> {
-        self.first
-            .iter()
-            .flatten()
-            .find(|(first, _)| first == key)
-            .map(|(_, state)| state)
-            .or_else(|| self.rest.get(key))
+        if self.rest.is_empty() {
+            self.first
+                .iter()
+                .flatten()
+                .find(|(first, _)| first == key)
+                .map(|(_, state)| state)
+        } else {
+            self.rest.get(key)
+        }
     }
     fn get_mut(&mut self, key: &BoxKey) -> Option<&mut CacheNodeState> {
-        if let Some((_, state)) = self
-            .first
-            .iter_mut()
-            .flatten()
-            .find(|(first, _)| first == key)
-        {
-            Some(state)
+        if self.rest.is_empty() {
+            self.first
+                .iter_mut()
+                .flatten()
+                .find(|(first, _)| first == key)
+                .map(|(_, state)| state)
         } else {
             self.rest.get_mut(key)
         }
     }
     fn get_or_insert(&mut self, key: BoxKey, publication: CacheEpoch) -> &mut CacheNodeState {
-        if let Some(index) = self
-            .first
-            .iter()
-            .position(|slot| slot.as_ref().is_some_and(|(first, _)| *first == key))
-        {
-            return &mut self.first[index].as_mut().expect("inline state exists").1;
-        }
-        if self.rest.contains_key(&key) {
-            return self.rest.get_mut(&key).expect("state exists");
-        }
-        if let Some(index) = self.first.iter().position(Option::is_none) {
-            self.first[index] = Some((key, CacheNodeState::new(key, publication)));
-            return &mut self.first[index]
-                .as_mut()
-                .expect("inline state was inserted")
-                .1;
-        }
-        if self.rest.is_empty() && self.expected > self.rest.capacity() {
-            self.rest.reserve(self.expected);
+        if self.rest.is_empty() {
+            if let Some(index) = self
+                .first
+                .iter()
+                .position(|slot| slot.as_ref().is_some_and(|(first, _)| *first == key))
+            {
+                return &mut self.first[index].as_mut().expect("inline state exists").1;
+            }
+            if let Some(index) = self.first.iter().position(Option::is_none) {
+                self.first[index] = Some((key, CacheNodeState::new(key, publication)));
+                return &mut self.first[index]
+                    .as_mut()
+                    .expect("inline state was inserted")
+                    .1;
+            }
+            self.rest.reserve(self.expected.max(self.first.len() + 1));
+            // Once the inline capacity is exceeded, every lookup uses the map directly.
+            for slot in &mut self.first {
+                let (key, state) = slot.take().expect("inline states are full");
+                self.rest.insert(key, state);
+            }
         }
         self.rest
             .entry(key)

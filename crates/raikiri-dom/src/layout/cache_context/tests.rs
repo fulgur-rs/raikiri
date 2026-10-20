@@ -410,3 +410,81 @@ fn walk_session_rollover_does_not_revive_a_previous_walk() {
     assert!(cache.node_state(key, false).taffy_child_walks.is_none());
     assert!(cache.can_read(key));
 }
+
+fn store_view(cache: &mut LayoutCacheContext, key: BoxKey, view: ViewContext) {
+    let frame = cache.enter_view(key, view);
+    assert!(cache.can_store(key));
+    cache.mark_stored(key);
+    cache.leave(frame);
+}
+
+#[test]
+fn growing_workset_preserves_existing_cache_stamps_and_contexts() {
+    let mut cache = LayoutCacheContext::default();
+    let epoch = cache.epoch();
+    for idx in 0..9 {
+        let view = ViewContext {
+            layout_wm: if idx % 2 == 0 {
+                WritingMode::HorizontalTb
+            } else {
+                WritingMode::VerticalRl
+            },
+            ..ViewContext::default()
+        };
+        store_view(&mut cache, BoxKey::Source(idx), view);
+        for previous in 0..=idx {
+            assert!(cache.can_read(BoxKey::Source(previous)));
+        }
+        assert_eq!(cache.epoch(), epoch);
+    }
+    let frame = cache.enter_view(
+        BoxKey::Source(0),
+        ViewContext {
+            layout_wm: WritingMode::VerticalRl,
+            ..ViewContext::default()
+        },
+    );
+    for idx in 0..9 {
+        assert!(!cache.can_read(BoxKey::Source(idx)));
+    }
+    cache.leave(frame);
+}
+
+#[test]
+fn publications_preserve_key_identity_across_large_and_small_worksets() {
+    let mut cache = LayoutCacheContext::default();
+    let view = ViewContext::default();
+    for idx in 0..6 {
+        store_view(&mut cache, BoxKey::Source(idx), view);
+        store_view(&mut cache, BoxKey::AnonymousCell(idx), view);
+    }
+    cache.publish_metadata();
+    for idx in 0..6 {
+        assert!(!cache.can_read(BoxKey::Source(idx)));
+        assert!(!cache.can_read(BoxKey::AnonymousCell(idx)));
+    }
+    store_view(&mut cache, BoxKey::Source(0), view);
+    store_view(&mut cache, BoxKey::AnonymousCell(0), view);
+    assert!(cache.can_read(BoxKey::Source(0)));
+    assert!(cache.can_read(BoxKey::AnonymousCell(0)));
+
+    cache.publish_source();
+    assert!(!cache.can_read(BoxKey::Source(0)));
+    assert!(!cache.can_read(BoxKey::AnonymousCell(0)));
+    for idx in 0..6 {
+        store_view(&mut cache, BoxKey::AnonymousCell(idx), view);
+    }
+    cache.publish_metadata();
+    for idx in 0..6 {
+        assert!(!cache.can_read(BoxKey::AnonymousCell(idx)));
+    }
+    let epoch = cache.epoch();
+    for idx in 0..6 {
+        store_view(&mut cache, BoxKey::Source(idx), view);
+    }
+    for idx in 0..6 {
+        assert!(cache.can_read(BoxKey::Source(idx)));
+        assert!(!cache.can_read(BoxKey::AnonymousCell(idx)));
+    }
+    assert_eq!(cache.epoch(), epoch);
+}
