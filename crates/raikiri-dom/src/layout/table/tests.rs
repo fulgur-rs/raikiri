@@ -4351,3 +4351,7 @@ fn negative_absolute_insets_do_not_expand_the_available_table_width() {
         );
     }
 }
+
+thread_local! {
+    pub(super) static COLUMN_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
