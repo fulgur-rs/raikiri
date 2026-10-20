@@ -47,7 +47,7 @@ fn resolve_cell_width(doc: &mut Document, cell: usize, available_space: Availabl
 }
 
 fn compute_table_intrinsic_width(limits: &str, available_space: AvailableSpace) -> f32 {
-    compute_table_width_with_cells(limits, available_space, 1, 1, "")
+    compute_table_width_with_cells(limits, available_space, 1, 1, "", false)
 }
 
 fn compute_table_width_with_cells(
@@ -56,6 +56,7 @@ fn compute_table_width_with_cells(
     rows: usize,
     columns: usize,
     cell_limits: &str,
+    collapse_first_column: bool,
 ) -> f32 {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
@@ -72,6 +73,17 @@ fn compute_table_width_with_cells(
         Style::default(),
         Some(&format!("display:table;border-spacing:0;{limits}")),
     );
+    if collapse_first_column {
+        for column in 0..columns {
+            let visibility = if column == 0 { "collapse" } else { "visible" };
+            doc.append_element(
+                Some(table),
+                "col",
+                Style::default(),
+                Some(&format!("display:table-column;visibility:{visibility}")),
+            );
+        }
+    }
     for _ in 0..rows {
         let row = doc.append_element(
             Some(table),
@@ -468,6 +480,7 @@ fn large_table_skips_wrapper_column_probes_with_cell_keywords() {
             rows,
             columns,
             "min-width:max-content",
+            false,
         );
         assert_eq!(width, 90.0 * columns as f32);
         assert_eq!(super::COLUMN_RESOLUTIONS.with(|count| count.get()), 1);
@@ -489,5 +502,27 @@ fn width_keyword_keeps_wrapper_column_probes() {
             3,
             "{limits}"
         );
+    }
+}
+
+#[test]
+fn wrapper_min_content_limit_preserves_min_content_available_space() {
+    assert_eq!(
+        compute_table_intrinsic_width("min-width:min-content", AvailableSpace::MinContent),
+        40.0
+    );
+}
+
+#[test]
+fn wrapper_width_keywords_measure_only_visible_columns() {
+    for limits in ["min-width:max-content", "max-width:min-content"] {
+        let width =
+            compute_table_width_with_cells(limits, AvailableSpace::MaxContent, 1, 2, "", true);
+        let expected = if limits.starts_with("min-") {
+            90.0
+        } else {
+            40.0
+        };
+        assert_eq!(width, expected, "{limits}");
     }
 }
