@@ -1081,17 +1081,25 @@ impl LayoutSession<'_> {
                 self.nodes[idx].cache.clear();
                 self.nodes[idx].flex_edge_basis = Some(basis);
             }
-            let style = self.layout_style_for_key_mut(idx).unwrap();
-            let edges = (style.padding, style.border);
-            style.padding = style
-                .padding
-                .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
-            style.border = style
-                .border
-                .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
-            let output = compute_cached_layout(self, node_id, inputs, compute);
-            let style = self.layout_style_for_key_mut(idx).unwrap();
-            (style.padding, style.border) = edges;
+            #[cfg(test)]
+            let output = self.with_resolved_edges(idx, basis, true, |tree| {
+                compute_cached_layout(tree, node_id, inputs, compute)
+            });
+            #[cfg(not(test))]
+            let output = {
+                let style = self.layout_style_for_key_mut(idx).unwrap();
+                let edges = (style.padding, style.border);
+                style.padding = style
+                    .padding
+                    .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+                style.border = style
+                    .border
+                    .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
+                let output = compute_cached_layout(self, node_id, inputs, compute);
+                let style = self.layout_style_for_key_mut(idx).unwrap();
+                (style.padding, style.border) = edges;
+                output
+            };
             output
         } else if uncached {
             compute(self, node_id, inputs)
@@ -2255,6 +2263,8 @@ struct FlexItemBounds {
     min: taffy::LengthPercentageAuto,
     max: taffy::LengthPercentageAuto,
     cache: Cache,
+    #[cfg(test)]
+    view_token: Option<crate::layout::style_views::OverrideToken>,
 }
 
 /// Run `probe`, which measures the intrinsic widths of the flex container
@@ -2278,9 +2288,31 @@ fn with_flex_intrinsic_probe<R>(
     let container_max = style.max_size.width;
     style.max_size.width = taffy::LengthPercentageAuto::auto();
     let outer = tree.context.flex_intrinsic_probe.replace(idx);
+    #[cfg(test)]
+    let token = tree.push_style_overrides(
+        idx,
+        vec![
+            raikiri_layout_style::OwnedPropertyOverride::length(
+                raikiri_layout_style::LengthProperty::MaxWidth,
+                raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+                false,
+            )
+            .expect("physical intrinsic maximum"),
+        ],
+    );
+    #[cfg(test)]
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(tree)));
+    #[cfg(not(test))]
     let result = probe(tree);
     tree.context.flex_intrinsic_probe = outer;
     tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
+    #[cfg(test)]
+    tree.restore_style_overrides(token);
+    #[cfg(test)]
+    let result = match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
     result
 }
 
@@ -2374,6 +2406,39 @@ fn with_flex_item_basis_bounds<R>(
         if new_min.is_none() && new_max.is_none() && new_width.is_none() {
             continue;
         }
+        #[cfg(test)]
+        let view_token = if tree.style_views.is_some() {
+            use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
+            let mut entries = Vec::new();
+            if cannot_shrink {
+                entries.push(O::flex_shrink(1.0));
+            }
+            let width_value =
+                new_width.and_then(|value| crate::layout::resolve_dimension(value, None));
+            let min_value = new_min
+                .and_then(|value| crate::layout::resolve_length_percentage_auto(value, None));
+            let max_value = new_max
+                .and_then(|value| crate::layout::resolve_length_percentage_auto(value, None));
+            for (property, value) in [
+                (P::Width, width_value),
+                (P::MinWidth, min_value),
+                (P::MaxWidth, max_value),
+            ] {
+                if let Some(value) = value {
+                    entries.push(
+                        O::length(
+                            property,
+                            raikiri_style::ComputedLengthPercentageOrAuto::Px(value),
+                            true,
+                        )
+                        .expect("physical flex base bound"),
+                    );
+                }
+            }
+            tree.push_style_overrides(child_idx, entries)
+        } else {
+            None
+        };
         let style = tree.layout_style_for_key_mut(child_idx).unwrap();
         // Taffy floors the contribution of an item that cannot shrink by its
         // flex base size on its own, ahead of the item's maximum. The floor
@@ -2395,17 +2460,29 @@ fn with_flex_item_basis_bounds<R>(
             min,
             max,
             cache,
+            #[cfg(test)]
+            view_token,
         });
     }
+    #[cfg(test)]
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(tree)));
+    #[cfg(not(test))]
     let result = layout(tree);
-    for item in saved {
+    for item in saved.into_iter().rev() {
         let style = tree.layout_style_for_key_mut(item.idx).unwrap();
         style.flex_shrink = item.shrink;
         style.size.width = item.width;
         style.min_size.width = item.min;
         style.max_size.width = item.max;
         tree.nodes[item.idx].cache = item.cache;
+        #[cfg(test)]
+        tree.restore_style_overrides(item.view_token);
     }
+    #[cfg(test)]
+    let result = match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
     result
 }
 

@@ -1,4 +1,30 @@
 use super::*;
+
+#[test]
+fn empty_templates_match_the_legacy_style_iterator_presence() {
+    let values = ComputedValues::initial();
+    let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    let legacy = taffy::Style::<raikiri_style::SmolStr>::default();
+    assert_eq!(
+        view.grid_template_columns().is_some(),
+        legacy.grid_template_columns().is_some()
+    );
+    assert_eq!(
+        view.grid_template_rows().is_some(),
+        legacy.grid_template_rows().is_some()
+    );
+    assert_eq!(
+        view.grid_template_column_names().is_some(),
+        legacy.grid_template_column_names().is_some()
+    );
+    assert_eq!(
+        view.grid_template_row_names().is_some(),
+        legacy.grid_template_row_names().is_some()
+    );
+    assert_eq!(view.grid_template_columns().unwrap().len(), 0);
+    assert_eq!(view.grid_template_column_names().unwrap().len(), 0);
+}
 use raikiri_style::{
     ComputedGridTemplateTracks, ComputedGridTrackBreadth as B, ComputedGridTrackList,
     ComputedGridTrackListComponent as C, ComputedGridTrackRepeat, ComputedGridTrackSize as S,

@@ -53,6 +53,8 @@ struct SavedSizes {
     size: Size<Dimension>,
     min_size: Size<LengthPercentageAuto>,
     max_size: Size<LengthPercentageAuto>,
+    #[cfg(test)]
+    scope: Option<usize>,
 }
 
 impl SavedSizes {
@@ -61,13 +63,28 @@ impl SavedSizes {
             size: style.size,
             min_size: style.min_size,
             max_size: style.max_size,
+            #[cfg(test)]
+            scope: None,
         }
     }
 
-    fn restore(self, style: &mut Style) {
+    fn capture(tree: &mut LayoutSession<'_>, idx: usize) -> Self {
+        let saved = Self::of(tree.layout_node_with_style(idx).unwrap().style);
+        #[cfg(test)]
+        let saved = Self {
+            scope: tree.save_size_scope(idx),
+            ..saved
+        };
+        saved
+    }
+
+    fn restore(self, tree: &mut LayoutSession<'_>, idx: usize) {
+        let style = tree.layout_style_for_key_mut(idx).unwrap();
         style.size = self.size;
         style.min_size = self.min_size;
         style.max_size = self.max_size;
+        #[cfg(test)]
+        tree.restore_size_scope(self.scope);
     }
 }
 
@@ -135,6 +152,22 @@ fn neutralize_all_sizes(style: &mut Style) {
     style.max_size = Size::auto();
 }
 
+#[cfg(test)]
+fn record_neutral_sizes(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    properties: &[raikiri_layout_style::LengthProperty],
+) {
+    for &property in properties {
+        tree.record_scoped_length(
+            idx,
+            property,
+            raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+            false,
+        );
+    }
+}
+
 /// Run `f`, a layout that resolves keyword sizes, with the measures of the
 /// boxes inside it remembered for as long as the outermost such layout runs.
 ///
@@ -146,8 +179,29 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
         tree.context.content_limit_measures.clear();
     }
     tree.context.content_limit_depth += 1;
+    #[cfg(test)]
+    let checkpoint = tree.size_scope_checkpoint();
+    #[cfg(test)]
+    let probe_depth = tree.context.content_limit_probes.len();
+    #[cfg(test)]
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
+    #[cfg(not(test))]
     let result = f(tree);
+    #[cfg(test)]
+    {
+        tree.restore_size_scopes_to(checkpoint);
+        tree.context.content_limit_probes.truncate(probe_depth);
+        if result.is_err() {
+            tree.layout_dirty = true;
+            tree.context.content_limit_measures.clear();
+        }
+    }
     tree.context.content_limit_depth -= 1;
+    #[cfg(test)]
+    let result = match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
     result
 }
 
@@ -171,7 +225,7 @@ pub(super) fn with_content_limits(
         return dispatch(tree, node_id, inputs);
     }
     scoped(tree, |tree| {
-        let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
+        let saved = SavedSizes::capture(tree, idx);
         // A parent hands its child a size already within the child's limits;
         // the keywords are the limits it could not read.
         let mut inputs = inputs;
@@ -181,6 +235,8 @@ pub(super) fn with_content_limits(
             let adjustment =
                 box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+            #[cfg(test)]
+            width.record(tree, idx, true, adjustment);
             if let Some(known) = inputs.known_dimensions.width {
                 let known = width.apply(known);
                 inputs.known_dimensions.width = Some(known);
@@ -193,13 +249,15 @@ pub(super) fn with_content_limits(
             let adjustment =
                 box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+            #[cfg(test)]
+            height.record(tree, idx, false, adjustment);
             inputs.known_dimensions.height = inputs
                 .known_dimensions
                 .height
                 .map(|known| height.apply(known));
         }
         let output = dispatch(tree, node_id, inputs);
-        saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+        saved.restore(tree, idx);
         output
     })
 }
@@ -225,13 +283,15 @@ pub(crate) fn with_oof_child_content_limits(
 
     scoped(tree, |tree| {
         let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
-        let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
+        let saved = SavedSizes::capture(tree, idx);
         let mut width = Bounds::default();
         if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
             width = resolved_width_bounds(tree, node_id, &limits, &inputs);
             let adjustment =
                 box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+            #[cfg(test)]
+            width.record(tree, idx, true, adjustment);
         }
         if let Some(known) = inputs.known_dimensions.width {
             let known =
@@ -244,6 +304,8 @@ pub(crate) fn with_oof_child_content_limits(
             let adjustment =
                 box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
+            #[cfg(test)]
+            height.record(tree, idx, false, adjustment);
             inputs.known_dimensions.height = inputs.known_dimensions.height.map(|known| {
                 clamp_known_height_to_style(
                     tree,
@@ -255,7 +317,7 @@ pub(crate) fn with_oof_child_content_limits(
             });
         }
         let output = dispatch(tree, node_id, inputs);
-        saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+        saved.restore(tree, idx);
         tree.nodes[idx].cache = cache;
         output
     })
@@ -335,19 +397,21 @@ pub(crate) fn with_oof_content_limits<R>(
         } else {
             let saved_sizes = raw_targets
                 .iter()
-                .map(|&idx| {
-                    let style = tree.layout_node_with_style(idx).unwrap().style;
-                    (idx, SavedSizes::of(style))
-                })
+                .map(|&idx| (idx, SavedSizes::capture(tree, idx)))
                 .collect::<Vec<_>>();
             for &idx in &raw_targets {
                 let style = tree.layout_style_for_key_mut(idx).unwrap();
                 style.min_size = Size::auto();
                 style.max_size = Size::auto();
+                #[cfg(test)]
+                {
+                    use raikiri_layout_style::LengthProperty::*;
+                    record_neutral_sizes(tree, idx, &[MinWidth, MinHeight, MaxWidth, MaxHeight]);
+                }
             }
             let inputs = capture_oof_layout_inputs(tree, &mut dispatch, suppress_nested_prepasses);
             for (idx, saved) in saved_sizes.into_iter().rev() {
-                saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+                saved.restore(tree, idx);
             }
             Some(inputs)
         };
@@ -374,12 +438,13 @@ pub(crate) fn with_oof_content_limits<R>(
                 idx,
                 positioned_inputs.parent_size.width.unwrap_or(0.0),
             );
-            let saved = {
-                let style = tree.layout_style_for_key_mut(idx).unwrap();
-                let saved = SavedSizes::of(style);
-                width.install_width(style, width_adjustment);
-                saved
-            };
+            let saved = SavedSizes::capture(tree, idx);
+            width.install_width(
+                tree.layout_style_for_key_mut(idx).unwrap(),
+                width_adjustment,
+            );
+            #[cfg(test)]
+            width.record(tree, idx, true, width_adjustment);
 
             if limits.has_height() {
                 let mut height_inputs = *positioned_inputs;
@@ -405,6 +470,8 @@ pub(crate) fn with_oof_content_limits<R>(
                     tree.layout_style_for_key_mut(idx).unwrap(),
                     height_adjustment,
                 );
+                #[cfg(test)]
+                height.record(tree, idx, false, height_adjustment);
             }
             prepared.push((idx, saved));
         }
@@ -429,7 +496,7 @@ pub(crate) fn with_oof_content_limits<R>(
             tree.context.content_limit_probes.pop();
         }
         for (idx, saved) in prepared.into_iter().rev() {
-            saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+            saved.restore(tree, idx);
         }
         for (idx, cache) in saved_caches.into_iter().rev() {
             tree.nodes[idx].cache = cache;
@@ -572,11 +639,12 @@ pub(crate) fn with_width_limits<R>(
         resolved_width_bounds(tree, NodeId::from(node), &limits, &inputs)
     });
     let adjustment = box_sizing_adjustment(tree, node, parent_size.width.unwrap_or(0.0));
-    let style = tree.layout_style_for_key_mut(node).unwrap();
-    let saved = SavedSizes::of(style);
-    bounds.install_width(style, adjustment);
+    let saved = SavedSizes::capture(tree, node);
+    bounds.install_width(tree.layout_style_for_key_mut(node).unwrap(), adjustment);
+    #[cfg(test)]
+    bounds.record(tree, node, true, adjustment);
     let result = f(tree);
-    saved.restore(tree.layout_style_for_key_mut(node).unwrap());
+    saved.restore(tree, node);
     result
 }
 
@@ -700,7 +768,7 @@ fn with_item_content_limits_for_parent_sizes(
                 vertical_margins_are_collapsible: Line::FALSE,
             };
 
-            let saved = SavedSizes::of(tree.layout_node_with_style(idx).unwrap().style);
+            let saved = SavedSizes::capture(tree, idx);
             let width =
                 if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
                     resolved_width_bounds(tree, child, &limits, &item_inputs)
@@ -713,6 +781,8 @@ fn with_item_content_limits_for_parent_sizes(
                 tree.layout_style_for_key_mut(idx).unwrap(),
                 width_adjustment,
             );
+            #[cfg(test)]
+            width.record(tree, idx, true, width_adjustment);
 
             if limits.has_height() {
                 let height = resolved_height_bounds(tree, child, &limits, &item_inputs, width);
@@ -722,6 +792,8 @@ fn with_item_content_limits_for_parent_sizes(
                     tree.layout_style_for_key_mut(idx).unwrap(),
                     height_adjustment,
                 );
+                #[cfg(test)]
+                height.record(tree, idx, false, height_adjustment);
             }
 
             let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
@@ -732,7 +804,7 @@ fn with_item_content_limits_for_parent_sizes(
         let output = dispatch(tree, node_id, inputs);
         for (idx, saved, cache) in prepared.into_iter().rev() {
             tree.context.content_limit_probes.pop();
-            saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+            saved.restore(tree, idx);
             tree.nodes[idx].cache = cache;
         }
         output
@@ -798,6 +870,27 @@ struct Bounds {
 }
 
 impl Bounds {
+    #[cfg(test)]
+    fn record(self, tree: &mut LayoutSession<'_>, idx: usize, width: bool, adjustment: f32) {
+        use raikiri_layout_style::LengthProperty::*;
+        let (min, max) = if width {
+            (MinWidth, MaxWidth)
+        } else {
+            (MinHeight, MaxHeight)
+        };
+        for (property, bound) in [(min, self.min), (max, self.max)] {
+            if let Some(bound) = bound {
+                tree.record_scoped_length(
+                    idx,
+                    property,
+                    raikiri_style::ComputedLengthPercentageOrAuto::Px(
+                        (bound - adjustment).max(0.0),
+                    ),
+                    true,
+                );
+            }
+        }
+    }
     /// `size` within the bounds, the minimum winning over the maximum.
     fn apply(self, size: f32) -> f32 {
         let size = self.max.map_or(size, |max| size.min(max));
@@ -895,24 +988,20 @@ fn probe(
     node_id: NodeId,
     key: MeasureKey,
     inputs: LayoutInput,
-    neutral: impl FnOnce(&mut Style),
+    neutral: impl FnOnce(&mut LayoutSession<'_>, usize),
 ) -> f32 {
     if let Some(&size) = tree.context.content_limit_measures.get(&key) {
         return size;
     }
     let idx = usize::from(node_id);
-    let saved = {
-        let style = tree.layout_style_for_key_mut(idx).unwrap();
-        let saved = SavedSizes::of(style);
-        neutral(style);
-        saved
-    };
+    let saved = SavedSizes::capture(tree, idx);
+    neutral(tree, idx);
     tree.context.content_limit_probes.push(idx);
     let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
     let output = tree.compute_child_layout_with_block_ctx(node_id, inputs, None);
     tree.nodes[idx].cache = cache;
     tree.context.content_limit_probes.pop();
-    saved.restore(tree.layout_style_for_key_mut(idx).unwrap());
+    saved.restore(tree, idx);
     let size = if key.width {
         output.size.width
     } else {
@@ -1019,13 +1108,25 @@ fn width_bounds(
                     vertical_margins_are_collapsible: Line::FALSE,
                 };
                 let key = MeasureKey::new(tree, idx, true, &along, Bounds::default());
-                probe(tree, node_id, key, along, |style| {
+                probe(tree, node_id, key, along, |tree, idx| {
+                    let style = tree.layout_style_for_key_mut(idx).unwrap();
                     if flex_grid_container {
                         neutralize_all_sizes(style);
                     } else {
                         style.size.width = Dimension::auto();
                         style.min_size.width = LengthPercentageAuto::auto();
                         style.max_size.width = LengthPercentageAuto::auto();
+                    }
+                    #[cfg(test)]
+                    {
+                        use raikiri_layout_style::LengthProperty::*;
+                        let properties: &[raikiri_layout_style::LengthProperty] =
+                            if flex_grid_container {
+                                &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
+                            } else {
+                                &[Width, MinWidth, MaxWidth]
+                            };
+                        record_neutral_sizes(tree, idx, properties);
                     }
                 })
             };
@@ -1107,7 +1208,8 @@ fn height_bounds(
             .content_limit_percentage_height_bases
             .push((idx, height));
     }
-    let height = probe(tree, node_id, key, along, |style| {
+    let height = probe(tree, node_id, key, along, |tree, idx| {
+        let style = tree.layout_style_for_key_mut(idx).unwrap();
         if flex_grid_container {
             let preferred_width = style.size.width;
             neutralize_all_sizes(style);
@@ -1117,6 +1219,19 @@ fn height_bounds(
             style.size.height = Dimension::auto();
             style.min_size.height = LengthPercentageAuto::auto();
             style.max_size.height = LengthPercentageAuto::auto();
+        }
+        #[cfg(test)]
+        {
+            use raikiri_layout_style::LengthProperty::*;
+            let properties: &[raikiri_layout_style::LengthProperty] = if flex_grid_container {
+                &[Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
+            } else {
+                &[Height, MinHeight, MaxHeight]
+            };
+            record_neutral_sizes(tree, idx, properties);
+            if flex_grid_container {
+                width.record(tree, idx, true, width_adjustment);
+            }
         }
     });
     if percentage_height_basis.is_some() {

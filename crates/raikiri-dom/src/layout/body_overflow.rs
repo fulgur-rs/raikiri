@@ -25,11 +25,12 @@ pub(crate) fn viewport_overflow_source(doc: &Document, cascade: &CascadeResult) 
 
 /// When the root overflow is visible, propagate body overflow to the viewport
 /// and give the body its visible used overflow value (CSS Overflow 3 §3.3).
+/// Return whether the body's used value was installed.
 pub(crate) fn propagate_body_overflow_to_viewport(
     doc: &mut Document,
     cascade: &CascadeResult,
     body_id: usize,
-) {
+) -> bool {
     if viewport_overflow_source(doc, cascade) == Some(body_id)
         && doc.parent_of(body_id) == doc.document_element_index()
         && doc.nodes[body_id].tag_name() == Some("body")
@@ -41,6 +42,9 @@ pub(crate) fn propagate_body_overflow_to_viewport(
             x: TaffyOverflow::Visible,
             y: TaffyOverflow::Visible,
         };
+        true
+    } else {
+        false
     }
 }
 

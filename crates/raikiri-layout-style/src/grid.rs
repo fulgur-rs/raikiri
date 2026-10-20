@@ -179,25 +179,24 @@ impl PreparedStyle<'_> {
     }
 }
 impl LayoutStyleView<'_> {
-    fn template_tracks(&self, axis: Axis) -> Option<TemplateTracks<'_>> {
-        let list = self.prepared.template(axis)?;
-        if list.components.is_empty() {
-            return None;
-        }
-        Some(TemplateTracks {
+    fn template_tracks(&self, axis: Axis) -> TemplateTracks<'_> {
+        let components = self
+            .prepared
+            .template(axis)
+            .map_or(&[][..], |list| list.components.as_slice());
+        TemplateTracks {
             prepared: self.prepared,
             axis,
-            components: list.components.iter(),
+            components: components.iter(),
             index: 0,
-        })
-    }
-    fn template_names(&self, axis: Axis) -> Option<LineNames<'_>> {
-        let list = self.prepared.template(axis)?;
-        if list.line_names.is_empty() {
-            None
-        } else {
-            Some(LineNames(list.line_names.iter()))
         }
+    }
+    fn template_names(&self, axis: Axis) -> LineNames<'_> {
+        let names = self
+            .prepared
+            .template(axis)
+            .map_or(&[][..], |list| list.line_names.as_slice());
+        LineNames(names.iter())
     }
     fn auto_tracks(&self, axis: Axis) -> Tracks<'_> {
         let tracks = match axis {
@@ -236,10 +235,10 @@ impl GridContainerStyle for LayoutStyleView<'_> {
     where
         Self: 'a;
     fn grid_template_rows(&self) -> Option<TemplateTracks<'_>> {
-        self.template_tracks(Axis::Y)
+        Some(self.template_tracks(Axis::Y))
     }
     fn grid_template_columns(&self) -> Option<TemplateTracks<'_>> {
-        self.template_tracks(Axis::X)
+        Some(self.template_tracks(Axis::X))
     }
     fn grid_auto_rows(&self) -> Tracks<'_> {
         self.auto_tracks(Axis::Y)
@@ -248,10 +247,10 @@ impl GridContainerStyle for LayoutStyleView<'_> {
         self.auto_tracks(Axis::X)
     }
     fn grid_template_column_names(&self) -> Option<LineNames<'_>> {
-        self.template_names(Axis::X)
+        Some(self.template_names(Axis::X))
     }
     fn grid_template_row_names(&self) -> Option<LineNames<'_>> {
-        self.template_names(Axis::Y)
+        Some(self.template_names(Axis::Y))
     }
     fn grid_template_areas(&self) -> Option<Areas<'_>> {
         match &self.prepared.values.grid_template_areas {

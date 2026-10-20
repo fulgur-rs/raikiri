@@ -1,4 +1,5 @@
 use super::*;
+mod style_view_tests;
 use crate::layout::context::LayoutSession;
 
 #[test]

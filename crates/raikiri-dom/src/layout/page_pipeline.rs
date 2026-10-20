@@ -1152,6 +1152,9 @@ fn layout_single_page_with_table_projection(
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
+    #[cfg(test)]
+    document.propagate_viewport_overflow(cascade, body_id);
+    #[cfg(not(test))]
     propagate_body_overflow_to_viewport(document, cascade, body_id);
     prepare_authored_block_widths(document, cascade, content_width);
     if let Some(state) = document.ifc.as_mut() {

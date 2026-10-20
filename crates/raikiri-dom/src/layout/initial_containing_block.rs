@@ -73,6 +73,21 @@ pub(crate) fn prepare(
             .expect("principal element has a style")
             .direction;
     }
+    #[cfg(test)]
+    {
+        use raikiri_style::{ComputedLengthPercentageOrAuto as L, property::Direction};
+        let mut values = super::style_views::neutral_initial_values();
+        values.width = L::Px(width);
+        values.height = L::Px(height);
+        values.direction = match style.direction {
+            taffy::Direction::Ltr => Direction::Ltr,
+            taffy::Direction::Rtl => Direction::Rtl,
+        };
+        document.synthetic_style_values.insert(
+            crate::node::arena::BoxKey::InitialContainingBlock,
+            std::sync::Arc::new(values),
+        );
+    }
     document.set_initial_containing_block(node, style)
 }
 

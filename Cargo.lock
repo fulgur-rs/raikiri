@@ -2623,6 +2623,7 @@ dependencies = [
  "criterion",
  "cssparser",
  "raikiri-html",
+ "raikiri-layout-style",
  "raikiri-style",
  "raikiri-traits",
  "rayon",
