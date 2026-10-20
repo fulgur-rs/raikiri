@@ -134,6 +134,65 @@ fn replaced_keyword_bounds_handles_nonreplaced_missing_invalid_and_sized_nodes()
 }
 
 #[test]
+fn replaced_keyword_bounds_follow_the_box_the_ratio_relates() {
+    // A 2:1 border box 100px high is 200px wide; the ratio of the content box
+    // would give a 90px high content box 180px beside the 40px of padding.
+    let mut doc = crate::document::Document::new();
+    let style = taffy::Style {
+        aspect_ratio: Some(2.0),
+        box_sizing: taffy::BoxSizing::BorderBox,
+        size: Size {
+            width: taffy::Dimension::auto(),
+            height: taffy::Dimension::length(100.0),
+        },
+        padding: taffy::Rect {
+            left: taffy::LengthPercentage::length(0.0),
+            right: taffy::LengthPercentage::length(40.0),
+            top: taffy::LengthPercentage::length(0.0),
+            bottom: taffy::LengthPercentage::length(10.0),
+        },
+        ..taffy::Style::default()
+    };
+    let image = doc.append_element(None, "img", style, None::<&str>);
+    if let crate::node::NodeData::Element(element) = &mut doc.nodes[image].data {
+        element.image_intrinsic_size = Some(raikiri_traits::IntrinsicBox::new(20.0, 50.0));
+    }
+    let limits = ContentLimits {
+        min: Size {
+            width: taffy::Dimension::min_content(),
+            height: taffy::Dimension::auto(),
+        },
+        max: Size::auto(),
+    };
+    let inputs = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size: Size::NONE,
+        available_space: Size {
+            width: AvailableSpace::MaxContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+    };
+    for (content_box_ratio, expected) in [(false, 200.0), (true, 220.0)] {
+        doc.nodes[image].ratio_in_content_box = content_box_ratio;
+        let session = LayoutSession::new(&mut doc);
+        let (width, _) = replaced_keyword_bounds(&session, image, &limits, &inputs);
+        assert_eq!(
+            width.min,
+            Some(expected),
+            "content box ratio {content_box_ratio}"
+        );
+    }
+}
+
+#[test]
 fn a_min_content_minimum_width_raises_the_width_to_the_content() {
     // The longest word is 40px wide, so the 20px box widens to it and wraps
     // at the space.

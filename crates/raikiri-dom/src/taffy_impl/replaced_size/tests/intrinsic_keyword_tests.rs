@@ -52,7 +52,7 @@ fn min_width_min_content_transfers_height_bound_through_natural_ratio() {
     );
 
     assert_eq!(
-        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        auto_sides_size(&style, &inputs(), natural_size(), limits, true),
         Some(Size {
             width: 100.0,
             height: 100.0,
@@ -72,7 +72,7 @@ fn min_height_min_content_transfers_width_bound_through_natural_ratio() {
     );
 
     assert_eq!(
-        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        auto_sides_size(&style, &inputs(), natural_size(), limits, true),
         Some(Size {
             width: 100.0,
             height: 100.0,
@@ -92,7 +92,7 @@ fn max_width_min_content_transfers_height_bound_through_natural_ratio() {
     );
 
     assert_eq!(
-        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        auto_sides_size(&style, &inputs(), natural_size(), limits, true),
         Some(Size {
             width: 100.0,
             height: 100.0,
@@ -112,7 +112,7 @@ fn max_height_min_content_transfers_width_bound_through_natural_ratio() {
     );
 
     assert_eq!(
-        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        auto_sides_size(&style, &inputs(), natural_size(), limits, true),
         Some(Size {
             width: 100.0,
             height: 100.0,
@@ -133,7 +133,7 @@ fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
     let with_ratio = ratio_style(Dimension::auto(), Dimension::auto());
 
     assert_eq!(
-        auto_sides_size(&without_ratio, &inputs(), natural_size(), limits),
+        auto_sides_size(&without_ratio, &inputs(), natural_size(), limits, true),
         None
     );
     assert_eq!(
@@ -145,6 +145,7 @@ fn missing_ratio_or_natural_dimensions_keeps_existing_leaf_fallback() {
                 height: 10.0,
             },
             limits,
+            true,
         ),
         None
     );
@@ -175,14 +176,14 @@ fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
     );
 
     assert_eq!(
-        keyword_bounds(&style, &inputs(), natural_size(), limits)
+        keyword_bounds(&style, &inputs(), natural_size(), limits, true)
             .unwrap()
             .width
             .min,
         Some(22.0)
     );
     assert_eq!(
-        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        auto_sides_size(&style, &inputs(), natural_size(), limits, true),
         Some(natural_size())
     );
 }
@@ -216,14 +217,14 @@ fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
     );
 
     assert_eq!(
-        keyword_bounds(&style, &inputs(), natural_size(), limits)
+        keyword_bounds(&style, &inputs(), natural_size(), limits, true)
             .unwrap()
             .width
             .max,
         Some(22.0)
     );
     assert_eq!(
-        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        auto_sides_size(&style, &inputs(), natural_size(), limits, true),
         Some(natural_size())
     );
 }
@@ -242,7 +243,7 @@ fn keyword_bounds_transfer_all_min_and_max_sides_through_the_ratio() {
         },
     );
 
-    let bounds = keyword_bounds(&style, &inputs(), natural_size(), limits).unwrap();
+    let bounds = keyword_bounds(&style, &inputs(), natural_size(), limits, true).unwrap();
 
     assert_eq!(bounds.width.min, Some(10.0));
     assert_eq!(bounds.width.max, Some(10.0));
@@ -269,6 +270,7 @@ fn keyword_bounds_reject_nonpositive_natural_dimensions() {
                 height: 10.0,
             },
             limits,
+            true,
         ),
         None
     );
@@ -297,7 +299,7 @@ fn conflicting_numeric_bounds_raise_max_to_min() {
     );
 
     assert_eq!(
-        auto_sides_size(&style, &inputs(), natural_size(), limits),
+        auto_sides_size(&style, &inputs(), natural_size(), limits, true),
         Some(Size {
             width: 100.0,
             height: 100.0,
@@ -328,7 +330,7 @@ fn cyclic_percentage_still_uses_zero_basis_with_intrinsic_limits() {
     layout_inputs.available_space.width = AvailableSpace::MinContent;
 
     assert_eq!(
-        auto_sides_size(&style, &layout_inputs, natural_size(), limits),
+        auto_sides_size(&style, &layout_inputs, natural_size(), limits, true),
         Some(Size {
             width: 40.0,
             height: 40.0,
