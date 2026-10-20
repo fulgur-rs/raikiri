@@ -4,6 +4,7 @@
 use super::*;
 use crate::cascade::keyword_defaults::KEYS;
 use crate::property::{BoxSizing, FloatValue, TextTransform, WordBreak, property_key_for_name};
+use crate::resolve::ComputedLengthPercentageOrNormal;
 
 /// A property, whether it is inherited, and values that compute apart: the
 /// first is the parent's, the second the user agent's, and a box `before`
@@ -212,6 +213,61 @@ const CASES: &[(&str, bool, &[&str])] = &[
     ("word-spacing", true, &["3px", "5px", "1em"]),
     ("tab-size", true, &["3", "5", "20px"]),
     ("border-spacing", true, &["3px", "5px 6px", "7px"]),
+    ("flex-basis", false, &["30px", "40%", "calc(10% + 4px)"]),
+    ("row-gap", false, &["3px", "5%", "calc(10% + 4px)"]),
+    ("column-gap", false, &["3px", "5%", "calc(10% + 4px)"]),
+    ("column-width", false, &["30px", "50px", "auto"]),
+    ("overflow-x", false, &["hidden", "scroll", "auto"]),
+    ("overflow-y", false, &["hidden", "scroll", "auto"]),
+];
+
+/// The shorthands over properties of the table, with the same three kinds of
+/// value as [`CASES`]. Each shorthand sets every longhand it expands to, so a
+/// keyword on it leaves nothing of an earlier value behind.
+const SHORTHAND_CASES: &[(&str, bool, &[&str])] = &[
+    (
+        "font",
+        true,
+        &[
+            "italic small-caps bold 20px/2 serif",
+            "oblique 14px/30px monospace",
+            "12px sans-serif",
+        ],
+    ),
+    ("flex", false, &["2 3 10px", "1 1 40%", "0 0 content"]),
+    (
+        "flex-flow",
+        false,
+        &["column wrap", "row-reverse wrap-reverse", "column-reverse"],
+    ),
+    (
+        "gap",
+        false,
+        &["3px 4px", "5% 6%", "calc(10% + 4px) normal"],
+    ),
+    (
+        "place-content",
+        false,
+        &["center end", "space-between start", "flex-end center"],
+    ),
+    (
+        "place-items",
+        false,
+        &["center end", "start center", "flex-end baseline"],
+    ),
+    (
+        "place-self",
+        false,
+        &["center end", "start center", "flex-end baseline"],
+    ),
+    ("grid-row", false, &["2 / 4", "span 2 / 5", "3 / span 2"]),
+    ("grid-column", false, &["2 / 4", "span 2 / 5", "3 / span 2"]),
+    (
+        "overflow",
+        false,
+        &["hidden scroll", "scroll", "clip hidden"],
+    ),
+    ("columns", false, &["30px 3", "50px 2", "auto 4"]),
 ];
 
 /// The computed values of a parent styled `parent` and of its child `p`
@@ -248,53 +304,107 @@ fn every_table_row_has_a_case() {
     }
 }
 
-#[test]
-fn the_keywords_resolve_for_every_row() {
+/// The failures of the five keywords on the property `name` after each of
+/// `values`, compared with the value that rule gives them (see [`CASES`]).
+fn keyword_failures(name: &str, inherited: bool, values: &[&str]) -> Vec<String> {
     let mut failures = Vec::new();
-    for &(name, inherited, values) in CASES {
-        let (parent_value, ua_value) = (values[0], values[1]);
-        let parent = format!("{name}: {parent_value}");
-        let ua_sheet = format!("p {{ {name}: {ua_value} }}");
-        let user_agent = [(ua_sheet.as_str(), Origin::UserAgent)];
-        let from_parent = child(
-            &parent,
-            &[],
-            &format!("#target {{ {name}: {parent_value} }}"),
-        );
-        // A non-inherited property is initial on a child that does not declare
-        // it, whatever the parent has; keeping the parent also keeps what a
-        // parent's value does to its children (a multicol parent, say).
-        let initial = if inherited {
-            child("", &[], "")
-        } else {
-            child(&parent, &[], "")
+    let (parent_value, ua_value) = (values[0], values[1]);
+    let parent = format!("{name}: {parent_value}");
+    let ua_sheet = format!("p {{ {name}: {ua_value} }}");
+    let user_agent = [(ua_sheet.as_str(), Origin::UserAgent)];
+    let from_parent = child(
+        &parent,
+        &[],
+        &format!("#target {{ {name}: {parent_value} }}"),
+    );
+    // A non-inherited property is initial on a child that does not declare
+    // it, whatever the parent has; keeping the parent also keeps what a
+    // parent's value does to its children (a multicol parent, say).
+    let initial = if inherited {
+        child("", &[], "")
+    } else {
+        child(&parent, &[], "")
+    };
+    let ua = child(&parent, &user_agent, "");
+    if same(&from_parent, &initial) {
+        failures.push(format!("{name}: the parent's value is the initial one"));
+        return failures;
+    }
+    for before in values {
+        let start = format!("#target {{ {name}: {before}; {name}: ");
+        let run = |sheets: &[(&str, Origin)], keyword: &str| {
+            child(&parent, sheets, &format!("{start}{keyword} }}"))
         };
-        let ua = child(&parent, &user_agent, "");
-        if same(&from_parent, &initial) {
-            failures.push(format!("{name}: the parent's value is the initial one"));
-            continue;
-        }
-        for before in values {
-            let start = format!("#target {{ {name}: {before}; {name}: ");
-            let run = |sheets: &[(&str, Origin)], keyword: &str| {
-                child(&parent, sheets, &format!("{start}{keyword} }}"))
-            };
-            let unset = if inherited { &from_parent } else { &initial };
-            let checks = [
-                ("inherit", run(&[], "inherit"), &from_parent),
-                ("initial", run(&[], "initial"), &initial),
-                ("unset", run(&[], "unset"), unset),
-                ("revert", run(&user_agent, "revert"), &ua),
-                ("revert-layer", run(&user_agent, "revert-layer"), &ua),
-            ];
-            for (keyword, actual, expected) in checks {
-                if !same(&actual, expected) {
-                    failures.push(format!("{name}: {keyword} after `{before}`"));
-                }
+        let unset = if inherited { &from_parent } else { &initial };
+        let checks = [
+            ("inherit", run(&[], "inherit"), &from_parent),
+            ("initial", run(&[], "initial"), &initial),
+            ("unset", run(&[], "unset"), unset),
+            ("revert", run(&user_agent, "revert"), &ua),
+            ("revert-layer", run(&user_agent, "revert-layer"), &ua),
+        ];
+        for (keyword, actual, expected) in checks {
+            if !same(&actual, expected) {
+                failures.push(format!("{name}: {keyword} after `{before}`"));
             }
         }
     }
+    failures
+}
+
+#[test]
+fn the_keywords_resolve_for_every_row() {
+    let failures: Vec<String> = CASES
+        .iter()
+        .flat_map(|&(name, inherited, values)| keyword_failures(name, inherited, values))
+        .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn the_keywords_resolve_on_the_shorthands() {
+    let failures: Vec<String> = SHORTHAND_CASES
+        .iter()
+        .flat_map(|&(name, inherited, values)| keyword_failures(name, inherited, values))
+        .collect();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn every_longhand_of_a_shorthand_case_resolves_the_keyword() {
+    use crate::cascade::custom_property::keyword_longhand_name;
+    use crate::cascade::inherit::resolve_defaulting_value;
+    use crate::property::{DeferredValue, PropertyKey, PropertyValue};
+    use crate::rule::{KeyClass, classify};
+
+    let initial = ComputedValues::initial();
+    // A key outside the shorthands has no such name.
+    assert_eq!(keyword_longhand_name(PropertyKey::Color), None);
+    for &(name, ..) in SHORTHAND_CASES {
+        let key = property_key_for_name(name).unwrap_or_else(|| panic!("{name} has no key"));
+        let KeyClass::Shorthand { longhands } = classify(key) else {
+            panic!("{name} is not expanded into longhands");
+        };
+        for &longhand in longhands {
+            // The projection of a shorthand's keyword onto a longhand renames
+            // the marker, so the longhand needs a name that maps back to it.
+            let longhand_name = keyword_longhand_name(longhand)
+                .unwrap_or_else(|| panic!("{name}: {longhand:?} has no name"));
+            assert_eq!(property_key_for_name(longhand_name), Some(longhand));
+            let marker = PropertyValue::Deferred(DeferredValue {
+                property: longhand_name.into(),
+                value: "inherit".into(),
+                key: longhand,
+            });
+            assert!(
+                !matches!(
+                    resolve_defaulting_value(marker, &initial),
+                    PropertyValue::Deferred(_)
+                ),
+                "{name}: {longhand:?} keeps its keyword marker"
+            );
+        }
+    }
 }
 
 #[test]
@@ -316,6 +426,38 @@ fn a_keyword_substituted_from_var_resolves_like_a_literal() {
     assert_eq!(values.box_sizing, BoxSizing::BorderBox);
     assert_eq!(values.text_transform, TextTransform::Uppercase);
     assert_eq!(values.word_break, WordBreak::Normal);
+}
+
+#[test]
+fn a_keyword_substituted_from_var_resolves_on_a_shorthand() {
+    let parent = "gap: 3px 4px; flex: 2 3 10px; font: italic 20px/2 serif; overflow: hidden scroll";
+    for keyword in ["inherit", "initial", "unset"] {
+        let through_var = child(
+            parent,
+            &[],
+            &format!(
+                "#target {{ --kw: {keyword}; gap: var(--kw); flex: var(--kw); font: var(--kw); \
+                 overflow: var(--kw) }}"
+            ),
+        );
+        let literal = child(
+            parent,
+            &[],
+            &format!(
+                "#target {{ --kw: {keyword}; gap: {keyword}; flex: {keyword}; \
+                 font: {keyword}; overflow: {keyword} }}"
+            ),
+        );
+        assert!(same(&through_var, &literal), "{keyword}");
+    }
+}
+
+#[test]
+fn an_important_keyword_on_a_shorthand_beats_a_later_longhand() {
+    let css = "#target { gap: inherit !important } p { row-gap: 9px }";
+    let values = child("gap: 3px 4px", &[], css);
+    assert_eq!(values.row_gap, ComputedLengthPercentageOrNormal::Px(3.0));
+    assert_eq!(values.column_gap, ComputedLengthPercentageOrNormal::Px(4.0));
 }
 
 #[test]

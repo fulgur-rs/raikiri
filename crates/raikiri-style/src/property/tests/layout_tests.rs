@@ -3169,3 +3169,24 @@ fn insets_accept_percentages() {
         ))))
     );
 }
+
+#[test]
+fn flex_gap_and_alignment_properties_keep_css_wide_keywords() {
+    for name in [
+        "flex",
+        "flex-flow",
+        "flex-basis",
+        "gap",
+        "row-gap",
+        "column-gap",
+        "place-content",
+        "place-items",
+        "place-self",
+        "grid-row",
+        "grid-column",
+        "columns",
+        "column-width",
+    ] {
+        assert_css_wide_keywords_deferred(name);
+    }
+}

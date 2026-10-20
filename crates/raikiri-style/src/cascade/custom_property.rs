@@ -393,26 +393,63 @@ fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
     })
 }
 
-/// The property name of a margin, padding or offset longhand key.
-fn box_side_longhand_name(key: PropertyKey) -> Option<&'static str> {
-    const NAMES: [(PropertyKey, &str); 12] = [
-        (PropertyKey::MarginTop, "margin-top"),
-        (PropertyKey::MarginRight, "margin-right"),
-        (PropertyKey::MarginBottom, "margin-bottom"),
-        (PropertyKey::MarginLeft, "margin-left"),
-        (PropertyKey::PaddingTop, "padding-top"),
-        (PropertyKey::PaddingRight, "padding-right"),
-        (PropertyKey::PaddingBottom, "padding-bottom"),
-        (PropertyKey::PaddingLeft, "padding-left"),
-        (PropertyKey::Top, "top"),
-        (PropertyKey::Right, "right"),
-        (PropertyKey::Bottom, "bottom"),
-        (PropertyKey::Left, "left"),
-    ];
-    NAMES
-        .iter()
-        .find(|(candidate, _)| *candidate == key)
-        .map(|&(_, name)| name)
+/// The property name of a longhand key of a shorthand that takes a CSS-wide
+/// keyword as a whole: the margin, padding and offset sides, and the longhands
+/// of `font`, `flex`, `flex-flow`, `gap`, `place-*`, `grid-row`,
+/// `grid-column`, `overflow` and `columns`.
+pub(super) fn keyword_longhand_name(key: PropertyKey) -> Option<&'static str> {
+    Some(match key {
+        PropertyKey::MarginTop => "margin-top",
+        PropertyKey::MarginRight => "margin-right",
+        PropertyKey::MarginBottom => "margin-bottom",
+        PropertyKey::MarginLeft => "margin-left",
+        PropertyKey::PaddingTop => "padding-top",
+        PropertyKey::PaddingRight => "padding-right",
+        PropertyKey::PaddingBottom => "padding-bottom",
+        PropertyKey::PaddingLeft => "padding-left",
+        PropertyKey::Top => "top",
+        PropertyKey::Right => "right",
+        PropertyKey::Bottom => "bottom",
+        PropertyKey::Left => "left",
+        PropertyKey::FontStyle => "font-style",
+        PropertyKey::FontVariantCaps => "font-variant-caps",
+        PropertyKey::FontWeight => "font-weight",
+        PropertyKey::FontSize => "font-size",
+        PropertyKey::LineHeight => "line-height",
+        PropertyKey::FontFamily => "font-family",
+        PropertyKey::FontKerning => "font-kerning",
+        PropertyKey::FontLanguageOverride => "font-language-override",
+        PropertyKey::FontOpticalSizing => "font-optical-sizing",
+        PropertyKey::FontVariantEastAsian => "font-variant-east-asian",
+        PropertyKey::FontVariantEmoji => "font-variant-emoji",
+        PropertyKey::FontVariantLigatures => "font-variant-ligatures",
+        PropertyKey::FontVariantNumeric => "font-variant-numeric",
+        PropertyKey::FontVariantPosition => "font-variant-position",
+        PropertyKey::FontVariationSettings => "font-variation-settings",
+        PropertyKey::FontFeatureSettings => "font-feature-settings",
+        PropertyKey::FlexGrow => "flex-grow",
+        PropertyKey::FlexShrink => "flex-shrink",
+        PropertyKey::FlexBasis => "flex-basis",
+        PropertyKey::FlexDirection => "flex-direction",
+        PropertyKey::FlexWrap => "flex-wrap",
+        PropertyKey::RowGap => "row-gap",
+        PropertyKey::ColumnGap => "column-gap",
+        PropertyKey::AlignContent => "align-content",
+        PropertyKey::JustifyContent => "justify-content",
+        PropertyKey::AlignItems => "align-items",
+        PropertyKey::JustifyItems => "justify-items",
+        PropertyKey::AlignSelf => "align-self",
+        PropertyKey::JustifySelf => "justify-self",
+        PropertyKey::GridRowStart => "grid-row-start",
+        PropertyKey::GridRowEnd => "grid-row-end",
+        PropertyKey::GridColumnStart => "grid-column-start",
+        PropertyKey::GridColumnEnd => "grid-column-end",
+        PropertyKey::OverflowX => "overflow-x",
+        PropertyKey::OverflowY => "overflow-y",
+        PropertyKey::ColumnWidth => "column-width",
+        PropertyKey::ColumnCount => "column-count",
+        _ => return None,
+    })
 }
 
 /// The property name of a border-image longhand key.
@@ -498,14 +535,15 @@ pub(crate) fn project_deferred_value(
         marker.property = property.into();
         return Some(PropertyValue::Deferred(marker));
     }
-    // A CSS-wide keyword written for a margin, padding or inset shorthand
-    // sets each of its longhands to that keyword.
+    // A CSS-wide keyword written for a margin, padding, inset or other
+    // shorthand listed in `keyword_longhand_name` sets each of its longhands
+    // to that keyword.
     if let PropertyValue::Deferred(marker) = &value
         && marker.key != key
         && marker.css_wide_keyword().is_some()
         && let crate::rule::KeyClass::Shorthand { longhands } = crate::rule::classify(marker.key)
         && longhands.contains(&key)
-        && let Some(property) = box_side_longhand_name(key)
+        && let Some(property) = keyword_longhand_name(key)
     {
         let mut marker = marker.clone();
         marker.key = key;

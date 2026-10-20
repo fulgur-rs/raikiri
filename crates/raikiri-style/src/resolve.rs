@@ -3967,6 +3967,36 @@ pub fn lift_length_percentage_or_calc(
     }
 }
 
+/// Lift a computed `flex-basis` back to its specified form, keeping each
+/// keyword and the mixed `calc()` as they are.
+pub(crate) fn lift_flex_basis(computed: ComputedFlexBasis) -> FlexBasisValue {
+    match computed {
+        ComputedFlexBasis::Auto => FlexBasisValue::Auto,
+        ComputedFlexBasis::Content => FlexBasisValue::Content,
+        ComputedFlexBasis::MinContent => FlexBasisValue::MinContent,
+        ComputedFlexBasis::MaxContent => FlexBasisValue::MaxContent,
+        ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
+        ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
+        ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
+        ComputedFlexBasis::Calc(calc) => FlexBasisValue::Calc(calc),
+    }
+}
+
+/// Lift a computed `row-gap` / `column-gap` back to its specified form,
+/// keeping `normal` a keyword.
+pub(crate) fn lift_length_percentage_or_normal(
+    computed: ComputedLengthPercentageOrNormal,
+) -> LengthOrNormal {
+    match computed {
+        ComputedLengthPercentageOrNormal::Normal => LengthOrNormal::Normal,
+        ComputedLengthPercentageOrNormal::Px(v) => LengthOrNormal::Length(Length::Px(v)),
+        ComputedLengthPercentageOrNormal::Percent(p) => LengthOrNormal::Length(Length::Percent(p)),
+        ComputedLengthPercentageOrNormal::Calc(calc) => {
+            LengthOrNormal::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
+    }
+}
+
 /// Lift a computed `text-indent` value into its inherited staging form.
 ///
 /// The parent's `em` term has already been resolved, so a mixed calc is copied

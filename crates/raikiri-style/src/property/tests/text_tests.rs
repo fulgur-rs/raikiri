@@ -5752,3 +5752,8 @@ fn font_size_scale_takes_only_percent_and_true_em_terms() {
     );
     assert_eq!(term(-1.0, "em").font_size_scale(), None);
 }
+
+#[test]
+fn font_shorthand_keeps_css_wide_keywords() {
+    assert_css_wide_keywords_deferred("font");
+}
