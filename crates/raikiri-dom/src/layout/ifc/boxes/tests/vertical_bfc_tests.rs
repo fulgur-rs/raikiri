@@ -145,6 +145,39 @@ fn vertical_mixed_ifc_block_children_use_their_bfc_context() {
     }
 }
 
+#[test]
+fn table_children_do_not_share_the_root_bfc() {
+    let mut table = 0;
+    let mut ordinary = 0;
+    let (mut doc, cascade, _root) = ahem_paragraph_with(
+        "writing-mode:vertical-rl;width:100px;height:40px",
+        |doc, root| {
+            table = doc.append_element(
+                Some(root),
+                "table",
+                Style::default(),
+                Some("display:table;width:20px;height:20px"),
+            );
+            ordinary = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;width:20px;height:20px"),
+            );
+        },
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+
+    let session = LayoutSession::new(&mut doc);
+    assert!(super::super::in_the_roots_formatting_context(
+        &session, ordinary
+    ));
+    assert!(!super::super::in_the_roots_formatting_context(
+        &session, table
+    ));
+}
+
 fn layout_vertical_aligned_block_ifc(
     writing_mode: &str,
     align_content: &str,

@@ -2307,6 +2307,7 @@ fn in_the_roots_formatting_context(tree: &LayoutSession<'_>, node: usize) -> boo
     let style = tree.get_block_container_style(taffy::NodeId::from(node));
     let overflow = style.overflow();
     tree.nodes[node].taffy_display() == taffy::Display::Block
+        && !crate::taffy_impl::is_table_box(tree.nodes[node].display())
         && !overflow.x.is_scroll_container()
         && !overflow.y.is_scroll_container()
         && !style.contain().establishes_independent_formatting_context()
