@@ -2217,12 +2217,12 @@ fn layout_vertical_block_child(
             Direction::Rtl => margin.bottom,
         },
         |slot| {
-            slot.x - inline_insets.0
-                + if geometry.axes.direction() == Direction::Ltr {
-                    auto_top
-                } else {
-                    auto_bottom
-                }
+            let slot_start = slot.x - inline_insets.0;
+            match geometry.axes.direction() {
+                Direction::Ltr => slot_start + auto_top,
+                // RTL inline-start is the slot's far edge; its auto margin moves inward.
+                Direction::Rtl => inline_basis - slot_start - slot.border_width + auto_bottom,
+            }
         },
     );
     let mut guess = if origin_resolved && collapse_top {

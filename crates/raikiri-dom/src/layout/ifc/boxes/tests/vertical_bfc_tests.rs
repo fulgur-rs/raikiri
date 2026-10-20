@@ -342,6 +342,68 @@ fn vertical_independent_bfc_child_avoids_ancestor_float() {
     assert_eq!(child.top, 10.0);
 }
 
+fn layout_vertical_rtl_independent_bfc_child(margins: &str) -> BoxRect {
+    let mut child = 0;
+    let child_style = format!("display:flow-root;width:5px;height:10px;{margins}");
+    let (mut doc, _cascade, _root) = ahem_paragraph_with(
+        "writing-mode:vertical-rl;direction:rtl;width:100px;height:40px",
+        |doc, root| {
+            child = doc.append_element(Some(root), "div", Style::default(), Some(&child_style));
+        },
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let geometry = FlowGeometry::new(
+        IfcAxes::new(WritingMode::VerticalRl, Direction::Rtl),
+        PhysicalSize {
+            width: 100.0,
+            height: 40.0,
+        },
+        taffy::Rect::ZERO,
+    );
+    let mut session = LayoutSession::new(&mut doc);
+    let mut bfc = BlockFormattingContext::new();
+    let mut ctx = bfc.root_block_context();
+    ctx.set_width(geometry.width);
+    ctx.set_origin_resolved(true);
+    ctx.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 20.0,
+        },
+        0.0,
+        FloatDirection::Right,
+        Clear::None,
+        false,
+    );
+
+    super::super::layout_vertical_block_child(
+        &mut session,
+        &mut ctx,
+        child,
+        0.0,
+        CollapsibleMarginSet::ZERO,
+        geometry,
+        true,
+        false,
+    );
+    drop(session);
+    absolute_rect(&doc, child)
+}
+
+#[test]
+fn vertical_rtl_independent_bfc_child_uses_its_float_slot() {
+    for (margins, expected_y) in [
+        ("", 10.0),
+        ("margin-bottom:auto", 0.0),
+        ("margin-top:auto", 10.0),
+        ("margin-top:auto;margin-bottom:auto", 5.0),
+    ] {
+        let child = layout_vertical_rtl_independent_bfc_child(margins);
+
+        assert_eq!(child, (95.0, expected_y, 5.0, 10.0), "margins={margins}");
+    }
+}
+
 #[test]
 fn vertical_independent_bfc_slot_probes_height_and_rtl_auto_margins() {
     let mut child = 0;
