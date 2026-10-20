@@ -756,10 +756,15 @@ fn place_columns(
             loop {
                 let room = height_of(column) - cursor;
                 // A break is not inside the block-end border and padding: the
-                // box ends in the next column with them, whole.
+                // box ends in the next column with them, whole. At the top of
+                // a column that is taller than what is left, the next column
+                // offers no more room, so the border and padding are cut like
+                // any other box.
                 let room = match item.slice {
                     Some((_, trailing))
-                        if left > room + EPSILON && left - room < trailing - EPSILON =>
+                        if left > room + EPSILON
+                            && left - room < trailing - EPSILON
+                            && (cursor > 0.0 || left - trailing > EPSILON) =>
                     {
                         (left - trailing).min(room)
                     }
@@ -1373,19 +1378,42 @@ fn slices_decorations(node: &crate::document::LayoutNodeRef<'_>) -> bool {
         && !node.paints_whole_box_effects
 }
 
-/// The stream item of `child`, a box of block size `height`. `slice` is the
-/// column width when the pieces of a cut box are placed to slice its
-/// decorations.
-fn item(tree: &Document, child: usize, height: f32, slice: Option<f32>) -> Item {
+/// Where the block-axis border and padding of a box whose pieces slice them
+/// are measured from.
+#[derive(Clone, Copy)]
+enum Insets {
+    /// Resolved against this inline size, that of the column a child of the
+    /// container sits in.
+    Against(f32),
+    /// Taken from the layout that placed the box, which resolved them against
+    /// the containing block the box has inside a wrapper.
+    Laid,
+}
+
+/// The stream item of `child`, a box of block size `height`. `slice` says how
+/// to measure the decorations when the pieces of a cut box are placed to
+/// slice them.
+fn item(tree: &Document, child: usize, height: f32, slice: Option<Insets>) -> Item {
     let node = &tree.layout_node_with_style(child).unwrap();
     let (margin_top, margin_bottom) = block_margins(node.style).unwrap_or_default();
-    let slice = slice.filter(|_| slices_decorations(node)).map(|basis| {
-        let inset = |value| super::multicol_resolve_inset(tree, value, basis);
-        (
-            inset(node.style.padding.top) + inset(node.style.border.top),
-            inset(node.style.padding.bottom) + inset(node.style.border.bottom),
-        )
-    });
+    let slice = slice
+        .filter(|_| slices_decorations(node))
+        .map(|insets| match insets {
+            Insets::Against(basis) => {
+                let inset = |value| super::multicol_resolve_inset(tree, value, basis);
+                (
+                    inset(node.style.padding.top) + inset(node.style.border.top),
+                    inset(node.style.padding.bottom) + inset(node.style.border.bottom),
+                )
+            }
+            Insets::Laid => {
+                let layout = &tree.nodes[child].unrounded_layout;
+                (
+                    layout.padding.top + layout.border.top,
+                    layout.padding.bottom + layout.border.bottom,
+                )
+            }
+        });
     Item {
         height,
         margin_top,
@@ -1666,7 +1694,12 @@ pub(super) fn layout(
         let first = items.len();
         match wrapped_tree {
             None => {
-                items.push(item(tree, child, size.height, Some(context.column_width)));
+                items.push(item(
+                    tree,
+                    child,
+                    size.height,
+                    Some(Insets::Against(context.column_width)),
+                ));
             }
             Some(wrapped_tree) => {
                 let leaves = wrapped_tree.leaf_ids();
@@ -1675,7 +1708,7 @@ pub(super) fn layout(
                         tree,
                         leaf,
                         tree.nodes[leaf].unrounded_layout.size.height,
-                        Some(context.column_width),
+                        Some(Insets::Laid),
                     )
                 }));
                 apply_wrapped_layout(tree, wrapped_tree, &mut items, first, context.column_width)?;
@@ -1832,9 +1865,12 @@ pub(super) fn layout(
         };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &layout);
         let mut records = Vec::with_capacity(pieces.len());
+        // How far each piece of a sliced box is moved up.
+        let mut shifts = Vec::with_capacity(pieces.len());
         let sliced = pieces.len() > 1 && slices_decorations(&tree.layout_node_with_style(child)?);
         let mut taken = 0.0f32;
         for (index, piece) in pieces.iter().enumerate() {
+            shifts.push(if sliced { taken } else { 0.0 });
             let x = origin.x + context.column_offset_x(piece.column);
             let record = tree.fragment_tree.try_push(LayoutFragment {
                 node_id: child,
@@ -1894,12 +1930,21 @@ pub(super) fn layout(
             )?;
         }
         for piece in absolute {
+            // The piece was placed against the column, but a piece of a
+            // sliced box sits higher by what the pieces before it took.
+            let shift = shifts[piece.parent_piece];
             tree.fragment_tree.try_push(LayoutFragment {
                 node_id: piece.node,
                 parent: Some(records[piece.parent_piece]),
                 fragmentainer: context.column_index + piece.column,
-                rect: piece.rect,
-                fragmentainer_clip: Some(piece.clip),
+                rect: FragmentRect {
+                    y: piece.rect.y + shift,
+                    ..piece.rect
+                },
+                fragmentainer_clip: Some(FragmentRect {
+                    y: piece.clip.y + shift,
+                    ..piece.clip
+                }),
                 fragment_index: 0,
                 fragment_count: 1,
                 line_start: None,

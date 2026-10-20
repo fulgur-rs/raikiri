@@ -166,6 +166,23 @@ fn a_box_that_slices_its_decorations_does_not_break_inside_the_block_end_ones() 
 }
 
 #[test]
+fn block_end_decorations_taller_than_a_column_are_cut_like_any_other_box() {
+    // The 101px of padding cannot follow whole in a 100px column, so the box
+    // is cut inside it instead of making no progress, which a piece budget
+    // would run out on.
+    assert!(place(&[sliced(102.0, 0.0, 101.0)], 100.0, 8).is_ok());
+    assert_eq!(
+        shape(&[sliced(102.0, 0.0, 101.0)], 100.0),
+        vec![vec![(0, 0.0, 1.0), (1, 0.0, 100.0), (2, 0.0, 1.0)]]
+    );
+    // After content in the column, the box first moves to a new column.
+    assert_eq!(
+        shape(&[split(95.0), sliced(105.0, 0.0, 150.0)], 100.0),
+        vec![vec![(0, 0.0, 95.0)], vec![(1, 0.0, 100.0), (2, 0.0, 5.0)]]
+    );
+}
+
+#[test]
 fn a_box_that_avoids_breaks_and_slices_its_decorations_breaks_anyway_when_taller_than_a_column() {
     let avoiding = Item {
         splittable: false,
