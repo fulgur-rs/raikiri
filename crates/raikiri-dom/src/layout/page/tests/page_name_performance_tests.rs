@@ -161,3 +161,42 @@ fn named_flex_keeps_owned_reordered_children() {
     assert!(matches!(resolved, Cow::Owned(_)));
     assert_eq!(&*resolved, &[last, first]);
 }
+
+#[test]
+fn propagation_resumes_after_hidden_and_whitespace_children() {
+    for display in ["block", "flex"] {
+        for named_child in [false, true] {
+            let mut doc = Document::new();
+            let root = doc.append_element(
+                Some(0),
+                "div",
+                Style::default(),
+                Some(&format!("display:{display};page:outer")),
+            );
+            doc.append_text(root, "   ");
+            doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:none;page:hidden"),
+            );
+            doc.append_text(root, "\n");
+            if named_child {
+                doc.append_element(
+                    Some(root),
+                    "div",
+                    Style::default(),
+                    Some("display:block;page:inner"),
+                );
+            }
+            doc.mark_in_document_flags();
+            let rules = raikiri_style::build_rule_tree(&doc);
+            let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+            crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).unwrap();
+            assert_eq!(
+                propagated_start_page_name_with_order(&doc, &cascade, root, None, false, false),
+                (true, Some(if named_child { "inner" } else { "outer" })),
+            );
+        }
+    }
+}
