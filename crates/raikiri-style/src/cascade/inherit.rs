@@ -2839,6 +2839,13 @@ pub(crate) fn resolve_defaulting_value(
                     crate::property::ColumnSpanValue::None
                 });
             }
+            crate::property::PropertyKey::AspectRatio => {
+                return PropertyValue::AspectRatio(if keyword == CssWideKeyword::Inherit {
+                    inherited.aspect_ratio
+                } else {
+                    crate::property::AspectRatioValue::AUTO
+                });
+            }
             crate::property::PropertyKey::TextGroupAlign => {
                 return PropertyValue::TextGroupAlign(if keyword == CssWideKeyword::Inherit {
                     inherited.text_group_align
@@ -3655,6 +3662,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_)
         | PropertyValue::ColumnSpan(_)
+        | PropertyValue::AspectRatio(_)
         | PropertyValue::Columns(_)
         | PropertyValue::ColumnRule(_)
         | PropertyValue::ColumnRuleWidth(_)
@@ -4233,6 +4241,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_) => {}
         PropertyValue::ColumnSpan(value) => target.column_span = value,
+        PropertyValue::AspectRatio(value) => target.aspect_ratio = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
         PropertyValue::ColumnRuleWidth(value) => {
             target.column_rule.width = value;

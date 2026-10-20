@@ -31,7 +31,7 @@ use crate::computed::{
     RunningTemplate, VerticalLogicalSize, initial_background_layers,
 };
 use crate::property::{
-    AlignSelfValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
+    AlignSelfValue, AspectRatioValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
     BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage, BackgroundLayerSpec,
     BackgroundRepeat, BackgroundSize, Border, BorderCollapseValue, BorderColor,
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
@@ -740,6 +740,9 @@ pub struct SpecifiedValues {
     pub text_group_align: TextGroupAlign,
     /// Non-inherited `column-span`, initially `none`.
     pub column_span: ColumnSpanValue,
+    /// `aspect-ratio` specified value; non-inherited, initial `auto`. It has
+    /// no lengths, so it is computed-equivalent.
+    pub aspect_ratio: AspectRatioValue,
     /// `column-width` specified value; non-inherited.
     pub column_width: ColumnWidthValue,
     /// Non-inherited column rule; resolves without contributing to box geometry.
@@ -1177,6 +1180,7 @@ impl SpecifiedValues {
             column_fill: ColumnFillValue::Balance,
             text_group_align: TextGroupAlign::None,
             column_span: ColumnSpanValue::None,
+            aspect_ratio: AspectRatioValue::AUTO,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: false,
@@ -1340,6 +1344,7 @@ impl SpecifiedValues {
             column_fill: ColumnFillValue::Balance,
             text_group_align: TextGroupAlign::None,
             column_span: ColumnSpanValue::None,
+            aspect_ratio: AspectRatioValue::AUTO,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: parent.multicol_flow,
@@ -2787,6 +2792,7 @@ impl SpecifiedValues {
             column_fill: self.column_fill,
             text_group_align: self.text_group_align,
             column_span: self.column_span,
+            aspect_ratio: self.aspect_ratio,
             column_rule: {
                 let mut rule = resolve_border_with_width_provenance(
                     self.column_rule,

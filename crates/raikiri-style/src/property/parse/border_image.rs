@@ -111,7 +111,9 @@ fn parse_clamped<T>(
 }
 
 /// A `<number [0,∞]>` token, or a math function that folds to a number.
-fn parse_non_negative_number<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+pub(super) fn parse_non_negative_number<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<f32, ParseError<'i, ()>> {
     if let Ok(source) = input.try_parse(clamped_math_source) {
         return parse_clamped(&source, |parser| expect_number_stable(parser).ok())
             .ok_or_else(|| input.new_custom_error(()));

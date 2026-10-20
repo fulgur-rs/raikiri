@@ -4233,7 +4233,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 191;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 192;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -4971,6 +4971,7 @@ property_key_samples! {
     StrokeDasharray => PropertyValue::StrokeDasharray("4 2".into()),
     StrokeDashoffset => PropertyValue::StrokeDashoffset("1em".into()),
     ColumnSpan => PropertyValue::ColumnSpan(crate::property::ColumnSpanValue::All),
+    AspectRatio => PropertyValue::AspectRatio(crate::property::AspectRatioValue::AUTO),
     BorderImageSource => PropertyValue::BorderImageSource(BackgroundImage::Url("frame.png".into())),
     BorderImageSlice => PropertyValue::BorderImageSlice(crate::property::BorderImageSlice::INITIAL),
     BorderImageWidth => PropertyValue::BorderImageWidth(Box::new(Sides::all(
@@ -5450,6 +5451,7 @@ property_value_variant_registry! {
     StrokeDasharray,
     StrokeDashoffset,
     ColumnSpan,
+    AspectRatio,
     BorderImageSource,
     BorderImageSlice,
     BorderImageWidth,
@@ -5832,6 +5834,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::StrokeDasharray(_)
             | PropertyValue::StrokeDashoffset(_)
             | PropertyValue::ColumnSpan(_)
+            | PropertyValue::AspectRatio(_)
             | PropertyValue::ColumnRuleStyle(_)
             | PropertyValue::ColumnRuleColor(_)
             // Border image slices and repeats carry no length; a source

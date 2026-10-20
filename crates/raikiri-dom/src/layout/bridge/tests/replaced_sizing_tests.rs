@@ -13,6 +13,16 @@ fn laid_out_with_natural_size(
     natural: (f32, f32),
     build: impl FnOnce(&mut Document, usize),
 ) -> Document {
+    laid_out_with_natural_box(natural, true, build)
+}
+
+/// [`laid_out_with_natural_size`] where the resolver may leave the natural
+/// ratio unset (`ratio_known` is false), as `IntrinsicBox::new` does.
+fn laid_out_with_natural_box(
+    natural: (f32, f32),
+    ratio_known: bool,
+    build: impl FnOnce(&mut Document, usize),
+) -> Document {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -29,7 +39,7 @@ fn laid_out_with_natural_size(
         {
             let mut intrinsic = raikiri_traits::IntrinsicBox::new(natural.0, natural.1);
             intrinsic.aspect_ratio =
-                (natural.0 > 0.0 && natural.1 > 0.0).then(|| natural.0 / natural.1);
+                (ratio_known && natural.0 > 0.0 && natural.1 > 0.0).then(|| natural.0 / natural.1);
             element.image_intrinsic_size = Some(intrinsic);
         }
     }
@@ -241,7 +251,6 @@ fn a_grid_image_stretched_on_one_axis_keeps_its_ratio() {
     let doc = laid_out(|doc, body| {
         for image_css in [
             "justify-self:stretch",
-            "align-self:stretch;justify-self:stretch;width:40px",
             "align-self:stretch;justify-self:stretch;position:absolute",
             "align-self:stretch;justify-self:stretch;margin-bottom:auto",
         ] {
@@ -256,9 +265,28 @@ fn a_grid_image_stretched_on_one_axis_keeps_its_ratio() {
     });
     let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
     assert_eq!(sizes[0], (100.0, 200.0));
-    assert_eq!(sizes[1], (40.0, 80.0));
-    assert_eq!(sizes[2].0 / sizes[2].1, 0.5);
-    assert_eq!(sizes[3], (100.0, 200.0));
+    assert_eq!(sizes[1].0 / sizes[1].1, 0.5);
+    assert_eq!(sizes[2], (100.0, 200.0));
+}
+
+#[test]
+fn a_grid_image_with_a_definite_width_and_stretch_alignment_ignores_its_ratio() {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-rows:100px;grid-template-columns:100px;height:100px"),
+        );
+        image = doc.append_element(
+            Some(grid),
+            "img",
+            Style::default(),
+            Some("align-self:stretch;justify-self:stretch;width:40px"),
+        );
+    });
+    assert_eq!(size(&doc, image), (40.0, 100.0));
 }
 
 #[test]
@@ -1188,4 +1216,34 @@ fn a_size_contained_image_with_a_keyword_width_is_not_stretched() {
             }
         }
     }
+}
+
+/// Size of a 20x10 `<img>` that a resolver gave no natural ratio, with `css`.
+fn image_without_natural_ratio(css: &str) -> (f32, f32) {
+    let mut image = 0;
+    let doc = laid_out_with_natural_box((20.0, 10.0), false, |doc, body| {
+        image = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some(format!("display:block;{css}").as_str()),
+        );
+    });
+    size(&doc, image)
+}
+
+#[test]
+fn an_auto_ratio_prefers_the_ratio_of_the_natural_size_when_the_resolver_gave_none() {
+    assert_eq!(
+        image_without_natural_ratio("width:100px;aspect-ratio:auto 1/1"),
+        (100.0, 50.0)
+    );
+}
+
+#[test]
+fn an_authored_ratio_replaces_the_ratio_of_the_natural_size_when_the_resolver_gave_none() {
+    assert_eq!(
+        image_without_natural_ratio("width:100px;aspect-ratio:1/1"),
+        (100.0, 100.0)
+    );
 }
