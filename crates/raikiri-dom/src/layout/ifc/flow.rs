@@ -340,8 +340,17 @@ pub(crate) fn rebreak_roots(
         }
         // The search starts at the parent of the text, so the root's first
         // text node is the starting point.
+        let generated_text = [
+            raikiri_style::PseudoElem::Before,
+            raikiri_style::PseudoElem::After,
+            raikiri_style::PseudoElem::Marker,
+        ]
+        .into_iter()
+        .any(|pseudo| crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo));
+        let generated_width = generated_text.then(|| widths.content_width(id)).flatten();
         let width = first_text_node(doc, id)
             .and_then(|text| widths.authored_containing_width(text))
+            .or(generated_width)
             .unwrap_or(max_advance);
         let Some(root) = doc.nodes[id].ifc.as_mut() else {
             continue;

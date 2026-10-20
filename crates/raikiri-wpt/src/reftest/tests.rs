@@ -607,9 +607,17 @@ fn reftest_kind_roundtrip() {
 #[test]
 fn authored_page_viewport_uses_print_content_box() {
     let html = "<style>@page { size: 5in 3in; margin: 0.5in; }</style>";
-    let (width, height) = authored_page_viewport(html, 800.0, 600.0);
+    let (width, height) = parsed_page_viewport(html, 800.0, 600.0);
     assert!((width - 384.0).abs() < 0.01);
     assert!((height - 192.0).abs() < 0.01);
+}
+
+#[test]
+fn named_page_viewport_excludes_border_and_padding_from_the_page_area() {
+    let html = "<style>@page named { size: 100vw 100vh; margin: 10px; padding: 20px; border: 5px solid }</style><div style=\"page:named\"></div>";
+    let (width, height) = parsed_page_viewport(html, 800.0, 600.0);
+
+    assert_eq!((width, height), (410.0, 218.0));
 }
 
 #[test]
@@ -631,7 +639,7 @@ fn authored_page_viewport_prefers_the_first_named_page() {
             @page { size: 300px 400px; margin: 0; }
             @page smaller { size: 200px; }
         </style><div style="page:smaller">first</div>"#;
-    let (width, height) = authored_page_viewport(html, 800.0, 600.0);
+    let (width, height) = parsed_page_viewport(html, 800.0, 600.0);
     assert!((width - 200.0).abs() < 0.01);
     assert!((height - 200.0).abs() < 0.01);
 }
@@ -2863,6 +2871,8 @@ fn page_sizes_read_every_named_size() {
     }
     let size = parse_page_size("b4 landscape").unwrap();
     assert!(size.landscape && size.size.is_some());
+    let size = parse_page_size("a4 portrait").unwrap();
+    assert!(size.portrait && size.size.is_some());
 }
 
 #[test]

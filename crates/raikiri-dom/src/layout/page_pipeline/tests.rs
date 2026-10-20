@@ -5430,11 +5430,10 @@ fn a_block_child_is_offset_by_the_content_box_of_its_paragraph() {
     assert!(doc.nodes[root].is_ifc_root());
     let layout = doc.nodes[block].unrounded_layout;
     // The content box starts at (6, 4); the block follows the first line.
-    // (Its width is the root's authored 100px, which a pre-layout pass copies
-    // into every auto-width block under an authored-width ancestor on both
-    // paths; the block child keeps the width taffy's style gives it.)
+    // The root's 100px border box has a 12px horizontal inset, so its content
+    // box and this auto-width child are 88px wide.
     assert_eq!((layout.location.x, layout.location.y), (6.0, 14.0));
-    assert_eq!(layout.size.width, 100.0);
+    assert_eq!(layout.size.width, 88.0);
 }
 
 #[test]
