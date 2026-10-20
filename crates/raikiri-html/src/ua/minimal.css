@@ -112,6 +112,13 @@ pre       { display: block; }
 search    { display: block; }
 xmp       { display: block; }
 
+/* HTML Living Standard "Rendering" §the-fieldset-and-legend-elements gives
+ * `fieldset` a block box, so `width` and `height` apply to it. Only that part
+ * lands here: its default margin, border, padding and `min-inline-size`, and
+ * the rendered legend, stay deferred with the other form controls, so a
+ * fieldset with no author style has no box decoration yet. */
+fieldset  { display: block; }
+
 /* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) includes
  * `dialog` as a member of the section's shared `display: block` group
  * selector (the same group `address`/`center`/`listing`/`plaintext`/

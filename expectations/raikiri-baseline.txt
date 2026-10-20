@@ -5017,3 +5017,8 @@ css/css-multicol/intrinsic-size-004.html
 css/css-sizing/replaced-aspect-ratio-stretch-fit-001.html
 css/css-sizing/replaced-aspect-ratio-stretch-fit-002.html
 css/css-sizing/replaced-aspect-ratio-stretch-fit-003.html
+
+# --- a fieldset is a block box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
+# The UA stylesheet gave a fieldset no display, so it stayed an inline box that ignores width and height; as a block, `width: fit-content` takes the width its image's percentage height and ratio give. 023 is KEEP in audit-vacuous-passes. 022 is VACUOUS-UNSTYLED because its square also appears without the subject properties; it stays as a negative guard, since it failed before the rule.
+css/css-sizing/intrinsic-percent-replaced-022.html
+css/css-sizing/intrinsic-percent-replaced-023.html

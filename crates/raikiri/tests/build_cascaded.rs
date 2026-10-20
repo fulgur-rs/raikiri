@@ -1046,6 +1046,21 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
 }
 
 #[test]
+fn fieldset_is_display_block_via_ua_css() {
+    // HTML LS Rendering gives a fieldset a block box (see minimal.css), which
+    // `width` and `height` apply to.
+    let doc = parse_html("<html><body><fieldset>Hi</fieldset></body></html>");
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
+
+    let el_id = find_by_tag(&doc.dom, "fieldset").expect("<fieldset> exists");
+    assert_eq!(
+        result.computed[el_id.0 as usize].display,
+        DisplayValue::Block,
+        "<fieldset> should be display: block from the UA CSS"
+    );
+}
+
+#[test]
 fn dialog_display_reflects_open_attribute_via_ua_css() {
     // HTML LS §flow-content-3 (15.3.3) specifies
     // `dialog:not([open]) { display: none; }` alongside dialog's
