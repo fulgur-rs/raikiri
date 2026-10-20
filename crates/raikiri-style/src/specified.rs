@@ -790,6 +790,13 @@ impl SizePrecedence {
         };
         *slot = Some(rank);
     }
+
+    /// Record the declaration at `position` of a sequence that is already
+    /// sorted in ascending cascade order, so its position stands for its
+    /// precedence.
+    pub(crate) fn record_in_order(&mut self, key: crate::property::PropertyKey, position: usize) {
+        self.record(key, (0, (false, 0), 0, 0, position));
+    }
 }
 
 /// Whether a logical size takes the place of the physical size on its axis,
@@ -2127,32 +2134,32 @@ impl SpecifiedValues {
             resolve_size_length_percentage_or_auto(value, font_size, own_line_height, ctx)
         });
         let precedence = self.size_precedence;
-        let pick_min = |physical, physical_rank| {
-            pick_by_precedence(
-                physical,
-                physical_rank,
-                logical_min,
-                precedence.min_block_size,
-                ComputedLengthPercentageOrAuto::Auto,
-            )
-        };
-        let physical_min_rank = if self.writing_mode.is_vertical() {
+        let vertical = self.writing_mode.is_vertical();
+        let physical_min_rank = if vertical {
             precedence.min_width
         } else {
             precedence.min_height
         };
-        let (min_width, min_height) = if self.writing_mode.is_vertical() {
-            (pick_min(min_width, physical_min_rank), min_height)
-        } else {
-            (min_width, pick_min(min_height, physical_min_rank))
+        let logical_min_wins = logical_size_wins(
+            physical_min_rank,
+            logical_min.is_some(),
+            precedence.min_block_size,
+        );
+        // A logical winner that was invalid at computed-value time computes to
+        // the initial `auto`.
+        let shared_min = |physical| {
+            if logical_min_wins {
+                logical_min.unwrap_or(ComputedLengthPercentageOrAuto::Auto)
+            } else {
+                physical
+            }
         };
-        let logical_min = logical_min.filter(|_| {
-            logical_size_wins(
-                physical_min_rank,
-                self.min_block_size.is_some(),
-                precedence.min_block_size,
-            )
-        });
+        let (min_width, min_height) = if vertical {
+            (shared_min(min_width), min_height)
+        } else {
+            (min_width, shared_min(min_height))
+        };
+        let logical_min = logical_min.filter(|_| logical_min_wins);
         // CSS2 §9.7: same-node coupling forces the computed `display` value to depend on the
         // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
         // phase 3 like overflow cross-axis coupling.
