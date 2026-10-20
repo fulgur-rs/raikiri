@@ -251,103 +251,10 @@ impl ExpectedFailures {
         let mut entries = Vec::new();
         let mut errors = Vec::new();
         for (line_no, line) in iter_data_lines(content) {
-            if has_trailing_whitespace(line) {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: format!("trailing whitespace on data line: {line:?}"),
-                });
-                continue;
+            match parse_expected_failure_row(line, file_name, line_no) {
+                Ok(entry) => entries.push(entry),
+                Err(error) => errors.push(error),
             }
-            if line.contains('\t') {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: "tab characters are not allowed in expected-failure rows".to_owned(),
-                });
-                continue;
-            }
-            let columns: Vec<&str> = line.split('|').map(str::trim).collect();
-            if columns.len() != 5 {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: format!("expected 5 pipe-delimited columns, got {}", columns.len()),
-                });
-                continue;
-            }
-            let test_id = columns[0];
-            let reason = columns[1];
-            let issue_id = columns[2];
-            let added = columns[3];
-            let review_by = columns[4];
-            if !is_exact_test_id(test_id) {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: format!(
-                        "expected one exact root-relative WPT test id, got {test_id:?}"
-                    ),
-                });
-                continue;
-            }
-            if reason.is_empty() {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: "reason must not be empty".to_owned(),
-                });
-                continue;
-            }
-            if !is_tracking_issue_id(issue_id) {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: format!(
-                        "expected a raikiri-spike Beads id or a RAIKIRI-<n> Plane id, got {issue_id:?}"
-                    ),
-                });
-                continue;
-            }
-            let parse_date = |value: &str, column: &str| {
-                Date::parse(value, &format_description!("[year]-[month]-[day]")).map_err(|error| {
-                    ExpectError::MalformedLine {
-                        file: file_name.to_owned(),
-                        line_no,
-                        reason: format!("{column} {value:?} is not YYYY-MM-DD ({error})"),
-                    }
-                })
-            };
-            let added_date = match parse_date(added, "added_date") {
-                Ok(date) => date,
-                Err(error) => {
-                    errors.push(error);
-                    continue;
-                }
-            };
-            let review_date = match parse_date(review_by, "review_by") {
-                Ok(date) => date,
-                Err(error) => {
-                    errors.push(error);
-                    continue;
-                }
-            };
-            if review_date <= added_date {
-                errors.push(ExpectError::MalformedLine {
-                    file: file_name.to_owned(),
-                    line_no,
-                    reason: "review_by must be later than added_date".to_owned(),
-                });
-                continue;
-            }
-            entries.push(ExpectedFailure {
-                test_id: test_id.to_owned(),
-                reason: reason.to_owned(),
-                issue_id: issue_id.to_owned(),
-                added_date,
-                review_by: review_date,
-                line_no,
-            });
         }
         (Self { entries }, errors)
     }
@@ -368,6 +275,69 @@ impl ExpectedFailures {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+/// Parse one data row of `expected-failures.txt`, reporting the first rule it
+/// breaks.
+fn parse_expected_failure_row(
+    line: &str,
+    file_name: &str,
+    line_no: usize,
+) -> Result<ExpectedFailure, ExpectError> {
+    let malformed = |reason: String| ExpectError::MalformedLine {
+        file: file_name.to_owned(),
+        line_no,
+        reason,
+    };
+    if has_trailing_whitespace(line) {
+        return Err(malformed(format!(
+            "trailing whitespace on data line: {line:?}"
+        )));
+    }
+    if line.contains('\t') {
+        return Err(malformed(
+            "tab characters are not allowed in expected-failure rows".to_owned(),
+        ));
+    }
+    let columns: Vec<&str> = line.split('|').map(str::trim).collect();
+    let [test_id, reason, issue_id, added, review_by] = columns[..] else {
+        return Err(malformed(format!(
+            "expected 5 pipe-delimited columns, got {}",
+            columns.len()
+        )));
+    };
+    if !is_exact_test_id(test_id) {
+        return Err(malformed(format!(
+            "expected one exact root-relative WPT test id, got {test_id:?}"
+        )));
+    }
+    if reason.is_empty() {
+        return Err(malformed("reason must not be empty".to_owned()));
+    }
+    if !is_tracking_issue_id(issue_id) {
+        return Err(malformed(format!(
+            "expected a raikiri-spike Beads id or a RAIKIRI-<n> Plane id, got {issue_id:?}"
+        )));
+    }
+    let parse_date = |value: &str, column: &str| {
+        Date::parse(value, &format_description!("[year]-[month]-[day]"))
+            .map_err(|error| malformed(format!("{column} {value:?} is not YYYY-MM-DD ({error})")))
+    };
+    let added_date = parse_date(added, "added_date")?;
+    let review_date = parse_date(review_by, "review_by")?;
+    if review_date <= added_date {
+        return Err(malformed(
+            "review_by must be later than added_date".to_owned(),
+        ));
+    }
+    Ok(ExpectedFailure {
+        test_id: test_id.to_owned(),
+        reason: reason.to_owned(),
+        issue_id: issue_id.to_owned(),
+        added_date,
+        review_by: review_date,
+        line_no,
+    })
 }
 
 fn is_exact_test_id(test_id: &str) -> bool {
