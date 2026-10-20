@@ -5,6 +5,7 @@ members = [
     "crates/raikiri-traits",
     "crates/raikiri-svg",
     "crates/raikiri-style",
+    "crates/raikiri-layout-style",
     "crates/raikiri-net",
     "crates/raikiri-dom",
     "crates/raikiri-html",
