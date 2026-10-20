@@ -3010,6 +3010,23 @@ fn calc_folding_to_a_negative_size_clamps_to_zero() {
 }
 
 #[test]
+fn a_substituted_calc_in_a_logical_limit_maps_onto_the_physical_limit() {
+    use ComputedLengthPercentageOrAuto::Px;
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "--a: 1em; font-size: 10px; min-inline-size: calc(var(--a) + 5px); \
+             max-inline-size: calc(var(--a) + 6px); max-block-size: calc(var(--a) + 7px)",
+        ),
+    );
+    assert_eq!(
+        (cv.min_width, cv.max_width, cv.max_height),
+        (Px(15.0), Px(16.0), Px(17.0))
+    );
+}
+
+#[test]
 fn mixed_calc_margin_and_padding_keep_the_percentage_until_used_time() {
     use crate::property::{BorderImageWidthSide, CalcLengthPercentage};
     use crate::resolve::{
