@@ -50,6 +50,13 @@ jobs:
       - name: Fetch WPT at the pinned revision
         run: scripts/wpt/fetch.sh
 
+      - name: Compare DOM style views on the Flex and Grid baseline corpus
+        # Dependency builds do not enable the DOM's cfg(test) comparison wrapper.
+        # Run its internal harness explicitly, including the ignored WPT corpus.
+        run: |
+          env -u RAIKIRI_STYLE_CORPUS_FILTER cargo test --locked -p raikiri-dom --lib \
+            --features snapshot-serde layout::style_views:: -- --include-ignored
+
       - name: Build the baseline runner
         run: cargo build --release --locked -p raikiri-wpt --bin run-baseline-report --bin validate-expectations
 

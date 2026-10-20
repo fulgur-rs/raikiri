@@ -643,8 +643,20 @@ pub(crate) fn with_width_limits<R>(
     bounds.install_width(tree.layout_style_for_key_mut(node).unwrap(), adjustment);
     #[cfg(test)]
     bounds.record(tree, node, true, adjustment);
+    #[cfg(test)]
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
+    #[cfg(not(test))]
     let result = f(tree);
     saved.restore(tree, node);
+    #[cfg(test)]
+    let result = match result {
+        Ok(value) => value,
+        Err(payload) => {
+            tree.layout_dirty = true;
+            tree.context.content_limit_measures.clear();
+            std::panic::resume_unwind(payload)
+        }
+    };
     result
 }
 

@@ -96,6 +96,31 @@ struct Totals {
     pass: usize,
     scoped: usize,
     restored: usize,
+    expected_missing_stylesheets: usize,
+}
+
+fn expected_missing_stylesheet(document: &Path, resource: &url::Url, root: &Path) -> bool {
+    // git ls-tree at WPT 97ea26e26a2aac3eec7e770650b25e7049ed4a4e has neither target.
+    // Keep the normal browser fallback; rewriting them to support/flexbox.css changes the input.
+    const DANGLING: [(&str, &str); 2] = [
+        (
+            "css/css-flexbox/percentage-descendant-of-anonymous-flex-item.html",
+            "css/css-flexbox/resources/flexbox.css",
+        ),
+        (
+            "css/css-flexbox/reference/flexbox-with-multi-column-property-ref.html",
+            "css/css-flexbox/reference/resources/flexbox.css",
+        ),
+    ];
+    let Ok(resource) = resource.to_file_path() else {
+        return false;
+    };
+    DANGLING.iter().any(|(page, stylesheet)| {
+        document == root.join(page)
+            && resource == root.join(stylesheet)
+            && std::fs::symlink_metadata(&resource)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    })
 }
 
 fn compare_document(
@@ -114,6 +139,27 @@ fn compare_document(
         },
     )
     .unwrap();
+    let resource_failures: Vec<_> = parsed
+        .warnings
+        .iter()
+        .filter(|warning| {
+            if let raikiri_traits::WarningKind::NetworkFallback { url } = &warning.kind
+                && expected_missing_stylesheet(path, url, &resources.root)
+            {
+                totals.expected_missing_stylesheets += 1;
+                return false;
+            }
+            matches!(
+                warning.kind,
+                raikiri_traits::WarningKind::NetworkFallback { .. }
+                    | raikiri_traits::WarningKind::PolicyWarning { .. }
+            )
+        })
+        .collect();
+    assert!(
+        resource_failures.is_empty(),
+        "stylesheet inputs unavailable: {resource_failures:?}"
+    );
     let mut document = transport(&parsed);
     let mut references = Vec::new();
     for node in &document.logical_snapshot().nodes {
@@ -140,13 +186,17 @@ fn compare_document(
     let tree = raikiri_html::build_rule_tree(&parsed);
     let media =
         raikiri_style::MediaContext::with_viewport(raikiri_style::MediaType::Screen, 800, 600);
-    let (fonts, _) = crate::build_inline_document_fonts(
+    let (fonts, font_report) = crate::build_inline_document_fonts(
         shared,
         &tree.font_faces_for(&media),
         &FontLoader {
             resources,
             base: &base,
         },
+    );
+    assert!(
+        font_report.skipped.is_empty(),
+        "font inputs unavailable: {font_report:?}"
     );
     document.set_font_collection(fonts);
     let resolver = raikiri_net::ImageResolver::new(resources.clone());
@@ -239,6 +289,10 @@ fn flex_grid_baseline_getters_agree() {
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     if filter.is_none() {
+        assert_eq!(
+            totals.expected_missing_stylesheets, 2,
+            "review stale WPT resource exceptions"
+        );
         assert!(totals.documents >= ids.len());
         assert!(totals.roles.iter().all(|count| *count > 0));
         assert!(
@@ -273,4 +327,49 @@ fn parser_transport_preserves_logical_inputs() {
             .iter()
             .any(|cv| cv.width == raikiri_style::ComputedLengthPercentageOrAuto::Px(23.0))
     );
+}
+
+#[test]
+fn missing_stylesheet_or_font_is_not_a_successful_comparison() {
+    for head in [
+        "<link rel=stylesheet href=missing.css>",
+        "<style>@font-face { font-family:Missing; src:url(missing.ttf) } body {font-family:Missing}</style>",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let path = root.join("test.html");
+        std::fs::write(&path, format!("<!doctype html><html><head>{head}</head><body style='display:flex'><div>test</div></body></html>")).unwrap();
+        let resources = LocalResources { root };
+        let fonts = crate::layout::test_support::ifc_ahem_fonts();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            compare_document(&path, &resources, &fonts, &mut Totals::default());
+        }));
+        assert!(
+            result.is_err(),
+            "missing input was silently accepted: {head}"
+        );
+    }
+}
+
+#[test]
+fn missing_stylesheet_exceptions_are_exact_and_expire_when_the_file_exists() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let page = root.join("css/css-flexbox/percentage-descendant-of-anonymous-flex-item.html");
+    let missing = root.join("css/css-flexbox/resources/flexbox.css");
+    let url = url::Url::from_file_path(&missing).unwrap();
+    assert!(expected_missing_stylesheet(&page, &url, &root));
+    assert!(!expected_missing_stylesheet(
+        &root.join("another.html"),
+        &url,
+        &root
+    ));
+    assert!(!expected_missing_stylesheet(
+        &page,
+        &url.join("another.css").unwrap(),
+        &root
+    ));
+    std::fs::create_dir_all(missing.parent().unwrap()).unwrap();
+    std::fs::write(&missing, "body { display:flex }").unwrap();
+    assert!(!expected_missing_stylesheet(&page, &url, &root));
 }

@@ -61,3 +61,38 @@ fn intrinsic_limit_install_and_restore_are_visible_to_the_view() {
     assert_eq!(session.style_view(child).min_size(), original);
     assert_eq!(session.style_override_depth(child), 0);
 }
+
+#[test]
+fn width_limit_scope_restores_after_callback_unwinds() {
+    let (mut doc, mut cascade, child, _) = fixture();
+    cascade.computed[child].min_width = L::MaxContent;
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    let original = session.style_view(child).min_size();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::super::with_width_limits(
+            &mut session,
+            child,
+            taffy::Size {
+                width: Some(100.0),
+                height: None,
+            },
+            100.0,
+            |tree| {
+                assert_eq!(tree.style_override_depth(child), 1);
+                assert!(!tree.style_view(child).min_size().width.is_auto());
+                panic!("width callback unwind");
+            },
+        );
+    }));
+    assert!(panic.is_err());
+    assert_eq!(
+        session.layout_style_for_key(child).unwrap().min_size,
+        original
+    );
+    assert_eq!(session.style_view(child).min_size(), original);
+    assert_eq!(session.style_override_depth(child), 0);
+    assert_eq!(session.size_scope_checkpoint(), 0);
+    assert_eq!(session.context.content_limit_depth, 0);
+}
