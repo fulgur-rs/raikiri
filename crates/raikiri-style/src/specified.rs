@@ -65,8 +65,8 @@ use crate::property::{
     resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
-    ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent,
-    NormalLineHeight, ResolveContext, empty_computed_box_shadow_list,
+    ComputedBoxShadowItem, ComputedLength, ComputedLengthPercentageOrAuto, ComputedLineHeight,
+    ComputedTextIndent, NormalLineHeight, ResolveContext, empty_computed_box_shadow_list,
     empty_computed_text_shadow_list, lift_border_spacing, lift_font_size, lift_letter_spacing,
     lift_line_height, lift_tab_size, lift_text_indent, lift_text_underline_offset,
     lift_word_spacing, resolve_background_image, resolve_background_size, resolve_border_radius,
@@ -341,10 +341,11 @@ pub struct SpecifiedValues {
     /// axis for all of them (CSS Sizing 3 §5.1), so they compute to `auto` unless the box is one
     /// that fills the space it is given for `auto`, as a page-margin box does.
     pub(crate) keeps_block_size_keywords: bool,
-    /// Cascade precedence of the winning `width` / `height` / `inline-size` /
-    /// `block-size` declarations. Phase 3 lets the logical and physical
-    /// declaration that map onto the same axis compete in cascade order.
-    pub(crate) preferred_size_precedence: PreferredSizePrecedence,
+    /// Cascade precedence of the winning size declarations (`width`,
+    /// `height`, `inline-size`, `block-size` and the minimum sizes). Phase 3
+    /// lets the logical and physical declaration that map onto the same axis
+    /// compete in cascade order.
+    pub(crate) size_precedence: SizePrecedence,
     /// **Specified** `top`; absolutized in phase 3.
     pub top: LengthOrAuto,
     /// **Specified** `right`; absolutized in phase 3.
@@ -759,14 +760,78 @@ pub struct SpecifiedValues {
 /// (CSS Cascading 4 §6.1).
 pub(crate) type CascadePrecedence = (u8, (bool, u32), u32, u32, usize);
 
-/// [`CascadePrecedence`] of each winning preferred-size declaration; `None`
-/// when no declaration won for that property.
+/// [`CascadePrecedence`] of each winning size declaration; `None` when no
+/// declaration won for that property.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct PreferredSizePrecedence {
+pub(crate) struct SizePrecedence {
     pub(crate) width: Option<CascadePrecedence>,
     pub(crate) height: Option<CascadePrecedence>,
     pub(crate) inline_size: Option<CascadePrecedence>,
     pub(crate) block_size: Option<CascadePrecedence>,
+    pub(crate) min_width: Option<CascadePrecedence>,
+    pub(crate) min_height: Option<CascadePrecedence>,
+    pub(crate) min_block_size: Option<CascadePrecedence>,
+}
+
+impl SizePrecedence {
+    /// Record `rank` as the precedence of the winning declaration of `key`;
+    /// a key that is not a size property is ignored.
+    pub(crate) fn record(&mut self, key: crate::property::PropertyKey, rank: CascadePrecedence) {
+        use crate::property::PropertyKey as K;
+        let slot = match key {
+            K::Width => &mut self.width,
+            K::Height => &mut self.height,
+            K::InlineSize => &mut self.inline_size,
+            K::BlockSize => &mut self.block_size,
+            K::MinWidth => &mut self.min_width,
+            K::MinHeight => &mut self.min_height,
+            K::MinBlockSize => &mut self.min_block_size,
+            _ => return,
+        };
+        *slot = Some(rank);
+    }
+
+    /// Record the declaration at `position` of a sequence that is already
+    /// sorted in ascending cascade order, so its position stands for its
+    /// precedence.
+    pub(crate) fn record_in_order(&mut self, key: crate::property::PropertyKey, position: usize) {
+        self.record(key, (0, (false, 0), 0, 0, position));
+    }
+}
+
+/// Whether a logical size takes the place of the physical size on its axis,
+/// which is the one declared later in cascade order.
+///
+/// CSS Logical Properties 1 §4: a logical property and the physical property
+/// it maps to share one computed value. Without any recorded precedence, a
+/// declared logical value wins.
+fn logical_size_wins(
+    physical_rank: Option<CascadePrecedence>,
+    logical_declared: bool,
+    logical_rank: Option<CascadePrecedence>,
+) -> bool {
+    if logical_rank.is_some() {
+        logical_rank >= physical_rank
+    } else {
+        physical_rank.is_none() && logical_declared
+    }
+}
+
+/// The value a logical size and the physical size on its axis share, see
+/// [`logical_size_wins`]. A winner that was invalid at computed-value time
+/// still takes its place in cascade order and computes to the initial `auto`.
+fn pick_by_precedence<T: Copy>(
+    physical: T,
+    physical_rank: Option<CascadePrecedence>,
+    logical: Option<T>,
+    logical_rank: Option<CascadePrecedence>,
+    initial: T,
+) -> T {
+    if logical_size_wins(physical_rank, logical.is_some(), logical_rank) {
+        logical.unwrap_or(initial)
+    } else {
+        physical
+    }
 }
 
 /// `size` as `auto` when it is one of the sizing keywords, which stand for the size of the
@@ -887,7 +952,7 @@ impl SpecifiedValues {
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
             inline_size: None,
-            preferred_size_precedence: PreferredSizePrecedence::default(),
+            size_precedence: SizePrecedence::default(),
             block_size: None,
             keeps_block_size_keywords: false,
             top: LengthOrAuto::Auto,
@@ -1344,7 +1409,7 @@ impl SpecifiedValues {
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
             inline_size: None,
-            preferred_size_precedence: PreferredSizePrecedence::default(),
+            size_precedence: SizePrecedence::default(),
             block_size: None,
             keeps_block_size_keywords: false,
             top: LengthOrAuto::Auto,
@@ -1911,8 +1976,9 @@ impl SpecifiedValues {
     /// mapping. In `vertical-rl` / `vertical-lr`, the returned physical
     /// `(width, height)` follows CSS Logical Properties 1 §4.1
     /// (<https://www.w3.org/TR/css-logical-1/#dimension-properties>): the
-    /// inline size is the physical height. A declared logical size replaces
-    /// the physical size on the same axis, matching `min-block-size` below.
+    /// inline size is the physical height. A logical size and the physical
+    /// size on the same axis compete in cascade order, as `min-block-size`
+    /// does below.
     fn map_logical_preferred_sizes(&mut self) -> Option<(LengthOrAuto, LengthOrAuto)> {
         if !self.keeps_block_size_keywords {
             self.height = without_sizing_keyword(self.height);
@@ -1920,7 +1986,7 @@ impl SpecifiedValues {
         }
         let inline_size = self.inline_size.take();
         let block_size = self.block_size.take();
-        let precedence = self.preferred_size_precedence;
+        let precedence = self.size_precedence;
         if inline_size.is_none()
             && block_size.is_none()
             && precedence.inline_size.is_none()
@@ -1928,22 +1994,14 @@ impl SpecifiedValues {
         {
             return None;
         }
-        // CSS Logical Properties 1 §4: a logical property and the physical
-        // property it maps to share one computed value, so the one later in
-        // cascade order wins.
-        let pick = |physical: LengthOrAuto,
-                    physical_rank: Option<CascadePrecedence>,
-                    logical: Option<LengthOrAuto>,
-                    logical_rank: Option<CascadePrecedence>| {
-            // A winner invalid at computed-value time still takes its place
-            // in cascade order and computes to the initial `auto`.
-            if logical_rank.is_some() && logical_rank >= physical_rank {
-                logical.unwrap_or(LengthOrAuto::Auto)
-            } else if physical_rank.is_some() {
-                physical
-            } else {
-                logical.unwrap_or(physical)
-            }
+        let pick = |physical, physical_rank, logical, logical_rank| {
+            pick_by_precedence(
+                physical,
+                physical_rank,
+                logical,
+                logical_rank,
+                LengthOrAuto::Auto,
+            )
         };
         let vertical = self.writing_mode.is_vertical().then(|| {
             (
@@ -2069,14 +2127,39 @@ impl SpecifiedValues {
             own_line_height,
             ctx,
         );
-        let physical_min_block = self.min_block_size.map(|value| {
+        // `min-block-size` and the minimum size on its axis share one computed
+        // value, so the one later in cascade order wins. The logical value is
+        // kept only while it does, for layout to tell the two apart.
+        let logical_min = self.min_block_size.map(|value| {
             resolve_size_length_percentage_or_auto(value, font_size, own_line_height, ctx)
         });
-        let (min_width, min_height) = if self.writing_mode.is_vertical() {
-            (physical_min_block.unwrap_or(min_width), min_height)
+        let precedence = self.size_precedence;
+        let vertical = self.writing_mode.is_vertical();
+        let physical_min_rank = if vertical {
+            precedence.min_width
         } else {
-            (min_width, physical_min_block.unwrap_or(min_height))
+            precedence.min_height
         };
+        let logical_min_wins = logical_size_wins(
+            physical_min_rank,
+            logical_min.is_some(),
+            precedence.min_block_size,
+        );
+        // A logical winner that was invalid at computed-value time computes to
+        // the initial `auto`.
+        let shared_min = |physical| {
+            if logical_min_wins {
+                logical_min.unwrap_or(ComputedLengthPercentageOrAuto::Auto)
+            } else {
+                physical
+            }
+        };
+        let (min_width, min_height) = if vertical {
+            (shared_min(min_width), min_height)
+        } else {
+            (min_width, shared_min(min_height))
+        };
+        let logical_min = logical_min.filter(|_| logical_min_wins);
         // CSS2 §9.7: same-node coupling forces the computed `display` value to depend on the
         // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
         // phase 3 like overflow cross-axis coupling.
@@ -2273,7 +2356,7 @@ impl SpecifiedValues {
             ),
             min_width,
             min_height,
-            min_block_size: physical_min_block,
+            min_block_size: logical_min,
             vertical_logical_size,
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),

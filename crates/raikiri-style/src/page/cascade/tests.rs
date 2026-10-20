@@ -8683,6 +8683,148 @@ fn margin_box_logical_sizes_follow_the_margin_boxs_own_writing_mode() {
     assert_eq!(height, ComputedLengthPercentageOrAuto::Px(10.0));
 }
 
+/// A margin box lets a logical size and the physical size on its axis compete
+/// in the order of the declarations, whichever comes first.
+#[test]
+fn margin_box_logical_sizes_compete_with_physical_ones_in_declaration_order() {
+    let style = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        result.margin_box_style(&rule, None)
+    };
+    let sizes = |style: &ComputedValues| (style.width, style.height);
+    // In `vertical-rl` the inline size is the height.
+    let vertical = "@page { @top-left { content: 'X'; writing-mode: vertical-rl; ";
+    assert_eq!(
+        sizes(&style(&format!(
+            "{vertical}inline-size: 20px; height: 5px }} }}"
+        ))),
+        (
+            ComputedLengthPercentageOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::Px(5.0)
+        )
+    );
+    assert_eq!(
+        sizes(&style(&format!(
+            "{vertical}height: 5px; inline-size: 20px }} }}"
+        ))),
+        (
+            ComputedLengthPercentageOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::Px(20.0)
+        )
+    );
+}
+
+/// `min-block-size` and the minimum size on its axis compete the same way.
+#[test]
+fn margin_box_min_block_size_competes_with_the_physical_minimum_in_declaration_order() {
+    let min = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        let style = result.margin_box_style(&rule, None);
+        (style.min_width, style.min_height, style.min_block_size)
+    };
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    assert_eq!(
+        min("@page { @top-left { content: 'X'; min-block-size: 5px; min-height: 10px } }"),
+        (Auto, Px(10.0), None)
+    );
+    assert_eq!(
+        min("@page { @top-left { content: 'X'; min-height: 10px; min-block-size: 5px } }"),
+        (Auto, Px(5.0), Some(Px(5.0)))
+    );
+    let vertical = "@page { @top-left { content: 'X'; writing-mode: vertical-rl; ";
+    assert_eq!(
+        min(&format!(
+            "{vertical}min-block-size: 5px; min-width: 10px }} }}"
+        )),
+        (Px(10.0), Auto, None)
+    );
+    assert_eq!(
+        min(&format!(
+            "{vertical}min-width: 10px; min-block-size: 5px }} }}"
+        )),
+        (Px(5.0), Auto, Some(Px(5.0)))
+    );
+    // A keyword that arrives through the box's own `writing-mode` order too.
+    assert_eq!(
+        min("@page { @top-left { content: 'X'; min-block-size: inherit; min-height: 10px } }"),
+        (Auto, Px(10.0), None)
+    );
+}
+
+/// A declaration that failed to substitute a `var()` still takes its place in
+/// the order, and computes to `auto`, whichever of the two sizes it is.
+#[test]
+fn margin_box_size_invalid_at_computed_value_time_keeps_its_place_in_the_order() {
+    let style = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        result.margin_box_style(&rule, None)
+    };
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let min = |css: &str| {
+        let style = style(css);
+        (style.min_height, style.min_block_size)
+    };
+    assert_eq!(
+        min(
+            "@page { @top-left { content: 'X'; min-height: 10px; min-block-size: var(--missing) } }"
+        ),
+        (Auto, None)
+    );
+    assert_eq!(
+        min(
+            "@page { @top-left { content: 'X'; min-block-size: 5px; min-height: var(--missing) } }"
+        ),
+        (Auto, None)
+    );
+    // The other size on the axis is still untouched by a declaration that
+    // lost for another property.
+    assert_eq!(
+        min("@page { @top-left { content: 'X'; min-height: 10px; min-width: var(--missing) } }"),
+        (Px(10.0), None)
+    );
+    // In `vertical-rl` the inline size is the height.
+    let vertical = "@page { @top-left { content: 'X'; writing-mode: vertical-rl; ";
+    assert_eq!(
+        style(&format!(
+            "{vertical}height: 5px; inline-size: var(--missing) }} }}"
+        ))
+        .height,
+        Auto
+    );
+    assert_eq!(
+        style(&format!(
+            "{vertical}inline-size: 20px; height: var(--missing) }} }}"
+        ))
+        .height,
+        Auto
+    );
+}
+
+/// The page context orders its own sizes the same way, though only its
+/// margin boxes see the result.
+#[test]
+fn page_context_size_invalid_at_computed_value_time_keeps_its_place_in_the_order() {
+    let result = page(
+        "@page { min-height: 10px; min-block-size: var(--missing); @top-left { content: 'X' } }",
+        &ComputedValues::initial(),
+    );
+    let page_style = result.page_style.as_deref().unwrap();
+    assert_eq!(
+        page_style.computed.min_height,
+        ComputedLengthPercentageOrAuto::Auto
+    );
+    assert_eq!(page_style.computed.min_block_size, None);
+}
+
 #[test]
 fn cascade_page_border_image_computes_its_longhands() {
     let root = ComputedValues::initial();

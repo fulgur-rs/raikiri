@@ -1039,9 +1039,11 @@ pub struct ComputedValues {
     /// `min-height` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_height: ComputedLengthPercentageOrAuto,
-    /// Authored logical `min-block-size`, retained so layout can distinguish
-    /// its fragmentation behavior from a physical `min-height` declaration.
-    /// The used value is already mapped into `min_width`/`min_height`.
+    /// Logical `min-block-size`, retained so layout can distinguish its
+    /// fragmentation behavior from a physical `min-height` declaration. It is
+    /// `Some` only while the logical declaration wins over the physical
+    /// minimum size on its axis in cascade order; the used value is already
+    /// mapped into `min_width`/`min_height`.
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
     /// Physical `(width, height)` of the authored `inline-size` /
     /// `block-size` mapped through a `vertical-rl` or `vertical-lr`
