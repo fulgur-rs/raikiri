@@ -39,7 +39,9 @@ pub(crate) fn box_parent(
 pub(crate) enum BoxTree<'a> {
     /// The boxes captured for a layout pass, including anonymous boxes.
     Layout(&'a Document),
-    /// A query of an explicit cascade, independent of retained layout metadata.
+    /// A query of an explicit cascade, independent of retained layout
+    /// metadata, but for the boxes that layout lifted into their container
+    /// (see [`crate::Node::generates_no_box`]), which make no box here either.
     Cascade(&'a Document, &'a CascadeResult),
 }
 
@@ -103,8 +105,10 @@ impl<'a> BoxTree<'a> {
             {
                 return true;
             }
-            self.display(id)
+            (self
+                .display(id)
                 .is_none_or(|display| display != DisplayValue::Contents)
+                && !document.nodes[id].generates_no_box())
                 || (scope == BoxParentScope::LayoutRoot && is_layout_root(document, id))
         })?;
         (scope == BoxParentScope::Document || document.nodes[parent].kind() == NodeKind::Element)

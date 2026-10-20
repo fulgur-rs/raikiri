@@ -626,9 +626,10 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             transform_y: origin.transform_y,
             paint_offset_y: origin.paint_offset_y,
             fragment_clip_height: child_fragment_clip_height,
-            column_clip_height: (cascade.computed[child].display == DisplayValue::Contents)
-                .then_some(plan.multicol_clip_height)
-                .flatten(),
+            column_clip_height: (cascade.computed[child].display == DisplayValue::Contents
+                || document.get_node(child).is_some_and(Node::generates_no_box))
+            .then_some(plan.multicol_clip_height)
+            .flatten(),
             fragment_id: origin.fragment_id,
             fragment_origin_x: origin.fragment_origin_x,
             fragment_origin_y: origin.fragment_origin_y,
@@ -669,6 +670,7 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 if !self.fragmented_nodes.contains(&child) && document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
                     child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
                         && cascade.computed[child].display != DisplayValue::Contents
+                        && !child_node.generates_no_box()
                         && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
                         && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
                 }) => // cov:ignore: exercised by ignored exact paged-text WPT.
@@ -732,9 +734,11 @@ pub(super) fn multicol_clip_height(
     };
     // A `display: contents` element has no box, so the columns of
     // the container it sits in hold its children.
-    own_multicol_clip_height.or((cv.display == DisplayValue::Contents)
-        .then_some(column_clip_height)
-        .flatten())
+    own_multicol_clip_height.or(
+        (cv.display == DisplayValue::Contents || node.generates_no_box())
+            .then_some(column_clip_height)
+            .flatten(),
+    )
 }
 
 /// How far the generated text shifts `child`, from `(child, shift)` pairs; no
