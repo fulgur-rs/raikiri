@@ -797,14 +797,7 @@ pub(crate) fn parse_property_grammar(
         // `auto | from-font | <length-percentage>` (`<line-width>` is out of
         // scope; see `TextDecorationThickness` doc).
         "text-decoration-thickness" => {
-            if input
-                .try_parse(|i| i.expect_ident_matching("inherit"))
-                .is_ok()
-            {
-                Some(PropertyValue::TextDecorationThicknessInherit)
-            } else {
-                parse_text_decoration_thickness(input).map(PropertyValue::TextDecorationThickness)
-            }
+            parse_text_decoration_thickness(input).map(PropertyValue::TextDecorationThickness)
         }
         // ED §2.9.1 text-decoration-inset. Grammar: `<length>{1,2} | auto`
         // (`<percentage>` is out of scope because WPT rejects it;

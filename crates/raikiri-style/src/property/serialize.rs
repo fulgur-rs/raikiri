@@ -678,7 +678,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::EmptyCells(..)
         | PropertyValue::Font(..)
         | PropertyValue::TextDecorationThickness(..)
-        | PropertyValue::TextDecorationThicknessInherit
         | PropertyValue::Page(..)
         | PropertyValue::ColumnCount(..)
         | PropertyValue::ColumnWidth(..)

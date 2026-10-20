@@ -4014,6 +4014,59 @@ pub fn lift_text_indent(computed: ComputedTextIndent) -> TextIndentLength {
     }
 }
 
+/// Lift a computed `text-underline-offset` into its specified form.
+///
+/// A length is already absolute and a percentage stays relative, so both
+/// round trip. A mixed calc is copied with its `em` term at zero because it
+/// was resolved against the declaring element's font size.
+pub(crate) fn lift_text_underline_offset(
+    computed: ComputedTextUnderlineOffset,
+) -> TextUnderlineOffset {
+    match computed {
+        ComputedTextUnderlineOffset::Auto => TextUnderlineOffset::Auto,
+        ComputedTextUnderlineOffset::Length(value) => {
+            TextUnderlineOffset::Length(Length::Px(value.px()))
+        }
+        ComputedTextUnderlineOffset::Percent(percent) => {
+            TextUnderlineOffset::Length(Length::Percent(percent))
+        }
+        ComputedTextUnderlineOffset::Calc(value) => {
+            TextUnderlineOffset::Calc(LengthPercentageCalc {
+                percent: value.percent,
+                px: value.px,
+                em: 0.0,
+                ch: 0.0,
+            })
+        }
+    }
+}
+
+/// Lift a computed `text-decoration-thickness` into its specified form.
+pub(crate) fn lift_text_decoration_thickness(
+    computed: ComputedTextDecorationThickness,
+) -> TextDecorationThickness {
+    match computed {
+        ComputedTextDecorationThickness::Auto => TextDecorationThickness::Auto,
+        ComputedTextDecorationThickness::FromFont => TextDecorationThickness::FromFont,
+        ComputedTextDecorationThickness::Length(px) => {
+            TextDecorationThickness::Length(Length::Px(px.px()))
+        }
+    }
+}
+
+/// Lift a computed `text-decoration-inset` into its specified form.
+pub(crate) fn lift_text_decoration_inset(
+    computed: ComputedTextDecorationInset,
+) -> TextDecorationInset {
+    match computed {
+        ComputedTextDecorationInset::Auto => TextDecorationInset::Auto,
+        ComputedTextDecorationInset::Lengths { start, end } => TextDecorationInset::Lengths {
+            start: Length::Px(start.px()),
+            end: Length::Px(end.px()),
+        },
+    }
+}
+
 /// **Lift** the parent's computed `letter-spacing` / `word-spacing` into
 /// specified form to seed inheritance.
 ///
