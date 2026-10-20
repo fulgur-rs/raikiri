@@ -17,6 +17,7 @@
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
+use raikiri_style::property::WhiteSpaceCollapse;
 
 /// Lets the spanners of multicol containers reach the columns through the
 /// wrappers around them, by laying those wrappers out as `display: contents`.
@@ -135,55 +136,49 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
 /// Whether the lines that the box of `id` holds directly are laid out as they
 /// would be in `container`, the box that holds them once `id` makes no box. A
 /// line of text that lies between two blocks of a wrapper goes in an
-/// anonymous block of the container, which takes the container's properties.
+/// anonymous block of the container, which has the style of a child of the
+/// container that no rule matches: whatever else the wrapper's style says
+/// about text, fonts, decoration or direction would be lost with its box.
 fn keeps_line_layout(doc: &Document, cascade: &CascadeResult, id: usize, container: usize) -> bool {
-    if !holds_lines(doc, cascade, id) {
+    let (wrapper, container) = (&cascade.computed[id], &cascade.computed[container]);
+    if !holds_lines(doc, cascade, id, container) {
         return true;
     }
-    let (cv, container) = (&cascade.computed[id], &cascade.computed[container]);
-    cv.text_align == container.text_align
-        && cv.text_align_last == container.text_align_last
-        && cv.text_justify == container.text_justify
-        && cv.text_wrap == container.text_wrap
-        && cv.text_wrap_style == container.text_wrap_style
-        && cv.text_group_align == container.text_group_align
-        && cv.hanging_punctuation == container.hanging_punctuation
-        && cv.text_indent == container.text_indent
-        && cv.text_indent_hanging == container.text_indent_hanging
-        && cv.text_indent_each_line == container.text_indent_each_line
-        && cv.direction == container.direction
-        && cv.unicode_bidi == container.unicode_bidi
-        && cv.white_space == container.white_space
-        && cv.white_space_collapse == container.white_space_collapse
-        && cv.tab_size == container.tab_size
-        && cv.line_break == container.line_break
-        && cv.word_break == container.word_break
-        && cv.overflow_wrap == container.overflow_wrap
-        && cv.hyphens == container.hyphens
-        && cv.letter_spacing == container.letter_spacing
-        && cv.word_spacing == container.word_spacing
-        && cv.text_transform == container.text_transform
-        && cv.orphans == container.orphans
-        && cv.widows == container.widows
-        && cv.font_family == container.font_family
-        && cv.font_size == container.font_size
-        && cv.font_weight == container.font_weight
-        && cv.font_style == container.font_style
-        && cv.line_height == container.line_height
+    let mut anonymous = ComputedValues::inherit_from(container);
+    // Both are blocks, and the margins were checked to take no space.
+    anonymous.display = wrapper.display;
+    anonymous.margin = wrapper.margin;
+    anonymous == *wrapper
 }
 
 /// Whether the box of `id` has text that renders, or an inline-level box,
-/// among its children, or among those of a `display: contents` child.
-fn holds_lines(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+/// among its children, or among those of a `display: contents` child. White
+/// space makes no line between blocks when it collapses both in the wrapper
+/// and in `container`, whose anonymous block would take it.
+fn holds_lines(
+    doc: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    container: &ComputedValues,
+) -> bool {
+    let drops_white_space = |cv: &ComputedValues| {
+        matches!(
+            cv.effective_white_space_collapse,
+            WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
+        )
+    };
     doc.nodes[id].children.iter().any(|&child| {
         let node = &doc.nodes[child];
         match node.kind() {
-            NodeKind::Text => node
-                .text_content()
-                .is_some_and(|text| !text.chars().all(char::is_whitespace)),
+            NodeKind::Text => node.text_content().is_some_and(|text| {
+                let dropped = text.chars().all(char::is_whitespace)
+                    && drops_white_space(container)
+                    && drops_white_space(&cascade.computed[id]);
+                !text.is_empty() && !dropped
+            }),
             NodeKind::Element => cascade.computed.get(child).is_some_and(|cv| {
                 if cv.display == DisplayValue::Contents {
-                    holds_lines(doc, cascade, child)
+                    holds_lines(doc, cascade, child, container)
                 } else {
                     cv.display.is_inline_level()
                 }

@@ -161,44 +161,47 @@ fn a_wrapper_below_one_that_keeps_its_box_is_not_reached() {
     }
 }
 
+/// Whether a plain wrapper that holds `content` and a spanner, in a container
+/// styled with `container_css`, makes no box. `content` is `text`, `inline`
+/// (an inline-level box), `space` (white space only) or `comment`.
+fn lifts_with_lines(container_css: &str, wrapper_css: &str, content: &str) -> bool {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let container = doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+    let wrapper = doc.append_element(Some(container), "div", Style::default(), Some(wrapper_css));
+    match content {
+        "text" => {
+            doc.append_text(wrapper, "before");
+        }
+        "inline" => {
+            doc.append_element(Some(wrapper), "b", Style::default(), None::<&str>);
+        }
+        "space" => {
+            doc.append_text(wrapper, " \n ");
+        }
+        "comment" => {
+            doc.append_comment(Some(wrapper), "note");
+        }
+        _ => unreachable!(),
+    }
+    doc.append_element(
+        Some(wrapper),
+        "h2",
+        Style::default(),
+        Some("display:block;column-span:all;height:10px"),
+    );
+    lay_out(&mut doc);
+    doc.nodes[wrapper].generates_no_box()
+}
+
 #[test]
 fn the_lines_a_wrapper_holds_keep_their_layout() {
-    let wrapped = |wrapper_css: &str, content: &str| {
-        let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-        let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
-        let wrapper =
-            doc.append_element(Some(container), "div", Style::default(), Some(wrapper_css));
-        match content {
-            "text" => {
-                doc.append_text(wrapper, "before");
-            }
-            "inline" => {
-                doc.append_element(Some(wrapper), "b", Style::default(), None::<&str>);
-            }
-            "space" => {
-                doc.append_text(wrapper, " \n ");
-            }
-            "comment" => {
-                doc.append_comment(Some(wrapper), "note");
-            }
-            _ => unreachable!(),
-        }
-        doc.append_element(
-            Some(wrapper),
-            "h2",
-            Style::default(),
-            Some("display:block;column-span:all;height:10px"),
-        );
-        lay_out(&mut doc);
-        doc.nodes[wrapper].generates_no_box()
-    };
     // Lines laid out as in the container.
-    assert!(wrapped(BLOCK, "text"));
-    assert!(wrapped(BLOCK, "inline"));
+    assert!(lifts_with_lines(COLUMNS, BLOCK, "text"));
+    assert!(lifts_with_lines(COLUMNS, BLOCK, "inline"));
     // What the container does not do to its lines the wrapper must not do
-    // either: the lines would take the container's layout.
+    // either: the lines would take the container's layout and style.
     for css in [
         "text-align:center",
         "text-align-last:right",
@@ -214,6 +217,7 @@ fn the_lines_a_wrapper_holds_keep_their_layout() {
         "font-size:30px",
         "font-weight:bold",
         "font-style:italic",
+        "font-variant-caps:small-caps",
         "line-height:40px",
         "text-wrap:balance",
         "text-wrap:nowrap",
@@ -228,14 +232,59 @@ fn the_lines_a_wrapper_holds_keep_their_layout() {
         "word-spacing:3px",
         "text-transform:uppercase",
         "hanging-punctuation:first",
+        "color:red",
+        "text-shadow:1px 1px black",
+        "text-decoration:underline",
+        "visibility:hidden",
     ] {
         let css = format!("{BLOCK};{css}");
-        assert!(!wrapped(&css, "text"), "{css}");
-        assert!(!wrapped(&css, "inline"), "{css}");
-        // Only white space or a comment between the blocks makes no line.
-        assert!(wrapped(&css, "space"), "{css}");
-        assert!(wrapped(&css, "comment"), "{css}");
+        assert!(!lifts_with_lines(COLUMNS, &css, "text"), "{css}");
+        assert!(!lifts_with_lines(COLUMNS, &css, "inline"), "{css}");
     }
+    // Only white space or a comment between the blocks makes no line, when
+    // the white space collapses.
+    for css in [
+        "text-align:center",
+        "color:red",
+        "text-decoration:underline",
+        "font-size:30px",
+    ] {
+        let css = format!("{BLOCK};{css}");
+        assert!(lifts_with_lines(COLUMNS, &css, "space"), "{css}");
+        assert!(lifts_with_lines(COLUMNS, &css, "comment"), "{css}");
+    }
+}
+
+#[test]
+fn white_space_that_is_preserved_between_the_blocks_is_a_line() {
+    for css in [
+        "white-space:pre",
+        "white-space:pre-wrap",
+        "white-space:pre-line",
+        "white-space:break-spaces",
+        "white-space-collapse:preserve",
+        "white-space-collapse:preserve-breaks",
+        "white-space-collapse:preserve-spaces",
+        "white-space-collapse:break-spaces",
+    ] {
+        // The wrapper preserves it, and the container does not.
+        let wrapper = format!("{BLOCK};{css}");
+        assert!(!lifts_with_lines(COLUMNS, &wrapper, "space"), "{wrapper}");
+        // The container preserves it, and the wrapper does not.
+        let container = format!("{COLUMNS};{css}");
+        let wrapper = format!("{BLOCK};white-space:normal");
+        assert!(
+            !lifts_with_lines(&container, &wrapper, "space"),
+            "{container}"
+        );
+        // Both preserve it, so the container's block lays it out the same.
+        assert!(lifts_with_lines(&container, BLOCK, "space"), "{container}");
+    }
+    assert!(lifts_with_lines(
+        COLUMNS,
+        "display:block;white-space-collapse:discard",
+        "space"
+    ));
 }
 
 #[test]
