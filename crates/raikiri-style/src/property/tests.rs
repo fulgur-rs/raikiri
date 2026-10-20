@@ -21,6 +21,23 @@ fn parse_entire(source: &str, name: &str) -> Option<PropertyValue> {
         .ok()
 }
 
+/// Asserts that each CSS-wide keyword parses to the deferred marker the
+/// cascade resolves, for the property spelled `name`.
+fn assert_css_wide_keywords_deferred(name: &str) {
+    let key = property_key_for_name(name).unwrap_or_else(|| panic!("`{name}` has no key"));
+    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+        let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
+            panic!("expected a CSS-wide defaulting marker for `{name}: {keyword}`");
+        };
+        assert_eq!(value.key, key, "{name}: {keyword}");
+        assert_eq!(
+            value.css_wide_keyword(),
+            CssWideKeyword::from_css_ident(keyword),
+            "{name}: {keyword}"
+        );
+    }
+}
+
 fn content_items(source: &str) -> Vec<ContentComponent> {
     match parse(source, "content") {
         // Clone the items of PropertyValue::Content(Arc<ContentList>).

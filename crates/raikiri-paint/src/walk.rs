@@ -353,63 +353,8 @@ pub(crate) fn paint_page_border(
     ) {
         return;
     }
-    // The page context inherits `color` from the root element.
-    let current_color = match declarations.get(&PropertyKey::Color) {
-        Some(PropertyValue::Color(color)) => *color,
-        _ => find_html(document)
-            .and_then(|node_id| cascade.computed.get(node_id))
-            .map_or(CssColor::BLACK, |computed| computed.color),
-    };
-    let ctx = ResolveContext::initial();
-
-    let side = |width_key: PropertyKey, style_key: PropertyKey, color_key: PropertyKey| {
-        let mut border = Border::new();
-        match declarations.get(&width_key) {
-            Some(PropertyValue::BorderTopWidth(value))
-            | Some(PropertyValue::BorderRightWidth(value))
-            | Some(PropertyValue::BorderBottomWidth(value))
-            | Some(PropertyValue::BorderLeftWidth(value)) => border.width = *value,
-            _ => {}
-        }
-        match declarations.get(&style_key) {
-            Some(PropertyValue::BorderTopStyle(value))
-            | Some(PropertyValue::BorderRightStyle(value))
-            | Some(PropertyValue::BorderBottomStyle(value))
-            | Some(PropertyValue::BorderLeftStyle(value)) => border.style = *value,
-            _ => {}
-        }
-        match declarations.get(&color_key) {
-            Some(PropertyValue::BorderTopColor(value))
-            | Some(PropertyValue::BorderRightColor(value))
-            | Some(PropertyValue::BorderBottomColor(value))
-            | Some(PropertyValue::BorderLeftColor(value)) => border.color = *value,
-            _ => {}
-        }
-        resolve_border(border, ComputedLength(16.0), None, &ctx)
-    };
-
-    let borders = Sides {
-        top: side(
-            PropertyKey::BorderTopWidth,
-            PropertyKey::BorderTopStyle,
-            PropertyKey::BorderTopColor,
-        ),
-        right: side(
-            PropertyKey::BorderRightWidth,
-            PropertyKey::BorderRightStyle,
-            PropertyKey::BorderRightColor,
-        ),
-        bottom: side(
-            PropertyKey::BorderBottomWidth,
-            PropertyKey::BorderBottomStyle,
-            PropertyKey::BorderBottomColor,
-        ),
-        left: side(
-            PropertyKey::BorderLeftWidth,
-            PropertyKey::BorderLeftStyle,
-            PropertyKey::BorderLeftColor,
-        ),
-    };
+    let current_color = page_current_color(document, cascade);
+    let borders = page_border_sides(declarations);
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
     let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
@@ -442,6 +387,82 @@ pub(crate) fn paint_page_border(
         &borders,
         current_color,
     );
+}
+
+/// The `color` of the page context, which inherits it from the root element.
+fn page_current_color(document: &Document, cascade: &CascadeResult) -> CssColor {
+    match cascade.page.declarations().get(&PropertyKey::Color) {
+        Some(PropertyValue::Color(color)) => *color,
+        _ => find_html(document)
+            .and_then(|node_id| cascade.computed.get(node_id))
+            .map_or(CssColor::BLACK, |computed| computed.color),
+    }
+}
+
+/// Resolve the four borders of the page context from its `@page` declarations.
+fn page_border_sides(
+    declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
+) -> Sides<raikiri_style::resolve::ComputedBorder> {
+    let ctx = ResolveContext::initial();
+    let side = |width_key, style_key, color_key| {
+        page_border_side(declarations, width_key, style_key, color_key, &ctx)
+    };
+    Sides {
+        top: side(
+            PropertyKey::BorderTopWidth,
+            PropertyKey::BorderTopStyle,
+            PropertyKey::BorderTopColor,
+        ),
+        right: side(
+            PropertyKey::BorderRightWidth,
+            PropertyKey::BorderRightStyle,
+            PropertyKey::BorderRightColor,
+        ),
+        bottom: side(
+            PropertyKey::BorderBottomWidth,
+            PropertyKey::BorderBottomStyle,
+            PropertyKey::BorderBottomColor,
+        ),
+        left: side(
+            PropertyKey::BorderLeftWidth,
+            PropertyKey::BorderLeftStyle,
+            PropertyKey::BorderLeftColor,
+        ),
+    }
+}
+
+/// Resolve one border of the page context from the declarations under the
+/// longhands `width_key`, `style_key` and `color_key` of its side.
+fn page_border_side(
+    declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
+    width_key: PropertyKey,
+    style_key: PropertyKey,
+    color_key: PropertyKey,
+    ctx: &ResolveContext,
+) -> raikiri_style::resolve::ComputedBorder {
+    let mut border = Border::new();
+    match declarations.get(&width_key) {
+        Some(PropertyValue::BorderTopWidth(value))
+        | Some(PropertyValue::BorderRightWidth(value))
+        | Some(PropertyValue::BorderBottomWidth(value))
+        | Some(PropertyValue::BorderLeftWidth(value)) => border.width = *value,
+        _ => {}
+    }
+    match declarations.get(&style_key) {
+        Some(PropertyValue::BorderTopStyle(value))
+        | Some(PropertyValue::BorderRightStyle(value))
+        | Some(PropertyValue::BorderBottomStyle(value))
+        | Some(PropertyValue::BorderLeftStyle(value)) => border.style = *value,
+        _ => {}
+    }
+    match declarations.get(&color_key) {
+        Some(PropertyValue::BorderTopColor(value))
+        | Some(PropertyValue::BorderRightColor(value))
+        | Some(PropertyValue::BorderBottomColor(value))
+        | Some(PropertyValue::BorderLeftColor(value)) => border.color = *value,
+        _ => {}
+    }
+    resolve_border(border, ComputedLength(16.0), None, ctx)
 }
 
 /// Paint a solid `@page` outline around the page content box.
@@ -1304,81 +1325,100 @@ fn generated_flow_height(
             continue;
         }
 
-        let before = generated_pseudo_text_height(
-            document,
-            cascade,
-            current_id,
-            raikiri_style::PseudoElem::Before,
-            snapshots,
-        );
-        let after = generated_pseudo_text_height(
-            document,
-            cascade,
-            current_id,
-            raikiri_style::PseudoElem::After,
-            snapshots,
-        );
-        let Some(node) = document.get_node(current_id) else {
-            cache.insert(current_id, before.max(after)); // cov:ignore: generated flow receives arena-valid node ids
-            continue;
-        };
-
-        // A generated `::before` run is the first child of a block box. When
-        // the block also owns normal-flow block children, those children must
-        // start after the generated run and contribute to the block's auto
-        // height. Keep the existing inline-only bridge unchanged.
-        let block_children = generated_flow_block_children(document, cascade, current_id);
-        let has_generated_block_child = block_children
-            .iter()
-            .any(|child| cache.get(child).copied().unwrap_or(0.0) > 0.0);
-        let height = if !block_children.is_empty()
-            && (before > 0.0 || after > 0.0 || has_generated_block_child)
-        {
-            before
-                + after
-                + block_children
-                    .iter()
-                    .filter_map(|&child| {
-                        let child_node = document.get_node(child)?;
-                        Some(
-                            child_node
-                                .unrounded_layout
-                                .size
-                                .height
-                                .max(cache.get(&child).copied().unwrap_or(0.0)),
-                        )
-                    })
-                    .sum::<f32>()
-        } else {
-            let inline_child = node
-                .children
-                .iter()
-                .filter_map(|&child| {
-                    let child_cv = cascade.computed.get(child)?;
-                    (child_cv.display.is_inline_flow()).then_some(
-                        generated_pseudo_text_height(
-                            document,
-                            cascade,
-                            child,
-                            raikiri_style::PseudoElem::Before,
-                            snapshots,
-                        )
-                        .max(generated_pseudo_text_height(
-                            document,
-                            cascade,
-                            child,
-                            raikiri_style::PseudoElem::After,
-                            snapshots,
-                        )),
-                    )
-                })
-                .fold(0.0, f32::max);
-            before.max(after).max(inline_child)
-        };
+        let height = generated_flow_node_height(document, cascade, current_id, snapshots, cache);
         cache.insert(current_id, height);
     }
 
     cache.get(&node_id).copied().unwrap_or(0.0)
+}
+
+/// The generated flow height of `node_id`, given the heights of its block
+/// children already in `cache`.
+fn generated_flow_node_height(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    snapshots: &CounterSnapshots,
+    cache: &std::collections::HashMap<usize, f32>,
+) -> f32 {
+    let before = generated_pseudo_text_height(
+        document,
+        cascade,
+        node_id,
+        raikiri_style::PseudoElem::Before,
+        snapshots,
+    );
+    let after = generated_pseudo_text_height(
+        document,
+        cascade,
+        node_id,
+        raikiri_style::PseudoElem::After,
+        snapshots,
+    );
+    let Some(node) = document.get_node(node_id) else {
+        return before.max(after); // cov:ignore: generated flow receives arena-valid node ids
+    };
+
+    // A generated `::before` run is the first child of a block box. When
+    // the block also owns normal-flow block children, those children must
+    // start after the generated run and contribute to the block's auto
+    // height. Keep the existing inline-only bridge unchanged.
+    let block_children = generated_flow_block_children(document, cascade, node_id);
+    let has_generated_block_child = block_children
+        .iter()
+        .any(|child| cache.get(child).copied().unwrap_or(0.0) > 0.0);
+    if !block_children.is_empty() && (before > 0.0 || after > 0.0 || has_generated_block_child) {
+        return before
+            + after
+            + block_children
+                .iter()
+                .filter_map(|&child| {
+                    let child_node = document.get_node(child)?;
+                    Some(
+                        child_node
+                            .unrounded_layout
+                            .size
+                            .height
+                            .max(cache.get(&child).copied().unwrap_or(0.0)),
+                    )
+                })
+                .sum::<f32>();
+    }
+    let inline_child =
+        generated_inline_children_height(document, cascade, &node.children, snapshots);
+    before.max(after).max(inline_child)
+}
+
+/// The tallest generated `::before` or `::after` text among the inline-flow
+/// `children`.
+fn generated_inline_children_height(
+    document: &Document,
+    cascade: &CascadeResult,
+    children: &[usize],
+    snapshots: &CounterSnapshots,
+) -> f32 {
+    children
+        .iter()
+        .filter_map(|&child| {
+            let child_cv = cascade.computed.get(child)?;
+            (child_cv.display.is_inline_flow()).then_some(
+                generated_pseudo_text_height(
+                    document,
+                    cascade,
+                    child,
+                    raikiri_style::PseudoElem::Before,
+                    snapshots,
+                )
+                .max(generated_pseudo_text_height(
+                    document,
+                    cascade,
+                    child,
+                    raikiri_style::PseudoElem::After,
+                    snapshots,
+                )),
+            )
+        })
+        .fold(0.0, f32::max)
 }
 
 fn generated_flow_block_children(
@@ -4235,6 +4275,25 @@ mod tests;
 #[cfg(test)]
 use raikiri_style::CounterStyleRegistry;
 
+/// The block-axis edges of a column fragment's clip that no other fragment of
+/// the same box lies behind: the top of the first fragment of a box and the
+/// bottom of its last.
+#[derive(Clone, Copy)]
+struct OpenBlockEdges {
+    top: bool,
+    bottom: bool,
+}
+
+impl OpenBlockEdges {
+    /// The edges of the clip of fragment `fragment` of its box.
+    fn of(fragment: &raikiri_dom::LayoutFragment) -> Self {
+        Self {
+            top: fragment.fragment_index == 0,
+            bottom: fragment.fragment_index + 1 >= fragment.fragment_count,
+        }
+    }
+}
+
 /// The clip of a column fragment, with the vertical edges that separate it
 /// from its neighbour columns grown outward to whole device pixels of the
 /// raster output on `grid`.
@@ -4253,11 +4312,17 @@ use raikiri_style::CounterStyleRegistry;
 /// next column, stay exact, as the next fragment's content starts right
 /// behind them.
 ///
+/// The top edge of the first fragment of a box and the bottom edge of its
+/// last (`open`) have no such neighbour, so they grow outward too. The
+/// rasterizer places a line's glyphs on whole device pixels, up to half a
+/// pixel beyond the line box, and an exact edge at a fractional block offset
+/// would cut the row of ink there.
+///
 /// The edges move in device space, so a scaled ancestor grows the clip by
 /// less than one device pixel, not one CSS pixel. A vector output, or a
 /// transform that rotates or skews, has no grid (`None`) and keeps the clip
 /// exact.
-fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>) -> Rect {
+fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>, open: OpenBlockEdges) -> Rect {
     let Some(grid) = grid.filter(|grid| {
         grid.scale_x.is_finite() && grid.scale_x != 0.0 && grid.offset_x.is_finite()
     }) else {
@@ -4271,7 +4336,29 @@ fn snap_column_clip_outward(clip: Rect, grid: Option<DeviceGrid>) -> Rect {
         css(first.min(second).floor()),
         css(first.max(second).ceil()),
     );
-    Rect::new(near.min(far), clip.y0, near.max(far), clip.y1)
+    let (mut top, mut bottom) = (clip.y0, clip.y1);
+    if grid.scale_y.is_finite() && grid.scale_y != 0.0 && grid.offset_y.is_finite() {
+        let device = |y: f64| y * grid.scale_y + grid.offset_y;
+        let css = |y: f64| (y - grid.offset_y) / grid.scale_y;
+        // The top edge is the low one in device space unless the grid is
+        // mirrored.
+        let grow = |y: f64, is_top: bool| {
+            let low = (grid.scale_y > 0.0) == is_top;
+            let device_y = device(y);
+            css(if low {
+                device_y.floor()
+            } else {
+                device_y.ceil()
+            })
+        };
+        if open.top {
+            top = grow(clip.y0, true);
+        }
+        if open.bottom {
+            bottom = grow(clip.y1, false);
+        }
+    }
+    Rect::new(near.min(far), top, near.max(far), bottom)
 }
 
 fn push_overflow_clip(

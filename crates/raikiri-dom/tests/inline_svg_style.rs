@@ -274,3 +274,30 @@ fn a_painting_attribute_with_a_variable_is_listed_resolved() {
         )]
     );
 }
+
+#[test]
+fn a_painting_property_of_an_html_ancestor_is_listed_on_the_root() {
+    let elements = declarations(
+        "<style>div{fill:blue;stroke-dasharray:4 2;color:red}</style>\
+         <div><svg width=20 height=20><rect /></svg></div>",
+    );
+    let listed: Vec<_> = elements
+        .iter()
+        .map(|element| (element.element_index, element.declarations.as_str()))
+        .collect();
+    assert_eq!(
+        listed,
+        [(
+            0,
+            "fill:rgba(0,0,255,1)!important;stroke-dasharray:4 2!important;"
+        )]
+    );
+}
+
+#[test]
+fn an_html_element_inside_the_svg_lists_nothing() {
+    let elements = declarations(
+        "<svg width=20 height=20><foreignObject><div style='fill:red'><p>text</p></div></foreignObject><rect /></svg>",
+    );
+    assert!(elements.is_empty(), "{elements:?}");
+}

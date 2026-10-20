@@ -447,9 +447,8 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 ///
 /// # Non-goals
 ///
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
-///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
-///   the canonical list of five keywords and the rationale.
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade (see the "CSS-wide keywords"
+///   section of the [`PropertyValue`] documentation).
 /// - **(a) Invalid under the specification → dropped**: negative `<number>` / `<length-percentage>` values;
 ///   `auto`, `medium`, and other invalid keywords violate the grammar and are dropped.
 pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
@@ -523,9 +522,8 @@ pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight
 ///
 /// # Non-goals
 ///
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
-///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
-///   the canonical list of five keywords and the rationale.
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade (see the "CSS-wide keywords"
+///   section of the [`PropertyValue`] documentation).
 /// - **(b) Unsupported**: `var()` is silently dropped. `calc()` only supports the additive
 ///   `px` + `em` subset described in "Handling `calc()`" above; calculations with `sign()` or
 ///   container-relative units remain unsupported and are dropped.

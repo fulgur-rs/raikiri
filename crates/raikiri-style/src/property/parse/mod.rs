@@ -915,8 +915,9 @@ pub(crate) fn parse_property_grammar(
         // unimplemented, the keyword itself is fully accepted).
         "visibility" => parse_visibility(input).map(PropertyValue::Visibility),
         // CSS2 §9.9.1 z-index. grammar: `auto | <integer>` (`inherit` — the
-        // propdef's third alternative — is the CSS-wide keyword, unhandled
-        // here per the "CSS-wide keyword (canonical)" section above).
+        // propdef's third alternative — is the CSS-wide keyword, kept as a
+        // deferred marker before this arm per the "CSS-wide keyword
+        // (canonical)" section above).
         // initial `auto`, not inherited, computed value = specified value.
         "z-index" => parse_z_index(input).map(PropertyValue::ZIndex),
         // CSS Text 3 §5.1 word-break. grammar (this crate's scope):
@@ -973,14 +974,14 @@ pub(crate) fn parse_property_grammar(
             parse_legacy_page_break_inside(input).map(PropertyValue::BreakInside)
         }
         // CSS2 §9.5.1 float. grammar: `left | right | none` (`inherit` —
-        // the propdef's fourth alternative — is the CSS-wide keyword,
-        // unhandled here per the "CSS-wide keyword (canonical)" section
-        // above). initial `none`, not inherited, computed value =
+        // the propdef's fourth alternative — is the CSS-wide keyword, kept
+        // as a deferred marker before this arm per the "CSS-wide keyword
+        // (canonical)" section above). initial `none`, not inherited, computed value =
         // specified value; §9.7's forced `display` recomputation is
         // applied separately at phase 3 (`resolve_display_for_float` doc).
         "float" => parse_float(input).map(PropertyValue::Float),
         // CSS2 §9.5.2 clear. grammar: `none | left | right | both`
-        // (`inherit` unhandled, same reason as `float` above). initial
+        // (`inherit` is a deferred marker, same reason as `float` above). initial
         // `none`, not inherited, computed value = specified value.
         "clear" => parse_clear(input).map(PropertyValue::Clear),
         // CSS Text 3 §3 white-space. grammar (this crate's scope): `normal |

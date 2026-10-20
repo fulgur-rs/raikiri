@@ -12172,6 +12172,206 @@ fn stroke_lengths_without_font_relative_units_are_exported_as_written() {
     assert_eq!(text(PropertyKey::StrokeDashoffset), Some("2pt".into()));
 }
 
+/// The exported properties of the SVG root, the rect below it and the
+/// `section` and `div` above it, for `css` applied to
+/// `<section><div><svg><rect/></svg></div></section>`.
+fn html_wrapped_svg_properties(css: &str) -> [Vec<SvgStyleProperty>; 4] {
+    html_wrapped_svg_with_root_attributes(css, &[])
+}
+
+/// As [`html_wrapped_svg_properties`], with `root_attributes` on the `svg`.
+fn html_wrapped_svg_with_root_attributes(
+    css: &str,
+    root_attributes: &[(&str, &str)],
+) -> [Vec<SvgStyleProperty>; 4] {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, css);
+    let section = doc.push_element(0, "section", None);
+    let div = doc.push_element(section, "div", None);
+    let svg =
+        doc.push_element_with_namespace(div, "svg", "http://www.w3.org/2000/svg", root_attributes);
+    let rect = doc.push_element_with_namespace(svg, "rect", "http://www.w3.org/2000/svg", &[]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    [svg, rect, section, div].map(|node| {
+        result
+            .svg_style_properties(StyleNodeId(node as u64))
+            .to_vec()
+    })
+}
+
+#[test]
+fn the_svg_root_inherits_the_painting_properties_of_its_html_ancestors() {
+    let [root, rect, ..] = html_wrapped_svg_properties(
+        "section { fill: red; stroke-dasharray: 4 2; stroke-width: 3px; fill-rule: evenodd }",
+    );
+    let text = |key| exported(&root, key);
+    assert_eq!(
+        text(PropertyKey::Fill),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeDasharray),
+        Some((false, Some("4 2".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeWidth),
+        Some((false, Some("3px".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::FillRule),
+        Some((false, Some("evenodd".into())))
+    );
+    // A property nothing declares is left to the SVG's own default.
+    assert_eq!(text(PropertyKey::Stroke), None);
+    // The root carries the value for its descendants; they list nothing.
+    assert!(rect.is_empty());
+}
+
+#[test]
+fn the_nearest_html_ancestor_decides_and_an_inheriting_one_defers_to_its_parent() {
+    let [root, ..] = html_wrapped_svg_properties(
+        "section { fill: red; stroke: green; stroke-width: 5px } \
+         div { fill: blue; stroke: inherit; stroke-width: unset }",
+    );
+    let text = |key| exported(&root, key);
+    assert_eq!(
+        text(PropertyKey::Fill),
+        Some((false, Some("rgba(0,0,255,1)".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::Stroke),
+        Some((false, Some("rgba(0,128,0,1)".into())))
+    );
+    assert_eq!(
+        text(PropertyKey::StrokeWidth),
+        Some((false, Some("5px".into())))
+    );
+}
+
+#[test]
+fn an_html_ancestor_may_reset_a_painting_property_to_its_initial_value() {
+    let [root, ..] = html_wrapped_svg_properties("section { fill: red } div { fill: initial }");
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("black".into())))
+    );
+}
+
+#[test]
+fn the_roots_own_attribute_beats_what_it_could_inherit() {
+    let [root, ..] = html_wrapped_svg_with_root_attributes(
+        "div { fill: red; stroke-width: 9px; stroke: green }",
+        &[("fill", "blue"), ("stroke-width", "2")],
+    );
+    // The attributes stay in the SVG source, so only the property the root
+    // does not set is taken.
+    assert_eq!(exported(&root, PropertyKey::Fill), None);
+    assert_eq!(exported(&root, PropertyKey::StrokeWidth), None);
+    assert_eq!(
+        exported(&root, PropertyKey::Stroke),
+        Some((false, Some("rgba(0,128,0,1)".into())))
+    );
+    // An attribute that inherits does not set the property.
+    let [root, ..] =
+        html_wrapped_svg_with_root_attributes("div { fill: red }", &[("fill", "inherit")]);
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+}
+
+#[test]
+fn the_roots_own_declaration_beats_what_it_could_inherit() {
+    let [root, ..] =
+        html_wrapped_svg_properties("div { fill: red; stroke: green } svg { fill: blue }");
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(0,0,255,1)".into())))
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::Stroke),
+        Some((false, Some("rgba(0,128,0,1)".into())))
+    );
+}
+
+#[test]
+fn a_root_that_inherits_takes_the_value_of_its_html_ancestor() {
+    let [root, ..] = html_wrapped_svg_properties(
+        "div { stroke-dasharray: 4 2; fill: red } svg { stroke-dasharray: inherit; fill: unset }",
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::StrokeDasharray),
+        Some((false, Some("4 2".into())))
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+    // With nothing to inherit the root keeps `inherit`.
+    let [root, ..] = html_wrapped_svg_properties("svg { fill: inherit }");
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((true, Some("inherit".into())))
+    );
+}
+
+#[test]
+fn an_html_element_lists_only_its_painting_properties() {
+    let [_, _, section, div] = html_wrapped_svg_properties(
+        "section { color: red; font-size: 20px; opacity: 0.5; fill: red } \
+         div { visibility: hidden; stroke-width: 1em }",
+    );
+    let keys = |properties: &[SvgStyleProperty]| {
+        properties
+            .iter()
+            .map(|property| property.property)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(keys(&section), [PropertyKey::Fill]);
+    assert_eq!(keys(&div), [PropertyKey::StrokeWidth]);
+    // A declaration is listed as written.
+    assert_eq!(
+        exported(&div, PropertyKey::StrokeWidth),
+        Some((false, Some("1em".into())))
+    );
+}
+
+#[test]
+fn a_root_takes_the_px_of_an_html_ancestors_font_relative_stroke_length() {
+    let width = |css| {
+        let [root, ..] = html_wrapped_svg_properties(css);
+        exported(&root, PropertyKey::StrokeWidth)
+    };
+    // The root has another font size than the element that declares the length.
+    assert_eq!(
+        width("div { font-size: 20px; stroke-width: 1em } svg { font-size: 10px }"),
+        Some((false, Some("20px".into())))
+    );
+    assert_eq!(
+        width(
+            "div { font-size: 20px; stroke-width: .5em } \
+             svg { font-size: 10px; stroke-width: inherit }"
+        ),
+        Some((false, Some("10px".into())))
+    );
+    // With the same font size the length stays as written.
+    assert_eq!(
+        width("div { font-size: 20px; stroke-width: 1em }"),
+        Some((false, Some("1em".into())))
+    );
+}
+
+#[test]
+fn an_html_ancestors_variable_paint_reaches_the_svg_root() {
+    let [root, ..] = html_wrapped_svg_properties("section { --c: green; fill: var(--c) }");
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(0,128,0,1)".into())))
+    );
+}
+
 #[test]
 fn revert_layer_rolls_a_paint_property_back_to_its_attribute() {
     let properties = svg_rect_properties(
@@ -12570,5 +12770,41 @@ fn an_inherited_margin_that_is_a_sizing_keyword_falls_back_to_zero() {
     assert_eq!(
         inherited_margin_length(ComputedLengthPercentageOrAuto::Auto),
         LengthOrAuto::Auto
+    );
+}
+
+#[test]
+fn a_root_declaring_current_color_keeps_it_over_the_fill_of_an_html_ancestor() {
+    let [root, ..] =
+        html_wrapped_svg_properties("div { fill: red } svg { fill: currentColor; color: blue }");
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("currentColor".into())))
+    );
+}
+
+#[test]
+fn an_attribute_beaten_by_inherit_leaves_the_property_to_the_html_ancestor() {
+    // The stylesheet's `inherit` beats the attribute, so the root takes the
+    // ancestor's red; the blue attribute sets nothing.
+    let [root, ..] = html_wrapped_svg_with_root_attributes(
+        "div { fill: red } svg { fill: inherit }",
+        &[("fill", "blue")],
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(255,0,0,1)".into())))
+    );
+}
+
+#[test]
+fn an_attribute_beaten_by_a_value_is_replaced_by_that_value() {
+    let [root, ..] = html_wrapped_svg_with_root_attributes(
+        "div { fill: red } svg { fill: green }",
+        &[("fill", "blue")],
+    );
+    assert_eq!(
+        exported(&root, PropertyKey::Fill),
+        Some((false, Some("rgba(0,128,0,1)".into())))
     );
 }

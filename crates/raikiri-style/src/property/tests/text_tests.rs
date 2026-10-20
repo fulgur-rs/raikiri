@@ -590,21 +590,15 @@ fn line_height_rejects_negative_percentage() {
 fn line_height_rejects_unknown_keyword() {
     // Idents outside the grammar, such as `auto` / `medium`, are invalid
     // under the spec and silently dropped. CSS-wide keywords have a separate
-    // test (`line_height_rejects_css_wide_keyword`): those are unsupported
-    // feature (b), not spec-invalid category (a).
+    // test (`line_height_retains_css_wide_keywords_for_defaulting`): they stay
+    // deferred markers for the cascade instead of being dropped.
     assert_eq!(parse("auto", "line-height"), None);
     assert_eq!(parse("medium", "line-height"), None);
 }
 
 #[test]
-fn line_height_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet and are
-    // silently dropped. The "CSS-wide keyword" section of PropertyValue is canonical.
-    assert_eq!(parse("inherit", "line-height"), None);
-    assert_eq!(parse("initial", "line-height"), None);
-    assert_eq!(parse("unset", "line-height"), None);
-    assert_eq!(parse("revert", "line-height"), None);
-    assert_eq!(parse("revert-layer", "line-height"), None);
+fn line_height_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("line-height");
 }
 
 #[test]
@@ -1046,7 +1040,6 @@ fn text_spacing_trim_rejects_unsupported_or_compound_values() {
     for source in [
         "",
         "none",
-        "inherit",
         "unknown",
         "trim-start space-first",
         "normal auto",
@@ -1054,6 +1047,7 @@ fn text_spacing_trim_rejects_unsupported_or_compound_values() {
     ] {
         assert_eq!(parse_entire(source, "text-spacing-trim"), None, "{source}");
     }
+    assert_css_wide_keywords_deferred("text-spacing-trim");
 }
 
 #[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
@@ -1811,12 +1805,8 @@ fn text_decoration_line_rejects_unknown_keyword() {
 }
 
 #[test]
-fn text_decoration_line_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "text-decoration-line"), None);
-    }
+fn text_decoration_line_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("text-decoration-line");
 }
 
 #[test]
@@ -3044,9 +3034,10 @@ fn font_kerning_is_case_insensitive_and_rejects_unknown_keywords() {
         parse("NORMAL", "font-kerning"),
         Some(PropertyValue::FontKerning(FontKerning::Normal))
     );
-    for input in ["bogus", "italic", "inherit", "1"] {
+    for input in ["bogus", "italic", "1"] {
         assert_eq!(parse(input, "font-kerning"), None);
     }
+    assert_css_wide_keywords_deferred("font-kerning");
 }
 
 #[test]
@@ -3090,9 +3081,10 @@ fn font_optical_sizing_is_case_insensitive_and_rejects_unknown_values() {
         parse("AUTO", "font-optical-sizing"),
         Some(PropertyValue::FontOpticalSizing(FontOpticalSizing::Auto))
     );
-    for input in ["normal", "on", "inherit", "1"] {
+    for input in ["normal", "on", "1"] {
         assert_eq!(parse(input, "font-optical-sizing"), None);
     }
+    assert_css_wide_keywords_deferred("font-optical-sizing");
 }
 
 #[test]
@@ -3116,9 +3108,10 @@ fn font_variant_emoji_is_case_insensitive_and_rejects_unknown_values() {
         parse("UNICODE", "font-variant-emoji"),
         Some(PropertyValue::FontVariantEmoji(FontVariantEmoji::Unicode))
     );
-    for input in ["none", "bogus", "inherit", "1"] {
+    for input in ["none", "bogus", "1"] {
         assert_eq!(parse(input, "font-variant-emoji"), None);
     }
+    assert_css_wide_keywords_deferred("font-variant-emoji");
     assert_eq!(parse_entire("text emoji", "font-variant-emoji"), None);
 }
 
@@ -3165,21 +3158,14 @@ fn font_language_override_accepts_case_insensitive_normal_and_rejects_invalid_va
             FontLanguageOverride::Normal
         ))
     );
-    for input in [
-        "none",
-        "foo",
-        "inherit",
-        "1",
-        "\"\"",
-        "\"ENGLISH\"",
-        "\"\u{e9}n\"",
-    ] {
+    for input in ["none", "foo", "1", "\"\"", "\"ENGLISH\"", "\"\u{e9}n\""] {
         assert_eq!(parse(input, "font-language-override"), None);
     }
     assert_eq!(
         parse_entire("\"KSW\" \"ENG\"", "font-language-override"),
         None
     );
+    assert_css_wide_keywords_deferred("font-language-override");
 }
 
 #[test]
@@ -3242,9 +3228,10 @@ fn font_variant_ligatures_accepts_case_insensitive_keywords_and_rejects_unknown_
             FontVariantLigatures::NoCommonLigatures
         ))
     );
-    for input in ["bogus", "inherit", "1"] {
+    for input in ["bogus", "1"] {
         assert_eq!(parse(input, "font-variant-ligatures"), None, "{input}");
     }
+    assert_css_wide_keywords_deferred("font-variant-ligatures");
     assert_eq!(parse_entire("normal none", "font-variant-ligatures"), None);
 }
 
@@ -3259,9 +3246,10 @@ fn font_variant_position_parses_and_serializes_the_three_computed_keywords() {
         assert_eq!(value, Some(PropertyValue::FontVariantPosition(expected)));
         assert_eq!(serialize_value(&value.unwrap()), Some(input.to_owned()));
     }
-    for input in ["none", "bogus", "inherit", "1"] {
+    for input in ["none", "bogus", "1"] {
         assert_eq!(parse(input, "font-variant-position"), None, "{input}");
     }
+    assert_css_wide_keywords_deferred("font-variant-position");
     assert_eq!(parse_entire("normal sub", "font-variant-position"), None);
 }
 
@@ -3711,12 +3699,8 @@ fn font_variant_caps_rejects_unknown_keyword() {
 }
 
 #[test]
-fn font_variant_caps_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "font-variant-caps"), None);
-    }
+fn font_variant_caps_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("font-variant-caps");
 }
 
 #[test]
@@ -3851,12 +3835,8 @@ fn text_transform_rejects_unknown_keyword() {
 }
 
 #[test]
-fn text_transform_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "text-transform"), None);
-    }
+fn text_transform_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("text-transform");
 }
 
 #[test]
@@ -3937,12 +3917,8 @@ fn word_break_rejects_unknown_keyword() {
 }
 
 #[test]
-fn word_break_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "word-break"), None);
-    }
+fn word_break_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("word-break");
 }
 
 #[test]
@@ -4026,13 +4002,9 @@ fn overflow_wrap_rejects_unknown_keyword() {
 }
 
 #[test]
-fn overflow_wrap_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "overflow-wrap"), None);
-        assert_eq!(parse(kw, "word-wrap"), None);
-    }
+fn overflow_wrap_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("overflow-wrap");
+    assert_css_wide_keywords_deferred("word-wrap");
 }
 
 #[test]
@@ -4279,19 +4251,13 @@ fn word_spacing_rejects_unknown_keyword() {
 }
 
 #[test]
-fn letter_spacing_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "letter-spacing"), None);
-    }
+fn letter_spacing_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("letter-spacing");
 }
 
 #[test]
-fn word_spacing_rejects_css_wide_keyword() {
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "word-spacing"), None);
-    }
+fn word_spacing_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("word-spacing");
 }
 
 #[test]
@@ -4469,13 +4435,8 @@ fn tab_size_rejects_unknown_keyword() {
 }
 
 #[test]
-fn tab_size_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future
-    // work), silent drop (`PropertyValue` doc's "CSS-wide keyword"
-    // section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "tab-size"), None);
-    }
+fn tab_size_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("tab-size");
 }
 
 #[test]
@@ -4691,12 +4652,8 @@ fn hyphens_rejects_unknown_keyword() {
 }
 
 #[test]
-fn hyphens_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "hyphens"), None);
-    }
+fn hyphens_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("hyphens");
 }
 
 #[test]
@@ -5369,13 +5326,14 @@ fn hyphenate_character_decodes_escaped_unicode_string() {
 
 #[test]
 fn hyphenate_character_rejects_unknown_ident_and_non_string_values() {
-    for invalid in ["none", "manual", "unknown", "16px", "inherit"] {
+    for invalid in ["none", "manual", "unknown", "16px"] {
         assert_eq!(
             parse_entire(invalid, "hyphenate-character"),
             None,
             "{invalid}"
         );
     }
+    assert_css_wide_keywords_deferred("hyphenate-character");
 }
 
 #[test]
@@ -5793,4 +5751,9 @@ fn font_size_scale_takes_only_percent_and_true_em_terms() {
         None
     );
     assert_eq!(term(-1.0, "em").font_size_scale(), None);
+}
+
+#[test]
+fn font_shorthand_keeps_css_wide_keywords() {
+    assert_css_wide_keywords_deferred("font");
 }

@@ -303,12 +303,8 @@ fn float_rejects_unknown_keyword() {
 }
 
 #[test]
-fn float_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "float"), None);
-    }
+fn float_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("float");
 }
 
 #[test]
@@ -371,12 +367,8 @@ fn clear_rejects_unknown_keyword() {
 }
 
 #[test]
-fn clear_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "clear"), None);
-    }
+fn clear_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("clear");
 }
 
 #[test]
@@ -622,13 +614,9 @@ fn break_before_after_rejects_unknown_keyword() {
 }
 
 #[test]
-fn break_before_after_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "break-before"), None);
-        assert_eq!(parse(kw, "break-after"), None);
-    }
+fn break_before_after_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("break-before");
+    assert_css_wide_keywords_deferred("break-after");
 }
 
 #[test]
@@ -791,10 +779,8 @@ fn break_inside_rejects_unknown_keyword() {
 }
 
 #[test]
-fn break_inside_rejects_css_wide_keyword() {
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "break-inside"), None);
-    }
+fn break_inside_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("break-inside");
 }
 
 #[test]
@@ -2751,14 +2737,9 @@ fn orphans_widows_reject_non_integer_values() {
 }
 
 #[test]
-fn orphans_widows_reject_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future
-    // work), silent drop (`PropertyValue` doc's "CSS-wide keyword"
-    // section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "orphans"), None);
-        assert_eq!(parse(kw, "widows"), None);
-    }
+fn orphans_widows_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("orphans");
+    assert_css_wide_keywords_deferred("widows");
 }
 
 #[test]
@@ -3187,4 +3168,25 @@ fn insets_accept_percentages() {
             -5.0
         ))))
     );
+}
+
+#[test]
+fn flex_gap_and_alignment_properties_keep_css_wide_keywords() {
+    for name in [
+        "flex",
+        "flex-flow",
+        "flex-basis",
+        "gap",
+        "row-gap",
+        "column-gap",
+        "place-content",
+        "place-items",
+        "place-self",
+        "grid-row",
+        "grid-column",
+        "columns",
+        "column-width",
+    ] {
+        assert_css_wide_keywords_deferred(name);
+    }
 }

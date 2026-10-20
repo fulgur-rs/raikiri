@@ -17,6 +17,12 @@ impl ImagePixelSource for NoPixels {
 }
 
 fn raster(body: &str, css: &str) -> Vec<u8> {
+    raster_at(body, css, None)
+}
+
+/// `raster` for a device with `device_scale` device pixels per CSS pixel,
+/// whose clips lie on its pixels, or for a vector output with `None`.
+fn raster_at(body: &str, css: &str, device_scale: Option<f32>) -> Vec<u8> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -24,7 +30,9 @@ fn raster(body: &str, css: &str) -> Vec<u8> {
         )
         .build()
         .unwrap();
-    let resources = RenderResources::new().fonts(fonts);
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .border_width_device_scale(device_scale);
     let html = format!(
         "<!doctype html><style>@page{{size:180px 160px;margin:0}}body{{margin:0;background:white;font:20px/20px Ahem}}p{{margin:0}}.mc{{width:100px;column-count:2;column-gap:20px;orphans:1;widows:1}}{css}</style>{body}"
     );
@@ -54,8 +62,12 @@ fn raster(body: &str, css: &str) -> Vec<u8> {
 }
 
 fn compare(body: &str, css: &str, reference: &str) {
-    let actual = raster(body, css);
-    let expected = raster(reference, "");
+    compare_at(body, css, reference, None);
+}
+
+fn compare_at(body: &str, css: &str, reference: &str, device_scale: Option<f32>) {
+    let actual = raster_at(body, css, device_scale);
+    let expected = raster_at(reference, "", device_scale);
     assert_eq!(
         actual
             .chunks_exact(4)
@@ -462,6 +474,50 @@ fn a_spanner_leaves_the_shadows_of_a_line_visible_past_its_column() {
             ),
         );
     }
+}
+
+#[test]
+fn a_spanner_leaves_the_outline_of_a_paragraph_visible_past_its_column_group() {
+    // The outline reaches 10px past the first line above and past the last
+    // line below, where its column group ends.
+    compare(
+        "<div class=mc><p>A</p><div style='column-span:all'>x</div><p style='outline:10px solid red'>B</p></div>",
+        ".mc{width:80px;column-count:auto;column-width:80px}",
+        "<div style='position:absolute;left:0;top:0;width:80px'>A</div><div style='position:absolute;left:0;top:20px'>x</div><div style='position:absolute;left:0;top:40px;width:80px;outline:10px solid red'>B</div>",
+    );
+}
+
+#[test]
+fn a_box_with_a_block_border_slices_it_across_the_columns() {
+    // The border is where the box starts or ends, not at the break.
+    compare(
+        "<div class=mc><div style='height:150px;border-top:1px solid;background:lime'></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:99px;border-top:1px solid;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:51px;background:lime'></div>",
+    );
+    compare(
+        "<div class=mc><div style='height:100px;padding:10px 0;border-bottom:2px solid;background:lime'></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:100px;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:20px;border-bottom:2px solid;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_box_with_block_borders_cut_into_three_pieces_has_borders_on_the_outer_edges_only() {
+    compare(
+        "<div class=mc><div style='height:249px;border:solid;border-width:1px 0 2px;background:lime'></div></div>",
+        ".mc{width:160px;column-count:3;height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:99px;border-top:1px solid;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:100px;background:lime'></div><div style='position:absolute;left:120px;top:0;width:40px;height:50px;border-bottom:2px solid;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_wrapped_box_with_a_block_border_slices_it_across_the_columns() {
+    compare(
+        "<div class=mc><div><div style='height:150px;border-top:1px solid;background:lime'></div></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:99px;border-top:1px solid;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:51px;background:lime'></div>",
+    );
 }
 
 #[test]
@@ -2439,4 +2495,17 @@ fn a_wrapper_is_sliced_like_its_blocks_under_the_sizing_of_the_container() {
             );
         }
     }
+}
+
+#[test]
+fn a_block_after_a_spanner_keeps_its_first_row_of_ink_at_a_fractional_offset() {
+    // The block after the spanner starts 0.3px into a device pixel, and the
+    // rasterizer puts its glyphs on whole pixels, so its fragment clip must not
+    // cut the first row of them.
+    compare_at(
+        "<div class=mc><p>A</p><div style='column-span:all;height:10.3px'></div><p>B</p></div>",
+        "",
+        "<div style='width:100px'><p>A</p><div style='height:10.3px'></div><p>B</p></div>",
+        Some(1.0),
+    );
 }

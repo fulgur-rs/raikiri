@@ -49,14 +49,8 @@ fn box_sizing_rejects_unknown_ident() {
 }
 
 #[test]
-fn box_sizing_rejects_css_wide_keyword() {
-    // (b) Unsupported: CSS-wide keywords are not implemented yet; silently drop them.
-    // Canonical reference: the "CSS-wide keyword" section of the PropertyValue doc.
-    assert_eq!(parse("inherit", "box-sizing"), None);
-    assert_eq!(parse("initial", "box-sizing"), None);
-    assert_eq!(parse("unset", "box-sizing"), None);
-    assert_eq!(parse("revert", "box-sizing"), None);
-    assert_eq!(parse("revert-layer", "box-sizing"), None);
+fn box_sizing_retains_css_wide_keywords_for_defaulting() {
+    assert_css_wide_keywords_deferred("box-sizing");
 }
 
 #[test]
@@ -206,9 +200,9 @@ fn position_rejects_out_of_scope_keywords() {
         parse("fixed", "position"),
         Some(PropertyValue::Position(PositionValue::Fixed))
     );
-    // Drop any other keyword.
-    assert_eq!(parse("inherit", "position"), None);
-    assert_eq!(parse("initial", "position"), None);
+    // Drop any other keyword; the CSS-wide ones are kept for the cascade.
+    assert_eq!(parse("bogus", "position"), None);
+    assert_css_wide_keywords_deferred("position");
 }
 
 #[test]
@@ -757,13 +751,9 @@ fn overflow_rejects_unknown_keyword() {
 }
 
 #[test]
-fn overflow_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "overflow-x"), None);
-        assert_eq!(parse(kw, "overflow-y"), None);
-        assert_eq!(parse(kw, "overflow"), None);
+fn overflow_keeps_css_wide_keyword() {
+    for name in ["overflow-x", "overflow-y", "overflow"] {
+        assert_css_wide_keywords_deferred(name);
     }
 }
 

@@ -495,11 +495,19 @@ fn apply_computed_to_style_in_session_inner(
                 style.size.height = Dimension::auto();
             }
         }
-        if stretches_on_both_grid_axes(doc, idx, cv) {
+        if stretches_on_both_grid_axes(doc, idx, cv)
+            && !replaced_keyword_width(doc.document, cascade, idx)
+        {
             doc.layout_node_with_style_mut(idx)
                 .unwrap()
                 .style
                 .aspect_ratio = None;
+        }
+        if is_stretched_by_replaced_keyword_width_in_grid(doc, cascade, idx) {
+            doc.layout_node_with_style_mut(idx)
+                .unwrap()
+                .style
+                .justify_self = Some(TaffyAlignItems::START);
         }
         if is_stretched_by_keyword_width(doc, cascade, idx) {
             doc.layout_node_with_style_mut(idx)
@@ -697,8 +705,8 @@ fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes
 /// cascade's own. A `max-content` or `fit-content` size a box is not sized by
 /// (see [`sized_by_content_keyword`]) is `auto` here, and so is a `min-*` or
 /// `max-*` size that is a sizing keyword the box does not honor (see
-/// [`honors_content_limits`]). A vertical box takes its inline size from
-/// `height`.
+/// [`honors_content_limits`]). The `min-content` width of a replaced box is
+/// `auto` as well. A vertical box takes its inline size from `height`.
 fn layout_values<'a>(
     doc: &Document,
     cascade: &'a CascadeResult,
@@ -714,7 +722,9 @@ fn layout_values<'a>(
                 | ComputedLengthPercentageOrAuto::FitContentOf(_)
         )
     };
-    let width = content_keyword(cv.width);
+    let width = content_keyword(cv.width)
+        || (matches!(cv.width, ComputedLengthPercentageOrAuto::MinContent)
+            && min_content_width_is_auto(doc, cascade, idx));
     let height = vertical_sized.is_some() && content_keyword(cv.height);
     let limited = [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
         .into_iter()
@@ -856,13 +866,14 @@ fn uses_vertical_writing_mode(cv: &ComputedValues) -> bool {
 
 /// Whether the width of element `idx` is a sizing keyword its layout sizes the
 /// box by: `min-content`, or a `max-content` or `fit-content` width that
-/// [`layout_values`] keeps. A `display: contents` element generates no box and
-/// `width` does not apply to a non-replaced inline box (CSS Sizing 3 §3.1.1),
-/// so the width of either sizes nothing.
+/// [`layout_values`] keeps. A replaced box is sized as if its width were `auto`
+/// (see [`min_content_width_is_auto`]). A `display: contents` element
+/// generates no box and `width` does not apply to a non-replaced inline box
+/// (CSS Sizing 3 §3.1.1), so the width of either sizes nothing.
 pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
     let keyword = match cv.width {
-        ComputedLengthPercentageOrAuto::MinContent => true,
+        ComputedLengthPercentageOrAuto::MinContent => !min_content_width_is_auto(doc, cascade, idx),
         ComputedLengthPercentageOrAuto::MaxContent
         | ComputedLengthPercentageOrAuto::FitContent
         | ComputedLengthPercentageOrAuto::FitContentOf(_) => {
@@ -1204,6 +1215,33 @@ fn preferred_aspect_ratio(cv: &ComputedValues, natural: Option<f32>) -> Option<f
     }
 }
 
+/// Whether element `idx` is a replaced box of a horizontal writing mode, which
+/// sizes itself by its `min-content` width as it does by `auto`.
+fn min_content_width_is_auto(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    crate::paint_rules::is_replaced_element(doc, idx) && !lays_out_vertically(cascade, idx)
+}
+
+/// Whether element `idx` is a replaced box with a natural size whose `width` is
+/// `min-content`, `max-content` or `fit-content`.
+///
+/// Such a box sizes itself as if the width were `auto`: its natural size, or
+/// the width its ratio gives a definite height ([`layout_values`] hands the
+/// layout `auto`). The width is no `auto` for alignment, though: `stretch`
+/// fills the space of a box whose size is `auto` and of no other (CSS Box
+/// Alignment 3 §6.1). `fit-content(<length-percentage>)` stays out, as browsers
+/// treat it like `auto` on a replaced box. So does a box without a natural
+/// size, such as an inline SVG with only a viewBox: browsers fill the space
+/// with it for a keyword width as they do for `auto`.
+fn replaced_keyword_width(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    matches!(
+        cascade.computed[idx].width,
+        ComputedLengthPercentageOrAuto::MinContent
+            | ComputedLengthPercentageOrAuto::MaxContent
+            | ComputedLengthPercentageOrAuto::FitContent
+    ) && crate::paint_rules::lays_out_as_replaced(doc, idx)
+        && !lays_out_vertically(cascade, idx)
+}
+
 /// Whether item `idx` of a column flex container has a `width` that is a sizing
 /// keyword although the container's alignment would stretch it.
 ///
@@ -1214,6 +1252,9 @@ fn preferred_aspect_ratio(cv: &ComputedValues, natural: Option<f32>) -> Option<f
 /// the start of the cross axis measures it at its own width. Taffy places a
 /// stretched item that it does not stretch exactly like a `flex-start` one, so
 /// nothing else moves.
+///
+/// The width of a replaced box is `auto` to Taffy ([`replaced_keyword_width`]),
+/// so the item is aligned at the start whenever the keyword would be stretched.
 fn is_stretched_by_keyword_width(
     doc: &LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -1221,10 +1262,9 @@ fn is_stretched_by_keyword_width(
 ) -> bool {
     use taffy::AlignItemsKeyword;
     let style = &doc.layout_node_with_style(idx).unwrap().style;
-    if !style.size.width.is_sizing_keyword()
-        || style.size.width.is_stretch()
-        || lays_out_vertically(cascade, idx)
-    {
+    let keyword_width = (style.size.width.is_sizing_keyword() && !style.size.width.is_stretch())
+        || replaced_keyword_width(doc.document, cascade, idx);
+    if !keyword_width || lays_out_vertically(cascade, idx) {
         return false;
     }
     doc.column_flex_container_of(idx).is_some_and(|container| {
@@ -1233,6 +1273,28 @@ fn is_stretched_by_keyword_width(
             AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
         )
     })
+}
+
+/// Whether grid item `idx` is a replaced box with a keyword width that its
+/// `justify-self` would stretch ([`replaced_keyword_width`]). Aligning it at
+/// the start of the row axis keeps the width it sizes itself to.
+fn is_stretched_by_replaced_keyword_width_in_grid(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> bool {
+    use taffy::AlignItemsKeyword;
+    let style = &doc.layout_node_with_style(idx).unwrap().style;
+    replaced_keyword_width(doc.document, cascade, idx)
+        && doc.taffy_parent_of(idx).is_some_and(|parent| {
+            let container = &doc.layout_node_with_style(parent).unwrap().style;
+            container.display == taffy::Display::Grid
+                && style
+                    .justify_self
+                    .unwrap_or(container.justify_items)
+                    .keyword
+                    == AlignItemsKeyword::Stretch
+        })
 }
 
 /// Whether in-flow grid item `idx` is sized along both axes without its
