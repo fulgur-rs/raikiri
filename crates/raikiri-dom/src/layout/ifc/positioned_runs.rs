@@ -13,6 +13,8 @@ use shodo::Fragment;
 use shodo::geometry::{PhysicalConverter, PhysicalSize, WritingMode};
 use std::ops::Range;
 
+pub(crate) mod geometry;
+
 /// One glyph of a run, at its outline origin.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LineGlyph {
@@ -251,6 +253,8 @@ impl<'a> PositionedLines<'a> {
     ) -> Option<Self> {
         let root_node = document.ifc_layout_node(root_id)?;
         let lines = root_node.ifc_lines()?;
+        #[cfg(test)]
+        crate::page_projection::work_tests::geometry_lines(lines.len());
         let writing_mode = root_node
             .ifc_writing_mode()
             .unwrap_or(WritingMode::HorizontalTb);
@@ -343,12 +347,29 @@ impl<'a> PositionedLines<'a> {
             })
     }
 
-    /// Line `index` with its runs, or `None` when it is not drawn here.
-    pub(crate) fn line_at(&self, index: usize) -> Option<PositionedLine<'a>> {
-        let offset = (*self.line_offsets.get(index)?)?;
-        Some(self.line(index, &self.lines[index], offset))
+    fn line(&self, index: usize, line: &'a shodo::Line, offset: (f32, f32)) -> PositionedLine<'a> {
+        LineContext {
+            document: self.document,
+            cascade: self.cascade,
+            root_id: self.root_id,
+            writing_mode: self.writing_mode,
+            converter_size: self.converter_size,
+            offsets: self.offsets,
+        }
+        .line(index, line, offset)
     }
+}
 
+struct LineContext<'a> {
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    root_id: usize,
+    writing_mode: WritingMode,
+    converter_size: PhysicalSize,
+    offsets: &'a [(usize, (f32, f32))],
+}
+
+impl<'a> LineContext<'a> {
     fn line(&self, index: usize, line: &'a shodo::Line, offset: (f32, f32)) -> PositionedLine<'a> {
         let converter = PhysicalConverter::new(
             self.writing_mode,
@@ -508,7 +529,7 @@ impl<'a> PositionedLines<'a> {
     }
 }
 
-impl<'a> PositionedLines<'a> {
+impl<'a> LineContext<'a> {
     /// Add the runs of the ruby `annotation`, whose line `placement` maps to
     /// the paragraph, and of the annotations nested in it. They are read at
     /// `text_offset` of the paragraph line's text.

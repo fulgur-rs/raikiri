@@ -1,5 +1,6 @@
 //! Stored page placements and the final views borrowed from them.
 
+mod clip_index;
 pub(crate) mod continuation;
 mod flow_pages;
 pub(crate) mod fragment;
@@ -9,6 +10,7 @@ mod image_markers;
 pub(crate) mod paint_order;
 pub(crate) mod paint_transform;
 pub(crate) mod records;
+mod text_index;
 pub(crate) mod text_runs;
 
 use crate::{Document, Fragment, OverflowClip, PageContentInsets, PageMargins, PageSlice};
@@ -34,10 +36,11 @@ pub(crate) struct PageProjection {
     /// For each page fragment, the indices of the text roots that can draw
     /// on it, so a page's runs do not walk every paragraph of the document.
     text_roots_by_page: Vec<Vec<usize>>,
+    text_index: text_index::PageTextIndex,
     /// Column-overlap facts about `text_roots`, shared by every page.
     run_context: text_runs::RunContext,
-    /// Elements that open an opacity group, which the paint order lists on
-    /// every page it visits them.
+    /// Sources that keep opacity groups reachable on every page: block
+    /// groups themselves and the paragraph owners of inline groups.
     opacity_layers: Vec<usize>,
     /// Standalone marker text shaped once, shared by every page placement.
     markers: BTreeMap<usize, text_runs::MarkerText>,
@@ -50,6 +53,7 @@ pub(crate) struct PageProjection {
     /// The `::first-letter` opacity groups of the paragraphs, built when
     /// first read.
     letter_groups: paint_order::LetterGroupCache,
+    paragraph_structure: paint_order::ParagraphStructureCache,
     /// Whether any style can decorate the text of each paragraph, by root,
     /// found when first read.
     pub(crate) decorated_paragraphs: std::cell::RefCell<HashMap<usize, bool>>,
@@ -72,6 +76,7 @@ impl PageProjection {
         self.links.clear();
         self.text_roots.clear();
         self.text_roots_by_page.clear();
+        self.text_index = text_index::PageTextIndex::default();
         self.run_context = text_runs::RunContext::default();
         self.opacity_layers.clear();
         self.markers.clear();
@@ -80,6 +85,7 @@ impl PageProjection {
         self.generated_boxes.clear();
         self.inline_boxes.clear();
         self.letter_groups.clear();
+        self.paragraph_structure.clear();
         self.decorated_paragraphs.get_mut().clear();
         self.later_line_membership.get_mut().clear();
         self.column_rules.clear();
@@ -92,6 +98,9 @@ impl PageProjection {
     /// in page order, so the position the index implies is tried before a
     /// search; walking every page then costs linear time, not quadratic.
     fn page_position(&self, page_index: u32) -> Option<usize> {
+        if let Some(&position) = self.text_index.positions(page_index).first() {
+            return Some(position);
+        }
         let first = self.pages.first()?.page_index;
         if let Some(guess) = page_index.checked_sub(first).map(|offset| offset as usize)
             && self
@@ -296,17 +305,40 @@ impl Document {
         let (generated_boxes, inline_boxes) =
             generated_boxes::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
         let column_rules = crate::column_rules::project(self, cascade, &pages, &mut work)?;
-        let text_roots_by_page =
-            text_runs::roots_by_page(self, cascade, &text_roots, &markers, &pages);
+        let (text_index, text_roots_by_page) = text_index::PageTextIndex::prepare(
+            self,
+            cascade,
+            &text_roots,
+            &markers,
+            &pages,
+            &mut work,
+        )?;
         let run_context = text_runs::RunContext::new(self, &text_roots, &pages);
         let transform_boxes = paint_transform::transform_boxes(self, cascade, &pages);
-        let opacity_layers = cascade
+        let mut opacity_layers: Vec<_> = cascade
             .computed
             .iter()
             .enumerate()
             .filter(|(_, cv)| crate::paint_rules::opacity_layer(cv).is_some())
-            .map(|(id, _)| id)
+            .map(|(id, _)| {
+                // Inline groups are listed by their paragraph, including
+                // empty groups. One paragraph source keeps every ancestor
+                // entered without revisiting all of its opacity elements.
+                self.get_node(id)
+                    .filter(|node| node.display().is_inline_flow() && node.in_ifc_subtree())
+                    .and_then(|_| {
+                        self.table_objects
+                            .paragraph_owner
+                            .get(id)
+                            .copied()
+                            .flatten()
+                            .or_else(|| self.ifc_root_of(id))
+                    })
+                    .map_or(id, |root| self.ifc_source_owner(root))
+            })
             .collect();
+        opacity_layers.sort_unstable();
+        opacity_layers.dedup();
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<PageLink>> = pages.iter().map(|_| Vec::new()).collect();
         let page_positions: HashMap<u32, usize> = pages
@@ -356,6 +388,7 @@ impl Document {
             links,
             text_roots,
             text_roots_by_page,
+            text_index,
             run_context,
             opacity_layers,
             markers,
@@ -364,6 +397,7 @@ impl Document {
             generated_boxes,
             inline_boxes,
             letter_groups: Default::default(),
+            paragraph_structure: Default::default(),
             decorated_paragraphs: Default::default(),
             later_line_membership: Default::default(),
             column_rules,
@@ -551,3 +585,5 @@ impl Document {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) mod work_tests;

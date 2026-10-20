@@ -1254,3 +1254,81 @@ fn a_fixed_outside_marker_ignores_the_body_relative_translation() {
         );
     }
 }
+
+#[test]
+fn duplicate_page_indices_keep_the_lines_of_each_matching_fragment() {
+    let (mut document, cascade, [first, _]) = tall_paragraphs();
+    let slices = [
+        crate::PageSlice {
+            page_index: 7,
+            content_origin_y: 0.0,
+            page_name: None,
+        },
+        crate::PageSlice {
+            page_index: 7,
+            content_origin_y: 100.0,
+            page_name: None,
+        },
+        crate::PageSlice {
+            page_index: 8,
+            content_origin_y: 200.0,
+            page_name: None,
+        },
+    ];
+    document
+        .project_pages(&cascade, raikiri_traits::PageBox::A4, &slices, &[])
+        .unwrap();
+    assert_eq!(
+        page_lines(&document, &cascade, 7),
+        (0..20).map(|line| (first, line)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn indexed_line_candidates_match_the_fresh_page_ownership_predicate() {
+    for origins in [
+        &[0.0, 100.0, 200.0, 300.0][..],
+        &[0.0, 0.0, 250.0][..],
+        &[200.0, 0.0, 100.0][..],
+    ] {
+        let (mut document, cascade, _) = tall_paragraphs();
+        project_at(&mut document, &cascade, origins);
+        let projection = &document.page_projection;
+        for (placement, root) in projection.text_roots.iter().enumerate() {
+            let Some(fresh) =
+                crate::PositionedLines::new(&document, &cascade, root.node, root.fragmentainer)
+            else {
+                continue;
+            };
+            let view = projection
+                .text_index
+                .view(&document, &cascade, root)
+                .unwrap();
+            for (position, page) in projection.pages.iter().enumerate() {
+                let expected: Vec<_> = fresh
+                    .all_lines()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, line)| {
+                        let offset = fresh.line_offset(index)?;
+                        let top = root.y + offset.1 + line.block_offset();
+                        let (top, bottom) =
+                            page.flow_axis
+                                .line_extent(root, top, top + line.block_size());
+                        page.owns_line(&projection.pages, top, bottom)
+                            .then_some(index)
+                    })
+                    .collect();
+                let actual: Vec<_> = projection
+                    .text_index
+                    .lines(position, placement)
+                    .map_or_else(Vec::new, |lines| lines.indices(&view).collect());
+                assert_eq!(
+                    actual, expected,
+                    "origins={origins:?}, page={position}, root={}",
+                    root.node
+                );
+            }
+        }
+    }
+}

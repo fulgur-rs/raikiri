@@ -4,6 +4,7 @@ use super::{
 use crate::IfcTextLines;
 use crate::node::MulticolTextFragment;
 use std::collections::{BTreeSet, HashSet};
+use std::sync::Arc;
 
 pub(crate) struct ProjectionWork<'a, 'b> {
     control: &'a PageLayoutControl<'b>,
@@ -90,7 +91,7 @@ pub(crate) type PreparedContentImage = (f32, f32, usize, crate::PositionedConten
 
 pub(super) type TextGroups = Vec<(f32, usize, u32, IfcTextLines)>;
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(super) struct ColumnProjection {
     pub(super) bounds: HashMap<usize, Vec<(BoxRect, u32)>>,
     pub(super) fragmented: HashSet<usize>,
@@ -99,6 +100,19 @@ pub(super) struct ColumnProjection {
 }
 
 pub(crate) struct ParagraphProjection {
+    pub(super) combined: Arc<ColumnProjection>,
+    pub(super) columns: HashMap<usize, Arc<ColumnProjection>>,
+    pub(super) children: Option<HashMap<(usize, usize), Vec<usize>>>,
+    pub(super) multicol: bool,
+    generated: Vec<PreparedGeneratedPiece>,
+    generated_columns: HashMap<usize, Vec<PreparedGeneratedPiece>>,
+    markers: Vec<(f32, f32, crate::PositionedMarker)>,
+    marker_columns: HashMap<usize, Vec<(f32, f32, crate::PositionedMarker)>>,
+    content_images: Vec<PreparedContentImage>,
+    content_image_columns: HashMap<usize, Vec<PreparedContentImage>>,
+}
+
+struct ParagraphProjectionBuilder {
     pub(super) combined: ColumnProjection,
     pub(super) columns: HashMap<usize, ColumnProjection>,
     pub(super) children: Option<HashMap<(usize, usize), Vec<usize>>>,
@@ -202,80 +216,12 @@ impl ParagraphProjection {
         fallback_column: usize,
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<Self, LayoutError> {
-        let node = document
-            .ifc_layout_node(root)
-            .expect("projected roots retain their paragraph");
-        let ranges = node.ifc_multicol_fragments();
-        let multicol = ranges.is_some();
-        let count = node.ifc_lines().map_or(0, |lines| lines.len());
-        charge_column_ranges(ranges, count, work)?;
-        work.check()?;
-        let positioned = PositionedLines::new(document, cascade, root, None);
-        let origins_recorded = node
-            .ifc
-            .as_ref()
-            .is_some_and(|root| root.multicol_fragment_origins_recorded);
-        let columns = LineColumns::new(ranges, count, fallback_column, origins_recorded);
-        let mut result = Self {
-            combined: ColumnProjection::default(),
-            columns: HashMap::new(),
-            children: None,
-            multicol,
-            generated: Vec::new(),
-            generated_columns: HashMap::new(),
-            markers: Vec::new(),
-            marker_columns: HashMap::new(),
-            content_images: Vec::new(),
-            content_image_columns: HashMap::new(),
-        };
-        let pieces = node.ifc_inline_boxes().unwrap_or_default();
-        let split = split_inline_elements(document, cascade, root, node, &pieces);
-        let (generated, block_nodes) = generated_blocks(node, cascade, work)?;
-        result.generated = generated;
-        let lines = ParagraphLines {
-            node,
-            cascade,
-            positioned: positioned.as_ref(),
-            columns: &columns,
-            multicol,
-        };
-        result.add_inline_pieces(&lines, pieces, &split, &block_nodes, work)?;
-        result.add_text_lines(&lines, document, root, work)?;
-        if crate::generated_content::inside_marker_in_flow(cascade, root)
-            && document.list_marker_image(root).is_some()
-            && let Some(positioned) = &positioned
-        {
-            result.add_marker_images(positioned, &columns, work)?;
-        }
-        if node
-            .ifc
-            .as_ref()
-            .is_some_and(|ifc| !ifc.generated_atomics.is_empty())
-            && let Some(positioned) = &positioned
-        {
-            result.add_content_images(positioned, &columns, work)?;
-        }
-        // Pure inline paragraphs have no independent block/atomic subtrees.
-        // Index their source edges by actual column ownership once, retaining
-        // unowned empty elements in the first placement only. Atomic subtrees
-        // keep the existing traversal and remain bounded by the work cap.
-        if multicol && node.ifc_boxes().is_empty() {
-            let first_column = ranges
-                .and_then(|ranges| ranges.first())
-                .map_or(fallback_column, |range| range.fragmentainer);
-            result.children = Some(index_children(
-                document,
-                root,
-                &result.columns,
-                first_column,
-                work,
-            )?);
-        }
-        Ok(result)
+        ParagraphProjectionBuilder::prepare(document, cascade, root, fallback_column, work)
+            .map(ParagraphProjectionBuilder::finish)
     }
 }
 
-impl ParagraphProjection {
+impl ParagraphProjectionBuilder {
     /// Record the lines of text of each owner of a paragraph where the
     /// paragraph places them, combined and, in columns, in each column.
     fn add_text_lines(
@@ -700,7 +646,7 @@ fn painted_apart(
     .then_some((owner, kind))
 }
 
-impl ParagraphProjection {
+impl ParagraphProjectionBuilder {
     /// Record the line pieces of the inline elements of a paragraph: the
     /// bounds of each element, combined and in each column, and the pieces
     /// painted apart from their text.
@@ -818,4 +764,103 @@ pub(crate) fn generated_piece_style<'a>(
                 .filter(|_| line == 0)
         })
         .or_else(|| crate::generated_content::computed_for_id(cascade, node))
+}
+
+impl ParagraphProjectionBuilder {
+    pub(crate) fn prepare(
+        document: &Document,
+        cascade: &CascadeResult,
+        root: usize,
+        fallback_column: usize,
+        work: &mut ProjectionWork<'_, '_>,
+    ) -> Result<Self, LayoutError> {
+        let node = document
+            .ifc_layout_node(root)
+            .expect("projected roots retain their paragraph");
+        let ranges = node.ifc_multicol_fragments();
+        let multicol = ranges.is_some();
+        let count = node.ifc_lines().map_or(0, |lines| lines.len());
+        charge_column_ranges(ranges, count, work)?;
+        work.check()?;
+        let positioned = PositionedLines::new(document, cascade, root, None);
+        let origins_recorded = node
+            .ifc
+            .as_ref()
+            .is_some_and(|root| root.multicol_fragment_origins_recorded);
+        let columns = LineColumns::new(ranges, count, fallback_column, origins_recorded);
+        let mut result = Self {
+            combined: ColumnProjection::default(),
+            columns: HashMap::new(),
+            children: None,
+            multicol,
+            generated: Vec::new(),
+            generated_columns: HashMap::new(),
+            markers: Vec::new(),
+            marker_columns: HashMap::new(),
+            content_images: Vec::new(),
+            content_image_columns: HashMap::new(),
+        };
+        let pieces = node.ifc_inline_boxes().unwrap_or_default();
+        let split = split_inline_elements(document, cascade, root, node, &pieces);
+        let (generated, block_nodes) = generated_blocks(node, cascade, work)?;
+        result.generated = generated;
+        let lines = ParagraphLines {
+            node,
+            cascade,
+            positioned: positioned.as_ref(),
+            columns: &columns,
+            multicol,
+        };
+        result.add_inline_pieces(&lines, pieces, &split, &block_nodes, work)?;
+        result.add_text_lines(&lines, document, root, work)?;
+        if crate::generated_content::inside_marker_in_flow(cascade, root)
+            && document.list_marker_image(root).is_some()
+            && let Some(positioned) = &positioned
+        {
+            result.add_marker_images(positioned, &columns, work)?;
+        }
+        if node
+            .ifc
+            .as_ref()
+            .is_some_and(|ifc| !ifc.generated_atomics.is_empty())
+            && let Some(positioned) = &positioned
+        {
+            result.add_content_images(positioned, &columns, work)?;
+        }
+        // Pure inline paragraphs have no independent block/atomic subtrees.
+        // Index their source edges by actual column ownership once, retaining
+        // unowned empty elements in the first placement only. Atomic subtrees
+        // keep the existing traversal and remain bounded by the work cap.
+        if multicol && node.ifc_boxes().is_empty() {
+            let first_column = ranges
+                .and_then(|ranges| ranges.first())
+                .map_or(fallback_column, |range| range.fragmentainer);
+            result.children = Some(index_children(
+                document,
+                root,
+                &result.columns,
+                first_column,
+                work,
+            )?);
+        }
+        Ok(result)
+    }
+    fn finish(self) -> ParagraphProjection {
+        ParagraphProjection {
+            combined: Arc::new(self.combined),
+            columns: self
+                .columns
+                .into_iter()
+                .map(|(column, data)| (column, Arc::new(data)))
+                .collect(),
+            children: self.children,
+            multicol: self.multicol,
+            generated: self.generated,
+            generated_columns: self.generated_columns,
+            markers: self.markers,
+            marker_columns: self.marker_columns,
+            content_images: self.content_images,
+            content_image_columns: self.content_image_columns,
+        }
+    }
 }

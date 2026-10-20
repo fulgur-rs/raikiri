@@ -5,15 +5,14 @@ use super::generated_boxes::{GeneratedBox, LineBox, PageGeneratedBoxes, PageInli
 use super::generated_images::{GeneratedImageId, PageGeneratedImages};
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{
-    Document, Fragment, GeneratedKind, Node, OverflowClip, PositionedGlyphRun, RunSource,
-    TextLineId, paint_rules,
+    Document, Fragment, GeneratedKind, OverflowClip, PositionedGlyphRun, RunSource, TextLineId,
+    paint_rules,
 };
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
 use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
@@ -212,7 +211,7 @@ impl Layer {
 /// The lines of a paragraph a listing of its content covers. A translucent
 /// `::first-line` lists the first line in a group of its own, apart from
 /// the rest (see [`paint_rules::first_line_opacity_layer`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum LinePart {
     All,
     First,
@@ -232,7 +231,7 @@ impl LinePart {
 
 /// The supplied lines of a page's paragraphs, split by the inline opacity
 /// group that holds their runs.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct TextLines {
     /// Lines with runs outside every inline opacity group, by paragraph root.
     paragraphs: HashMap<NodeId, Vec<TextLineId>>,
@@ -246,19 +245,24 @@ struct TextLines {
 mod event_clips;
 mod letters;
 mod paragraph;
+mod structure;
 mod walk;
 
 pub(super) use letters::LetterGroupCache;
 use letters::LetterGroups;
 use paragraph::push_paragraph;
+pub(super) use structure::ParagraphStructureCache;
 
 /// The elements of a paragraph with inline boxes on its first line and on
 /// the lines after it.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct LineBoxes {
     first: HashSet<usize>,
     later: HashSet<usize>,
 }
+
+type ParagraphListings<'a> =
+    HashMap<(usize, Option<usize>, LinePart), std::rc::Rc<paragraph::ListedParagraph<'a>>>;
 
 /// The fragments of one page, grouped by source node.
 struct PageItems<'a> {
@@ -274,29 +278,19 @@ struct PageItems<'a> {
     /// The elements with inline boxes on the first line and on lines after
     /// the first, by paragraph root, built when a paragraph is first split
     /// by line.
-    line_boxes: RefCell<HashMap<usize, Rc<LineBoxes>>>,
+    source_lines: Option<TextLines>,
+    paragraph_presence: RefCell<HashMap<(usize, usize, LinePart), bool>>,
+    #[cfg(test)]
+    full_paragraph_listing: bool,
+    paragraph_listings: RefCell<ParagraphListings<'a>>,
+    paragraph_nodes: RefCell<Option<HashMap<usize, Arc<HashSet<usize>>>>>,
+    paragraph_slots: RefCell<HashMap<usize, Arc<structure::PageParagraphSlots>>>,
 }
 
 impl<'a> PageItems<'a> {
     /// The `::first-letter` opacity groups of paragraph `root`.
     fn letter_groups(&self, root: usize) -> Arc<LetterGroups> {
         self.document.cached_letter_groups(self.cascade, root)
-    }
-
-    /// The elements of paragraph `root` with inline boxes on the first line
-    /// and on lines after the first.
-    fn line_boxes(&self, root: usize, root_node: &Node) -> Rc<LineBoxes> {
-        Rc::clone(self.line_boxes.borrow_mut().entry(root).or_insert_with(|| {
-            let mut boxes = LineBoxes::default();
-            for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
-                if piece.line == 0 {
-                    boxes.first.insert(piece.node);
-                } else {
-                    boxes.later.insert(piece.node);
-                }
-            }
-            Rc::new(boxes)
-        }))
     }
 
     fn of(&self, node_id: usize) -> &[&'a PageFragmentItem] {
@@ -486,14 +480,10 @@ impl Document {
         lines: Option<&TextLines>,
         skip_empty: bool,
     ) -> Vec<PaintEvent<'a>> {
-        let Some(page) = self
-            .page_projection
-            .pages
-            .iter()
-            .find(|page| page.page_index == page_index)
-        else {
+        let Some(page_position) = self.page_projection.page_position(page_index) else {
             return Vec::new();
         };
+        let page = &self.page_projection.pages[page_position];
         let Some(root) = self.document_element_index() else {
             return Vec::new(); // cov:ignore: a laid-out page always has a document element
         };
@@ -507,7 +497,13 @@ impl Document {
             cascade,
             document: self,
             page,
-            line_boxes: RefCell::default(),
+            source_lines: lines.cloned(),
+            paragraph_presence: Default::default(),
+            #[cfg(test)]
+            full_paragraph_listing: !skip_empty,
+            paragraph_listings: Default::default(),
+            paragraph_nodes: Default::default(),
+            paragraph_slots: Default::default(),
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -519,8 +515,16 @@ impl Document {
             .then(|| self.page_paint_nodes(&items, page_index, lines))
             .flatten();
 
-        let events =
-            walk::PaintWalk::new(self, cascade, &items, lines, page_index, entered, root).run();
+        let events = walk::PaintWalk::new(
+            self,
+            cascade,
+            &items,
+            items.source_lines.as_ref(),
+            page_index,
+            entered,
+            root,
+        )
+        .run();
         event_clips::clip_events(self, cascade, &items, events)
     }
 
@@ -598,37 +602,36 @@ impl Document {
         if !groups.is_empty() {
             // Each group joins the boxes at its place in tree order before
             // the stable sort, so equal keys keep tree order.
-            let position = self.preorder_positions(root);
+            let structure = self.paragraph_structure(cascade, root);
+            let position = &structure.positions;
             let mut groups: Vec<(Option<(usize, u8)>, usize)> = groups
                 .into_iter()
-                .map(|group| (self.group_tree_position(&position, group), group))
+                .map(|group| (self.group_tree_position(position, group), group))
                 .collect();
             // Pseudo-element groups are found after the element groups of
             // the same pass; tree order puts them among those.
             groups.sort_by_key(|&(at, _)| at.map_or((usize::MAX, u8::MAX), |at| at));
+            // The first entry beyond a tree position is found from prefix
+            // maxima, even when the original boxes are not in tree order.
+            // Previously inserted groups are sorted and cannot be that
+            // first greater entry; merge them once instead of shifting the
+            // growing vector for each group.
+            let mut maximum = None;
+            let prefix: Vec<_> = entries
+                .iter()
+                .map(|(_, frame)| {
+                    if let Frame::Visit(id) | Frame::Paragraph(id) = frame {
+                        maximum = maximum.max(position.get(id).map(|&at| (at, 0)));
+                    }
+                    maximum
+                })
+                .collect();
+            let mut additions = Vec::with_capacity(groups.len());
             for (group_at, group) in groups {
                 let at = group_at.map_or(entries.len(), |group_at| {
-                    entries
-                        .iter()
-                        .position(|(_, frame)| match *frame {
-                            Frame::Visit(id) | Frame::Paragraph(id) => {
-                                position.get(&id).is_some_and(|&at| (at, 0) > group_at)
-                            }
-                            Frame::InlineGroup(_, id, _) => self
-                                .group_tree_position(&position, id)
-                                .is_some_and(|at| at > group_at),
-                            // The first line starts the paragraph.
-                            Frame::FirstLine(_) => false,
-                            Frame::PopClip
-                            | Frame::PopOpacity
-                            | Frame::PopTransform
-                            | Frame::Content(_)
-                            | Frame::HeldContent(_)
-                            | Frame::EndDeferral
-                            | Frame::PushClip(_)
-                            | Frame::DeferredParagraph(_) => false, // cov:ignore: never listed here
-                        })
-                        .unwrap_or(entries.len())
+                    prefix.partition_point(|maximum| {
+                        maximum.is_none_or(|maximum| maximum <= group_at)
+                    })
                 });
                 // A positioned group keeps its own z-index level.
                 let key = match crate::generated_content::generated_origin(group) {
@@ -643,8 +646,18 @@ impl Document {
                         Some(_) => paint_rules::paint_child_key(group, display, cascade),
                     },
                 };
-                entries.insert(at, (key, Frame::InlineGroup(root, group, part)));
+                additions.push((at, (key, Frame::InlineGroup(root, group, part))));
             }
+            let mut merged = Vec::with_capacity(entries.len() + additions.len());
+            let mut additions = additions.into_iter().peekable();
+            for (index, entry) in entries.into_iter().enumerate() {
+                while additions.peek().is_some_and(|(at, _)| *at == index) {
+                    merged.push(additions.next().unwrap().1);
+                }
+                merged.push(entry);
+            }
+            merged.extend(additions.map(|(_, entry)| entry));
+            entries = merged;
         }
         entries.sort_by_key(|(key, _)| *key);
         let split = entries.partition_point(|(((bucket, _), _, _), _)| *bucket == 0);
@@ -694,22 +707,25 @@ impl Document {
     pub fn preorder_positions(&self, root: usize) -> HashMap<usize, usize> {
         self.preorder(root)
             .enumerate()
-            .map(|(position, id)| (id, position))
+            .map(|(position, id)| {
+                #[cfg(test)]
+                super::work_tests::paragraph_node();
+                (id, position)
+            })
             .collect()
     }
 
     /// The `groups` of paragraph `root` that list anything on the lines of
     /// `part`: all of them when `part` covers every line.
-    fn groups_with_content(
-        &self,
-        items: &PageItems<'_>,
+    fn groups_with_content<'a>(
+        &'a self,
+        items: &PageItems<'a>,
         root: usize,
         mut groups: Vec<usize>,
-        lines: Option<&TextLines>,
         part: LinePart,
     ) -> Vec<usize> {
         if part != LinePart::All {
-            groups.retain(|&group| self.group_has_content(items, root, group, lines, part));
+            groups.retain(|&group| self.group_has_content(items, root, group, part));
         }
         groups
     }
@@ -717,43 +733,63 @@ impl Document {
     /// Whether inline opacity group `group` of paragraph `root`, or a group
     /// nested in it, lists anything on the lines of `part`, or a box laid
     /// out beside them.
-    fn group_has_content(
-        &self,
-        items: &PageItems<'_>,
+    fn group_has_content<'a>(
+        &'a self,
+        items: &PageItems<'a>,
         root: usize,
         group: usize,
-        lines: Option<&TextLines>,
         part: LinePart,
     ) -> bool {
-        // Nested groups are walked with a stack, as deep as the document.
-        let mut pending = vec![group];
-        while let Some(group) = pending.pop() {
-            let mut content = Vec::new();
-            let nested = push_paragraph(self, items, root, Some(group), lines, part, &mut content);
-            // A first line on another page lists none of its boxes here.
-            if !content.is_empty()
+        let key = (root, group, part);
+        if let Some(&present) = items.paragraph_presence.borrow().get(&key) {
+            return present;
+        }
+        let mut pending = vec![(group, false)];
+        while let Some((group, children_ready)) = pending.pop() {
+            let key = (root, group, part);
+            if items.paragraph_presence.borrow().contains_key(&key) {
+                continue;
+            }
+            let listed = paragraph::listed_paragraph(self, items, root, Some(group), part);
+            let own = !listed.events.is_empty()
                 || self
                     .ifc_boxes_in_group(items.cascade, root, Some(group), part)
                     .iter()
-                    .any(|id| part != LinePart::First || items.by_node.contains_key(id))
-            {
-                return true;
+                    .any(|id| part != LinePart::First || items.by_node.contains_key(id));
+            if own {
+                items.paragraph_presence.borrow_mut().insert(key, true);
+            } else if children_ready {
+                let present = listed.nested.iter().any(|&child| {
+                    items
+                        .paragraph_presence
+                        .borrow()
+                        .get(&(root, child, part))
+                        .copied()
+                        .unwrap_or(false)
+                });
+                items.paragraph_presence.borrow_mut().insert(key, present);
+            } else {
+                pending.push((group, true));
+                pending.extend(listed.nested.iter().rev().map(|&child| (child, false)));
             }
-            pending.extend(nested);
         }
-        false
+        items.paragraph_presence.borrow()[&(root, group, part)]
     }
 
     /// The in-flow blocks inside the inline content of paragraph `root`
     /// that paint before its lines (see
     /// [`paint_rules::paints_before_paragraph_lines`]), in tree order.
-    fn paragraph_blocks(&self, cascade: &CascadeResult, root: usize) -> Vec<usize> {
+    fn uncached_paragraph_blocks(&self, cascade: &CascadeResult, root: usize) -> Vec<usize> {
         self.get_node(root)
             .map(|node| node.ifc_boxes())
             .unwrap_or_default()
             .into_iter()
             .filter(|&id| paint_rules::paints_before_paragraph_lines(self, cascade, root, id))
             .collect()
+    }
+
+    fn paragraph_blocks(&self, cascade: &CascadeResult, root: usize) -> Vec<usize> {
+        self.paragraph_structure(cascade, root).blocks.clone()
     }
 
     /// The boxes of paragraph `root` laid out beside its lines whose
@@ -767,24 +803,14 @@ impl Document {
         group: Option<usize>,
         part: LinePart,
     ) -> Vec<usize> {
-        let Some(node) = self.get_node(root) else {
-            return Vec::new(); // cov:ignore: element paragraph roots are arena nodes
-        };
-        let mut boxes = node.ifc_boxes();
-        let blocks: HashSet<usize> = self.paragraph_blocks(cascade, root).into_iter().collect();
-        boxes.retain(|&id| {
-            !blocks.contains(&id)
-                && self
-                    .parent_of(id)
-                    .and_then(|parent| self.inline_opacity_group(cascade, root, parent))
-                    == group
-                && match part {
-                    LinePart::All => true,
-                    LinePart::First => paint_rules::atomic_on_first_line(self, root, id),
-                    LinePart::Rest => !paint_rules::atomic_on_first_line(self, root, id),
-                }
-        });
-        boxes
+        if self.get_node(root).is_none() {
+            return Vec::new();
+        }
+        self.paragraph_structure(cascade, root)
+            .boxes
+            .get(&(group, part))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// The nodes the paint walk of one page has to enter: every node that can

@@ -13,6 +13,7 @@ use super::{
 use crate::fragment::LayoutFragment;
 use crate::node::Node;
 use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::sync::Arc;
 
 /// What the walk collected: the sources of the page fragments in the order
 /// they were met, the text roots, and the paragraphs it prepared on the way.
@@ -464,18 +465,29 @@ impl<'a> SourceWalk<'a> {
             .take_text_lines(self.document, placed.id, node);
         let source = self.box_source(placed, visit, own_overflow_source);
         if let Some(groups) = ifc_lines {
-            for group in groups {
-                let line =
-                    self.paragraphs
-                        .line_source(&source, group, (placed.area.x, placed.area.y));
+            for (offset, start, column, owned) in groups.groups().into_iter().flatten() {
+                let line = self.paragraphs.line_source(
+                    &source,
+                    (
+                        *offset,
+                        *start,
+                        groups.column_override.unwrap_or(*column),
+                        owned,
+                    ),
+                    (placed.area.x, placed.area.y),
+                );
                 self.sources.push(line);
             }
-        } else if let Some((origin, pieces)) =
+        } else if let Some((origin, pieces, column_override)) =
             self.paragraphs.pieces_of(self.document, placed.id, node)
         {
             for (rect, column) in pieces {
-                self.sources
-                    .push(piece_source(&source, origin, rect, *column));
+                self.sources.push(piece_source(
+                    &source,
+                    origin,
+                    rect,
+                    column_override.unwrap_or(*column),
+                ));
             }
         } else {
             self.sources.push(source);
@@ -595,7 +607,7 @@ pub(super) fn gives_source(node: &Node, area: PaintRect) -> bool {
 
 /// The origin of the content box of a paragraph, and the pieces of an inline
 /// element measured from it, each with the column it is in.
-type InlinePieces<'p> = ((f32, f32), &'p [(BoxRect, u32)]);
+type InlinePieces<'p> = ((f32, f32), &'p [(BoxRect, u32)], Option<u32>);
 
 /// The paragraphs of the inline engine the walk has entered: where each one
 /// sits, and the pieces and lines it gives to the boxes and text below it.
@@ -610,10 +622,10 @@ pub(super) struct Paragraphs {
     pub(super) vertical: HashMap<usize, (f32, bool)>,
     /// Each inline element's rectangle is the union of its pieces after
     /// pagination moves their lines.
-    piece_bounds: HashMap<usize, HashMap<usize, Vec<(BoxRect, u32)>>>,
+    selected: HashMap<usize, ActiveColumn>,
     fragmented_inline_nodes: HashSet<usize>,
-    text_lines: HashMap<usize, TextGroups>,
     cache: ParagraphCache,
+    owner_roots: HashMap<usize, usize>,
 }
 
 impl Paragraphs {
@@ -657,18 +669,32 @@ impl Paragraphs {
         work: &mut ProjectionWork<'_, '_>,
     ) -> Result<(), LayoutError> {
         if let Entry::Vacant(entry) = self.cache.entry(root_id) {
-            entry.insert(ParagraphProjection::prepare(
+            let prepared = ParagraphProjection::prepare(
                 document,
                 cascade,
                 root_id,
                 column.unwrap_or(0),
                 work,
-            )?);
+            )?;
+            self.owner_roots.extend(
+                prepared
+                    .combined
+                    .owners
+                    .keys()
+                    .map(|&owner| (owner, root_id)),
+            );
+            entry.insert(prepared);
         }
         let selected = column_data(&self.cache[&root_id], column, repeated, work)?;
-        self.fragmented_inline_nodes.extend(selected.fragmented);
-        self.piece_bounds.insert(root_id, selected.bounds);
-        self.text_lines.extend(selected.owners);
+        self.fragmented_inline_nodes
+            .extend(selected.data.fragmented.iter().copied());
+        self.selected.insert(
+            root_id,
+            ActiveColumn {
+                view: selected,
+                consumed: HashSet::new(),
+            },
+        );
         Ok(())
     }
 
@@ -686,8 +712,13 @@ impl Paragraphs {
             .then(|| document.ifc_root_of(node_id))
             .flatten()?;
         let origin = *self.origin.get(&root)?;
-        let pieces = self.piece_bounds.get(&root)?.get(&node_id);
-        Some((origin, pieces.map_or(&[], Vec::as_slice)))
+        let selected = &self.selected.get(&root)?.view;
+        let pieces = selected.data.bounds.get(&node_id);
+        Some((
+            origin,
+            pieces.map_or(&[], Vec::as_slice),
+            selected.column_override,
+        ))
     }
 
     /// The area of an inline element of an inline-engine paragraph, from the
@@ -698,7 +729,7 @@ impl Paragraphs {
         node_id: usize,
         node: &Node,
     ) -> Option<PaintRect> {
-        let ((root_x, root_y), pieces) = self.pieces_of(document, node_id, node)?;
+        let ((root_x, root_y), pieces, _) = self.pieces_of(document, node_id, node)?;
         let (rect, _) = pieces.first()?;
         Some(PaintRect::new(
             root_x + rect.x,
@@ -713,21 +744,36 @@ impl Paragraphs {
     /// for text outside the inline engine.
     fn take_text_lines(
         &mut self,
-        document: &Document,
+        _document: &Document,
         node_id: usize,
         node: &Node,
-    ) -> Option<TextGroups> {
-        (node.kind() == NodeKind::Text)
-            .then(|| {
-                self.text_lines.remove(&node_id).or_else(|| {
-                    document
-                        .ifc_root_of(node_id)
-                        .and_then(|root| self.cache.get(&root))
-                        .filter(|prepared| prepared.combined.owners.contains_key(&node_id))
-                        .map(|_| Vec::new())
-                })
+    ) -> Option<TextGroupsView> {
+        if node.kind() != NodeKind::Text {
+            return None;
+        }
+        let root = *self.owner_roots.get(&node_id)?;
+        if let Some(active) = self.selected.get_mut(&root) {
+            let visible = active.consumed.insert(node_id);
+            if active.view.data.owners.contains_key(&node_id) {
+                return Some(TextGroupsView {
+                    data: Arc::clone(&active.view.data),
+                    owner: node_id,
+                    column_override: active.view.column_override,
+                    visible,
+                });
+            }
+        }
+        let prepared = self.cache.get(&root)?;
+        prepared
+            .combined
+            .owners
+            .contains_key(&node_id)
+            .then(|| TextGroupsView {
+                data: Arc::clone(&prepared.combined),
+                owner: node_id,
+                column_override: None,
+                visible: false,
             })
-            .flatten()
     }
 
     /// The source of the page fragment of a group of lines of a text node,
@@ -736,7 +782,7 @@ impl Paragraphs {
     pub(super) fn line_source(
         &self,
         source: &PageFragmentSource,
-        (offset_x, start, column, owned): (f32, usize, u32, IfcTextLines),
+        (offset_x, start, column, owned): (f32, usize, u32, &IfcTextLines),
         fallback_origin: (f32, f32),
     ) -> PageFragmentSource {
         let (root_x, root_y) = self
@@ -812,39 +858,55 @@ pub(super) fn piece_source(
 /// paragraph in columns shows those of its column; any other shows all of
 /// them, numbered after the column it is in. Charges `work` for the records
 /// it hands out again when `repeated`.
+struct ColumnView {
+    data: Arc<ColumnProjection>,
+    column_override: Option<u32>,
+}
+
+struct ActiveColumn {
+    view: ColumnView,
+    consumed: HashSet<usize>,
+}
+
+struct TextGroupsView {
+    data: Arc<ColumnProjection>,
+    owner: usize,
+    column_override: Option<u32>,
+    visible: bool,
+}
+
+impl TextGroupsView {
+    fn groups(&self) -> Option<&TextGroups> {
+        self.visible
+            .then(|| self.data.owners.get(&self.owner))
+            .flatten()
+    }
+}
+
 fn column_data(
     prepared: &ParagraphProjection,
     column: Option<usize>,
     repeated: bool,
     work: &mut ProjectionWork<'_, '_>,
-) -> Result<ColumnProjection, LayoutError> {
+) -> Result<ColumnView, LayoutError> {
     if prepared.multicol
         && let Some(column) = column
     {
-        return Ok(match prepared.columns.get(&column) {
-            Some(data) => {
-                work.charge(data.record_count)?;
-                data.clone()
-            }
-            None => ColumnProjection::default(),
+        let data = prepared.columns.get(&column).cloned().unwrap_or_default();
+        work.charge(data.record_count)?;
+        return Ok(ColumnView {
+            data,
+            column_override: None,
         });
     }
     if repeated {
         work.charge(prepared.combined.record_count)?;
     }
-    let mut data = prepared.combined.clone();
-    if !prepared.multicol {
-        let number = column.unwrap_or(0) as u32;
-        for pieces in data.bounds.values_mut() {
-            for (_, piece_number) in pieces {
-                *piece_number = number;
-            }
-        }
-        for groups in data.owners.values_mut() {
-            for (_, _, group_number, _) in groups {
-                *group_number = number;
-            }
-        }
-    }
-    Ok(data)
+    Ok(ColumnView {
+        data: Arc::clone(&prepared.combined),
+        column_override: (!prepared.multicol).then_some(column.unwrap_or(0) as u32),
+    })
 }
+
+#[cfg(test)]
+mod tests;

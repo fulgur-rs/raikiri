@@ -25,6 +25,10 @@ impl<'p> FlowPages<'p> {
         }
     }
 
+    pub(super) fn ends_are_ordered(&self) -> bool {
+        self.ends_ordered
+    }
+
     /// The pages whose flow range can own a line centered, or reaching,
     /// between `low` and `high`, in flow order. A page without a flow range cannot own a
     /// normal-flow line, so it is never a candidate.

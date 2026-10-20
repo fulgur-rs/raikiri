@@ -110,7 +110,13 @@ fn skipping_subtrees_without_events_keeps_every_page_order() {
             cascade: &cascade,
             document: &document,
             page: fragment,
-            line_boxes: Default::default(),
+
+            source_lines: None,
+            paragraph_presence: Default::default(),
+            full_paragraph_listing: false,
+            paragraph_listings: Default::default(),
+            paragraph_nodes: Default::default(),
+            paragraph_slots: Default::default(),
         };
         for item in &fragment.items {
             items
@@ -160,7 +166,13 @@ fn an_untraceable_event_source_walks_every_node() {
         cascade: &cascade,
         document: &document,
         page: fragment,
-        line_boxes: Default::default(),
+
+        source_lines: None,
+        paragraph_presence: Default::default(),
+        full_paragraph_listing: false,
+        paragraph_listings: Default::default(),
+        paragraph_nodes: Default::default(),
+        paragraph_slots: Default::default(),
     };
     assert!(document.page_paint_nodes(&items, 0, None).is_none());
 }
@@ -357,3 +369,5 @@ fn nodes_that_are_not_rendered_list_nothing_when_every_node_is_walked() {
     let pruned = document.page_paint_order_impl(&cascade, 0, None, true);
     assert_eq!(format!("{pruned:?}"), format!("{walked:?}"));
 }
+
+mod paragraph_cache_tests;

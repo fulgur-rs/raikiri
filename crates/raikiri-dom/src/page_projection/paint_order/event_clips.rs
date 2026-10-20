@@ -4,7 +4,7 @@
 
 use super::{ClipKind, PageItems, PaintEvent, fragment_hides_box, generated_image_line};
 use crate::{Document, TextLineId, paint_rules};
-use raikiri_style::{CascadeResult, PseudoElem};
+use raikiri_style::CascadeResult;
 use raikiri_traits::{NodeId, PaintClip};
 use std::collections::{HashMap, HashSet};
 
@@ -24,20 +24,32 @@ impl LineClips {
     /// The clips of the lines that `events` list.
     fn new(
         document: &Document,
-        cascade: &CascadeResult,
+        _cascade: &CascadeResult,
         items: &PageItems<'_>,
         events: &[PaintEvent<'_>],
     ) -> Self {
         let mut line_clips = Self::default();
-        let listed = listed_roots(items, events);
+        let listed = listed_lines(items, events);
         let page = items.page;
-        for root in &document.page_projection.text_roots {
-            if (root.fragment_clip.is_none() && root.overflow_chain.is_none())
-                || !listed.contains(&root.node)
-            {
+        let mut selected: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (&root, lines) in &listed {
+            for &line in lines {
+                for placement in document
+                    .page_projection
+                    .text_index
+                    .clip_placements(root, line)
+                {
+                    selected.entry(placement).or_default().push(line);
+                }
+            }
+        }
+        let mut placements: Vec<_> = selected.into_iter().collect();
+        placements.sort_unstable_by_key(|(placement, _)| *placement);
+        for (placement, indices) in placements {
+            let root = &document.page_projection.text_roots[placement];
+            if root.fragment_clip.is_none() && root.overflow_chain.is_none() {
                 continue;
             }
-            let indices = lines_of_root(document, cascade, root.node, root.fragmentainer);
             if let Some(chain) = root.overflow_chain {
                 for &index in &indices {
                     line_clips.overflow_chains.insert(
@@ -81,49 +93,28 @@ impl LineClips {
     }
 }
 
-/// The paragraphs, by root node, with lines, generated boxes or line pieces
-/// among `events`; only those need their line clips.
-fn listed_roots(items: &PageItems<'_>, events: &[PaintEvent<'_>]) -> HashSet<usize> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => Some(line.root),
-            PaintEvent::GeneratedBox(fragment) => Some(fragment.line.root),
-            PaintEvent::LineBox(piece) => Some(piece.line.root),
-            PaintEvent::GeneratedImage(image) => {
-                let placement = items.generated_images?.get(&image.key()?)?;
-                Some(NodeId::new(placement.root as u64))
-            }
+/// Actual event lines, including generated block boxes whose slices can
+/// outlive the page that owns their glyphs.
+fn listed_lines(
+    items: &PageItems<'_>,
+    events: &[PaintEvent<'_>],
+) -> HashMap<usize, HashSet<usize>> {
+    let mut listed: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for event in events {
+        let line = match event {
+            PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => Some(*line),
+            PaintEvent::GeneratedBox(fragment) => Some(fragment.line),
+            PaintEvent::LineBox(piece) => Some(piece.line),
+            PaintEvent::GeneratedImage(image) => generated_image_line(items, *image),
             _ => None,
-        })
-        .filter_map(|root| usize::try_from(root.0).ok())
-        .collect()
-}
-
-/// The indices of the lines of the text root `node` that are positioned on
-/// the page, in the column `fragmentainer` when it is in columns.
-fn lines_of_root(
-    document: &Document,
-    cascade: &CascadeResult,
-    node: usize,
-    fragmentainer: Option<usize>,
-) -> Vec<usize> {
-    if let Some((owner, PseudoElem::Marker)) = crate::generated_content::generated_origin(node) {
-        document
-            .page_projection
-            .markers
-            .get(&owner)
-            .map_or_else(Vec::new, |marker| (0..marker.line_count()).collect())
-    } else {
-        crate::PositionedLines::new(document, cascade, node, fragmentainer).map_or_else(
-            Vec::new,
-            |positioned| {
-                (0..positioned.all_lines().len())
-                    .filter(|&index| positioned.line_offset(index).is_some())
-                    .collect()
-            },
-        )
+        };
+        if let Some(line) = line
+            && let Ok(root) = usize::try_from(line.root.0)
+        {
+            listed.entry(root).or_default().insert(line.index);
+        }
     }
+    listed
 }
 
 /// Whether `event` is a box that is not visible, and paints no decoration of
@@ -237,3 +228,6 @@ pub(super) fn clip_events<'a>(
     }
     clipped_events
 }
+
+#[cfg(test)]
+mod tests;
