@@ -532,6 +532,30 @@ fn authored_containing_width_uses_the_cascade_resolved_ch_width() {
 }
 
 #[test]
+fn authored_containing_width_uses_content_box_for_border_box_ancestor() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:250px;box-sizing:border-box;border:3px solid"),
+    );
+    let text = doc.append_text(container, "generated text");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("styles");
+
+    assert_eq!(
+        AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
+        Some(244.0),
+    );
+}
+
+#[test]
 fn content_widths_resolve_a_cascade_ch_calc_with_a_percentage() {
     use raikiri_style::{build_rule_tree, cascade};
 

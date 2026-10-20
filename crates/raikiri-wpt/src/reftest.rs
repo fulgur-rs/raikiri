@@ -934,6 +934,7 @@ fn render_raikiri_inner(
         .ok_or_else(|| "raikiri produced no pages".into())
 }
 
+#[cfg(test)]
 fn parse_print_length(token: &str, percent_basis: Option<f32>) -> Option<f32> {
     let token = token.trim().trim_matches(|c: char| c == ',' || c == ';');
     if token.is_empty() {
@@ -965,6 +966,7 @@ fn parse_print_length(token: &str, percent_basis: Option<f32>) -> Option<f32> {
     px.is_finite().then_some(px)
 }
 
+#[cfg(test)]
 /// A page margin length; a number without a unit is a length only when it
 /// is zero.
 fn parse_page_margin(token: &str, page_width: f32) -> Option<f32> {
@@ -974,6 +976,7 @@ fn parse_page_margin(token: &str, page_width: f32) -> Option<f32> {
     parse_print_length(token, Some(page_width))
 }
 
+#[cfg(test)]
 /// A `size` value as the harness reads it.
 struct PageSize {
     /// The width and height it names, if any.
@@ -982,6 +985,7 @@ struct PageSize {
     portrait: bool,
 }
 
+#[cfg(test)]
 /// A `size` value, or `None` for one with a component the harness does not
 /// read, which drops the declaration.
 fn parse_page_size(value: &str) -> Option<PageSize> {
@@ -1025,8 +1029,6 @@ fn parse_page_size(value: &str) -> Option<PageSize> {
                 return None;
             }
         } else {
-            // Page size lengths are non-negative, and a number without a
-            // unit is a length only when it is zero.
             if token.parse::<f32>().is_ok_and(|value| value != 0.0) {
                 return None;
             }
@@ -1055,6 +1057,7 @@ fn parse_page_size(value: &str) -> Option<PageSize> {
 /// such as `@top-left { margin: 0 }` are not part of the list. As in the
 /// cascade, a declaration whose value `parse` rejects is dropped, and of the
 /// rest a later one wins unless an earlier one is `!important`.
+#[cfg(test)]
 fn print_declaration<T>(block: &str, name: &str, parse: impl Fn(&str) -> Option<T>) -> Option<T> {
     struct Declarations<'n> {
         name: &'n str,
@@ -1868,92 +1871,6 @@ fn resolve_document_page_context_viewport_units(document: &mut raikiri::Uncascad
     }
 }
 
-fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32) -> (f32, f32) {
-    authored_page_viewport_for_name(
-        input,
-        first_authored_page_name(input).as_deref(),
-        fallback_width,
-        fallback_height,
-    )
-}
-
-fn authored_page_viewport_for_name(
-    input: &str,
-    page_name: Option<&str>,
-    fallback_width: f32,
-    fallback_height: f32,
-) -> (f32, f32) {
-    let block = page_name
-        .and_then(|name| page_block_named(input, name))
-        .or_else(|| page_block(input));
-    let Some(block) = block else {
-        return (fallback_width, fallback_height);
-    };
-    // WPT print reftests resolve page-context `vw`/`vh` against the
-    // 5×3-inch default page box (480×288 CSS px), not the test setup fallback
-    // image size.  Keep the legacy fallback for pages without viewport units.
-    let block_lower = block.to_ascii_lowercase();
-    let has_page_viewport_units = block_lower.contains("vw") || block_lower.contains("vh");
-    let mut page_width = if has_page_viewport_units {
-        480.0
-    } else {
-        fallback_width
-    };
-    let mut page_height = if has_page_viewport_units {
-        288.0
-    } else {
-        fallback_height
-    };
-    if !has_page_viewport_units
-        && let Some(PageSize {
-            size,
-            landscape,
-            portrait,
-        }) = print_declaration(block, "size", parse_page_size)
-    {
-        if let Some((width, height)) = size {
-            page_width = width;
-            page_height = height;
-        }
-        if (landscape && page_width < page_height) || (portrait && page_width > page_height) {
-            std::mem::swap(&mut page_width, &mut page_height);
-        }
-    }
-
-    let mut margins = [0.0_f32; 4];
-    if let Some(values) = print_declaration(block, "margin", |value| {
-        let values = value
-            .split_whitespace()
-            .map(|token| parse_page_margin(token, page_width))
-            .collect::<Option<Vec<_>>>()?;
-        match values.as_slice() {
-            [one] => Some([*one, *one, *one, *one]),
-            [vertical, horizontal] => Some([*vertical, *horizontal, *vertical, *horizontal]),
-            [top, horizontal, bottom] => Some([*top, *horizontal, *bottom, *horizontal]),
-            [top, right, bottom, left] => Some([*top, *right, *bottom, *left]),
-            _ => None,
-        }
-    }) {
-        margins = values;
-    }
-    for (name, index) in [
-        ("margin-top", 0),
-        ("margin-right", 1),
-        ("margin-bottom", 2),
-        ("margin-left", 3),
-    ] {
-        if let Some(value) =
-            print_declaration(block, name, |value| parse_page_margin(value, page_width))
-        {
-            margins[index] = value;
-        }
-    }
-    (
-        (page_width - margins[1] - margins[3]).max(1.0),
-        (page_height - margins[0] - margins[2]).max(1.0),
-    )
-}
-
 /// Build an initial-axis probe in cascade order with fixed media dimensions.
 fn viewport_rule_tree(
     document: &raikiri_html::UncascadedDocument,
@@ -2103,20 +2020,25 @@ fn authored_document_page_viewport(
             &context,
         );
         if hinted.size() == page.size() {
-            return if let Some(name) = query.page_name.as_ref().map(|name| name.0.as_str()) {
-                authored_page_viewport_for_name(&projected, Some(name), width, height)
-            } else {
-                authored_page_viewport(&projected, width, height)
-            };
+            let mut nominal = raikiri_traits::PageBox::new();
+            nominal.width = 480.0;
+            nominal.height = 288.0;
+            return page_area_viewport(&page, nominal);
         }
     }
     let mut fallback = raikiri_traits::PageBox::new();
     fallback.width = width;
     fallback.height = height;
     let paper = page_box_or_fallback(&page, fallback);
-    // The page area sits inside the page border and padding, as in layout.
-    let margins = raikiri_dom::page_margins_for_page(&page, paper);
-    let insets = raikiri_dom::page_content_insets_for_page(&page, paper);
+    page_area_viewport(&page, paper)
+}
+
+fn page_area_viewport(
+    page: &raikiri_style::PageCascadeResult,
+    paper: raikiri_traits::PageBox,
+) -> (f32, f32) {
+    let margins = raikiri_dom::page_margins_for_page(page, paper);
+    let insets = raikiri_dom::page_content_insets_for_page(page, paper);
     (
         insets.page_area_width(margins, paper).max(1.0),
         insets.page_area_height(margins, paper).max(1.0),

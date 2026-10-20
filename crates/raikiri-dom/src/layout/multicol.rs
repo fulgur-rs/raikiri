@@ -3241,19 +3241,31 @@ impl AncestorFacts {
             .is_some_and(WritingMode::is_vertical);
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
         let cv = &cascade.computed[id];
-        self.content_width[id] = match cv.width {
-            // Contents has no box; both preparation and rebreaking inherit its parent width.
-            _ if doc.nodes[id].display() == DisplayValue::Contents => parent_width.max(0.0),
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+        let authored_width = match cv.width {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => Some(value),
             ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
-                (parent_width * value / 100.0).max(0.0)
+                Some(parent_width * value / 100.0)
             }
             ComputedLengthPercentageOrAuto::Calc(calc)
                 if calc.px.is_finite() && calc.percent.is_finite() =>
             {
-                (calc.px + parent_width * calc.percent / 100.0).max(0.0)
+                Some(calc.px + parent_width * calc.percent / 100.0)
             }
-            _ => parent_width.max(0.0),
+            _ => None,
+        };
+        self.content_width[id] = if doc.nodes[id].display() == DisplayValue::Contents {
+            // Contents has no box; both preparation and rebreaking inherit its parent width.
+            parent_width.max(0.0)
+        } else if let Some(width) = authored_width {
+            let width = width.max(0.0);
+            if doc.layout_node_with_style(id).unwrap().style.box_sizing == TaffyBoxSizing::BorderBox
+            {
+                multicol_content_width(doc, id, width, Some(parent_width))
+            } else {
+                width
+            }
+        } else {
+            parent_width.max(0.0)
         };
         self.intrinsic_width[id] = super::bridge::width_sized_by_keyword(doc, cascade, id)
             || parent.is_some_and(|parent| self.intrinsic_width[parent]);
@@ -3377,6 +3389,10 @@ impl AncestorFacts {
             .copied()
             .flatten()
             .map(|ancestor| self.content_width[ancestor])
+    }
+
+    pub(crate) fn content_width(&self, id: usize) -> Option<f32> {
+        self.content_width.get(id).copied()
     }
 
     /// `id` or one of its ancestors has a `min-content`, `max-content` or

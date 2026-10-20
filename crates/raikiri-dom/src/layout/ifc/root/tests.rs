@@ -223,6 +223,26 @@ fn an_empty_atomic_before_keeps_its_size_through_a_rebreak() {
     assert_eq!(piece.parent, Some(owner));
 }
 
+#[test]
+fn generated_before_rebreak_uses_its_border_box_content_width() {
+    use crate::layout::ifc::test_support::{ahem_fonts, sheet_fixture};
+    use crate::layout::test_support::{page_box_800x600, with_ahem};
+
+    let fixture = sheet_fixture(
+        "div::before{content:'aaaa aaaa aaaa aaaa aaaa aaaa'}",
+        "width:250px;box-sizing:border-box;border:3px solid;line-height:10px",
+        |_, _| {},
+    );
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    doc.set_font_collection_with_limits(ahem_fonts(), Limits::default());
+    crate::layout::layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600())
+        .expect("layout");
+
+    assert_eq!(doc.nodes[root].ifc_lines().expect("lines").len(), 2);
+    crate::layout::relayout_text_for_width(with_ahem(&mut doc), &cascade, 400.0);
+    assert_eq!(doc.nodes[root].ifc_lines().expect("lines").len(), 2);
+}
+
 /// A rebreak of a vertical paragraph keeps an empty inline-block `::before`
 /// on its lines, its physical height along the inline axis and its
 /// percentage width resolved against the paragraph's physical width.
