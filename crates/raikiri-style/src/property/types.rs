@@ -9268,16 +9268,39 @@ impl AspectRatioValue {
     /// the natural ratio is kept when there is one. A degenerate or missing
     /// `<ratio>` leaves the natural ratio, as `auto` does.
     pub fn preferred(self, natural: Option<f32>) -> Option<f32> {
-        let natural = natural.filter(|ratio| ratio.is_finite() && *ratio > 0.0);
-        let specified = self.ratio.and_then(|(width, height)| {
-            let ratio = width / height;
-            (width > 0.0 && height > 0.0 && ratio.is_finite() && ratio > 0.0).then_some(ratio)
-        });
-        match specified {
+        let natural = Self::usable_natural(natural);
+        match self.usable_ratio() {
             Some(_) if self.auto && natural.is_some() => natural,
             Some(ratio) => Some(ratio),
             None => natural,
         }
+    }
+
+    /// Whether the preferred ratio of [`Self::preferred`] relates the content
+    /// box of the box rather than the box `box-sizing` names.
+    ///
+    /// The natural ratio of replaced content relates its content box, and so
+    /// does a `<ratio>` given with `auto`. A `<ratio>` alone relates the box
+    /// `box-sizing` names. A degenerate `<ratio>` behaves as `auto`, so it
+    /// leaves the natural ratio and with it the content box.
+    pub fn relates_content_box(self, natural: Option<f32>) -> bool {
+        match self.usable_ratio() {
+            Some(_) => self.auto,
+            None => Self::usable_natural(natural).is_some(),
+        }
+    }
+
+    /// The natural ratio when it can serve as a preferred ratio.
+    fn usable_natural(natural: Option<f32>) -> Option<f32> {
+        natural.filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+    }
+
+    /// The `<ratio>` as a number, `None` when it is missing or degenerate.
+    fn usable_ratio(self) -> Option<f32> {
+        self.ratio.and_then(|(width, height)| {
+            let ratio = width / height;
+            (width > 0.0 && height > 0.0 && ratio.is_finite() && ratio > 0.0).then_some(ratio)
+        })
     }
 }
 

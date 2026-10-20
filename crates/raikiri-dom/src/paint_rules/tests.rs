@@ -981,3 +981,17 @@ fn positioned_frames_go_back_to_their_place_in_tree_order() {
     // Clips keep the order they are added in.
     assert_eq!(insert(vec![Box(c)], Open(b)), [Box(c), Open(b)]);
 }
+
+mod first_line_membership_tests;
+
+thread_local! {
+    static FIRST_LINE_WORK: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
+}
+
+pub(super) fn record_first_line_work(kind: usize) {
+    FIRST_LINE_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += 1;
+        work.set(counts);
+    });
+}

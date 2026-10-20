@@ -1935,6 +1935,7 @@ css/CSS2/visuren/split-inner-inline-2.html
 css/compositing/root-element-background-transparency.html
 css/compositing/svg/mix-blend-mode-in-svg-image.html
 css/compositing/svg/mix-blend-mode-svg-rectangle.html
+css/css-align/abspos/align-self-static-position-002.html
 css/css-align/abspos/align-self-stretch-auto-size.tentative.html
 css/css-align/baseline-rules/inline-table-inline-block-baseline.html
 css/css-align/blocks/justify-self-block-in-inline-002.html
@@ -4230,7 +4231,9 @@ css/css-writing-modes/direction-upright-001.html
 css/css-writing-modes/dynamic-offset-rtl-001.html
 css/css-writing-modes/dynamic-offset-rtl-002.html
 css/css-writing-modes/dynamic-offset-vrl-001.html
+css/css-writing-modes/dynamic-offset-vrl-002.html
 css/css-writing-modes/dynamic-offset-vrl-rtl-001.html
+css/css-writing-modes/dynamic-offset-vrl-rtl-002.html
 css/css-writing-modes/forms/checkbox-appearance-native-vertical-lr-baseline.optional.html
 css/css-writing-modes/forms/checkbox-appearance-native-vertical-rl-baseline.optional.html
 css/css-writing-modes/forms/radio-appearance-native-vertical-lr-baseline.optional.html
@@ -5032,3 +5035,20 @@ css/css-sizing/replaced-aspect-ratio-stretch-fit-003.html
 # The UA stylesheet gave a fieldset no display, so it stayed an inline box that ignores width and height; as a block, `width: fit-content` takes the width its image's percentage height and ratio give. 023 is KEEP in audit-vacuous-passes. 022 is VACUOUS-UNSTYLED because its square also appears without the subject properties; it stays as a negative guard, since it failed before the rule.
 css/css-sizing/intrinsic-percent-replaced-022.html
 css/css-sizing/intrinsic-percent-replaced-023.html
+
+# --- the aspect-ratio of a replaced box relates its border box under border-box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
+# A `border-box` image or svg with an `aspect-ratio` and padding on one side sizes its border box by the ratio, instead of its content box; 031 to 034 are KEEP in audit-vacuous-passes. 013 and 014 are VACUOUS-UNSTYLED because the natural size gives the same square without the ratio; they stay as negative guards, since they failed while the ratio related the content box.
+css/css-sizing/aspect-ratio/replaced-element-013.html
+css/css-sizing/aspect-ratio/replaced-element-014.html
+css/css-sizing/aspect-ratio/replaced-element-031.html
+css/css-sizing/aspect-ratio/replaced-element-032.html
+css/css-sizing/aspect-ratio/replaced-element-033.html
+css/css-sizing/aspect-ratio/replaced-element-034.html
+
+# --- a spanner cut at the page end (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
+# A spanner whose page ends below its last line is cut there and continues on the next page, as a block of the flow does, instead of moving whole to the next page; KEEP in audit-vacuous-passes.
+css/css-multicol/column-balancing-paged-001-print.html
+
+# --- a legend is a block box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
+# The UA stylesheet gave a legend no display, so it stayed an inline box inside its fieldset; as a block, a size-contained fieldset with a legend aligns on its baseline in a flex row as the reference does. KEEP in audit-vacuous-passes.
+css/css-contain/contain-size-fieldset-004.html

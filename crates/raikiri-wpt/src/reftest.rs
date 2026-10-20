@@ -11,11 +11,15 @@
 mod dynamic;
 mod fuzzy;
 pub(crate) mod local_resources;
+mod viewport_units;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::runner::{TestOutcome, Tolerance};
+use viewport_units::{
+    expand_css_viewport_units_with_axes, expand_css_viewport_units_with_media_basis,
+};
 
 // ── Public constants ───────────────────────────────────────────────────
 
@@ -1143,121 +1147,167 @@ struct PageRule<'a> {
 /// Every `@page` rule in `input`, including those nested in other blocks,
 /// in source order. Comments and strings are skipped by the tokenizer.
 fn page_rules(input: &str) -> Vec<PageRule<'_>> {
-    fn collect<'i>(
+    let mut rules = Vec::new();
+    let mut source = cssparser::ParserInput::new(input);
+    let _ = collect_page_rules(&mut cssparser::Parser::new(&mut source), &mut rules, 0);
+    rules
+}
+
+/// Add the `@page` rules of one block, and of the group rules in it, to
+/// `rules`.
+fn collect_page_rules<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    rules: &mut Vec<PageRule<'i>>,
+    depth: usize,
+) -> Result<(), cssparser::ParseError<'i, ()>> {
+    let mut scan = PageScan::new();
+    while let Ok(token) = input.next_including_whitespace().cloned() {
+        match &token {
+            // Whitespace only matters inside an `@page` selector, where
+            // it may not separate a pseudo-class from the rest of its
+            // selector.
+            cssparser::Token::WhiteSpace(_) => {
+                scan.whitespace(input);
+                continue;
+            }
+            cssparser::Token::AtKeyword(name) => scan.at_keyword(name),
+            cssparser::Token::Semicolon => scan.semicolon(),
+            cssparser::Token::CurlyBracketBlock => scan.block(input, rules, depth)?,
+            _ => scan.selector_token(&token, input),
+        }
+        scan.after_colon = matches!(token, cssparser::Token::Colon);
+    }
+    Ok(())
+}
+
+/// What the scan of one block of rules knows about the prelude it is in.
+struct PageScan {
+    /// `None` outside an `@page` prelude, else the names seen so far and
+    /// whether the selector is still valid.
+    page: Option<(Vec<String>, bool)>,
+    /// Whether the current prelude belongs to a conditional group rule,
+    /// the only blocks besides the top level that may hold `@page`.
+    group: bool,
+    /// Whether the last token was a colon.
+    after_colon: bool,
+    /// Whether the selector after the last comma has no component yet.
+    empty_selector: bool,
+    /// Whether the prelude is a comma-separated list.
+    list: bool,
+}
+
+impl PageScan {
+    fn new() -> Self {
+        PageScan {
+            page: None,
+            group: false,
+            after_colon: false,
+            empty_selector: true,
+            list: false,
+        }
+    }
+
+    fn whitespace(&mut self, input: &mut cssparser::Parser<'_, '_>) {
+        if let Some((_, valid)) = &mut self.page
+            && !self.empty_selector
+        {
+            let state = input.state();
+            if matches!(input.next(), Ok(cssparser::Token::Colon)) {
+                *valid = false;
+            }
+            input.reset(&state);
+        }
+    }
+
+    fn at_keyword(&mut self, name: &str) {
+        self.page = name
+            .eq_ignore_ascii_case("page")
+            .then(|| (Vec::new(), true));
+        self.empty_selector = true;
+        self.list = false;
+        self.group = ["media", "supports", "layer"]
+            .iter()
+            .any(|known| name.eq_ignore_ascii_case(known));
+    }
+
+    fn semicolon(&mut self) {
+        self.page = None;
+        self.group = false;
+    }
+
+    /// A block ends the prelude: an `@page` rule is read, a group rule is
+    /// scanned for `@page` rules of its own.
+    fn block<'i>(
+        &mut self,
         input: &mut cssparser::Parser<'i, '_>,
         rules: &mut Vec<PageRule<'i>>,
         depth: usize,
     ) -> Result<(), cssparser::ParseError<'i, ()>> {
-        // `None` outside an `@page` prelude, else the names seen so far and
-        // whether the selector is still valid.
-        let mut page: Option<(Vec<String>, bool)> = None;
-        // Whether the current prelude belongs to a conditional group rule,
-        // the only blocks besides the top level that may hold `@page`.
-        let mut group = false;
-        let mut after_colon = false;
-        // Whether the selector after the last comma has no component yet,
-        // and whether the prelude is a comma-separated list.
-        let mut empty_selector = true;
-        let mut list = false;
-        while let Ok(token) = input.next_including_whitespace().cloned() {
-            match &token {
-                // Whitespace only matters inside an `@page` selector, where
-                // it may not separate a pseudo-class from the rest of its
-                // selector.
-                cssparser::Token::WhiteSpace(_) => {
-                    if let Some((_, valid)) = &mut page
-                        && !empty_selector
-                    {
-                        let state = input.state();
-                        if matches!(input.next(), Ok(cssparser::Token::Colon)) {
-                            *valid = false;
-                        }
-                        input.reset(&state);
-                    }
-                    continue;
-                }
-                cssparser::Token::AtKeyword(name) => {
-                    page = name
-                        .eq_ignore_ascii_case("page")
-                        .then(|| (Vec::new(), true));
-                    empty_selector = true;
-                    list = false;
-                    group = ["media", "supports", "layer"]
-                        .iter()
-                        .any(|known| name.eq_ignore_ascii_case(known));
-                }
-                cssparser::Token::Semicolon => {
-                    page = None;
-                    group = false;
-                }
-                cssparser::Token::CurlyBracketBlock => {
-                    if let Some((names, mut valid)) = page.take() {
-                        // A list may not end with an empty selector, and a
-                        // colon needs its pseudo-class name.
-                        valid &= !(after_colon || list && empty_selector);
-                        let block = input.parse_nested_block(|input| {
-                            let start = input.position();
-                            while input.next().is_ok() {}
-                            Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
-                        })?;
-                        // As in the cascade, a rule with an invalid selector
-                        // is dropped.
-                        if valid {
-                            rules.push(PageRule { names, block });
-                        }
-                    } else if std::mem::take(&mut group) && depth < 256 {
-                        input.parse_nested_block(|input| collect(input, rules, depth + 1))?;
-                    }
-                }
-                _ => {
-                    if let Some((names, valid)) = &mut page {
-                        let starts_selector = empty_selector;
-                        if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
-                            empty_selector = false;
-                        }
-                        match &token {
-                            cssparser::Token::Ident(name) if after_colon => {
-                                *valid &= ["first", "left", "right", "blank"]
-                                    .iter()
-                                    .any(|class| name.eq_ignore_ascii_case(class));
-                            }
-                            // A selector has at most one page name, before
-                            // its pseudo-classes.
-                            cssparser::Token::Ident(name) => {
-                                *valid &= starts_selector;
-                                names.push(name.to_string());
-                            }
-                            // A pseudo-class name follows its colon directly.
-                            cssparser::Token::Colon => {
-                                let state = input.state();
-                                if matches!(
-                                    input.next_including_whitespace(),
-                                    Ok(cssparser::Token::WhiteSpace(_))
-                                ) {
-                                    *valid = false;
-                                }
-                                input.reset(&state);
-                            }
-                            // Each comma separates two non-empty selectors.
-                            cssparser::Token::Comma => {
-                                *valid &= !empty_selector && !after_colon;
-                                empty_selector = true;
-                                list = true;
-                            }
-                            _ => *valid = false,
-                        }
-                    }
-                }
+        if let Some((names, mut valid)) = self.page.take() {
+            // A list may not end with an empty selector, and a
+            // colon needs its pseudo-class name.
+            valid &= !(self.after_colon || self.list && self.empty_selector);
+            let block = input.parse_nested_block(|input| {
+                let start = input.position();
+                while input.next().is_ok() {}
+                Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
+            })?;
+            // As in the cascade, a rule with an invalid selector
+            // is dropped.
+            if valid {
+                rules.push(PageRule { names, block });
             }
-            after_colon = matches!(token, cssparser::Token::Colon);
+        } else if std::mem::take(&mut self.group) && depth < 256 {
+            input.parse_nested_block(|input| collect_page_rules(input, rules, depth + 1))?;
         }
         Ok(())
     }
 
-    let mut rules = Vec::new();
-    let mut source = cssparser::ParserInput::new(input);
-    let _ = collect(&mut cssparser::Parser::new(&mut source), &mut rules, 0);
-    rules
+    /// A token of the prelude of an `@page` rule; any other token is ignored.
+    fn selector_token(
+        &mut self,
+        token: &cssparser::Token<'_>,
+        input: &mut cssparser::Parser<'_, '_>,
+    ) {
+        let Some((names, valid)) = &mut self.page else {
+            return;
+        };
+        let starts_selector = self.empty_selector;
+        if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
+            self.empty_selector = false;
+        }
+        match token {
+            cssparser::Token::Ident(name) if self.after_colon => {
+                *valid &= ["first", "left", "right", "blank"]
+                    .iter()
+                    .any(|class| name.eq_ignore_ascii_case(class));
+            }
+            // A selector has at most one page name, before
+            // its pseudo-classes.
+            cssparser::Token::Ident(name) => {
+                *valid &= starts_selector;
+                names.push(name.to_string());
+            }
+            // A pseudo-class name follows its colon directly.
+            cssparser::Token::Colon => {
+                let state = input.state();
+                if matches!(
+                    input.next_including_whitespace(),
+                    Ok(cssparser::Token::WhiteSpace(_))
+                ) {
+                    *valid = false;
+                }
+                input.reset(&state);
+            }
+            // Each comma separates two non-empty selectors.
+            cssparser::Token::Comma => {
+                *valid &= !self.empty_selector && !self.after_colon;
+                self.empty_selector = true;
+                self.list = true;
+            }
+            _ => *valid = false,
+        }
+    }
 }
 
 fn page_block(input: &str) -> Option<&str> {
@@ -1282,112 +1332,158 @@ fn page_block_named<'a>(input: &'a str, name: &str) -> Option<&'a str> {
 /// Only an identifier at the start of a declaration names the property, so
 /// selectors such as `.page:hover` are not declarations.
 fn first_authored_page_name(input: &str) -> Option<String> {
-    fn find<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
-        let mut declaration_start = true;
-        // The last two significant tokens, to recognize `style="…"`.
-        let mut previous: [Option<cssparser::Token<'i>>; 2] = [None, None];
-        while let Ok(token) = input.next().cloned() {
-            match &token {
-                cssparser::Token::Ident(name)
-                    if declaration_start && name.eq_ignore_ascii_case("page") =>
-                {
-                    // An unquoted `style=…` attribute value ends at
-                    // whitespace or the end of the tag.
-                    let unquoted = matches!(
-                        &previous,
-                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
-                            if attribute.eq_ignore_ascii_case("style")
-                    );
-                    let value = input.try_parse(|input| {
-                        input.expect_colon()?;
-                        let value = input.expect_ident_cloned()?;
-                        // A declaration's value ends the declaration; a
-                        // selector such as `page :first-child {}` goes on.
-                        let end = input.state();
-                        if unquoted
-                            && matches!(
-                                input.next_including_whitespace(),
-                                Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Delim('>'))
-                            )
-                        {
-                            input.reset(&end);
-                            return Ok(value.to_string());
-                        }
-                        input.reset(&end);
-                        // Only `!important` may follow the value.
-                        if input.try_parse(|input| input.expect_delim('!')).is_ok() {
-                            input.expect_ident_matching("important")?;
-                        }
-                        let end = input.state();
-                        match input.next() {
-                            Err(_) | Ok(cssparser::Token::Semicolon) => input.reset(&end),
-                            Ok(_) => return Err(input.new_custom_error(())),
-                        }
-                        Ok::<_, cssparser::ParseError<'i, ()>>(value.to_string())
-                    });
-                    // `auto` names no page, CSS-wide keywords are not names,
-                    // and `default` is reserved.
-                    if let Ok(value) = value
-                        && ![
-                            "auto",
-                            "default",
-                            "initial",
-                            "inherit",
-                            "unset",
-                            "revert",
-                            "revert-layer",
-                        ]
-                        .iter()
-                        .any(|keyword| value.eq_ignore_ascii_case(keyword))
-                    {
-                        return Some(value);
-                    }
-                }
-                cssparser::Token::QuotedString(value)
-                    if matches!(
-                        &previous,
-                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
-                            if attribute.eq_ignore_ascii_case("style")
-                    ) =>
-                {
-                    let mut attribute = cssparser::ParserInput::new(value);
-                    if let Some(name) = find(&mut cssparser::Parser::new(&mut attribute), depth + 1)
-                    {
-                        return Some(name);
-                    }
-                }
-                cssparser::Token::CurlyBracketBlock if depth < 256 => {
-                    let name = input
-                        .parse_nested_block(|input| {
-                            let name = find(input, depth + 1);
-                            // The nested parser must be exhausted to succeed.
-                            while input.next().is_ok() {}
-                            Ok::<_, cssparser::ParseError<'i, ()>>(name)
-                        })
-                        .ok()
-                        .flatten();
-                    if name.is_some() {
-                        return name;
-                    }
-                }
-                _ => {}
-            }
-            // A declaration starts after `;` and after a nested rule's block.
-            declaration_start = matches!(
-                token,
-                cssparser::Token::Semicolon | cssparser::Token::CurlyBracketBlock
-            ) || matches!(
-                (&previous[1], &token),
-                (Some(cssparser::Token::Ident(attribute)), cssparser::Token::Delim('='))
-                    if attribute.eq_ignore_ascii_case("style")
-            );
-            previous = [previous[1].take(), Some(token)];
-        }
-        None
-    }
-
     let mut source = cssparser::ParserInput::new(input);
-    find(&mut cssparser::Parser::new(&mut source), 0)
+    find_page_name(&mut cssparser::Parser::new(&mut source), 0)
+}
+
+/// The last two significant tokens, to recognize `style="…"`.
+type PreviousTokens<'i> = [Option<cssparser::Token<'i>>; 2];
+
+/// Bounds the recursion into blocks and `style` attributes; deeper ones are
+/// not searched.
+const MAX_PAGE_NAME_DEPTH: usize = 256;
+
+/// Words that cannot be a page name: `auto` names no page, CSS-wide keywords
+/// are not names, and `default` is reserved.
+const NON_PAGE_NAMES: [&str; 7] = [
+    "auto",
+    "default",
+    "initial",
+    "inherit",
+    "unset",
+    "revert",
+    "revert-layer",
+];
+
+/// The value of the first `page` declaration found by reading `input`
+/// token by token, and the blocks and `style` attributes inside it.
+///
+/// `depth` counts the blocks and attributes entered so far.
+fn find_page_name<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
+    let mut declaration_start = true;
+    let mut previous: PreviousTokens<'i> = [None, None];
+    while let Ok(token) = input.next().cloned() {
+        let name = match &token {
+            cssparser::Token::Ident(name)
+                if declaration_start && name.eq_ignore_ascii_case("page") =>
+            {
+                // An identifier right after `style=` starts an unquoted
+                // attribute value, which ends at whitespace or the end of
+                // the tag.
+                page_declaration_name(input, follows_style_equals(&previous))
+            }
+            cssparser::Token::QuotedString(value) if follows_style_equals(&previous) => {
+                let mut attribute = cssparser::ParserInput::new(value);
+                find_page_name(&mut cssparser::Parser::new(&mut attribute), depth + 1)
+            }
+            cssparser::Token::CurlyBracketBlock if depth < MAX_PAGE_NAME_DEPTH => {
+                block_page_name(input, depth)
+            }
+            _ => None,
+        };
+        if name.is_some() {
+            return name;
+        }
+        // A declaration starts after `;` and after a nested rule's block.
+        declaration_start = matches!(
+            token,
+            cssparser::Token::Semicolon | cssparser::Token::CurlyBracketBlock
+        ) || is_style_equals(previous[1].as_ref(), Some(&token));
+        previous = [previous[1].take(), Some(token)];
+    }
+    None
+}
+
+/// Whether `ident` and `delim` spell `style=`, which opens an attribute value.
+fn is_style_equals(
+    ident: Option<&cssparser::Token<'_>>,
+    delim: Option<&cssparser::Token<'_>>,
+) -> bool {
+    matches!(
+        (ident, delim),
+        (Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('=')))
+            if attribute.eq_ignore_ascii_case("style")
+    )
+}
+
+/// Whether the token being read comes right after `style=`.
+fn follows_style_equals(previous: &PreviousTokens<'_>) -> bool {
+    is_style_equals(previous[0].as_ref(), previous[1].as_ref())
+}
+
+/// The page name that a `page` property, just read, declares, if it is one.
+///
+/// `unquoted` is set when the declaration is the value of an unquoted
+/// `style=…` attribute.
+fn page_declaration_name<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    unquoted: bool,
+) -> Option<String> {
+    input
+        .try_parse(|input| page_declaration_value(input, unquoted))
+        .ok()
+        .filter(|value| {
+            !NON_PAGE_NAMES
+                .iter()
+                .any(|keyword| value.eq_ignore_ascii_case(keyword))
+        })
+}
+
+/// Read `: ident` and the end of the declaration after a `page` property.
+fn page_declaration_value<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    unquoted: bool,
+) -> Result<String, cssparser::ParseError<'i, ()>> {
+    input.expect_colon()?;
+    let value = input.expect_ident_cloned()?;
+    // A declaration's value ends the declaration; a selector such as
+    // `page :first-child {}` goes on.
+    if !(unquoted && at_unquoted_value_end(input)) {
+        expect_declaration_end(input)?;
+    }
+    Ok(value.to_string())
+}
+
+/// Whether an unquoted attribute value ends at the next token, whitespace or
+/// the end of the tag. Nothing is consumed.
+fn at_unquoted_value_end(input: &mut cssparser::Parser<'_, '_>) -> bool {
+    let end = input.state();
+    let ended = matches!(
+        input.next_including_whitespace(),
+        Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Delim('>'))
+    );
+    input.reset(&end);
+    ended
+}
+
+/// Only `!important` may follow the value, and then the declaration ends at
+/// `;` or at the end of its block. Nothing after the value is consumed.
+fn expect_declaration_end<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+) -> Result<(), cssparser::ParseError<'i, ()>> {
+    if input.try_parse(|input| input.expect_delim('!')).is_ok() {
+        input.expect_ident_matching("important")?;
+    }
+    let end = input.state();
+    match input.next() {
+        Err(_) | Ok(cssparser::Token::Semicolon) => input.reset(&end),
+        Ok(_) => return Err(input.new_custom_error(())),
+    }
+    Ok(())
+}
+
+/// The page name that the block just opened declares, found by searching
+/// the block.
+fn block_page_name<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
+    input
+        .parse_nested_block(|input| {
+            let name = find_page_name(input, depth + 1);
+            // The nested parser must be exhausted to succeed.
+            while input.next().is_ok() {}
+            Ok::<_, cssparser::ParseError<'i, ()>>(name)
+        })
+        .ok()
+        .flatten()
 }
 
 fn css_block_end(input: &str, open: usize) -> Option<usize> {
@@ -1497,120 +1593,30 @@ fn strip_css_comments(input: &str) -> String {
     output
 }
 
-fn inject_default_page_margin(input: &str) -> String {
-    let lower = input.to_ascii_lowercase();
-    let mut page_rules = Vec::new();
-    let mut search = 0;
-    while let Some(relative) = lower[search..].find("@page") {
-        let page_start = search + relative;
-        let before_ok = page_start == 0
-            || !lower.as_bytes()[page_start - 1].is_ascii_alphanumeric()
-                && lower.as_bytes()[page_start - 1] != b'-'
-                && lower.as_bytes()[page_start - 1] != b'_';
-        let after_name = page_start + "@page".len();
-        let after_ok = lower
-            .as_bytes()
-            .get(after_name)
-            .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
-        if !before_ok || !after_ok {
-            search = after_name;
-            continue;
-        }
-        let Some(open_rel) = lower[page_start..].find('{') else {
-            break;
-        };
-        let open = page_start + open_rel;
-        let Some(close) = css_block_end(input, open) else {
-            break;
-        };
-        let top_level_end = top_level_css_block_end(input, open, close);
-        let top_level = &input[open + 1..top_level_end];
-        let mut margin_sides = [false; 4];
-        let mut has_authored_border = false;
-        for declaration in top_level.split(';') {
-            let Some((key, _)) = declaration.split_once(':') else {
-                continue;
-            };
-            let key = key
-                .rsplit("*/")
-                .next()
-                .unwrap_or(key)
-                .trim()
-                .to_ascii_lowercase();
-            match key.as_str() {
-                "margin" => margin_sides = [true; 4],
-                "margin-top" => margin_sides[0] = true,
-                "margin-right" => margin_sides[1] = true,
-                "margin-bottom" => margin_sides[2] = true,
-                "margin-left" => margin_sides[3] = true,
-                "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
-                | "border-width" | "border-style" | "border-color" => {
-                    has_authored_border = true;
-                }
-                _ if key.starts_with("border-") => has_authored_border = true,
-                _ => {}
-            }
-        }
-        // A selector-less @page rule is the only rule that can establish the
-        // low-specificity baseline for all page contexts.  Strip comments so
-        // that a formatting comment between `@page` and `{` does not make a
-        // default rule look like a named or pseudo page.
-        let selector = strip_css_comments(&input[after_name..open]);
-        let selector = selector.trim();
-        let is_unqualified = selector.is_empty();
-        page_rules.push((open + 1, is_unqualified, margin_sides, has_authored_border));
-        search = close + 1;
-    }
+/// One `@page` rule that [`scan_page_rules`] found.
+struct PageRuleEdges {
+    /// Where the rule's block starts, right after its `{`.
+    block_start: usize,
+    /// Whether the rule has no page selector, which makes it apply to every
+    /// page.
+    unqualified: bool,
+    /// Whether the top-level declarations set the top, right, bottom and left
+    /// margin.
+    margins: [bool; 4],
+    /// Whether the top-level declarations set a border.
+    border: bool,
+}
 
-    let has_unqualified_rule = page_rules.iter().any(|(_, unqualified, _, _)| *unqualified);
-    let insertions: Vec<(usize, String)> = if has_unqualified_rule {
-        // Fill only the omitted physical sides of an unqualified rule.  This
-        // keeps the fallback lower-specificity than named/pseudo rules and
-        // lets an authored `margin: 0` (or individual side) win normally.
-        page_rules
-            .iter()
-            .filter_map(|(position, unqualified, margins, has_border)| {
-                if !*unqualified || *has_border {
-                    return None;
-                }
-                let names = [
-                    ("margin-top", 0),
-                    ("margin-right", 1),
-                    ("margin-bottom", 2),
-                    ("margin-left", 3),
-                ];
-                let mut declarations = String::new();
-                for (name, index) in names {
-                    if !margins[index] {
-                        declarations.push_str(name);
-                        declarations.push_str(": 48px;");
-                    }
-                }
-                (!declarations.is_empty()).then_some((*position, declarations))
-            })
-            .collect()
-    } else {
-        // Preserve the historical behavior for documents that define only a
-        // named/pseudo page rule: its default margin is local to that rule, so
-        // an unselected page keeps the test setup fallback geometry.
-        let has_authored_page_edge = page_rules
-            .iter()
-            .any(|(_, _, margins, has_border)| margins.iter().any(|value| *value) || *has_border);
-        if has_authored_page_edge {
-            page_rules
-                .first()
-                .filter(|(_, _, margins, has_border)| {
-                    !margins.iter().any(|value| *value) && !*has_border
-                })
-                .map(|(position, _, _, _)| vec![(*position, "margin: 48px;".to_owned())])
-                .unwrap_or_default()
-        } else {
-            page_rules
-                .iter()
-                .map(|(position, _, _, _)| (*position, "margin: 48px;".to_owned()))
-                .collect()
-        }
-    };
+impl PageRuleEdges {
+    /// Whether the rule sets a margin on any side or a border.
+    fn has_authored_edge(&self) -> bool {
+        self.margins.iter().any(|value| *value) || self.border
+    }
+}
+
+fn inject_default_page_margin(input: &str) -> String {
+    let page_rules = scan_page_rules(input);
+    let insertions = default_margin_insertions(&page_rules);
     if insertions.is_empty() {
         return input.to_string();
     }
@@ -1629,22 +1635,16 @@ fn inject_default_page_margin(input: &str) -> String {
     output
 }
 
-fn page_rule_edge_summaries(input: &str) -> Vec<([bool; 4], bool, bool)> {
+/// Find the `@page` rules of `input`, in source order. The scan stops at an
+/// `@page` rule whose block does not close.
+fn scan_page_rules(input: &str) -> Vec<PageRuleEdges> {
     let lower = input.to_ascii_lowercase();
-    let mut summaries = Vec::new();
+    let mut page_rules = Vec::new();
     let mut search = 0;
     while let Some(relative) = lower[search..].find("@page") {
         let page_start = search + relative;
-        let before_ok = page_start == 0
-            || !lower.as_bytes()[page_start - 1].is_ascii_alphanumeric()
-                && lower.as_bytes()[page_start - 1] != b'-'
-                && lower.as_bytes()[page_start - 1] != b'_';
         let after_name = page_start + "@page".len();
-        let after_ok = lower
-            .as_bytes()
-            .get(after_name)
-            .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
-        if !before_ok || !after_ok {
+        if !is_page_keyword(lower.as_bytes(), page_start, after_name) {
             search = after_name;
             continue;
         }
@@ -1656,55 +1656,129 @@ fn page_rule_edge_summaries(input: &str) -> Vec<([bool; 4], bool, bool)> {
             break;
         };
         let top_level_end = top_level_css_block_end(input, open, close);
-        let top_level = &input[open + 1..top_level_end];
-        let mut margins = [false; 4];
-        let mut border = false;
-        for declaration in top_level.split(';') {
-            let Some((key, _)) = declaration.split_once(':') else {
-                continue;
-            };
-            let key = key
-                .rsplit("*/")
-                .next()
-                .unwrap_or(key)
-                .trim()
-                .to_ascii_lowercase();
-            match key.as_str() {
-                "margin" => margins = [true; 4],
-                "margin-top" => margins[0] = true,
-                "margin-right" => margins[1] = true,
-                "margin-bottom" => margins[2] = true,
-                "margin-left" => margins[3] = true,
-                "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
-                | "border-width" | "border-style" | "border-color" => border = true,
-                _ if key.starts_with("border-") => border = true,
-                _ => {}
-            }
-        }
+        let (margins, border) = authored_page_edges(&input[open + 1..top_level_end]);
+        // A selector-less @page rule is the only rule that can establish the
+        // low-specificity baseline for all page contexts.  Strip comments so
+        // that a formatting comment between `@page` and `{` does not make a
+        // default rule look like a named or pseudo page.
         let selector = strip_css_comments(&input[after_name..open]);
         let selector = selector.trim();
-        summaries.push((margins, border, selector.is_empty()));
+        page_rules.push(PageRuleEdges {
+            block_start: open + 1,
+            unqualified: selector.is_empty(),
+            margins,
+            border,
+        });
         search = close + 1;
     }
-    summaries
+    page_rules
+}
+
+/// Whether the `@page` at `page_start..after_name` is the whole at-keyword,
+/// not part of a longer identifier on either side.
+fn is_page_keyword(lower: &[u8], page_start: usize, after_name: usize) -> bool {
+    let before_ok = page_start == 0
+        || !lower[page_start - 1].is_ascii_alphanumeric()
+            && lower[page_start - 1] != b'-'
+            && lower[page_start - 1] != b'_';
+    let after_ok = lower
+        .get(after_name)
+        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
+    before_ok && after_ok
+}
+
+/// Which margin sides (top, right, bottom, left) and whether a border the
+/// declarations of an `@page` block set.
+fn authored_page_edges(top_level: &str) -> ([bool; 4], bool) {
+    let mut margins = [false; 4];
+    let mut border = false;
+    for declaration in top_level.split(';') {
+        let Some((key, _)) = declaration.split_once(':') else {
+            continue;
+        };
+        let key = key
+            .rsplit("*/")
+            .next()
+            .unwrap_or(key)
+            .trim()
+            .to_ascii_lowercase();
+        match key.as_str() {
+            "margin" => margins = [true; 4],
+            "margin-top" => margins[0] = true,
+            "margin-right" => margins[1] = true,
+            "margin-bottom" => margins[2] = true,
+            "margin-left" => margins[3] = true,
+            "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
+            | "border-width" | "border-style" | "border-color" => border = true,
+            _ if key.starts_with("border-") => border = true,
+            _ => {}
+        }
+    }
+    (margins, border)
+}
+
+/// The declarations to insert, and where, so that pages get the default
+/// margin.
+fn default_margin_insertions(page_rules: &[PageRuleEdges]) -> Vec<(usize, String)> {
+    if page_rules.iter().any(|rule| rule.unqualified) {
+        // Fill only the omitted physical sides of an unqualified rule.  This
+        // keeps the fallback lower-specificity than named/pseudo rules and
+        // lets an authored `margin: 0` (or individual side) win normally.
+        page_rules
+            .iter()
+            .filter_map(|rule| {
+                if !rule.unqualified || rule.border {
+                    return None;
+                }
+                let names = [
+                    ("margin-top", 0),
+                    ("margin-right", 1),
+                    ("margin-bottom", 2),
+                    ("margin-left", 3),
+                ];
+                let mut declarations = String::new();
+                for (name, index) in names {
+                    if !rule.margins[index] {
+                        declarations.push_str(name);
+                        declarations.push_str(": 48px;");
+                    }
+                }
+                (!declarations.is_empty()).then_some((rule.block_start, declarations))
+            })
+            .collect()
+    } else if page_rules.iter().any(PageRuleEdges::has_authored_edge) {
+        // Preserve the historical behavior for documents that define only a
+        // named/pseudo page rule: its default margin is local to that rule, so
+        // an unselected page keeps the test setup fallback geometry.
+        page_rules
+            .first()
+            .filter(|rule| !rule.has_authored_edge())
+            .map(|rule| vec![(rule.block_start, "margin: 48px;".to_owned())])
+            .unwrap_or_default()
+    } else {
+        page_rules
+            .iter()
+            .map(|rule| (rule.block_start, "margin: 48px;".to_owned()))
+            .collect()
+    }
 }
 
 fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
-    let test_rules = page_rule_edge_summaries(test_html);
-    let has_unqualified = test_rules.iter().any(|(_, _, unqualified)| *unqualified);
+    let test_rules = scan_page_rules(test_html);
+    let has_unqualified = test_rules.iter().any(|rule| rule.unqualified);
     // Only mirror the pure UA fallback.  If the test has an authored margin,
     // the reference normally supplies its own matching geometry.
     let test_uses_only_default_margin = has_unqualified
         && test_rules
             .iter()
-            .filter(|(_, _, unqualified)| *unqualified)
-            .all(|(margins, border, _)| !margins.iter().any(|value| *value) && !*border);
+            .filter(|rule| rule.unqualified)
+            .all(|rule| !rule.has_authored_edge());
     if !test_uses_only_default_margin {
         return reference_html.to_owned();
     }
-    let reference_has_authored_edge = page_rule_edge_summaries(reference_html)
+    let reference_has_authored_edge = scan_page_rules(reference_html)
         .iter()
-        .any(|(margins, border, _)| margins.iter().any(|value| *value) || *border);
+        .any(PageRuleEdges::has_authored_edge);
     if reference_has_authored_edge {
         return reference_html.to_owned();
     }
@@ -2049,236 +2123,6 @@ fn authored_document_page_viewport(
     )
 }
 
-/// Expand CSS dimensions without interpreting quoted strings as HTML attributes.
-fn expand_css_viewport_units_with_media_basis(
-    input: &str,
-    width: f32,
-    height: f32,
-    media_width: f32,
-    media_height: f32,
-) -> String {
-    expand_css_viewport_units_with_axes(input, width, height, media_width, media_height, false)
-}
-
-fn expand_css_viewport_units_with_axes(
-    input: &str,
-    width: f32,
-    height: f32,
-    media_width: f32,
-    media_height: f32,
-    vertical: bool,
-) -> String {
-    /// The viewport a dimension resolves against.
-    #[derive(Clone, Copy)]
-    struct Basis {
-        width: f32,
-        height: f32,
-        vertical: bool,
-    }
-
-    /// The viewport extent that one hundred `unit`s span.
-    fn unit_extent(unit: &str, basis: Basis) -> Option<f32> {
-        let Basis {
-            width,
-            height,
-            vertical,
-        } = basis;
-        let extent = match unit {
-            "vw" | "svw" | "lvw" | "dvw" => width,
-            "vh" | "svh" | "lvh" | "dvh" => height,
-            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height),
-            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height),
-            "vi" | "svi" | "lvi" | "dvi" => {
-                if vertical {
-                    height
-                } else {
-                    width
-                }
-            }
-            "vb" | "svb" | "lvb" | "dvb" => {
-                if vertical {
-                    width
-                } else {
-                    height
-                }
-            }
-            _ => return None,
-        };
-        Some(extent)
-    }
-
-    type Edits = Vec<(std::ops::Range<usize>, String)>;
-
-    // Bounds recursion on pathological nesting; deeper blocks stay as written.
-    const MAX_DEPTH: usize = 256;
-
-    /// Expand the dimension `token`, which ended at the parser position,
-    /// and the dimensions inside it when it opens a block. URL contents are
-    /// opaque.
-    fn expand_token<'i>(
-        input: &mut cssparser::Parser<'i, '_>,
-        token: &cssparser::Token<'i>,
-        start: usize,
-        basis: Basis,
-        edits: &mut Edits,
-        depth: usize,
-    ) {
-        match token {
-            cssparser::Token::Dimension { value, unit, .. } => {
-                // Multiply before dividing, as the cascade does, so `100vw`
-                // is the viewport width exactly. Scaling by a precomputed
-                // `width / 100` rounds twice: 100 * (420 / 100) is 419.99997.
-                if let Some(px) = unit_extent(&unit.to_ascii_lowercase(), basis)
-                    .map(|extent| extent * value / 100.0)
-                    && px.is_finite()
-                {
-                    let end = input.position().byte_index();
-                    edits.push((start..end, format!("{px:.6}px")));
-                }
-            }
-            cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {}
-            cssparser::Token::Function(_)
-            | cssparser::Token::ParenthesisBlock
-            | cssparser::Token::SquareBracketBlock
-            | cssparser::Token::CurlyBracketBlock
-                if depth < MAX_DEPTH =>
-            {
-                let _ = input.parse_nested_block(|input| {
-                    loop {
-                        let start = input.position().byte_index();
-                        let Ok(token) = input.next_including_whitespace_and_comments().cloned()
-                        else {
-                            break;
-                        };
-                        expand_token(input, &token, start, basis, edits, depth + 1);
-                    }
-                    Ok::<_, cssparser::ParseError<'i, ()>>(())
-                });
-            }
-            _ => {}
-        }
-    }
-
-    /// Expand the dimensions of a list of rules and declarations, the
-    /// contents of a stylesheet, a declaration block or a style attribute,
-    /// leaving qualified rule preludes (selectors) as written.
-    ///
-    /// `@media` and `@import` preludes resolve against the media basis.
-    fn expand_items<'i>(
-        input: &mut cssparser::Parser<'i, '_>,
-        basis: Basis,
-        media: Basis,
-        edits: &mut Edits,
-        depth: usize,
-    ) {
-        loop {
-            let start = input.position().byte_index();
-            let token = match input.next_including_whitespace_and_comments() {
-                Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Comment(_)) => continue,
-                Ok(token) => token.clone(),
-                Err(_) => return,
-            };
-            if let cssparser::Token::AtKeyword(name) = &token {
-                let prelude =
-                    if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import") {
-                        media
-                    } else {
-                        basis
-                    };
-                loop {
-                    let start = input.position().byte_index();
-                    match input.next_including_whitespace_and_comments().cloned() {
-                        Err(_) => return,
-                        Ok(cssparser::Token::Semicolon) => break,
-                        Ok(cssparser::Token::CurlyBracketBlock) => {
-                            nested_items(input, basis, media, edits, depth);
-                            break;
-                        }
-                        Ok(token) => expand_token(input, &token, start, prelude, edits, depth),
-                    }
-                }
-                continue;
-            }
-            // A custom property value may hold `{}` blocks; any other item
-            // that reaches a `{}` block is a qualified rule, whose prelude is a
-            // selector rather than a value.
-            let custom_property =
-                matches!(&token, cssparser::Token::Ident(name) if name.starts_with("--"));
-            let mut pending = Vec::new();
-            let mut token = Some((start, token));
-            loop {
-                let (start, current) = match token.take() {
-                    Some(token) => token,
-                    None => {
-                        let start = input.position().byte_index();
-                        match input.next_including_whitespace_and_comments() {
-                            Ok(token) => (start, token.clone()),
-                            Err(_) => {
-                                edits.append(&mut pending);
-                                return;
-                            }
-                        }
-                    }
-                };
-                match current {
-                    cssparser::Token::Semicolon => {
-                        edits.append(&mut pending);
-                        break;
-                    }
-                    cssparser::Token::CurlyBracketBlock if !custom_property => {
-                        nested_items(input, basis, media, edits, depth);
-                        break;
-                    }
-                    current => expand_token(input, &current, start, basis, &mut pending, depth),
-                }
-            }
-        }
-    }
-
-    fn nested_items(
-        input: &mut cssparser::Parser<'_, '_>,
-        basis: Basis,
-        media: Basis,
-        edits: &mut Edits,
-        depth: usize,
-    ) {
-        if depth < MAX_DEPTH {
-            let _ = input.parse_nested_block(|input| {
-                expand_items(input, basis, media, edits, depth + 1);
-                Ok::<_, cssparser::ParseError<'_, ()>>(())
-            });
-        }
-    }
-
-    let basis = Basis {
-        width,
-        height,
-        vertical,
-    };
-    let media = Basis {
-        width: media_width,
-        height: media_height,
-        vertical: false,
-    };
-    let mut edits = Vec::new();
-    let mut source = cssparser::ParserInput::new(input);
-    expand_items(
-        &mut cssparser::Parser::new(&mut source),
-        basis,
-        media,
-        &mut edits,
-        0,
-    );
-    let mut result = String::with_capacity(input.len());
-    let mut copied = 0;
-    for (range, replacement) in edits {
-        result.push_str(&input[copied..range.start]);
-        result.push_str(&replacement);
-        copied = range.end;
-    }
-    result.push_str(&input[copied..]);
-    result
-}
 /// Resolve decoded CSS from every document stylesheet and inline-style slot.
 /// Screen and print adapters call this before their first rule-tree parse and
 /// after restoring authored animation styles on a freshly parsed document.

@@ -165,6 +165,7 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    doc.context.table_cache.clear();
     // Keep the previous payloads alive while styles are rebuilt in place.
     // A later error or unwind may leave some styles with old handles and
     // others with newly appended handles, so only a complete successful
@@ -294,8 +295,7 @@ fn apply_computed_to_style_in_session_inner(
         let natural_ratio = crate::taffy_impl::leaf_intrinsic_ratio(&doc.nodes[idx]);
         let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio, false);
         doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
-        doc.nodes[idx].ratio_in_content_box =
-            cv.aspect_ratio.auto && cv.aspect_ratio.ratio.is_some();
+        doc.nodes[idx].ratio_in_content_box = cv.aspect_ratio.relates_content_box(natural_ratio);
         doc.layout_node_with_style_mut(idx)
             .unwrap()
             .style
@@ -1752,12 +1752,18 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
     style.justify_items =
         self_alignment_to_taffy(cv.justify_items).unwrap_or(TaffyAlignItems::NORMAL);
     // An absolutely positioned box takes no part in baseline alignment, so
-    // `last baseline` falls back to `safe self-end` (CSS Box Alignment 3 §9.1).
+    // `last baseline` falls back to `safe self-end` and `baseline` to `safe
+    // start` (CSS Box Alignment 3 §9.1). Taffy places `baseline` at the start
+    // edge already, but keeps the default overflow alignment.
     let abspos = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
     let own = |value: AlignSelfValue| match value {
         AlignSelfValue::Value(SelfAlignmentValue::LastBaseline) if abspos => {
             Some(TaffyAlignItems::SAFE_SELF_END)
         }
+        AlignSelfValue::Value(SelfAlignmentValue::Baseline) if abspos => Some(TaffyAlignItems {
+            keyword: taffy::AlignItemsKeyword::Baseline,
+            safety: taffy::AlignmentSafety::Safe,
+        }),
         value => self_alignment_or_auto_to_taffy(value),
     };
     style.align_self = own(cv.align_self);

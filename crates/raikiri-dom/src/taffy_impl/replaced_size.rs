@@ -28,11 +28,17 @@ use taffy::{
 /// A percentage that has no definite basis resolves to nothing, as for any
 /// other box. The sizes are resolved to the content box, so that
 /// `box-sizing: border-box` bounds the border box.
+///
+/// `content_box_ratio` says that the ratio relates content box sizes whatever
+/// the `box-sizing` is, as the natural ratio of the content does. Otherwise a
+/// `border-box` box has the ratio of its border box (CSS Box Sizing 4 §5.1),
+/// and the padding and border take part in the sizes it gives across.
 pub(super) fn auto_sides_size(
     style: &Style,
     inputs: &LayoutInput,
     natural: Size<f32>,
     limits: ContentLimits,
+    content_box_ratio: bool,
 ) -> Option<Size<f32>> {
     let ratio = style
         .aspect_ratio
@@ -48,9 +54,10 @@ pub(super) fn auto_sides_size(
     let basis = inputs.parent_size;
     let is_min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent
         || inputs.available_space.height == taffy::AvailableSpace::MinContent;
-    let edges = (style.padding.resolve_or_zero(basis.width, resolve_calc)
-        + style.border.resolve_or_zero(basis.width, resolve_calc))
-    .sum_axes();
+    let edges = padding_and_border(style, basis.width);
+    let insets = ratio_box_insets(style, edges, content_box_ratio);
+    let height_for = |width: f32| height_for_width(width, ratio, insets);
+    let width_for = |height: f32| width_for_height(height, ratio, insets);
     let content = |size: Size<Option<f32>>| Size {
         width: size
             .width
@@ -71,7 +78,7 @@ pub(super) fn auto_sides_size(
         width: resolve_cyclic_size(style.size.width, basis.width, is_min_content),
         height: resolve_cyclic_size(style.size.height, basis.height, is_min_content),
     });
-    let keyword = keyword_bounds(style, inputs, natural, limits);
+    let keyword = keyword_bounds(style, inputs, natural, limits, content_box_ratio);
     if let Some(keyword) = keyword {
         min.width = merge_min(
             min.width,
@@ -125,24 +132,38 @@ pub(super) fn auto_sides_size(
         });
         return Some(Size {
             width,
-            height: clamp_height(width / ratio),
+            height: clamp_height(height_for(width)),
         });
     }
     let (width, height) = match (authored.width, authored.height) {
         (Some(width), Some(height)) => (clamp_width(width), clamp_height(height)),
         (Some(width), _) => {
             let width = clamp_width(width);
-            (width, clamp_height(width / ratio))
+            (width, clamp_height(height_for(width)))
         }
         (None, Some(height)) => {
             let height = clamp_height(height);
-            (clamp_width(height * ratio), height)
+            (clamp_width(width_for(height)), height)
         }
-        (None, None) => constrain_with_ratio(
-            (natural.width, natural.height),
-            (min_width, max_width),
-            (min_height, max_height),
-        ),
+        (None, None) => {
+            // The natural width stays. The natural height does too when the
+            // ratio is the natural one; a ratio the box states replaces it,
+            // and the height follows the width along it (CSS 2.1 §10.6.2).
+            let natural_height = if content_box_ratio {
+                natural.height
+            } else {
+                height_for(natural.width)
+            };
+            let (width, height) = constrain_with_ratio(
+                (natural.width + insets.width, natural_height + insets.height),
+                (min_width + insets.width, max_width + insets.width),
+                (min_height + insets.height, max_height + insets.height),
+            );
+            (
+                (width - insets.width).max(0.0),
+                (height - insets.height).max(0.0),
+            )
+        }
     };
     Some(Size { width, height })
 }
@@ -174,6 +195,7 @@ pub(super) fn keyword_bounds(
     inputs: &LayoutInput,
     natural: Size<f32>,
     limits: ContentLimits,
+    content_box_ratio: bool,
 ) -> Option<KeywordBounds> {
     let ratio = style
         .aspect_ratio
@@ -186,9 +208,8 @@ pub(super) fn keyword_bounds(
     let basis = inputs.parent_size;
     let is_min_content = inputs.available_space.width == taffy::AvailableSpace::MinContent
         || inputs.available_space.height == taffy::AvailableSpace::MinContent;
-    let edges = (style.padding.resolve_or_zero(basis.width, resolve_calc)
-        + style.border.resolve_or_zero(basis.width, resolve_calc))
-    .sum_axes();
+    let edges = padding_and_border(style, basis.width);
+    let insets = ratio_box_insets(style, edges, content_box_ratio);
     let min_content = Size {
         width: resolve_bound(style.min_size.width, basis.width, is_min_content)
             .map(|size| content_side(style, size, edges.width)),
@@ -225,11 +246,11 @@ pub(super) fn keyword_bounds(
     // A size transferred across the ratio is not limited by the numeric bounds
     // of the side it lands on.
     let contribution_width = match (ratio, authored.height) {
-        (Some(ratio), Some(_)) => preferred_height * ratio,
+        (Some(ratio), Some(_)) => width_for_height(preferred_height, ratio, insets),
         _ => clamp(natural.width, min_content.width, max_content.width),
     };
     let contribution_height = match (ratio, authored.width) {
-        (Some(ratio), Some(_)) => preferred_width / ratio,
+        (Some(ratio), Some(_)) => height_for_width(preferred_width, ratio, insets),
         _ => clamp(natural.height, min_content.height, max_content.height),
     };
 
@@ -264,31 +285,27 @@ pub(super) fn keyword_bounds(
     if let Some(ratio) = ratio {
         bounds.width.min = merge_min(
             bounds.width.min,
-            bounds
-                .height
-                .min
-                .map(|height| (height - edges.height).max(0.0) * ratio + edges.width),
+            bounds.height.min.map(|height| {
+                width_for_height((height - edges.height).max(0.0), ratio, insets) + edges.width
+            }),
         );
         bounds.width.max = merge_max(
             bounds.width.max,
-            bounds
-                .height
-                .max
-                .map(|height| (height - edges.height).max(0.0) * ratio + edges.width),
+            bounds.height.max.map(|height| {
+                width_for_height((height - edges.height).max(0.0), ratio, insets) + edges.width
+            }),
         );
         bounds.height.min = merge_min(
             bounds.height.min,
-            bounds
-                .width
-                .min
-                .map(|width| (width - edges.width).max(0.0) / ratio + edges.height),
+            bounds.width.min.map(|width| {
+                height_for_width((width - edges.width).max(0.0), ratio, insets) + edges.height
+            }),
         );
         bounds.height.max = merge_max(
             bounds.height.max,
-            bounds
-                .width
-                .max
-                .map(|width| (width - edges.width).max(0.0) / ratio + edges.height),
+            bounds.width.max.map(|width| {
+                height_for_width((width - edges.width).max(0.0), ratio, insets) + edges.height
+            }),
         );
     } // cov:ignore: llvm-cov reports the covered ratio-transfer block's closing brace as uncovered.
     Some(bounds)
@@ -355,6 +372,41 @@ fn content_side(style: &Style, side: f32, edges: f32) -> f32 {
         BoxSizing::ContentBox => side,
         BoxSizing::BorderBox => (side - edges).max(0.0),
     }
+}
+
+/// The padding and border of `style` on each axis, with percentages resolved
+/// against `basis`, the width of the containing block.
+pub(super) fn padding_and_border(style: &Style, basis: Option<f32>) -> Size<f32> {
+    (style.padding.resolve_or_zero(basis, resolve_calc)
+        + style.border.resolve_or_zero(basis, resolve_calc))
+    .sum_axes()
+}
+
+/// The part of the `edges` (padding and border) that lies between the content
+/// box and the box the preferred aspect ratio relates: all of it for a
+/// `border-box` box whose ratio is not a content box one, none otherwise.
+pub(super) fn ratio_box_insets(
+    style: &Style,
+    edges: Size<f32>,
+    content_box_ratio: bool,
+) -> Size<f32> {
+    match style.box_sizing {
+        BoxSizing::BorderBox if !content_box_ratio => edges,
+        _ => Size::ZERO,
+    }
+}
+
+/// The content-box height that goes with a content-box `width` along `ratio`,
+/// where the ratio relates the boxes that are `insets` larger than the content
+/// boxes.
+pub(super) fn height_for_width(width: f32, ratio: f32, insets: Size<f32>) -> f32 {
+    ((width + insets.width) / ratio - insets.height).max(0.0)
+}
+
+/// The content-box width that goes with a content-box `height` along `ratio`;
+/// see [`height_for_width`].
+pub(super) fn width_for_height(height: f32, ratio: f32, insets: Size<f32>) -> f32 {
+    ((height + insets.height) * ratio - insets.width).max(0.0)
 }
 
 /// Convert a border-box size to the content-box size returned by this module.

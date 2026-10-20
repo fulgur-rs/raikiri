@@ -3286,6 +3286,57 @@ impl InitialParseSelectorBudget {
     }
 }
 
+fn selector_freeze_candidates<'a, 'input>(
+    root: roxmltree::Node<'a, 'input>,
+    stylesheet_ranges: &[(roxmltree::Node<'a, 'input>, Range<usize>)],
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Vec<roxmltree::Node<'a, 'input>>, SvgError> {
+    let descendants = root.descendants();
+    let capacity = descendants.len();
+    // Charge the traversal and full reserved capacity before allocating.
+    SelectorFreezeBudget::consume(&mut budget.checks, capacity)?;
+    budget.bytes(
+        capacity
+            .checked_mul(std::mem::size_of::<roxmltree::Node<'a, 'input>>())
+            .ok_or_else(selector_freeze_limit_error)?,
+    )?;
+    let mut candidates = Vec::with_capacity(capacity);
+    let mut ranges = stylesheet_ranges.iter().peekable();
+    // The default XML parser rejects DTDs, so element starts follow source
+    // order without entity-expanded markup pointing back into a definition.
+    for node in descendants.filter(|node| node.is_element()) {
+        let start = node.range().start;
+        while let Some((_, range)) = ranges.peek() {
+            SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+            #[cfg(test)]
+            tests::SELECTOR_FREEZE_STATS.with(|stats| {
+                let (candidates, ranges) = stats.get();
+                stats.set((candidates, ranges + 1));
+            });
+            if range.end <= start {
+                ranges.next();
+            } else {
+                break;
+            }
+        }
+        if let Some((_, range)) = ranges.peek() {
+            SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+            #[cfg(test)]
+            tests::SELECTOR_FREEZE_STATS.with(|stats| {
+                let (candidates, ranges) = stats.get();
+                stats.set((candidates, ranges + 1));
+            });
+            // Stylesheet text is replaced wholesale, including nested markup.
+            // The style element itself starts before its content range.
+            if range.start <= start && start < range.end {
+                continue;
+            }
+        }
+        candidates.push(node);
+    }
+    Ok(candidates)
+}
+
 fn freeze_svg_stylesheet_selectors(
     source: &str,
     budget: &mut SelectorFreezeBudget,
@@ -3326,6 +3377,7 @@ fn freeze_svg_stylesheet_selectors(
         return Ok((source.to_owned(), false));
     }
 
+    let candidates = selector_freeze_candidates(root, &stylesheet_ranges, budget)?;
     let marker_prefix = unique_attribute_name(source, "data-raikiri-svg-selector", budget)?;
     let mut frozen_stylesheet = String::new();
     let mut element_markers = BTreeMap::<usize, Vec<String>>::new();
@@ -3334,16 +3386,13 @@ fn freeze_svg_stylesheet_selectors(
         budget.bytes(marker_prefix.len() + 1 + usize::BITS as usize)?;
         let marker = format!("{marker_prefix}-{index}");
         let mut has_match = false;
-        for node in root.descendants().filter(|node| node.is_element()) {
+        for &node in &candidates {
+            #[cfg(test)]
+            tests::SELECTOR_FREEZE_STATS.with(|stats| {
+                let (candidates, ranges) = stats.get();
+                stats.set((candidates + 1, ranges));
+            });
             SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
-            // Markers cannot be inserted into source ranges that are replaced
-            // wholesale as stylesheet text. Such nested markup is not a
-            // renderable SVG element, even if a broad selector matches it.
-            if stylesheet_ranges.iter().any(|(_, range)| {
-                range.start <= node.range().start && node.range().start < range.end
-            }) {
-                continue;
-            }
             if budgeted_selector_matches(&rule.selector, node, budget)? {
                 SelectorFreezeBudget::consume(&mut budget.matches, 1)?;
                 // Charge string storage plus a conservative per-match share

@@ -119,3 +119,36 @@ fn a_degenerate_ratio_behaves_as_auto() {
     assert_eq!(AspectRatioValue::AUTO.preferred(Some(f32::NAN)), None);
     assert_eq!(ratio(2.0, 1.0).preferred(Some(f32::INFINITY)), Some(2.0));
 }
+
+#[test]
+fn the_natural_ratio_and_an_auto_ratio_relate_the_content_box() {
+    let auto = AspectRatioValue::AUTO;
+    assert!(auto.relates_content_box(Some(2.0)));
+    // `auto` alone leaves nothing to relate without a natural ratio.
+    assert!(!auto.relates_content_box(None));
+    assert!(!auto.relates_content_box(Some(0.0)));
+
+    // A ratio given with `auto` relates the content box, with or without a
+    // natural ratio.
+    let auto_ratio = AspectRatioValue {
+        auto: true,
+        ratio: Some((4.0, 1.0)),
+    };
+    assert!(auto_ratio.relates_content_box(None));
+    assert!(auto_ratio.relates_content_box(Some(2.0)));
+
+    // A ratio alone relates the box `box-sizing` names, a natural ratio
+    // notwithstanding.
+    assert!(!ratio(4.0, 1.0).relates_content_box(None));
+    assert!(!ratio(4.0, 1.0).relates_content_box(Some(2.0)));
+}
+
+#[test]
+fn a_degenerate_ratio_relates_the_content_box_of_the_natural_ratio() {
+    for degenerate in [ratio(0.0, 1.0), ratio(1.0, 0.0), ratio(0.0, 0.0)] {
+        assert!(degenerate.relates_content_box(Some(2.0)));
+        assert!(!degenerate.relates_content_box(None));
+    }
+    // The same for a ratio that overflows to infinity.
+    assert!(ratio(f32::MAX, f32::MIN_POSITIVE).relates_content_box(Some(3.0)));
+}
