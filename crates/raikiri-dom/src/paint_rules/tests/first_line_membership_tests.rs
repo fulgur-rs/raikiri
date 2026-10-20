@@ -84,6 +84,19 @@ fn first_line_membership_is_shared_for_positioned_inline_queries() {
             doc.text_run_opacity_group(&cascade, run);
         }
         let work = FIRST_LINE_WORK.with(|work| work.get());
+        let node = doc.get_node(root).unwrap();
+        let fragments = node
+            .ifc_lines()
+            .unwrap()
+            .iter()
+            .skip(1)
+            .flat_map(|line| line.fragments())
+            .count();
+        let pieces = node.ifc_generated_block_pieces().len();
+        assert_eq!(work[1], fragments);
+        assert_eq!(work[3], pieces);
+        // Each source can revisit one ancestor after the unique ancestors are inserted.
+        assert!(work[2] <= doc.nodes.len() + fragments + pieces);
         eprintln!(
             "N={count} depth={depth}: builds={} fragments={} ancestors={} pieces={} query-us={elapsed}",
             work[0], work[1], work[2], work[3]
