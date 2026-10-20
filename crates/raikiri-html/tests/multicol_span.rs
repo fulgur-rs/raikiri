@@ -503,6 +503,113 @@ fn a_spanner_that_cannot_fit_moves_before_the_following_group_is_paginated() {
     }
 }
 
+#[test]
+fn a_spanner_with_no_lines_breaks_at_the_page_end_like_any_block() {
+    // The spanner is 40px tall and starts at 40px on pages of 60px. It holds
+    // no line, so the page ends inside it and the 20px that remain lie at the
+    // top of the next page, where the second group starts below them. The
+    // height may come from a block inside the spanner as well.
+    for spanner in [
+        "<div class=span style='height:40px'></div>",
+        "<div class=span><div style='height:40px'></div></div>",
+    ] {
+        let document = lay_out(
+            &format!("<div class=mc><p>A<br>B<br>C<br>D</p>{spanner}<p>F<br>G<br>H<br>I</p></div>"),
+            "@page{size:180px 60px}",
+        );
+        assert_eq!(document.page_count(), 2, "{spanner}");
+        assert_page_runs(
+            &document,
+            0,
+            &[
+                ("A", (0.0, 16.0)),
+                ("B", (0.0, 36.0)),
+                ("C", (60.0, 16.0)),
+                ("D", (60.0, 36.0)),
+            ],
+        );
+        assert_page_runs(
+            &document,
+            1,
+            &[
+                ("F", (0.0, 36.0)),
+                ("G", (0.0, 56.0)),
+                ("H", (60.0, 36.0)),
+                ("I", (60.0, 56.0)),
+            ],
+        );
+    }
+}
+
+#[test]
+fn a_spanner_whose_lines_end_above_the_page_end_continues_on_the_next_page() {
+    // The spanner is 80px tall and starts at 40px on pages of 100px, so the
+    // page ends 60px into it. Its only line ends at 20px, so the page ends in
+    // the empty space below it, and the 20px that remain are at the top of the
+    // next page.
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><div class=span style='height:80px'>E</div><p>F<br>G<br>H<br>I</p></div>",
+        "@page{size:180px 100px}",
+    );
+    assert_eq!(document.page_count(), 2);
+    assert_page_runs(
+        &document,
+        0,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+            ("E", (0.0, 56.0)),
+        ],
+    );
+    assert_page_runs(
+        &document,
+        1,
+        &[
+            ("F", (0.0, 36.0)),
+            ("G", (0.0, 56.0)),
+            ("H", (60.0, 36.0)),
+            ("I", (60.0, 56.0)),
+        ],
+    );
+}
+
+#[test]
+fn a_spanner_with_content_at_the_page_end_moves_whole_to_the_next_page() {
+    // The spanner is 40px tall and starts at 40px on pages of 70px, so a page
+    // would end 30px into it. Each spanner has something there that the page
+    // does not cut, so it moves whole to the top of the next page, and the
+    // paragraph after the container starts below it.
+    for spanner in [
+        // A line crosses the page end.
+        "<div class=span style='padding-top:20px;height:20px'>E</div>",
+        // So does a line of a paragraph inside it.
+        "<div class=span style='height:40px'><div style='height:20px'></div><p>E</p></div>",
+        // A float crosses it although the only line ends above.
+        "<div class=span style='height:40px'>E<span style='float:left;width:10px;height:40px'></span></div>",
+        // A border and a padding lie there.
+        "<div class=span style='border-top:40px solid'></div>",
+        "<div class=span style='padding-bottom:40px'></div>",
+        // The spanner may not break inside.
+        "<div class=span style='height:40px;break-inside:avoid'></div>",
+        // Nor may a box inside it.
+        "<div class=span><div style='height:40px;break-inside:avoid'></div></div>",
+    ] {
+        let document = lay_out(
+            &format!("<div class=mc><p>A<br>B<br>C<br>D</p>{spanner}</div><p>K</p>"),
+            "@page{size:180px 70px}",
+        );
+        assert_eq!(document.page_count(), 2, "{spanner}");
+        let runs = document.page(1).unwrap().text_runs();
+        assert_eq!(
+            runs.last().map(|run| (run.text, run.origin)),
+            Some(("K", (0.0, 56.0))),
+            "{spanner}"
+        );
+    }
+}
+
 fn assert_page_runs(document: &DocumentLayout, number: u32, expected: &[(&str, (f32, f32))]) {
     let runs = document.page(number).unwrap().text_runs();
     assert_eq!(

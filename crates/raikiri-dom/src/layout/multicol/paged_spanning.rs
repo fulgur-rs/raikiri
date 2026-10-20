@@ -1,5 +1,6 @@
 use super::*;
 use crate::fragment::{LayoutFragment, MulticolGroup};
+use lineless::EPSILON;
 use std::collections::HashSet;
 
 // The page pipeline supplies the owner's final source position and page
@@ -149,9 +150,12 @@ pub(in crate::layout) fn paginate_spanning_columns(
             let layout = tree.nodes[id].unrounded_layout;
             let y = owner_y + layout.location.y;
             let (_, origin, height) = page_for(y);
+            // A spanner that can be cut where the page ends continues on the
+            // next page, as a block of the flow does; the others move whole.
             if layout.size.height <= height
                 && y > origin + 0.001
                 && y + layout.size.height > origin + height + 0.001
+                && !breaks_at(tree, id, origin + height - y)
             {
                 let shift = origin + height - y;
                 shift_child(tree, &mut shifts, id, shift);
@@ -168,6 +172,62 @@ pub(in crate::layout) fn paginate_spanning_columns(
     tree.nodes[owner].unrounded_layout.size.height += delta;
     edits.grow(owner, delta);
     Ok(delta)
+}
+
+/// Whether a page may end `cut` below the top of the border box of `id`, as it
+/// may inside a plain block of the flow: the box and every box inside it are
+/// plain blocks that allow a break inside them, no box holds anything but
+/// lines of text, every line ends above the cut, and the cut lies in the
+/// content of each box it crosses. Only empty space is cut then, and the part
+/// of the box past the end of the page continues on the next one.
+///
+/// A box whose last line meets the cut would leave nothing but empty space
+/// for the next page, so it does not break there.
+fn breaks_at(tree: &Document, id: usize, cut: f32) -> bool {
+    let mut pending = vec![(id, 0.0_f32)];
+    while let Some((current, top)) = pending.pop() {
+        let node = tree.layout_node_with_style(current).unwrap();
+        if !lineless::is_plain_block_holding_lines(tree, current)
+            || node.break_inside != raikiri_style::property::BreakInside::Auto
+        {
+            return false;
+        }
+        let layout = node.unrounded_layout;
+        let content_top = top + layout.border.top + layout.padding.top;
+        let bottom = top + layout.size.height;
+        let content_bottom = bottom - layout.border.bottom - layout.padding.bottom;
+        // A border or padding is not split by the page, so the cut may not
+        // fall in one.
+        if top < cut - EPSILON
+            && bottom > cut + EPSILON
+            && (cut < content_top - EPSILON || cut > content_bottom + EPSILON)
+        {
+            return false;
+        }
+        // The lines hold all that a paragraph has, up to the boxes among them.
+        if let Some(root) = &node.ifc {
+            if !root.boxes.is_empty()
+                || root.multicol_fragments.is_some()
+                || root.lines.as_ref().is_some_and(|lines| {
+                    lines.lines.last().is_some_and(|last| {
+                        content_top
+                            + lines.line_top(lines.lines.len() - 1)
+                            + last.block_size()
+                            + EPSILON
+                            > cut
+                    })
+                })
+            {
+                return false;
+            }
+            continue;
+        }
+        pending.extend(
+            lineless::rendered_elements(tree, current)
+                .map(|child| (child, top + tree.nodes[child].unrounded_layout.location.y)),
+        );
+    }
+    true
 }
 
 /// Move a child now and record the same move for its container fragments.

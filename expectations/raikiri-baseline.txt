@@ -5041,3 +5041,7 @@ css/css-sizing/aspect-ratio/replaced-element-031.html
 css/css-sizing/aspect-ratio/replaced-element-032.html
 css/css-sizing/aspect-ratio/replaced-element-033.html
 css/css-sizing/aspect-ratio/replaced-element-034.html
+
+# --- a spanner cut at the page end (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
+# A spanner whose page ends below its last line is cut there and continues on the next page, as a block of the flow does, instead of moving whole to the next page; KEEP in audit-vacuous-passes.
+css/css-multicol/column-balancing-paged-001-print.html
