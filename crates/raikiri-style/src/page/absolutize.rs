@@ -16,11 +16,11 @@ use crate::property::{
     TransformFunction, resolve_overflow,
 };
 use crate::resolve::{
-    ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
-    ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
-    ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ComputedTextIndent, ResolveContext, lift_border_spacing, lift_length_percentage_or_calc,
+    ComputedBackgroundSize, ComputedCssPositionOffset, ComputedGridTemplateTracks,
+    ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
+    ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedTextIndent, ResolveContext, lift_border_spacing,
+    lift_flex_basis, lift_length_percentage_or_calc, lift_length_percentage_or_normal,
     lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing,
     resolve_background_size, resolve_border_radius, resolve_border_spacing,
     resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_css_position,
@@ -116,16 +116,12 @@ impl PageLengthBasis<'_> {
     /// `FlexBasisValue::Content` directly rather than routing through the
     /// `Auto`/`Px`/`Percent` cases `lpa` shares).
     fn fb(self, specified: FlexBasisValue) -> FlexBasisValue {
-        match resolve_flex_basis(specified, self.font_size, self.own_line_height, self.ctx) {
-            ComputedFlexBasis::Auto => FlexBasisValue::Auto,
-            ComputedFlexBasis::Content => FlexBasisValue::Content,
-            ComputedFlexBasis::MinContent => FlexBasisValue::MinContent,
-            ComputedFlexBasis::MaxContent => FlexBasisValue::MaxContent,
-            ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
-            ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
-            ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
-            ComputedFlexBasis::Calc(calc) => FlexBasisValue::Calc(calc),
-        }
+        lift_flex_basis(resolve_flex_basis(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ))
     }
     /// `background-size: <bg-size>` — same round-trip as [`Self::lpa`], applied
     /// per axis via [`resolve_background_size`]; `cover`/`contain` carry no
@@ -169,23 +165,14 @@ impl PageLengthBasis<'_> {
     /// `letter-spacing`/`word-spacing`'s `lift_length_or_normal`, which
     /// collapses `normal` to a resolved `ComputedLength` — gap's `normal`
     /// stays a keyword at the computed layer, see
-    /// [`ComputedLengthPercentageOrNormal`] doc).
+    /// [`crate::resolve::ComputedLengthPercentageOrNormal`] doc).
     fn lpn(self, specified: LengthOrNormal) -> LengthOrNormal {
-        match resolve_length_percentage_or_normal(
+        lift_length_percentage_or_normal(resolve_length_percentage_or_normal(
             specified,
             self.font_size,
             self.own_line_height,
             self.ctx,
-        ) {
-            ComputedLengthPercentageOrNormal::Normal => LengthOrNormal::Normal,
-            ComputedLengthPercentageOrNormal::Px(v) => LengthOrNormal::Length(Length::Px(v)),
-            ComputedLengthPercentageOrNormal::Percent(p) => {
-                LengthOrNormal::Length(Length::Percent(p))
-            }
-            ComputedLengthPercentageOrNormal::Calc(calc) => {
-                LengthOrNormal::Calc(LengthPercentageOrCalc::Calc(calc))
-            }
-        }
+        ))
     }
     /// `grid-template-columns` / `grid-template-rows` — round-trips through
     /// [`resolve_grid_template_tracks`] and maps the `Computed*` mirror

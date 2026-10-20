@@ -15,9 +15,12 @@
 use std::sync::LazyLock;
 
 use crate::computed::ComputedValues;
-use crate::property::{CssWideKeyword, FloatValue, PositionValue, PropertyKey, PropertyValue};
+use crate::property::{
+    ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue, PropertyKey, PropertyValue,
+};
 use crate::resolve::{
-    lift_border_spacing, lift_letter_spacing, lift_line_height, lift_tab_size, lift_word_spacing,
+    ComputedColumnWidth, lift_border_spacing, lift_flex_basis, lift_length_percentage_or_normal,
+    lift_letter_spacing, lift_line_height, lift_tab_size, lift_word_spacing,
 };
 
 static INITIAL: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
@@ -34,6 +37,14 @@ fn computed_float(source: &ComputedValues) -> FloatValue {
     match source.position {
         PositionValue::Absolute | PositionValue::Fixed => FloatValue::None,
         _ => source.float,
+    }
+}
+
+/// The specified `column-width` a computed one converts back to.
+fn lift_column_width(computed: ComputedColumnWidth) -> ColumnWidthValue {
+    match computed {
+        ComputedColumnWidth::Auto => ColumnWidthValue::Auto,
+        ComputedColumnWidth::Px(px) => ColumnWidthValue::Length(Length::Px(px)),
     }
 }
 
@@ -156,6 +167,12 @@ keyword_defaults! {
     };
     TabSize, true => PropertyValue::TabSize(lift_tab_size(source.tab_size));
     BorderSpacing, true => PropertyValue::BorderSpacing(lift_border_spacing(source.border_spacing));
+    FlexBasis, false => PropertyValue::FlexBasis(lift_flex_basis(source.flex_basis));
+    RowGap, false => PropertyValue::RowGap(lift_length_percentage_or_normal(source.row_gap));
+    ColumnGap, false => PropertyValue::ColumnGap(lift_length_percentage_or_normal(source.column_gap));
+    ColumnWidth, false => PropertyValue::ColumnWidth(lift_column_width(source.column_width));
+    OverflowX, false => PropertyValue::OverflowX(source.overflow.x);
+    OverflowY, false => PropertyValue::OverflowY(source.overflow.y);
 }
 
 /// The value the CSS-wide `keyword` gives the property `key` under the parent

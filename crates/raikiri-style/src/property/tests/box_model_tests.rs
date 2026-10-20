@@ -751,13 +751,9 @@ fn overflow_rejects_unknown_keyword() {
 }
 
 #[test]
-fn overflow_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
-    for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "overflow-x"), None);
-        assert_eq!(parse(kw, "overflow-y"), None);
-        assert_eq!(parse(kw, "overflow"), None);
+fn overflow_keeps_css_wide_keyword() {
+    for name in ["overflow-x", "overflow-y", "overflow"] {
+        assert_css_wide_keywords_deferred(name);
     }
 }
 

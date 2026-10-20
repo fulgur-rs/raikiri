@@ -7852,12 +7852,16 @@ impl PropertyKey {
         }
     }
 
-    /// Whether `self` is a margin, padding, offset, size (physical or
-    /// flow-relative), `text-align` or flow (`writing-mode`,
-    /// `text-orientation`, `direction`) property, or a shorthand of the first
-    /// three, or a property of the `keyword_defaults` table, whose CSS-wide
-    /// keywords the cascade resolves from the parent's computed value or the
-    /// initial value.
+    /// Whether the cascade resolves a CSS-wide keyword on `self` from the
+    /// parent's computed value or the initial value, so the parser keeps the
+    /// keyword instead of dropping the declaration.
+    ///
+    /// That holds for a property of the `keyword_defaults` table; for the
+    /// margin, padding, offset, size (physical or flow-relative), `text-align`
+    /// and flow (`writing-mode`, `text-orientation`, `direction`) properties;
+    /// and for a shorthand whose longhands all resolve a keyword, which expands
+    /// to one marker per longhand. The tests of `keyword_default_tests` check
+    /// that last condition for the shorthands listed here.
     pub(crate) const fn takes_cascade_css_wide_keyword(self) -> bool {
         if crate::cascade::keyword_defaults::covers(self) {
             return true;
@@ -7899,6 +7903,17 @@ impl PropertyKey {
                 | PropertyKey::WritingMode
                 | PropertyKey::TextOrientation
                 | PropertyKey::Direction
+                | PropertyKey::Font
+                | PropertyKey::Flex
+                | PropertyKey::FlexFlow
+                | PropertyKey::Gap
+                | PropertyKey::PlaceContent
+                | PropertyKey::PlaceItems
+                | PropertyKey::PlaceSelf
+                | PropertyKey::GridRow
+                | PropertyKey::GridColumn
+                | PropertyKey::Overflow
+                | PropertyKey::Columns
         )
     }
 }
@@ -9885,9 +9900,11 @@ pub enum FilterFunction {
 /// too; the shorthands expand to per-side markers during the cascade.
 /// Most other longhands whose computed value is a field of the computed
 /// style do too: `cascade::keyword_defaults` lists them, one row per
-/// property, and the cascade resolves their markers from that table. The
-/// shorthands over such longhands (`flex`, `flex-flow`, `text-wrap`,
-/// `place-content` and the like) do not accept them yet.
+/// property, and the cascade resolves their markers from that table. So do
+/// the shorthands over such longhands (`font`, `flex`, `flex-flow`, `gap`,
+/// `place-content`, `place-items`, `place-self`, `grid-row`, `grid-column`,
+/// `overflow` and `columns`), which expand to per-longhand markers; the
+/// others (`text-wrap` and the like) do not accept them yet.
 /// `text-align-all`, which has no computed field of its own, does not
 /// yet. The `all` shorthand additionally accepts literal `revert-layer`
 /// through [`PropertyValue::AllRevertLayer`]; its other CSS-wide values and
