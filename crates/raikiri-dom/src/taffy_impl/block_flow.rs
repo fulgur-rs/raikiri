@@ -11,7 +11,7 @@ use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};
 use shodo::style::TextGroupAlign;
-use sizing::Metrics;
+pub(crate) use sizing::Metrics;
 use taffy::{
     AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutBlockContainer,
     LayoutInput, LayoutOutput, LayoutPartialTree, Line, MaybeMath, NodeId, Position, Rect,

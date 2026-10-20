@@ -428,3 +428,146 @@ fn an_auto_ratio_keeps_the_viewbox_ratio_of_an_svg() {
         (100.0, 50.0)
     );
 }
+
+/// Border-box size of a paragraph block with `css` that holds `text` set in
+/// Ahem 10px.
+fn ratio_paragraph_size(css: &str, text: &str) -> (f32, f32) {
+    use crate::layout::test_support::{
+        ahem_paragraph_in, ifc_ahem_fonts, page_box_800x600, with_ahem,
+    };
+    let (mut doc, cascade, root) = ahem_paragraph_in("", css, text);
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::page_pipeline::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    assert!(doc.nodes[root].is_ifc_root());
+    let size = doc.nodes[root].unrounded_layout.size;
+    (size.width, size.height)
+}
+
+#[test]
+fn a_paragraph_ratio_height_grows_to_fit_its_lines() {
+    // The ratio gives 10px, but one 20px line needs more.
+    assert_eq!(
+        ratio_paragraph_size("width:100px;aspect-ratio:10/1;line-height:20px", "aaaa"),
+        (100.0, 20.0)
+    );
+}
+
+#[test]
+fn a_paragraph_ratio_height_stays_when_the_lines_are_shorter() {
+    assert_eq!(
+        ratio_paragraph_size("width:100px;aspect-ratio:2/1;line-height:10px", "aaaa"),
+        (100.0, 50.0)
+    );
+}
+
+#[test]
+fn a_zero_min_height_lets_the_paragraph_ratio_height_stand() {
+    assert_eq!(
+        ratio_paragraph_size(
+            "width:100px;aspect-ratio:10/1;line-height:20px;min-height:0",
+            "aaaa"
+        ),
+        (100.0, 10.0)
+    );
+}
+
+#[test]
+fn a_clipping_paragraph_keeps_the_ratio_height() {
+    assert_eq!(
+        ratio_paragraph_size(
+            "width:100px;aspect-ratio:10/1;line-height:20px;overflow:hidden",
+            "aaaa"
+        ),
+        (100.0, 10.0)
+    );
+}
+
+#[test]
+fn a_paragraph_maximum_height_caps_the_height_its_lines_ask_for() {
+    assert_eq!(
+        ratio_paragraph_size(
+            "width:100px;aspect-ratio:10/1;line-height:20px;max-height:15px",
+            "aaaa"
+        ),
+        (100.0, 15.0)
+    );
+}
+
+#[test]
+fn a_paragraph_ratio_width_grows_to_its_longest_word() {
+    // The ratio gives 10px from the 10px height; the word is 40px wide.
+    assert_eq!(
+        ratio_paragraph_size("height:10px;aspect-ratio:1/1", "aaaa"),
+        (40.0, 10.0)
+    );
+}
+
+#[test]
+fn a_paragraph_ratio_height_and_its_lines_both_count_the_padding() {
+    // The content box is 80px wide, so 40px tall by 2:1; the 60px line is
+    // taller, and the padding adds 20px to each axis.
+    assert_eq!(
+        ratio_paragraph_size(
+            "width:80px;aspect-ratio:2/1;padding:10px;line-height:60px",
+            "aaaa"
+        ),
+        (100.0, 80.0)
+    );
+}
+
+#[test]
+fn a_floated_paragraph_takes_its_height_through_the_ratio_from_the_width_its_text_gives() {
+    // The text is 40px wide, so a square is 40px tall and the 10px line fits.
+    assert_eq!(
+        ratio_paragraph_size("float:left;aspect-ratio:1/1", "aaaa"),
+        (40.0, 40.0)
+    );
+}
+
+#[test]
+fn a_floated_paragraph_ratio_height_grows_to_fit_its_lines() {
+    assert_eq!(
+        ratio_paragraph_size("float:left;aspect-ratio:4/1;line-height:30px", "aaaa"),
+        (40.0, 30.0)
+    );
+}
+
+#[test]
+fn a_clipping_paragraph_keeps_the_ratio_width() {
+    assert_eq!(
+        ratio_paragraph_size("height:10px;aspect-ratio:2/1;overflow:hidden", "aaaa"),
+        (20.0, 10.0)
+    );
+}
+
+#[test]
+fn a_paragraph_with_a_minimum_width_keeps_the_ratio_width() {
+    assert_eq!(
+        ratio_paragraph_size("height:20px;aspect-ratio:1/1;min-width:5px", "aaaa"),
+        (20.0, 20.0)
+    );
+}
+
+#[test]
+fn a_paragraph_with_both_sizes_ignores_the_ratio() {
+    assert_eq!(
+        ratio_paragraph_size("width:100px;height:10px;aspect-ratio:1/1", "aaaa"),
+        (100.0, 10.0)
+    );
+}
+
+#[test]
+fn a_size_contained_paragraph_ignores_its_lines() {
+    assert_eq!(
+        ratio_paragraph_size(
+            "width:100px;aspect-ratio:1/1;contain:size;line-height:200px",
+            "aaaa"
+        ),
+        (100.0, 100.0)
+    );
+}

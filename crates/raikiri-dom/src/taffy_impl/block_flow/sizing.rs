@@ -7,7 +7,7 @@ use taffy::{
 };
 
 #[derive(Clone, Copy)]
-pub(super) struct Metrics {
+pub(crate) struct Metrics {
     pub padding: Rect<f32>,
     pub border: Rect<f32>,
     pub inset: Rect<f32>,
@@ -45,7 +45,7 @@ impl Metrics {
     /// `replaced` is whether the box is a replaced element. `content_box_ratio`
     /// is whether its `aspect-ratio` is an `auto <ratio>`, which relates the
     /// content box sizes whatever the `box-sizing` is.
-    pub(super) fn resolve(
+    pub(crate) fn resolve(
         style: &Style,
         replaced: bool,
         content_box_ratio: bool,

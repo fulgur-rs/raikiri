@@ -13,9 +13,9 @@ use taffy::{
     AvailableSpace, BoxGenerationMode, Cache, CacheTree, CollapsibleMarginSet,
     ContainingBlockClaims, CoreStyle, DetailedGridInfo, ExpandedDimension, Layout,
     LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput,
-    LayoutPartialTree, NodeId, Position as TaffyPosition, Size, Style, TraversePartialTree,
-    TraverseTree, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
-    compute_leaf_layout,
+    LayoutPartialTree, MaybeMath, NodeId, Position as TaffyPosition, Size, Style,
+    TraversePartialTree, TraverseTree, compute_cached_layout, compute_flexbox_layout,
+    compute_grid_layout, compute_leaf_layout,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -1104,7 +1104,49 @@ fn compute_ifc_root(
     let idx = usize::from(node_id);
     let style = tree.layout_node_with_style(idx).unwrap().style.clone();
     let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
-    let layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
+    let mut layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
+    // A horizontal paragraph box with an `aspect-ratio` is sized as block
+    // flow sizes a block: a size the ratio gives is raised by the content up
+    // to the maximum the box states. Taffy's leaf takes it as final, so the
+    // leaf is given the width the ratio settles and no ratio, and the height
+    // follows once the content is measured.
+    let ratio = layout_style.aspect_ratio.filter(|_| {
+        inputs.sizing_mode == taffy::SizingMode::InherentSize
+            && tree.nodes[idx].multicol.is_none()
+            && tree.nodes[idx]
+                .ifc
+                .as_ref()
+                .is_some_and(|root| root.writing_mode == shodo::geometry::WritingMode::HorizontalTb)
+    });
+    let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
+    let stated = taffy::util::MaybeResolve::maybe_resolve(
+        layout_style.size,
+        inputs.parent_size,
+        resolve_calc,
+    );
+    let ratio_height_follows =
+        ratio.is_some() && inputs.known_dimensions.height.is_none() && stated.height.is_none();
+    let mut inputs = inputs;
+    if ratio.is_some() {
+        let metrics = block_flow::Metrics::resolve(&layout_style, false, content_box_ratio, inputs);
+        if inputs.known_dimensions.width.is_none()
+            && stated.width.is_none()
+            && let Some(width) = metrics.preferred.width
+        {
+            // The width the ratio takes from the height, raised to the
+            // min-content width of the lines unless the box scrolls or
+            // states a `min-width`.
+            let width = if metrics.ratio_width {
+                let minimum = ifc_min_content_width(tree, node_id, inputs.parent_size);
+                width.max(minimum.maybe_clamp(None, metrics.own_max.width))
+            } else {
+                width
+            };
+            inputs.known_dimensions.width = Some(width);
+            inputs.known_dimensions_are_definite.width = true;
+        }
+        layout_style.aspect_ratio = None;
+    }
     // Border-box top inset, resolved here: the parent has not
     // stored this node's layout yet.
     let top_inset = ifc_top_inset(&style, parent_inline_size);
@@ -1271,6 +1313,22 @@ fn compute_ifc_root(
             nested_oof_candidates = measured.oof_candidates;
             measured.size
         });
+    if ratio_height_follows {
+        layout_style.aspect_ratio = ratio;
+        let mut settled = inputs;
+        settled.known_dimensions.width = Some(output.size.width);
+        let metrics =
+            block_flow::Metrics::resolve(&layout_style, false, content_box_ratio, settled);
+        if let Some(height) = metrics.preferred.height {
+            // `output` holds the height of the lines. They raise the height
+            // the ratio gives unless the box scrolls or states a `min-height`.
+            output.size.height = if metrics.ratio_height {
+                height.max(output.size.height.maybe_clamp(None, metrics.own_max.height))
+            } else {
+                height
+            };
+        }
+    }
     if auto_vertical_block_size && let Some(measured_size) = measured_size {
         // `compute_leaf_layout` retains Taffy's intrinsic auto-width probe as
         // a known width. In vertical flow, the performed IFC layout measures
@@ -1303,6 +1361,32 @@ fn compute_ifc_root(
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     }
     output
+}
+
+/// The min-content width of the border box of the paragraph box `node_id`,
+/// without any width the box states itself.
+fn ifc_min_content_width(
+    tree: &mut LayoutSession<'_>,
+    node_id: NodeId,
+    parent_size: Size<Option<f32>>,
+) -> f32 {
+    let probe = LayoutInput {
+        run_mode: RunMode::ComputeSize,
+        sizing_mode: taffy::SizingMode::ContentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size::NONE,
+        known_dimensions_are_definite: Size {
+            width: false,
+            height: false,
+        },
+        parent_size,
+        available_space: Size {
+            width: AvailableSpace::MinContent,
+            height: AvailableSpace::MaxContent,
+        },
+        vertical_margins_are_collapsible: taffy::Line::FALSE,
+    };
+    compute_ifc_root(tree, node_id, probe, None).size.width
 }
 
 /// The node's own `min-width` and `max-width`, as content-box widths.
