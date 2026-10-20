@@ -151,8 +151,10 @@ pub(super) fn auto_sides_size(
 ///
 /// Replaced content has the same natural min-content and max-content size. A
 /// definite opposite side may transfer that contribution through the
-/// preferred ratio, and the numeric bounds on that side constrain the
-/// transferred size before the contribution is used.
+/// preferred ratio. The numeric bounds of the opposite side constrain the size
+/// that is transferred, but the numeric bounds of the side the keyword is on do
+/// not limit the result: a `min-width: max-content` takes the width the height
+/// gives, whatever `max-width` says.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct KeywordBounds {
     pub width: AxisBounds,
@@ -220,20 +222,14 @@ pub(super) fn keyword_bounds(
         max_content.height,
     );
 
+    // A size transferred across the ratio is not limited by the numeric bounds
+    // of the side it lands on.
     let contribution_width = match (ratio, authored.height) {
-        (Some(ratio), Some(_)) => clamp(
-            preferred_height * ratio,
-            min_content.width,
-            max_content.width,
-        ),
+        (Some(ratio), Some(_)) => preferred_height * ratio,
         _ => clamp(natural.width, min_content.width, max_content.width),
     };
     let contribution_height = match (ratio, authored.width) {
-        (Some(ratio), Some(_)) => clamp(
-            preferred_width / ratio,
-            min_content.height,
-            max_content.height,
-        ),
+        (Some(ratio), Some(_)) => preferred_width / ratio,
         _ => clamp(natural.height, min_content.height, max_content.height),
     };
 

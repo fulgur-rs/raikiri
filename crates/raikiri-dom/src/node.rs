@@ -484,6 +484,12 @@ pub struct Node {
     pub(crate) paragraph_widows: usize,
     /// Whether column layout must restore an authored automatic inline size.
     pub(crate) multicol_auto_width: bool,
+    /// Whether this inline SVG has a `viewBox` ratio only, and `auto` for both
+    /// sides, so that its width is the room its parent offers (CSS Sizing 3,
+    /// "stretch-fit") before the `min-*` and `max-*` sizes of both sides move
+    /// it along the ratio. Recomputed by the style bridge before every layout
+    /// pass.
+    pub(crate) svg_width_follows_available: bool,
     /// Whether enabled before/after content must remain in one measured subtree.
     /// Recomputed by the style bridge before every layout pass.
     pub(crate) has_before_or_after_content: bool,
@@ -743,6 +749,7 @@ impl Node {
             paragraph_orphans: 2,
             paragraph_widows: 2,
             multicol_auto_width: true,
+            svg_width_follows_available: false,
             has_before_or_after_content: false,
             preferred_aspect_ratio: None,
             ratio_in_content_box: false,

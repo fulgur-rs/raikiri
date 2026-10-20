@@ -1502,3 +1502,207 @@ fn an_authored_ratio_replaces_the_ratio_of_the_natural_size_when_the_resolver_ga
         (100.0, 100.0)
     );
 }
+
+/// The border-box size of an inline SVG that has a `viewBox` and no size
+/// attributes, laid out in a block container styled `container_css`.
+fn ratio_only_svg_in_container(container_css: &str, view_box: &str, svg_css: &str) -> (f32, f32) {
+    let mut svg = 0;
+    let doc = laid_out(|doc, body| {
+        let container =
+            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+        svg = doc.append_element(Some(container), "svg", Style::default(), Some(svg_css));
+        doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+        doc.set_element_attributes(svg, vec![("viewBox".into(), view_box.into())]);
+    });
+    size(&doc, svg)
+}
+
+#[test]
+fn a_ratio_only_svg_in_block_flow_is_brought_within_the_bounds_of_both_sides() {
+    // The width of an svg that has a ratio only is the room its container
+    // offers; the `min-*` and `max-*` sizes of both sides then bring it within
+    // the constraint table of CSS 2.1 section 10.4. The sizes are those
+    // Chromium gives.
+    let wide = "0 0 2 1";
+    let square = "0 0 1 1";
+    let block = |width: u32| format!("display:block;width:{width}px");
+    for (container, view_box, css, expected) in [
+        (
+            block(50),
+            wide,
+            "max-width:100px;min-height:100px",
+            (100.0, 100.0),
+        ),
+        (block(50), square, "min-height:100px", (100.0, 100.0)),
+        (
+            block(50),
+            wide,
+            "max-width:60px;min-height:100px",
+            (60.0, 100.0),
+        ),
+        (block(100), wide, "max-height:20px", (40.0, 20.0)),
+        (
+            block(300),
+            wide,
+            "max-height:50px;min-width:10px",
+            (100.0, 50.0),
+        ),
+        (block(300), wide, "max-height:50px", (100.0, 50.0)),
+        (block(50), wide, "min-width:80px", (80.0, 40.0)),
+        (block(200), wide, "max-width:80px", (80.0, 40.0)),
+        (block(500), wide, "", (500.0, 250.0)),
+        (block(500), wide, "min-height:300px", (600.0, 300.0)),
+        (block(500), wide, "max-height:100px", (200.0, 100.0)),
+        (
+            block(500),
+            wide,
+            "min-height:300px;max-width:400px",
+            (400.0, 300.0),
+        ),
+        // The room is what the margins leave; padding counts in a border-box.
+        (
+            block(100),
+            wide,
+            "margin:0 10px;min-height:100px",
+            (200.0, 100.0),
+        ),
+        (
+            block(100),
+            wide,
+            "padding:10px;min-height:100px;box-sizing:border-box",
+            (180.0, 100.0),
+        ),
+        // A min above its max wins.
+        (
+            block(200),
+            wide,
+            "min-width:80px;max-width:50px",
+            (80.0, 40.0),
+        ),
+        (
+            block(200),
+            wide,
+            "min-height:80px;max-height:50px",
+            (160.0, 80.0),
+        ),
+        // An authored width is not moved: only the height follows the bounds.
+        (
+            block(50),
+            wide,
+            "width:100%;min-height:100px",
+            (50.0, 100.0),
+        ),
+        // Flex items, floats, grid items and absolutely positioned boxes take
+        // the same room.
+        (
+            "display:flex;width:500px".to_string(),
+            wide,
+            "",
+            (500.0, 250.0),
+        ),
+        (
+            "display:flex;width:500px".to_string(),
+            wide,
+            "max-width:100px",
+            (100.0, 50.0),
+        ),
+        (
+            "display:flex;flex-direction:column;width:500px".to_string(),
+            wide,
+            "",
+            (500.0, 250.0),
+        ),
+        (
+            block(500),
+            wide,
+            "float:left;min-height:300px",
+            (600.0, 300.0),
+        ),
+        (
+            "display:grid;width:500px".to_string(),
+            wide,
+            "min-height:300px",
+            (600.0, 300.0),
+        ),
+        (
+            "display:block;position:relative;width:500px;height:400px".to_string(),
+            wide,
+            "position:absolute;min-height:300px",
+            (600.0, 300.0),
+        ),
+    ] {
+        assert_eq!(
+            ratio_only_svg_in_container(&container, view_box, css),
+            expected,
+            "{container} {view_box} {css}"
+        );
+    }
+}
+
+#[test]
+fn a_ratio_only_svg_in_a_shrink_to_fit_container_stays_empty() {
+    // The room is not known there, so a width of `auto` contributes nothing.
+    for css in ["", "max-width:100px", "max-height:100px"] {
+        assert_eq!(
+            ratio_only_svg_in_container("display:inline-block", "0 0 2 1", css),
+            (0.0, 0.0),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn a_keyword_min_or_max_width_of_a_ratio_only_svg_takes_the_width_its_height_gives() {
+    // The width an authored height gives through the ratio is not limited by
+    // the numeric bounds of the side it lands on, in either direction.
+    let container = "display:block;width:100px;height:100px";
+    for (view_box, css, expected) in [
+        (
+            "0 0 1 1",
+            "min-width:max-content;max-width:50px;height:100%",
+            (100.0, 100.0),
+        ),
+        (
+            "0 0 1 1",
+            "min-height:max-content;max-height:50px;width:100%",
+            (100.0, 100.0),
+        ),
+        ("0 0 1 1", "min-width:max-content;height:50%", (50.0, 50.0)),
+        (
+            "0 0 2 1",
+            "max-width:max-content;height:60px;min-width:10px",
+            (120.0, 60.0),
+        ),
+    ] {
+        assert_eq!(
+            ratio_only_svg_in_container(container, view_box, css),
+            expected,
+            "{view_box} {css}"
+        );
+    }
+}
+
+#[test]
+fn a_keyword_min_or_max_size_of_an_image_takes_the_size_its_other_side_gives() {
+    // The 25x50 image gets the width its authored height gives through the
+    // ratio, and the height its authored width gives, whatever the numeric
+    // bound on the side the keyword is on says.
+    let container = "display:block;width:200px";
+    for (css, expected) in [
+        (
+            "min-width:max-content;max-width:10px;height:100px",
+            (50.0, 100.0),
+        ),
+        (
+            "min-height:max-content;max-height:10px;width:100px",
+            (100.0, 200.0),
+        ),
+        (
+            "max-width:max-content;min-width:80px;height:100px",
+            (80.0, 100.0),
+        ),
+        ("max-width:max-content;height:100px", (50.0, 100.0)),
+    ] {
+        assert_eq!(image_in_container(container, css), expected, "{css}");
+    }
+}

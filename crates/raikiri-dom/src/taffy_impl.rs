@@ -870,6 +870,17 @@ impl LayoutSession<'_> {
                 let ratio = tree.nodes[idx].preferred_aspect_ratio.unwrap_or(ratio);
                 let mut resolver_style = tree.layout_node_with_style(idx).unwrap().style.clone();
                 resolver_style.aspect_ratio = Some(ratio);
+                if tree.nodes[idx].svg_width_follows_available
+                    && matches!(inputs.available_space.width, AvailableSpace::Definite(_))
+                {
+                    // The style holds `width: 100%` so that the box fills the
+                    // room its parent offers. Measured as an authored width it
+                    // would keep that width whatever the `min-*` and `max-*`
+                    // sizes of the height ask for; as `auto` the constraint
+                    // table of CSS 2.1 §10.4 moves it along the ratio. An
+                    // intrinsic size measurement keeps the percentage.
+                    resolver_style.size.width = taffy::Dimension::auto();
+                }
                 let mut style = resolver_style.clone();
                 // Transfer the ratio in measurement only. Taffy's leaf ratio
                 // floor would otherwise override explicit/max heights.
