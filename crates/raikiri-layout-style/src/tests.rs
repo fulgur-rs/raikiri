@@ -4,6 +4,7 @@ use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 use taffy::{CoreStyle, FlexboxContainerStyle, FlexboxItemStyle};
 mod core_tests;
 mod grid_tests;
+mod owned_tests;
 mod policy_tests;
 mod pr_review_tests;
 mod review_tests;

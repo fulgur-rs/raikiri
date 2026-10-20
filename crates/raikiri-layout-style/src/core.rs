@@ -27,7 +27,7 @@ impl CoreStyle for LayoutStyleView<'_> {
         self.flags().contains(StyleFlags::REPLACED)
     }
     fn box_sizing(&self) -> taffy::BoxSizing {
-        let c = self.prepared.values;
+        let c = &*self.prepared.values;
         let side_borders = c.border.left.width().px() > 0.0 || c.border.right.width().px() > 0.0;
         let vertical_clean = c.border.top.width().px() == 0.0
             && c.border.bottom.width().px() == 0.0
@@ -44,7 +44,7 @@ impl CoreStyle for LayoutStyleView<'_> {
         }
     }
     fn direction(&self) -> taffy::Direction {
-        let c = self.prepared.values;
+        let c = &*self.prepared.values;
         let upright = self.vertical()
             && c.text_orientation == TextOrientation::Upright
             && matches!(
@@ -63,12 +63,12 @@ impl CoreStyle for LayoutStyleView<'_> {
         let get = |axis, base| {
             self.overrides()
                 .find_map(|o| match o {
-                    OverrideKind::Overflow(a, v) if *a == axis => Some(*v),
+                    OverrideKind::Overflow(a, v) if a == axis => Some(v),
                     _ => None,
                 })
                 .unwrap_or(base)
         };
-        let c = self.prepared.values;
+        let c = &*self.prepared.values;
         let (x, y) = (
             overflow(get(Axis::X, c.overflow.x)),
             overflow(get(Axis::Y, c.overflow.y)),
@@ -118,7 +118,7 @@ impl CoreStyle for LayoutStyleView<'_> {
         )
     }
     fn aspect_ratio(&self) -> Option<f32> {
-        let c = self.prepared.values;
+        let c = &*self.prepared.values;
         let width = self.base_length(LengthProperty::Width).value;
         let height = self.base_length(LengthProperty::Height).value;
         let base = if matches!(width, L::Auto)
@@ -132,7 +132,7 @@ impl CoreStyle for LayoutStyleView<'_> {
         let ratio = self
             .overrides()
             .find_map(|o| match o {
-                OverrideKind::AspectRatio(r) => Some(*r),
+                OverrideKind::AspectRatio(r) => Some(r),
                 _ => None,
             })
             .unwrap_or(base);

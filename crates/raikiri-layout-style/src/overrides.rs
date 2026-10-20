@@ -3,6 +3,7 @@ use raikiri_style::{
     ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P,
     property::OverflowValue,
 };
+use std::sync::Arc;
 
 /// A length override with an explicit calc owner or resolution tag.
 #[derive(Clone, Copy, Debug)]
@@ -21,6 +22,8 @@ pub enum OverrideError {
     UnpreparedCalc,
     /// The payload uses another property's range.
     WrongRange,
+    /// An already resolved value must be a physical pixel length.
+    ResolvedNonPixel,
 }
 impl std::fmt::Display for OverrideError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -113,5 +116,107 @@ impl<'a> PropertyOverride<'a> {
     /// Override inline self alignment, including explicit auto.
     pub const fn justify_self(value: Option<taffy::AlignSelf>) -> Self {
         Self(OverrideKind::JustifySelf(value))
+    }
+}
+
+/// A sparse override that owns any calc payload it introduces.
+///
+/// Borrowed projections never clone the Arc or allocate while querying.
+#[derive(Clone, Debug)]
+pub struct OwnedPropertyOverride(OwnedOverrideKind);
+#[derive(Clone, Debug)]
+enum OwnedOverrideKind {
+    Inline(PropertyOverride<'static>),
+    Length {
+        property: LengthProperty,
+        value: L,
+        payload: Option<Arc<AlignedCalc>>,
+        resolved: bool,
+    },
+}
+impl OwnedPropertyOverride {
+    /// Construct a physical length override, preparing a calc owner if needed.
+    /// `resolved` marks values already resolved in physical pixels.
+    ///
+    /// # Errors
+    /// Rejects preparation-only logical slots and non-pixel resolved values.
+    pub fn length(
+        property: LengthProperty,
+        value: L,
+        resolved: bool,
+    ) -> Result<Self, OverrideError> {
+        if resolved && !matches!(value, L::Px(_)) {
+            return Err(OverrideError::ResolvedNonPixel);
+        }
+        let payload = match value {
+            L::Calc(expression) | L::FitContentOf(P::Calc(expression)) => Some(Arc::new(
+                AlignedCalc::new(expression, property.non_negative()),
+            )),
+            _ => None,
+        };
+        PropertyOverride::length(
+            property,
+            LengthValue {
+                value,
+                payload: payload.as_deref(),
+                resolved,
+            },
+        )?;
+        Ok(Self(OwnedOverrideKind::Length {
+            property,
+            value,
+            payload,
+            resolved,
+        }))
+    }
+
+    /// Borrow the entry without cloning its payload owner.
+    pub fn as_borrowed(&self) -> PropertyOverride<'_> {
+        match &self.0 {
+            OwnedOverrideKind::Inline(entry) => *entry,
+            OwnedOverrideKind::Length {
+                property,
+                value,
+                payload,
+                resolved,
+            } => PropertyOverride(OverrideKind::Length(
+                *property,
+                LengthValue {
+                    value: *value,
+                    payload: payload.as_deref(),
+                    resolved: *resolved,
+                },
+            )),
+        }
+    }
+    /// Override the ratio, including explicitly disabling it.
+    pub const fn aspect_ratio(value: Option<f32>) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::aspect_ratio(
+            value,
+        )))
+    }
+    /// Override physical overflow.
+    pub const fn overflow(axis: Axis, value: OverflowValue) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::overflow(
+            axis, value,
+        )))
+    }
+    /// Override flex shrink during an intrinsic probe.
+    pub const fn flex_shrink(value: f32) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::flex_shrink(
+            value,
+        )))
+    }
+    /// Override self alignment, including explicit auto.
+    pub const fn align_self(value: Option<taffy::AlignSelf>) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::align_self(
+            value,
+        )))
+    }
+    /// Override inline self alignment, including explicit auto.
+    pub const fn justify_self(value: Option<taffy::AlignSelf>) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::justify_self(
+            value,
+        )))
     }
 }

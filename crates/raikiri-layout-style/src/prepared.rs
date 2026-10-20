@@ -5,6 +5,7 @@ use raikiri_style::{
     ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P,
     ComputedLengthPercentageOrNormal as N, ComputedValues, property::CalcLengthPercentage,
 };
+use std::{ops::Deref, sync::Arc};
 
 /// A preparation error, detected before any getter runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,10 +26,10 @@ impl std::fmt::Display for PrepareError {
 }
 impl std::error::Error for PrepareError {}
 
-/// A validated borrow of computed style and prepared calc bindings.
+/// Computed style and calc bindings prepared before layout queries.
 ///
-/// Preparation does not clone the computed values or own any payloads.
-/// The adapter retains payload owners separately, for example in Arcs.
+/// The original constructor borrows both inputs. The owning constructors
+/// retain calc owners without making references into their own fields.
 ///
 /// ```compile_fail
 /// use raikiri_layout_style::{PreparedStyle, StyleMetadata};
@@ -71,13 +72,61 @@ impl std::error::Error for PrepareError {}
 /// let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
 /// let _ = taffy::CoreStyle::size(&view);
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PreparedStyle<'a> {
-    pub(crate) values: &'a ComputedValues,
+    pub(crate) values: ComputedSource<'a>,
     pub(crate) metadata: StyleMetadata,
-    pub(crate) calcs: &'a [PreparedCalc<'a>],
+    calcs: CalcBindings<'a>,
+}
+#[derive(Clone, Debug)]
+pub(crate) enum ComputedSource<'a> {
+    Borrowed(&'a ComputedValues),
+    Shared(Arc<ComputedValues>),
+}
+impl Deref for ComputedSource<'_> {
+    type Target = ComputedValues;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(values) => values,
+            Self::Shared(values) => values,
+        }
+    }
+}
+#[derive(Clone, Debug)]
+enum CalcBindings<'a> {
+    Borrowed(&'a [PreparedCalc<'a>]),
+    Owned(Box<[(CalcSlot, Arc<AlignedCalc>)]>),
 }
 impl<'a> PreparedStyle<'a> {
+    /// Borrow computed values and allocate owners for their calc slots once.
+    pub fn prepare(values: &'a ComputedValues, metadata: StyleMetadata) -> Self {
+        Self::prepare_source(ComputedSource::Borrowed(values), metadata)
+    }
+
+    /// Retain shared computed values and allocate their calc owners once.
+    pub fn prepare_shared(
+        values: Arc<ComputedValues>,
+        metadata: StyleMetadata,
+    ) -> PreparedStyle<'static> {
+        PreparedStyle::prepare_source(ComputedSource::Shared(values), metadata)
+    }
+
+    fn prepare_source(values: ComputedSource<'a>, metadata: StyleMetadata) -> Self {
+        let mut prepared = Self {
+            values,
+            metadata,
+            calcs: CalcBindings::Owned(Box::default()),
+        };
+        let mut calcs = Vec::new();
+        prepared
+            .visit_calcs(|slot, expression, range| {
+                calcs.push((slot, Arc::new(AlignedCalc::new(expression, range))));
+                Ok(())
+            })
+            .expect("constructing owners cannot reject a calc slot");
+        prepared.calcs = CalcBindings::Owned(calcs.into_boxed_slice());
+        prepared
+    }
     /// Validate the complete property/component table once, outside layout getters.
     ///
     /// # Errors
@@ -93,9 +142,9 @@ impl<'a> PreparedStyle<'a> {
             }
         }
         let prepared = Self {
-            values,
+            values: ComputedSource::Borrowed(values),
             metadata,
-            calcs,
+            calcs: CalcBindings::Borrowed(calcs),
         };
         let mut count = 0;
         prepared.visit_calcs(|slot, expression, range| {
@@ -115,16 +164,27 @@ impl<'a> PreparedStyle<'a> {
         }
         Ok(prepared)
     }
-    pub(crate) fn payload(&self, slot: CalcSlot) -> &'a AlignedCalc {
-        self.calcs
-            .iter()
-            .find(|b| b.slot == slot)
-            .expect("validated immutable calc bindings")
-            .payload
+    pub(crate) fn payload(&self, slot: CalcSlot) -> &AlignedCalc {
+        match &self.calcs {
+            CalcBindings::Borrowed(bindings) => {
+                bindings
+                    .iter()
+                    .find(|binding| binding.slot == slot)
+                    .expect("validated immutable calc bindings")
+                    .payload
+            }
+            CalcBindings::Owned(bindings) => {
+                &bindings
+                    .iter()
+                    .find(|(binding_slot, _)| *binding_slot == slot)
+                    .expect("constructed immutable calc bindings")
+                    .1
+            }
+        }
     }
     pub(crate) fn scalar(&self, property: LengthProperty) -> L {
         use LengthProperty::*;
-        let c = self.values;
+        let c = &*self.values;
         let padding = |v| match v {
             P::Px(v) => L::Px(v),
             P::Percent(v) => L::Percent(v),
@@ -225,7 +285,7 @@ impl<'a> PreparedStyle<'a> {
             }
             Ok::<_, PrepareError>(())
         };
-        let c = self.values;
+        let c = &*self.values;
         for (axis, template, auto) in [
             (Axis::X, &c.grid_template_columns, &c.grid_auto_columns),
             (Axis::Y, &c.grid_template_rows, &c.grid_auto_rows),
