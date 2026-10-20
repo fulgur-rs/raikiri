@@ -3797,48 +3797,112 @@ impl LayoutBlockContainer for LayoutSession<'_> {
 }
 
 impl LayoutFlexboxContainer for LayoutSession<'_> {
+    #[cfg(not(test))]
     type FlexboxContainerStyle<'a>
         = &'a Style
     where
         Self: 'a;
+    #[cfg(test)]
+    type FlexboxContainerStyle<'a>
+        = crate::layout::style_views::checked::CheckedStyle<'a>
+    where
+        Self: 'a;
+    #[cfg(not(test))]
     type FlexboxItemStyle<'a>
         = &'a Style
     where
         Self: 'a;
+    #[cfg(test)]
+    type FlexboxItemStyle<'a>
+        = crate::layout::style_views::checked::CheckedStyle<'a>
+    where
+        Self: 'a;
 
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
-        self.layout_node_with_style(usize::from(node_id))
-            .unwrap()
-            .style
+        #[cfg(test)]
+        {
+            self.checked_style(
+                usize::from(node_id),
+                crate::layout::style_views::checked::ReadRole::FlexContainer,
+            )
+        }
+        #[cfg(not(test))]
+        {
+            self.layout_node_with_style(usize::from(node_id))
+                .unwrap()
+                .style
+        }
     }
 
     fn get_flexbox_child_style(&self, child_node_id: NodeId) -> Self::FlexboxItemStyle<'_> {
-        self.layout_node_with_style(usize::from(child_node_id))
-            .unwrap()
-            .style
+        #[cfg(test)]
+        {
+            self.checked_style(
+                usize::from(child_node_id),
+                crate::layout::style_views::checked::ReadRole::FlexItem,
+            )
+        }
+        #[cfg(not(test))]
+        {
+            self.layout_node_with_style(usize::from(child_node_id))
+                .unwrap()
+                .style
+        }
     }
 }
 
 impl LayoutGridContainer for LayoutSession<'_> {
+    #[cfg(not(test))]
     type GridContainerStyle<'a>
         = &'a Style
     where
         Self: 'a;
+    #[cfg(test)]
+    type GridContainerStyle<'a>
+        = crate::layout::style_views::checked::CheckedStyle<'a>
+    where
+        Self: 'a;
+    #[cfg(not(test))]
     type GridItemStyle<'a>
         = &'a Style
     where
         Self: 'a;
+    #[cfg(test)]
+    type GridItemStyle<'a>
+        = crate::layout::style_views::checked::CheckedStyle<'a>
+    where
+        Self: 'a;
 
     fn get_grid_container_style(&self, node_id: NodeId) -> Self::GridContainerStyle<'_> {
-        self.layout_node_with_style(usize::from(node_id))
-            .unwrap()
-            .style
+        #[cfg(test)]
+        {
+            self.checked_style(
+                usize::from(node_id),
+                crate::layout::style_views::checked::ReadRole::GridContainer,
+            )
+        }
+        #[cfg(not(test))]
+        {
+            self.layout_node_with_style(usize::from(node_id))
+                .unwrap()
+                .style
+        }
     }
 
     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
-        self.layout_node_with_style(usize::from(child_node_id))
-            .unwrap()
-            .style
+        #[cfg(test)]
+        {
+            self.checked_style(
+                usize::from(child_node_id),
+                crate::layout::style_views::checked::ReadRole::GridItem,
+            )
+        }
+        #[cfg(not(test))]
+        {
+            self.layout_node_with_style(usize::from(child_node_id))
+                .unwrap()
+                .style
+        }
     }
 
     fn set_detailed_grid_info(

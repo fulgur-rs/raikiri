@@ -35,6 +35,7 @@ impl LayoutSession<'_> {
             if previous == PercentBasis::Taffy {
                 prepared.context.percent_basis = PercentBasis::Definite(basis);
             }
+            prepared.was_scoped = true;
             previous
         });
         let style = self
@@ -162,6 +163,7 @@ impl LayoutSession<'_> {
             depth: prepared.scopes.len(),
         };
         prepared.scopes.push(token.length);
+        prepared.was_scoped = true;
         prepared.scoped.extend(entries);
         Some(token)
     }

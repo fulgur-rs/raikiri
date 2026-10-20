@@ -383,6 +383,8 @@ pub struct Document {
         crate::node::arena::BoxKey,
         std::sync::Arc<raikiri_style::ComputedValues>,
     >,
+    #[cfg(test)]
+    pub(crate) style_view_comparisons: crate::layout::style_views::checked::ComparisonStats,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
@@ -671,6 +673,8 @@ impl Document {
             retained_layout_styles,
             #[cfg(test)]
             synthetic_style_values: Default::default(),
+            #[cfg(test)]
+            style_view_comparisons: Default::default(),
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
             focused: None,
@@ -2065,6 +2069,8 @@ impl Document {
             retained_layout_styles: _,
             #[cfg(test)]
                 synthetic_style_values: _,
+            #[cfg(test)]
+                style_view_comparisons: _,
             fragment_tree: _,
             column_rules: _,
             quirks_mode,

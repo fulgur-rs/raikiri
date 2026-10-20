@@ -7,6 +7,7 @@ use raikiri_layout_style::{
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::NodeKind;
 
+pub(crate) mod checked;
 mod metadata;
 pub(crate) use metadata::neutral_initial_values;
 mod overrides;
@@ -18,6 +19,7 @@ pub(crate) struct PreparedBox<'a> {
     scoped: Vec<OwnedPropertyOverride>,
     scopes: Vec<usize>,
     context: ViewContext,
+    was_scoped: bool,
 }
 
 pub(crate) struct StyleViews<'a> {
@@ -79,6 +81,7 @@ impl<'a> StyleViews<'a> {
                     scoped: Vec::new(),
                     scopes: Vec::new(),
                     context: ViewContext::default(),
+                    was_scoped: false,
                 },
             );
         }
@@ -86,6 +89,33 @@ impl<'a> StyleViews<'a> {
 }
 
 impl LayoutSession<'_> {
+    pub(crate) fn checked_style(
+        &self,
+        idx: usize,
+        role: checked::ReadRole,
+    ) -> checked::CheckedStyle<'_> {
+        let key = self.nodes.box_key(idx).expect("style query has a box key");
+        let mut context = checked::ReadContext::new(key, role);
+        let view = self.style_views.as_ref().map(|views| {
+            let prepared = views
+                .boxes
+                .get(&key)
+                .unwrap_or_else(|| panic!("missing prepared style for {key:?}"));
+            context.context = prepared.context;
+            context.pass_entries = prepared.pass.len();
+            context.scope_depth = prepared.scopes.len();
+            context.was_scoped = prepared.was_scoped;
+            self.style_view(idx)
+        });
+        checked::CheckedStyle::new(
+            self.layout_style_for_key(idx)
+                .expect("style query has a retained style"),
+            view,
+            context,
+            &self.document.style_view_comparisons,
+        )
+    }
+
     pub(crate) fn propagate_viewport_overflow(&mut self, cascade: &CascadeResult, body: usize) {
         use raikiri_layout_style::Axis;
         use raikiri_style::property::OverflowValue;

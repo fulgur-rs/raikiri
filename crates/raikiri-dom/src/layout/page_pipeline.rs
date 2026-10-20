@@ -1052,6 +1052,16 @@ pub fn layout_single_page(
     layout_single_page_with_table_projection(&mut session, cascade, page_box, false, false)
 }
 
+#[cfg(test)]
+pub(super) fn layout_single_page_checked(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+) -> Result<(), LayoutError> {
+    let mut session = super::context::LayoutSession::with_cascade(document, cascade);
+    layout_single_page_with_table_projection(&mut session, cascade, page_box, false, false)
+}
+
 /// The error a layout pass recorded in the session while taffy ran: a
 /// rejected table or an exhausted fragment budget.
 fn take_layout_failure(
