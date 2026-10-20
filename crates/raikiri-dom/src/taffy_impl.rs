@@ -1319,15 +1319,14 @@ fn compute_ifc_root(
         settled.known_dimensions.width = Some(output.size.width);
         let metrics =
             block_flow::Metrics::resolve(&layout_style, false, content_box_ratio, settled);
-        if let Some(height) = metrics.preferred.height {
-            // `output` holds the height of the lines. They raise the height
-            // the ratio gives unless the box scrolls or states a `min-height`.
-            output.size.height = if metrics.ratio_height {
-                height.max(output.size.height.maybe_clamp(None, metrics.own_max.height))
-            } else {
-                height
-            };
-        }
+        // `output` holds the height of the lines. They raise the height the
+        // ratio gives unless the box scrolls or states a `min-height`.
+        let height = metrics.preferred.height.unwrap_or(output.size.height);
+        output.size.height = if metrics.ratio_height {
+            height.max(output.size.height.maybe_clamp(None, metrics.own_max.height))
+        } else {
+            height
+        };
     }
     if auto_vertical_block_size && let Some(measured_size) = measured_size {
         // `compute_leaf_layout` retains Taffy's intrinsic auto-width probe as

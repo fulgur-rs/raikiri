@@ -571,3 +571,44 @@ fn a_size_contained_paragraph_ignores_its_lines() {
         (100.0, 100.0)
     );
 }
+
+#[test]
+fn an_inline_block_paragraph_ratio_height_grows_to_fit_its_lines() {
+    assert_eq!(
+        ratio_paragraph_size(
+            "display:inline-block;width:100px;aspect-ratio:10/1;line-height:20px",
+            "aaaa"
+        ),
+        (100.0, 20.0)
+    );
+}
+
+#[test]
+fn a_clipping_inline_block_paragraph_keeps_the_ratio_height() {
+    assert_eq!(
+        ratio_paragraph_size(
+            "display:inline-block;width:100px;aspect-ratio:10/1;line-height:20px;overflow:hidden",
+            "aaaa"
+        ),
+        (100.0, 10.0)
+    );
+}
+
+#[test]
+fn an_inline_block_paragraph_ratio_width_grows_to_its_longest_word() {
+    assert_eq!(
+        ratio_paragraph_size("display:inline-block;height:10px;aspect-ratio:1/1", "aaaa"),
+        (40.0, 10.0)
+    );
+}
+
+#[test]
+fn a_clipping_inline_block_paragraph_keeps_the_ratio_width() {
+    assert_eq!(
+        ratio_paragraph_size(
+            "display:inline-block;height:10px;aspect-ratio:2/1;overflow:hidden",
+            "aaaa"
+        ),
+        (20.0, 10.0)
+    );
+}
