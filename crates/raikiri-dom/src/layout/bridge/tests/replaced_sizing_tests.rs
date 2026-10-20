@@ -1161,3 +1161,31 @@ fn a_keyword_width_is_not_stretched_when_the_height_is_stretched_in_a_grid() {
         (100.0, 100.0)
     );
 }
+
+#[test]
+fn a_size_contained_image_with_a_keyword_width_is_not_stretched() {
+    // Size containment leaves the image without a natural size, which an
+    // `auto` width fills the space for; a keyword width is not `auto`, so the
+    // box collapses as in browsers.
+    for (name, container, align) in [
+        ("grid", KEYWORD_WIDTH_CONTAINERS[1].1, "justify-self"),
+        ("column flex", KEYWORD_WIDTH_CONTAINERS[3].1, "align-self"),
+    ] {
+        for (contain, height) in [("size", 0.0), ("inline-size", 50.0)] {
+            let css = format!("contain:{contain};{align}:stretch;width:auto");
+            assert_eq!(
+                child_in_container(container, "img", &css),
+                (0.0, (100.0, height)),
+                "{name} {contain} auto"
+            );
+            for width in ["min-content", "max-content", "fit-content"] {
+                let css = format!("contain:{contain};{align}:stretch;width:{width}");
+                assert_eq!(
+                    child_in_container(container, "img", &css),
+                    (0.0, (0.0, height)),
+                    "{name} {contain} {width}"
+                );
+            }
+        }
+    }
+}
