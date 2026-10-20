@@ -12,7 +12,7 @@ use raikiri_style::resolve::ComputedOverflowClipMargin;
 use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 
 /// Whether `node_id` is painted on the page whose name is `active_page_name`.
 ///
@@ -646,33 +646,55 @@ fn within_translucent_first_line(document: &Document, root: usize, id: usize) ->
     if first_line_opacity_layer(document, root).is_none() {
         return false;
     }
-    let inside = |node: usize| {
-        node == id
-            || document
-                .inclusive_ancestors(
-                    crate::generated_content::generated_origin(node)
-                        .map_or(node, |(element, _)| element),
-                )
-                .any(|ancestor| ancestor == id)
-    };
     let Some(node) = document.get_node(root) else {
         return false; // cov:ignore: a translucent first line belongs to a paragraph node
     };
-    let on_later_lines = node
-        .ifc_lines()
-        .into_iter()
-        .flatten()
-        .skip(1)
-        .flat_map(|line| line.fragments())
-        .filter_map(fragment_node)
-        .any(inside);
-    // A block-level `::before` or `::after` paints its own box with the
-    // line it goes with, which need not hold any of its content.
-    !on_later_lines
-        && !node
-            .ifc_generated_block_pieces()
-            .iter()
-            .any(|piece| piece.line > 0 && inside(piece.node))
+    let cache = &document.page_projection.later_line_membership;
+    if let Some(members) = cache.borrow().get(&root) {
+        return !members.contains(&id);
+    }
+    let members = collect_later_line_membership(document, node);
+    let within = !members.contains(&id);
+    cache.borrow_mut().insert(root, members);
+    within
+}
+
+fn collect_later_line_membership(document: &Document, node: &crate::Node) -> HashSet<usize> {
+    #[cfg(test)]
+    tests::record_first_line_work(0);
+    let mut members = HashSet::new();
+    let mut include = |id| {
+        let origin =
+            crate::generated_content::generated_origin(id).map_or(id, |(element, _)| element);
+        // An existing ancestor already has its full ancestor chain recorded.
+        // Add the fragment ID only after closing its origin's ancestor chain.
+        for ancestor in document.inclusive_ancestors(origin) {
+            #[cfg(test)]
+            tests::record_first_line_work(2);
+            if !members.insert(ancestor) {
+                break;
+            }
+        }
+        members.insert(id);
+    };
+    for line in node.ifc_lines().into_iter().flatten().skip(1) {
+        for fragment in line.fragments() {
+            #[cfg(test)]
+            tests::record_first_line_work(1);
+            if let Some(id) = fragment_node(fragment) {
+                include(id);
+            }
+        }
+    }
+    // Empty generated blocks still paint their boxes on their recorded line.
+    for piece in node.ifc_generated_block_pieces() {
+        #[cfg(test)]
+        tests::record_first_line_work(3);
+        if piece.line > 0 {
+            include(piece.node);
+        }
+    }
+    members
 }
 
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
