@@ -121,11 +121,8 @@ pub fn inline_svg_element_declarations(
 /// The ids that the `use` elements of the SVG rooted at `root` reference.
 fn use_targets(document: &Document, root: usize) -> HashSet<&str> {
     let mut targets = HashSet::new();
-    let mut stack = vec![root];
-    while let Some(node_id) = stack.pop() {
-        let Some(node) = document.get_node(node_id) else {
-            continue;
-        };
+    let mut stack: Vec<_> = document.get_node(root).into_iter().collect();
+    while let Some(node) = stack.pop() {
         if node.kind() == NodeKind::Element
             && node.namespace_uri() == Some(SVG_NAMESPACE)
             && node.tag_name() == Some("use")
@@ -136,7 +133,11 @@ fn use_targets(document: &Document, root: usize) -> HashSet<&str> {
         {
             targets.insert(id);
         }
-        stack.extend(node.children.iter().copied());
+        stack.extend(
+            node.children
+                .iter()
+                .filter_map(|&child| document.get_node(child)),
+        );
     }
     targets
 }
