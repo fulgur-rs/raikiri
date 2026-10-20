@@ -3176,3 +3176,9 @@ fn rasterizing_with_resolved_styles_rejects_malformed_descendants_whatever_the_r
         assert!(blank.rgba.iter().all(|&byte| byte == 0));
     }
 }
+
+mod selector_freeze_performance_tests;
+
+thread_local! {
+    pub(super) static SELECTOR_FREEZE_STATS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
