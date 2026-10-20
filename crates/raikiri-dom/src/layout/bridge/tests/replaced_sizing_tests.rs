@@ -1706,3 +1706,221 @@ fn a_keyword_min_or_max_size_of_an_image_takes_the_size_its_other_side_gives() {
         assert_eq!(image_in_container(container, css), expected, "{css}");
     }
 }
+
+/// Lay out one 20x50 `<img>` with `css` in the 100px wide body and return its
+/// size and node.
+fn natural_20x50_image(css: &str) -> (Document, usize) {
+    let mut image = 0;
+    let doc = laid_out_with_natural_size((20.0, 50.0), |doc, body| {
+        image = doc.append_element(Some(body), "img", Style::default(), Some(css));
+    });
+    (doc, image)
+}
+
+#[test]
+fn a_border_box_aspect_ratio_relates_the_border_boxes_of_an_image() {
+    // Sizes a browser gives. The ratio of a `border-box` image relates its
+    // border box, so the padding on one side only does not skew it.
+    let padded = "aspect-ratio:1;padding-right:80px;padding-bottom:50px;box-sizing:border-box";
+    for (css, expected) in [
+        (format!("display:block;{padded}"), (100.0, 100.0)),
+        (padded.to_string(), (100.0, 100.0)),
+        (
+            format!("display:block;{padded};width:100px"),
+            (100.0, 100.0),
+        ),
+        (
+            "aspect-ratio:1;padding-right:20px;padding-bottom:40px;box-sizing:border-box;\
+             height:100px"
+                .to_string(),
+            (100.0, 100.0),
+        ),
+        (
+            "display:block;aspect-ratio:1;padding:4px 10px;box-sizing:border-box;width:60px"
+                .to_string(),
+            (60.0, 60.0),
+        ),
+    ] {
+        let (doc, image) = natural_20x50_image(&css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn a_content_box_aspect_ratio_relates_the_content_boxes_of_an_image() {
+    let (doc, image) = natural_20x50_image(
+        "display:block;aspect-ratio:1;padding-right:80px;padding-bottom:50px;width:100px",
+    );
+
+    // The 100px width is the content box: 100x100 plus the padding.
+    assert_eq!(size(&doc, image), (180.0, 150.0));
+}
+
+#[test]
+fn a_ratio_the_image_states_replaces_the_natural_ratio_under_min_and_max_sizes() {
+    // The natural 20x50 size keeps its width, and the 1:1 ratio the image
+    // states gives the height, until a `min-*` or `max-*` size moves them.
+    for (css, expected) in [
+        ("display:block;aspect-ratio:1", (20.0, 20.0)),
+        (
+            "display:block;aspect-ratio:1;min-height:100px",
+            (100.0, 100.0),
+        ),
+        ("display:block;aspect-ratio:1;max-height:10px", (10.0, 10.0)),
+    ] {
+        let (doc, image) = natural_20x50_image(css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn min_and_max_sizes_move_a_border_box_image_along_its_border_box_ratio() {
+    for (css, expected) in [
+        (
+            "display:block;aspect-ratio:2;padding-right:40px;padding-bottom:20px;\
+             box-sizing:border-box;min-height:100px",
+            (200.0, 100.0),
+        ),
+        (
+            "display:block;aspect-ratio:1;padding:4px 10px;box-sizing:border-box;min-width:80px",
+            (80.0, 80.0),
+        ),
+        (
+            "display:block;aspect-ratio:3;padding-right:10px;padding-bottom:5px;\
+             box-sizing:border-box;max-width:60px",
+            (30.0, 10.0),
+        ),
+    ] {
+        let (doc, image) = natural_20x50_image(css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn an_auto_ratio_of_an_image_relates_the_content_box_of_its_natural_ratio() {
+    // `auto 2` keeps the natural 2:5 ratio of the content box, whatever the
+    // box-sizing and padding: 20x50 content plus 80x50 of padding.
+    let (doc, image) = natural_20x50_image(
+        "display:block;aspect-ratio:auto 2;padding-right:80px;padding-bottom:50px;\
+         box-sizing:border-box",
+    );
+    assert_eq!(size(&doc, image), (100.0, 100.0));
+}
+
+#[test]
+fn the_ratio_of_an_aspect_ratio_relates_the_content_box_when_it_is_auto_or_natural() {
+    // `ratio_in_content_box` is set for `auto` with a `<ratio>` or with the
+    // natural ratio of the image, and for no other `aspect-ratio`.
+    for (css, expected) in [
+        ("aspect-ratio:auto", true),
+        ("aspect-ratio:auto 2", true),
+        ("aspect-ratio:2", false),
+    ] {
+        let (doc, image) = natural_20x50_image(css);
+        assert_eq!(doc.nodes[image].ratio_in_content_box, expected, "{css}");
+    }
+    // Without a natural ratio, `auto` alone leaves nothing to relate.
+    let mut image = 0;
+    let doc = laid_out_with_natural_box((0.0, 0.0), false, |doc, body| {
+        image = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some("aspect-ratio:auto"),
+        );
+    });
+    assert!(!doc.nodes[image].ratio_in_content_box);
+}
+
+#[test]
+fn a_border_box_image_is_sized_by_its_border_box_ratio_as_an_inline_block() {
+    // The same sizes as for a block, as a shrink-to-fit box.
+    for (css, expected) in [
+        (
+            "display:inline-block;aspect-ratio:1;padding-right:80px;padding-bottom:50px;\
+             box-sizing:border-box",
+            (100.0, 100.0),
+        ),
+        (
+            "display:inline-block;aspect-ratio:1;padding-right:20px;padding-bottom:40px;\
+             box-sizing:border-box;height:100px",
+            (100.0, 100.0),
+        ),
+        (
+            "display:inline-block;aspect-ratio:1;padding-right:20px;padding-bottom:10px;\
+             box-sizing:border-box;min-width:80px",
+            (80.0, 80.0),
+        ),
+        (
+            "display:inline-block;aspect-ratio:1;padding-right:20px;padding-bottom:10px;\
+             box-sizing:border-box;max-width:30px",
+            (30.0, 30.0),
+        ),
+        (
+            "display:inline-block;aspect-ratio:1;padding-right:20px;padding-bottom:10px;\
+             box-sizing:border-box;max-height:30px",
+            (30.0, 30.0),
+        ),
+        // The natural ratio relates the content box.
+        (
+            "display:inline-block;padding-right:80px;padding-bottom:50px;box-sizing:border-box",
+            (100.0, 100.0),
+        ),
+        (
+            "display:inline-block;padding-right:20px;padding-bottom:40px;\
+             box-sizing:border-box;height:100px",
+            (44.0, 100.0),
+        ),
+    ] {
+        let (doc, image) = natural_20x50_image(css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn a_keyword_min_or_max_size_of_a_border_box_image_transfers_along_its_border_box_ratio() {
+    // A 2:1 border box 100px high is 200px wide; one 100px wide is 50px high.
+    // The content box ratio would give the 40px of padding at the right and
+    // the 10px at the bottom a share of the transfer.
+    let padded = "display:block;aspect-ratio:2;padding-right:40px;padding-bottom:10px;\
+                  box-sizing:border-box";
+    for (css, expected) in [
+        (
+            format!("{padded};height:100px;min-width:min-content"),
+            (200.0, 100.0),
+        ),
+        (
+            format!("{padded};width:100px;min-height:min-content"),
+            (100.0, 50.0),
+        ),
+        (
+            format!("{padded};width:100px;max-height:max-content"),
+            (100.0, 50.0),
+        ),
+    ] {
+        let (doc, image) = natural_20x50_image(&css);
+        assert_eq!(size(&doc, image), expected, "{css}");
+    }
+}
+
+#[test]
+fn a_border_box_aspect_ratio_relates_the_border_boxes_of_a_ratio_only_svg() {
+    // Sizes a browser gives for a 20:50 `viewBox`: the `aspect-ratio` replaces
+    // its ratio, and relates the border box of a `border-box` svg.
+    let container = "display:block;width:100px";
+    let padded = "display:block;padding-right:30px;padding-bottom:10px;box-sizing:border-box";
+    for (css, expected) in [
+        (format!("{padded};aspect-ratio:1;height:60px"), (60.0, 60.0)),
+        (
+            format!("{padded};aspect-ratio:2;height:60px"),
+            (120.0, 60.0),
+        ),
+        (format!("{padded};aspect-ratio:2;width:60px"), (60.0, 30.0)),
+    ] {
+        assert_eq!(
+            ratio_only_svg_in_container(container, "0 0 20 50", &css),
+            expected,
+            "{css}"
+        );
+    }
+}

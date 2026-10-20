@@ -944,7 +944,9 @@ fn replaced_keyword_bounds(
     if style.aspect_ratio.is_none() {
         style.aspect_ratio = super::leaf_intrinsic_ratio(&tree.nodes[idx]);
     }
-    let Some(bounds) = super::replaced_size::keyword_bounds(&style, inputs, natural, *limits)
+    let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
+    let Some(bounds) =
+        super::replaced_size::keyword_bounds(&style, inputs, natural, *limits, content_box_ratio)
     else {
         return (Bounds::default(), Bounds::default());
     };

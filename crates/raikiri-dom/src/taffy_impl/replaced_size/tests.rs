@@ -4,6 +4,7 @@ use raikiri_style::property::CalcLengthPercentage;
 use taffy::{AvailableSpace, Dimension, LayoutInput, Line, RunMode, Size, SizingMode, Style};
 
 mod intrinsic_keyword_tests;
+mod ratio_box_tests;
 
 #[test]
 fn a_percentage_calc_on_a_replaced_min_content_width_uses_zero_basis() {
@@ -50,6 +51,7 @@ fn a_percentage_calc_on_a_replaced_min_content_width_uses_zero_basis() {
                 height: 50.0,
             },
             crate::taffy_impl::content_limits::ContentLimits::NONE,
+            true,
         ),
         Some(Size {
             width: 40.0,

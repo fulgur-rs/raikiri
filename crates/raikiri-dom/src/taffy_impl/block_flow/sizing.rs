@@ -43,8 +43,9 @@ fn bounds(own: [Option<f32>; 2], carried: [Option<f32>; 2]) -> (Option<f32>, Opt
 
 impl Metrics {
     /// `replaced` is whether the box is a replaced element. `content_box_ratio`
-    /// is whether its `aspect-ratio` is an `auto <ratio>`, which relates the
-    /// content box sizes whatever the `box-sizing` is.
+    /// is whether its preferred aspect ratio relates the content box sizes
+    /// whatever the `box-sizing` is: the `aspect-ratio` has `auto` and the box
+    /// either states a `<ratio>` or has a natural ratio.
     pub(crate) fn resolve(
         style: &Style,
         replaced: bool,

@@ -868,6 +868,7 @@ impl LayoutSession<'_> {
                 // An authored `aspect-ratio` replaces the ratio of the viewBox;
                 // `auto` keeps it.
                 let ratio = tree.nodes[idx].preferred_aspect_ratio.unwrap_or(ratio);
+                let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
                 let mut resolver_style = tree.layout_node_with_style(idx).unwrap().style.clone();
                 resolver_style.aspect_ratio = Some(ratio);
                 if tree.nodes[idx].svg_width_follows_available
@@ -897,6 +898,11 @@ impl LayoutSession<'_> {
                         |val, basis| tree.resolve_calc_value(val, basis),
                     )
                     .is_some();
+                let insets = replaced_size::ratio_box_insets(
+                    &resolver_style,
+                    replaced_size::padding_and_border(&resolver_style, inputs.parent_size.width),
+                    content_box_ratio,
+                );
                 return compute_leaf_layout(
                     inputs,
                     &style,
@@ -912,10 +918,12 @@ impl LayoutSession<'_> {
                             .height
                             .into_option()
                             .filter(|_| height_is_authored);
+                        let width_for =
+                            |height| replaced_size::width_for_height(height, ratio, insets);
                         let width = known
                             .width
-                            .or(known.height.map(|height| height * ratio))
-                            .or(authored_height.map(|height| height * ratio))
+                            .or(known.height.map(width_for))
+                            .or(authored_height.map(width_for))
                             .unwrap_or(match available.width {
                                 AvailableSpace::Definite(width) => width,
                                 AvailableSpace::MinContent => 0.0,
@@ -923,7 +931,9 @@ impl LayoutSession<'_> {
                             });
                         let natural = Size {
                             width,
-                            height: known.height.unwrap_or(width / ratio),
+                            height: known.height.unwrap_or_else(|| {
+                                replaced_size::height_for_width(width, ratio, insets)
+                            }),
                         };
                         let resolver_inputs = LayoutInput {
                             known_dimensions: known,
@@ -935,6 +945,7 @@ impl LayoutSession<'_> {
                             &resolver_inputs,
                             natural,
                             limits,
+                            content_box_ratio,
                         )
                         .unwrap_or(natural);
                         Size {
@@ -965,8 +976,15 @@ impl LayoutSession<'_> {
                 // A replaced leaf with an `auto` side takes its size from the
                 // ratio and the min/max sizes; Taffy's ratio floor on the
                 // leaf is switched off for it.
+                let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
                 let constrained = leaf_intrinsic.and_then(|natural| {
-                    replaced_size::auto_sides_size(&style, &inputs, natural, limits)
+                    replaced_size::auto_sides_size(
+                        &style,
+                        &inputs,
+                        natural,
+                        limits,
+                        content_box_ratio,
+                    )
                 });
                 if constrained.is_some() {
                     style.aspect_ratio = None;
@@ -2356,6 +2374,7 @@ fn compute_inline_block_shrink_wrap(
     let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]).filter(|_| !empty);
     // A replaced leaf with an `auto` side is sized by its ratio and its
     // min/max sizes, not by Taffy's ratio floor, before any width is fixed.
+    let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
     let leaf_auto_sides = leaf_intrinsic.and_then(|natural| {
         replaced_size::auto_sides_size(
             &leaf_style,
@@ -2365,6 +2384,7 @@ fn compute_inline_block_shrink_wrap(
             },
             natural,
             limits,
+            content_box_ratio,
         )
     });
     let leaf_intrinsic_before_width = leaf_auto_sides.or(leaf_intrinsic);
@@ -2484,7 +2504,13 @@ fn compute_inline_block_shrink_wrap(
     if is_leaf {
         // The width is fixed now; the height follows it through the ratio.
         let fixed_width = leaf_intrinsic.and_then(|natural| {
-            replaced_size::auto_sides_size(&leaf_style, &final_inputs, natural, limits)
+            replaced_size::auto_sides_size(
+                &leaf_style,
+                &final_inputs,
+                natural,
+                limits,
+                content_box_ratio,
+            )
         });
         if fixed_width.is_some() {
             leaf_style.aspect_ratio = None;

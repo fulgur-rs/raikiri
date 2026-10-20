@@ -295,7 +295,7 @@ fn apply_computed_to_style_in_session_inner(
         let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio);
         doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
         doc.nodes[idx].ratio_in_content_box =
-            cv.aspect_ratio.auto && cv.aspect_ratio.ratio.is_some();
+            cv.aspect_ratio.auto && (cv.aspect_ratio.ratio.is_some() || natural_ratio.is_some());
         doc.layout_node_with_style_mut(idx)
             .unwrap()
             .style

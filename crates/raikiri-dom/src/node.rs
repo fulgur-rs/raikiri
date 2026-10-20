@@ -498,9 +498,11 @@ pub struct Node {
     /// and the height are definite. Recomputed by the style bridge before
     /// every layout pass.
     pub(crate) preferred_aspect_ratio: Option<f32>,
-    /// Whether the `aspect-ratio` is an `auto <ratio>`, which relates the
-    /// content box sizes whatever the `box-sizing` is (CSS Box Sizing 4 §5.1).
-    /// Recomputed by the style bridge before every layout pass.
+    /// Whether the preferred aspect ratio relates the content box sizes
+    /// whatever the `box-sizing` is (CSS Box Sizing 4 §5.1): the `aspect-ratio`
+    /// has `auto` and the box either states a `<ratio>` or is replaced content
+    /// with a natural ratio. Recomputed by the style bridge before every
+    /// layout pass.
     pub(crate) ratio_in_content_box: bool,
     /// Whether painting draws effects sized from the whole border box, such
     /// as background images, rounded corners or shadows. Recomputed by the
