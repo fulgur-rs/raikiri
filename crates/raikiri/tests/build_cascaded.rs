@@ -1061,6 +1061,21 @@ fn fieldset_is_display_block_via_ua_css() {
 }
 
 #[test]
+fn legend_is_display_block_via_ua_css() {
+    // HTML LS Rendering gives a legend a block box (see minimal.css), so it
+    // does not make a fieldset that holds it a paragraph of inline content.
+    let doc = parse_html("<html><body><fieldset><legend>Hi</legend></fieldset></body></html>");
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
+
+    let el_id = find_by_tag(&doc.dom, "legend").expect("<legend> exists");
+    assert_eq!(
+        result.computed[el_id.0 as usize].display,
+        DisplayValue::Block,
+        "<legend> should be display: block from the UA CSS"
+    );
+}
+
+#[test]
 fn dialog_display_reflects_open_attribute_via_ua_css() {
     // HTML LS §flow-content-3 (15.3.3) specifies
     // `dialog:not([open]) { display: none; }` alongside dialog's

@@ -3788,6 +3788,7 @@ fn minimal_ua_css_covers_required_display_block_selectors() {
         "search",
         "xmp",
         "fieldset",
+        "legend",
     ] {
         let has_rule = MINIMAL_UA_CSS.lines().any(|line| {
             let trimmed = line.trim_start();

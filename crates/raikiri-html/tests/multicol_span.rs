@@ -656,6 +656,38 @@ fn a_cut_in_a_border_is_found_among_ranges_that_overlap() {
     assert_page_runs(&document, 1, &[("K", (0.0, 116.0))]);
 }
 
+#[test]
+fn a_legend_is_a_block_that_leaves_the_columns_of_its_fieldset_in_place() {
+    // A legend is a block, so a fieldset that holds one lays out its blocks and
+    // its spanner as one with a block there does. As an inline box the legend
+    // made the fieldset a paragraph of inline content, and the box positioned
+    // inside the spanner took its static position from the end of the
+    // fieldset, 120px down, instead of from the top of the spanner, 60px down.
+    let kids = "<div>block1</div><div>block2</div><a></a><h3>spanner<a></a></h3><div>block3</div><div>block4</div><a></a>";
+    let css = "fieldset{width:400px;overflow:hidden;position:absolute;margin:0;border:0;padding:0}\
+               .t{column-count:3;column-rule:6px solid}\
+               h3{column-span:all;margin:0;font-size:20px}\
+               a{position:absolute;width:10px;height:10px;background:blue}div{margin:0}";
+    let boxes = |first: &str| {
+        let document = lay_out(&format!("<fieldset class=t>{first}{kids}</fieldset>"), css);
+        document
+            .page(0)
+            .unwrap()
+            .paint_order()
+            .iter()
+            .filter_map(|event| match event {
+                PaintEvent::Box(fragment) if fragment.rect().width == 10.0 => {
+                    Some((fragment.rect().x, fragment.rect().y))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![(140.0, 60.0), (0.0, 60.0), (0.0, 120.0)];
+    assert_eq!(boxes("<div>Legend</div>"), expected);
+    assert_eq!(boxes("<legend>Legend</legend>"), expected);
+}
+
 fn assert_page_runs(document: &DocumentLayout, number: u32, expected: &[(&str, (f32, f32))]) {
     let runs = document.page(number).unwrap().text_runs();
     assert_eq!(
