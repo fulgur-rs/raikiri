@@ -64,4 +64,5 @@ mod css_wide_tests;
 
 mod column_rule_tests;
 
+mod aspect_ratio_tests;
 mod column_span_tests;

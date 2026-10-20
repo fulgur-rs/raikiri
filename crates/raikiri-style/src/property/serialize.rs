@@ -658,6 +658,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderImageSource(..)
         | PropertyValue::BorderImage(..)
         | PropertyValue::ObjectFit(..)
+        | PropertyValue::AspectRatio(..)
         | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Opacity(..)

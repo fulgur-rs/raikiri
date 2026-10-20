@@ -515,6 +515,10 @@ fn parent_fixture() -> ComputedValues {
         column_fill: crate::property::ColumnFillValue::Auto,
         text_group_align: crate::property::TextGroupAlign::Center,
         column_span: crate::property::ColumnSpanValue::All,
+        aspect_ratio: crate::property::AspectRatioValue {
+            auto: false,
+            ratio: Some((16.0, 9.0)),
+        },
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
         custom_properties: crate::computed::empty_custom_properties(),
         local_custom_properties: crate::computed::empty_custom_properties(),
@@ -824,6 +828,8 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     assert_eq!(child.column_count, initial.column_count);
     assert_eq!(child.column_fill, initial.column_fill);
     assert_eq!(child.column_span, initial.column_span);
+    // CSS Box Sizing 4: aspect-ratio is non-inherited.
+    assert_eq!(child.aspect_ratio, initial.aspect_ratio);
     assert_eq!(child.column_width, initial.column_width);
     // CSS Text 4: text-group-align is non-inherited.
     assert_eq!(child.text_group_align, initial.text_group_align);

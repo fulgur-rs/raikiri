@@ -688,6 +688,204 @@ fn a_known_width_transfers_through_the_block_aspect_ratio() {
     );
 }
 
+fn ratio_box(tree: &mut Document, style: Style) -> usize {
+    tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            aspect_ratio: Some(2.0),
+            ..style
+        },
+        None::<&str>,
+    )
+}
+
+fn laid_out_size(tree: &mut Document, root: usize, known_width: Option<f32>) -> Size<f32> {
+    let mut input = inputs();
+    input.known_dimensions.width = known_width;
+    block_layout(tree, NodeId::from(root), input, None).size
+}
+
+#[test]
+fn a_height_taken_from_the_aspect_ratio_grows_to_fit_the_content() {
+    let mut tree = Document::new();
+    let root = ratio_box(
+        &mut tree,
+        Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::auto(),
+            },
+            ..Style::default()
+        },
+    );
+    block(&mut tree, root, 20.0, 100.0);
+    assert_eq!(
+        laid_out_size(&mut tree, root, None),
+        Size {
+            width: 100.0,
+            height: 100.0
+        }
+    );
+}
+
+#[test]
+fn a_stretched_width_gives_a_ratio_height_that_the_content_can_raise() {
+    let mut tree = Document::new();
+    let root = ratio_box(&mut tree, Style::default());
+    block(&mut tree, root, 20.0, 150.0);
+    assert_eq!(
+        laid_out_size(&mut tree, root, Some(200.0)),
+        Size {
+            width: 200.0,
+            height: 150.0
+        }
+    );
+}
+
+fn padded_ratio_box(tree: &mut Document, box_sizing: taffy::BoxSizing) -> usize {
+    ratio_box(
+        tree,
+        Style {
+            box_sizing,
+            padding: taffy::Rect::length(10.0),
+            ..Style::default()
+        },
+    )
+}
+
+#[test]
+fn a_known_border_box_width_gives_a_content_box_ratio_height() {
+    // The 100px width includes 20px of padding, so the 80px content box is
+    // 40px tall by 2:1, and the padding adds 20px to that.
+    let mut tree = Document::new();
+    let root = padded_ratio_box(&mut tree, taffy::BoxSizing::ContentBox);
+    assert_eq!(
+        laid_out_size(&mut tree, root, Some(100.0)),
+        Size {
+            width: 100.0,
+            height: 60.0
+        }
+    );
+}
+
+#[test]
+fn a_known_border_box_width_gives_a_border_box_ratio_height() {
+    let mut tree = Document::new();
+    let root = padded_ratio_box(&mut tree, taffy::BoxSizing::BorderBox);
+    assert_eq!(
+        laid_out_size(&mut tree, root, Some(100.0)),
+        Size {
+            width: 100.0,
+            height: 50.0
+        }
+    );
+}
+
+#[test]
+fn the_maximum_height_still_caps_a_height_the_content_raised() {
+    let mut tree = Document::new();
+    let root = ratio_box(
+        &mut tree,
+        Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::auto(),
+            },
+            max_size: Size {
+                width: taffy::LengthPercentageAuto::auto(),
+                height: taffy::LengthPercentageAuto::length(80.0),
+            },
+            ..Style::default()
+        },
+    );
+    block(&mut tree, root, 20.0, 100.0);
+    assert_eq!(laid_out_size(&mut tree, root, None).height, 80.0);
+}
+
+#[test]
+fn a_scroll_container_keeps_the_height_the_aspect_ratio_gives() {
+    let mut tree = Document::new();
+    let root = ratio_box(
+        &mut tree,
+        Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::auto(),
+            },
+            overflow: taffy::Point {
+                x: taffy::Overflow::Hidden,
+                y: taffy::Overflow::Hidden,
+            },
+            ..Style::default()
+        },
+    );
+    block(&mut tree, root, 20.0, 100.0);
+    assert_eq!(laid_out_size(&mut tree, root, None).height, 50.0);
+}
+
+#[test]
+fn a_zero_minimum_height_keeps_the_height_the_aspect_ratio_gives() {
+    let mut tree = Document::new();
+    let root = ratio_box(
+        &mut tree,
+        Style {
+            size: Size {
+                width: Dimension::length(100.0),
+                height: Dimension::auto(),
+            },
+            min_size: Size {
+                width: taffy::LengthPercentageAuto::auto(),
+                height: taffy::LengthPercentageAuto::length(0.0),
+            },
+            ..Style::default()
+        },
+    );
+    block(&mut tree, root, 20.0, 100.0);
+    assert_eq!(laid_out_size(&mut tree, root, None).height, 50.0);
+}
+
+#[test]
+fn an_authored_height_is_not_raised_by_the_content() {
+    let mut tree = Document::new();
+    let root = ratio_box(
+        &mut tree,
+        Style {
+            size: Size {
+                width: Dimension::auto(),
+                height: Dimension::length(50.0),
+            },
+            ..Style::default()
+        },
+    );
+    block(&mut tree, root, 20.0, 100.0);
+    assert_eq!(laid_out_size(&mut tree, root, None).height, 50.0);
+}
+
+#[test]
+fn a_width_taken_from_the_aspect_ratio_grows_to_the_min_content_width() {
+    let mut tree = Document::new();
+    let root = ratio_box(
+        &mut tree,
+        Style {
+            size: Size {
+                width: Dimension::auto(),
+                height: Dimension::length(50.0),
+            },
+            ..Style::default()
+        },
+    );
+    block(&mut tree, root, 300.0, 10.0);
+    assert_eq!(
+        laid_out_size(&mut tree, root, None),
+        Size {
+            width: 300.0,
+            height: 50.0
+        }
+    );
+}
+
 #[test]
 fn scrollable_overflow_keeps_the_end_padding_after_content() {
     let mut tree = Document::new();

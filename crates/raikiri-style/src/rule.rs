@@ -553,6 +553,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | StrokeDasharray
         | StrokeDashoffset
         | ColumnSpan
+        | AspectRatio
         | ColumnRuleWidth
         | ColumnRuleStyle
         | ColumnRuleColor
@@ -1076,6 +1077,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_)
         | PropertyValue::ColumnSpan(_)
+        | PropertyValue::AspectRatio(_)
         | PropertyValue::ColumnRuleWidth(_)
         | PropertyValue::ColumnRuleStyle(_)
         | PropertyValue::ColumnRuleColor(_)

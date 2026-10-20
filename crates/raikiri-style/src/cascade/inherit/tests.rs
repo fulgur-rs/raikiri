@@ -11997,6 +11997,7 @@ fn svg_export_css_wide_values_resolve_inherit_initial_and_unset() {
     }
 }
 
+mod aspect_ratio_tests;
 mod border_image_tests;
 mod column_rule_tests;
 mod column_span_tests;
