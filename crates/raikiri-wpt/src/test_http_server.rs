@@ -117,19 +117,9 @@ fn serve_one(
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set request timeout");
-    let mut request = [0_u8; 4096];
-    let length = stream.read(&mut request).expect("read request");
-    // Closing an unused connection is not an HTTP request.
-    if length == 0 {
+    let Some(path) = read_request_target(stream).expect("read request") else {
         return;
-    }
-    let request = String::from_utf8_lossy(&request[..length]);
-    let path = request
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .unwrap_or("/")
-        .to_owned();
+    };
     requests.lock().unwrap().push(path.clone());
     let missing = TestResponse::ok("text/plain", b"missing".to_vec());
     let response = routes.get(path.as_str()).unwrap_or(&missing);
@@ -152,4 +142,34 @@ fn serve_one(
     stream
         .write_all(&response.body)
         .expect("write response body");
+}
+
+fn read_request_target(stream: &mut impl std::io::Read) -> std::io::Result<Option<String>> {
+    let mut request = [0_u8; 4096];
+    let mut length = 0;
+    loop {
+        let received = stream.read(&mut request[length..])?;
+        // An unused connection or truncated headers are not an HTTP request.
+        if received == 0 {
+            return Ok(None);
+        }
+        length += received;
+        if request[..length]
+            .windows(4)
+            .any(|bytes| bytes == b"\r\n\r\n")
+        {
+            break;
+        }
+        if length == request.len() {
+            return Ok(None);
+        }
+    }
+    let request = String::from_utf8_lossy(&request[..length]);
+    let mut fields = request.lines().next().unwrap_or("").split_whitespace();
+    let (Some(_), Some(path), Some("HTTP/1.0" | "HTTP/1.1"), None) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(path.to_owned()))
 }
