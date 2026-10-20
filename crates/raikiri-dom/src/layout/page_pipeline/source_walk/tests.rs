@@ -130,3 +130,31 @@ fn text_in_another_column_is_suppressed_and_consumption_resets_per_visit() {
             .is_some_and(|groups| !groups.is_empty())
     );
 }
+
+#[test]
+fn a_cached_owner_without_an_active_column_remains_suppressed() {
+    let mut text = 0;
+    let fixture = block_fixture_with_ahem("width:100px", |doc, root| {
+        text = doc.append_text(root, "X");
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    crate::layout_single_page(
+        &mut doc,
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let control = crate::PageLayoutControl::default();
+    let mut work = ProjectionWork::new(&control, 100_000);
+    let mut paragraphs = Paragraphs::default();
+    paragraphs
+        .take_column(&doc, &cascade, root, None, false, &mut work)
+        .unwrap();
+    let active = paragraphs.selected.remove(&root).unwrap();
+    assert!(active.view.data.owners.contains_key(&text));
+    let hidden = paragraphs
+        .take_text_lines(&doc, text, doc.get_node(text).unwrap())
+        .unwrap();
+    assert!(hidden.groups().is_none());
+    assert!(Arc::ptr_eq(&hidden.data, &paragraphs.cache[&root].combined));
+}
