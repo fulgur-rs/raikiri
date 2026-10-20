@@ -855,3 +855,337 @@ fn a_replaced_box_in_a_vertical_shrink_to_fit_box_resolves_its_percentage_width(
     assert_eq!(size(&doc, image), (100.0, 100.0));
     assert_eq!(size(&doc, parent), (100.0, 100.0));
 }
+
+/// Lay out one 25x50 `<img>` with `image_css` in a `<div>` with `container_css`
+/// and return its size.
+fn image_in_container(container_css: &str, image_css: &str) -> (f32, f32) {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        let container =
+            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+        image = doc.append_element(Some(container), "img", Style::default(), Some(image_css));
+    });
+    size(&doc, image)
+}
+
+/// The containers a replaced box with a keyword width is laid out in, each
+/// 100px wide: block, grid, and row and column flex.
+const KEYWORD_WIDTH_CONTAINERS: [(&str, &str); 4] = [
+    ("block", "display:block"),
+    (
+        "grid",
+        "display:grid;grid-template:100px/100px;height:100px",
+    ),
+    ("row flex", "display:flex;height:100px"),
+    (
+        "column flex",
+        "display:flex;flex-direction:column;height:200px",
+    ),
+];
+
+#[test]
+fn a_keyword_width_of_an_image_takes_the_height_through_the_ratio() {
+    // `min-content`, `max-content` and `fit-content` size a replaced box as
+    // `auto` does, so a 100px height gives the 25x50 image a 50px width.
+    for width in ["min-content", "max-content", "fit-content"] {
+        for (name, container) in KEYWORD_WIDTH_CONTAINERS {
+            let css = format!("display:block;width:{width};height:100px");
+            assert_eq!(
+                image_in_container(container, &css),
+                (50.0, 100.0),
+                "{name} {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_width_of_an_image_keeps_its_natural_size_without_a_height() {
+    // A row flex item is stretched to the line, which is the next test.
+    for width in ["min-content", "max-content", "fit-content"] {
+        for (name, container) in KEYWORD_WIDTH_CONTAINERS {
+            if name == "row flex" {
+                continue;
+            }
+            let css = format!("display:block;width:{width}");
+            assert_eq!(
+                image_in_container(container, &css),
+                (25.0, 50.0),
+                "{name} {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_width_is_not_stretched_in_a_grid() {
+    // Only an `auto` size is stretched; a keyword width is not `auto`.
+    for width in ["min-content", "max-content", "fit-content"] {
+        let css = format!("justify-self:stretch;width:{width}");
+        assert_eq!(
+            image_in_container(KEYWORD_WIDTH_CONTAINERS[1].1, &css),
+            (25.0, 50.0),
+            "{width}"
+        );
+    }
+}
+
+#[test]
+fn a_keyword_width_is_not_stretched_in_a_column_flex_container() {
+    for width in ["min-content", "max-content", "fit-content"] {
+        for align in [
+            "align-self:stretch",
+            "justify-self:stretch",
+            "align-self:normal",
+        ] {
+            let css = format!("{align};width:{width}");
+            assert_eq!(
+                image_in_container(KEYWORD_WIDTH_CONTAINERS[3].1, &css),
+                (25.0, 50.0),
+                "{width} {align}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_width_leaves_the_stretched_height_of_a_row_flex_item_to_the_ratio() {
+    // The cross size of a row flex item stretches to the 100px line; the width
+    // follows through the ratio as it does for `auto`.
+    for width in ["auto", "min-content", "max-content", "fit-content"] {
+        let css = format!("width:{width}");
+        assert_eq!(
+            image_in_container(KEYWORD_WIDTH_CONTAINERS[2].1, &css),
+            (50.0, 100.0),
+            "{width}"
+        );
+    }
+}
+
+#[test]
+fn a_keyword_width_with_a_percentage_height_takes_the_ratio_from_the_resolved_height() {
+    for width in ["min-content", "max-content", "fit-content"] {
+        let css = format!("width:{width};height:100%");
+        assert_eq!(
+            image_in_container(KEYWORD_WIDTH_CONTAINERS[1].1, &css),
+            (50.0, 100.0),
+            "grid {width}"
+        );
+        assert_eq!(
+            image_in_container(KEYWORD_WIDTH_CONTAINERS[3].1, &css),
+            (100.0, 200.0),
+            "column flex {width}"
+        );
+    }
+}
+
+#[test]
+fn a_keyword_width_with_a_function_limit_still_follows_an_auto_width() {
+    // `fit-content(<length>)` is not one of the keywords that stop a stretch.
+    assert_eq!(
+        image_in_container(
+            KEYWORD_WIDTH_CONTAINERS[1].1,
+            "justify-self:stretch;width:fit-content(80px)"
+        ),
+        (100.0, 200.0)
+    );
+}
+
+/// Lay out one child `tag` with `css` in a `<div>` with `container_css`, in the
+/// SVG namespace for `svg` with a `viewBox` of 2:1, and return its inline
+/// offset and its size. An `<img>` has a 25x50 natural size.
+fn child_in_container(container_css: &str, tag: &str, css: &str) -> (f32, (f32, f32)) {
+    let mut child = 0;
+    let doc = laid_out(|doc, body| {
+        let container =
+            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+        child = doc.append_element(Some(container), tag, Style::default(), Some(css));
+        if tag == "svg" {
+            doc.set_element_namespace(child, Some("http://www.w3.org/2000/svg".into()));
+            doc.set_element_attributes(child, vec![("viewBox".into(), "0 0 2 1".into())]);
+        }
+    });
+    (
+        doc.nodes[child].unrounded_layout.location.x,
+        size(&doc, child),
+    )
+}
+
+#[test]
+fn a_stretched_keyword_width_is_aligned_at_the_start_of_the_inline_axis() {
+    let grid = KEYWORD_WIDTH_CONTAINERS[1].1;
+    let column = KEYWORD_WIDTH_CONTAINERS[3].1;
+    for width in ["min-content", "max-content", "fit-content"] {
+        for (container, align) in [(grid, "justify-self"), (column, "align-self")] {
+            let css = format!("{align}:stretch;width:{width}");
+            assert_eq!(
+                child_in_container(&format!("{container};direction:rtl"), "img", &css),
+                (75.0, (25.0, 50.0)),
+                "rtl {align} {width}"
+            );
+            assert_eq!(
+                child_in_container(container, "img", &css),
+                (0.0, (25.0, 50.0)),
+                "{align} {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_width_keeps_the_alignment_it_is_given() {
+    let grid = KEYWORD_WIDTH_CONTAINERS[1].1;
+    assert_eq!(
+        child_in_container(grid, "img", "justify-self:end;width:max-content"),
+        (75.0, (25.0, 50.0))
+    );
+    assert_eq!(
+        child_in_container(grid, "img", "justify-self:center;width:max-content"),
+        (37.5, (25.0, 50.0))
+    );
+}
+
+#[test]
+fn an_inline_image_with_a_keyword_width_is_blockified_in_a_grid() {
+    assert_eq!(
+        child_in_container(KEYWORD_WIDTH_CONTAINERS[1].1, "img", "width:max-content"),
+        (0.0, (25.0, 50.0))
+    );
+}
+
+#[test]
+fn auto_margins_center_an_image_with_a_keyword_width() {
+    for (name, container) in [
+        ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+        ("column flex", KEYWORD_WIDTH_CONTAINERS[3].1),
+    ] {
+        let css = "margin-left:auto;margin-right:auto;width:max-content";
+        assert_eq!(
+            child_in_container(container, "img", css),
+            (37.5, (25.0, 50.0)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn an_absolutely_positioned_image_with_a_keyword_width_keeps_its_natural_size() {
+    let container = "display:grid;width:100px;height:100px;position:relative;justify-items:stretch";
+    assert_eq!(
+        child_in_container(container, "img", "position:absolute;width:max-content"),
+        (0.0, (25.0, 50.0))
+    );
+    assert_eq!(
+        child_in_container(
+            container,
+            "img",
+            "position:absolute;left:0;right:0;width:max-content"
+        ),
+        (0.0, (25.0, 50.0))
+    );
+}
+
+#[test]
+fn an_svg_without_a_natural_size_fills_the_space_for_a_keyword_width() {
+    // Browsers size a viewBox-only SVG as they do with `auto`, whatever the
+    // keyword, so it is stretched.
+    for width in ["auto", "min-content", "max-content", "fit-content"] {
+        for (name, container, align) in [
+            ("grid", KEYWORD_WIDTH_CONTAINERS[1].1, "justify-self"),
+            ("column flex", KEYWORD_WIDTH_CONTAINERS[3].1, "align-self"),
+        ] {
+            let css = format!("{align}:stretch;width:{width}");
+            assert_eq!(
+                child_in_container(container, "svg", &css),
+                (0.0, (100.0, 50.0)),
+                "{name} {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_min_content_width_of_a_vertical_image_is_not_stretched_on_both_grid_axes() {
+    // A box with a vertical writing mode takes its sizes from its logical
+    // properties, so the `auto` handling of a replaced box does not apply to it
+    // and the ratio is kept.
+    assert_eq!(
+        child_in_container(
+            KEYWORD_WIDTH_CONTAINERS[1].1,
+            "img",
+            "writing-mode:vertical-rl;justify-self:stretch;width:min-content"
+        ),
+        (0.0, (25.0, 50.0))
+    );
+}
+
+#[test]
+fn replaced_content_without_a_natural_size_treats_a_keyword_width_as_auto() {
+    // It fills the space an `auto` width fills; there is no natural size to
+    // keep.
+    for (name, container, align) in [
+        ("grid", KEYWORD_WIDTH_CONTAINERS[1].1, "justify-self"),
+        ("column flex", KEYWORD_WIDTH_CONTAINERS[3].1, "align-self"),
+    ] {
+        let auto = child_in_container(container, "iframe", &format!("{align}:stretch"));
+        assert_eq!(auto.1.0, 100.0, "{name} auto");
+        for width in ["min-content", "max-content", "fit-content"] {
+            let css = format!("{align}:stretch;width:{width}");
+            assert_eq!(
+                child_in_container(container, "iframe", &css),
+                auto,
+                "{name} {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_width_is_not_stretched_when_the_height_is_stretched_in_a_grid() {
+    // An `auto` width and height both stretched fill the area and drop the
+    // ratio; a keyword width is not `auto`, so only the height is stretched and
+    // the width follows through the ratio.
+    for width in ["min-content", "max-content", "fit-content"] {
+        let css = format!("justify-self:stretch;align-self:stretch;width:{width}");
+        assert_eq!(
+            image_in_container(KEYWORD_WIDTH_CONTAINERS[1].1, &css),
+            (50.0, 100.0),
+            "{width}"
+        );
+    }
+    assert_eq!(
+        image_in_container(
+            KEYWORD_WIDTH_CONTAINERS[1].1,
+            "justify-self:stretch;align-self:stretch"
+        ),
+        (100.0, 100.0)
+    );
+}
+
+#[test]
+fn a_size_contained_image_with_a_keyword_width_is_not_stretched() {
+    // Size containment leaves the image without a natural size, which an
+    // `auto` width fills the space for; a keyword width is not `auto`, so the
+    // box collapses as in browsers.
+    for (name, container, align) in [
+        ("grid", KEYWORD_WIDTH_CONTAINERS[1].1, "justify-self"),
+        ("column flex", KEYWORD_WIDTH_CONTAINERS[3].1, "align-self"),
+    ] {
+        for (contain, height) in [("size", 0.0), ("inline-size", 50.0)] {
+            let css = format!("contain:{contain};{align}:stretch;width:auto");
+            assert_eq!(
+                child_in_container(container, "img", &css),
+                (0.0, (100.0, height)),
+                "{name} {contain} auto"
+            );
+            for width in ["min-content", "max-content", "fit-content"] {
+                let css = format!("contain:{contain};{align}:stretch;width:{width}");
+                assert_eq!(
+                    child_in_container(container, "img", &css),
+                    (0.0, (0.0, height)),
+                    "{name} {contain} {width}"
+                );
+            }
+        }
+    }
+}
