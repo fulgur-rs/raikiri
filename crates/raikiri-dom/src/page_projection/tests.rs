@@ -1,3 +1,4 @@
+use crate::LayoutStyle as Style;
 use crate::{
     Document, PageContentInsets, PageMargins, PageSlice, layout_pages, layout_single_page,
     layout_single_page_with_resolver,
@@ -7,7 +8,6 @@ use raikiri_traits::{
     NodeId, PageBox, PaintTransform, ReplacedResolver, ResolvedIntrinsic, ResolverError,
     ResolverRequest,
 };
-use taffy::Style;
 
 #[test]
 fn decoration_preparation_checks_budget_and_cancellation_before_publication() {

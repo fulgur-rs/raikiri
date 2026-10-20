@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 const SVG_NS: &str = "http://www.w3.org/2000/svg";

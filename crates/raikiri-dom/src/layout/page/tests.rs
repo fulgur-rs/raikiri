@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 mod page_name_performance_tests;
 

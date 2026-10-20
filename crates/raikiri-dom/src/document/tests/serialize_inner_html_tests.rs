@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 #[test]
 fn serialize_raw_text_tags_in_both_html_namespace_representations() {

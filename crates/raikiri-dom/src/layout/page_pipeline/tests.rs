@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
-use taffy::Style;
 
 mod avoid_followup_tests;
 mod candidate_context_tests;
@@ -5146,19 +5146,19 @@ fn an_inline_block_holding_a_paragraph_is_measured() {
     let atomic_box = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline-block"),
     );
     let middle = doc.append_element(
         Some(atomic_box),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let inner = doc.append_element(
         Some(middle),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     doc.append_text(inner, "bb cc");
@@ -5186,7 +5186,7 @@ fn an_inline_block_baseline_counts_its_top_margin() {
     let atomic = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline-block;width:20px;margin-top:3px"),
     );
     doc.append_text(atomic, "ii");
@@ -5215,7 +5215,7 @@ fn a_clipping_inline_block_sits_on_its_bottom_margin_edge() {
     let atomic = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline-block;width:20px;height:10px;overflow:hidden"),
     );
     doc.append_text(atomic, "ii");
@@ -5251,7 +5251,7 @@ fn an_inline_block_with_text_sits_on_its_last_baseline() {
     let atomic = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline-block;width:20px"),
     );
     doc.append_text(atomic, "ii");
@@ -5318,7 +5318,7 @@ fn an_atomic_beside_a_float_starts_after_it() {
     let atomic = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline-block;width:30px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -5339,7 +5339,7 @@ fn an_image_is_placed_like_an_inline_block() {
     let image = doc.append_element(
         Some(root),
         "img",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline;width:10px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -5366,7 +5366,7 @@ fn paragraph_with_block(
     let block = doc.append_element(
         Some(root),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;{block_css}")),
     );
     doc.append_text(root, after);
@@ -5540,14 +5540,14 @@ fn vertical_rl_keeps_multiple_block_children_in_logical_source_order() {
     let first = doc.append_element(
         Some(root),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:12px;height:8px"),
     );
     doc.append_text(root, "bb");
     let second = doc.append_element(
         Some(root),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:14px;height:8px"),
     );
     doc.append_text(root, "cc");
@@ -5611,7 +5611,7 @@ fn vertical_block_children_collapse_adjoining_block_axis_margins() {
         let first = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:10px;height:20px;{first_margin}"
             )),
@@ -5620,7 +5620,7 @@ fn vertical_block_children_collapse_adjoining_block_axis_margins() {
         let second = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:10px;height:20px;{second_margin}"
             )),
@@ -5657,7 +5657,7 @@ fn vertical_block_child_margin_percentages_resolve_against_inline_size() {
         let block = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:10px;height:20px;{block_start_margin}"
             )),
@@ -5687,7 +5687,7 @@ fn vertical_block_child_percentage_edges_use_parent_inline_size() {
         let block = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:30px;height:49px;padding:10%;{block_start_side}:10%"
             )),
@@ -5728,7 +5728,7 @@ fn vertical_block_children_distribute_auto_inline_margins() {
         let block = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;width:10px;height:20px;margin-top:auto;margin-bottom:auto"),
         );
         doc.append_text(block, "a");
@@ -5750,7 +5750,7 @@ fn vertical_block_child_auto_inline_margin_is_zero_when_the_child_overflows() {
         let block = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;width:10px;height:40px;margin-top:auto"),
         );
         doc.append_text(block, "a");
@@ -5774,7 +5774,7 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
             let first = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(first, "aa");
@@ -5783,14 +5783,14 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
             let wrapper = doc.append_element(
                 Some(root),
                 "if-zh",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             for text in ["bb", "cc"] {
                 let child = doc.append_element(
                     Some(wrapper),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
                 doc.append_text(child, text);
@@ -5800,7 +5800,7 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
             let last = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(last, "dd");
@@ -5810,7 +5810,7 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
                 let block = doc.append_element(
                     Some(root),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
                 doc.append_text(block, text);
@@ -5891,13 +5891,13 @@ fn a_float_anchored_right_before_a_block_child_is_placed_above_it() {
     let float = doc.append_element(
         Some(root),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;float:left;width:30px;height:10px"),
     );
     let block = doc.append_element(
         Some(root),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;height:20px"),
     );
     doc.append_text(root, "bb");
@@ -5936,7 +5936,7 @@ fn a_paragraph_that_contains_its_floats_contains_those_of_its_block_children() {
     doc.append_element(
         Some(block),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;float:left;width:30px;height:50px"),
     );
     doc.mark_in_document_flags();
@@ -5958,7 +5958,12 @@ fn a_paragraph_that_contains_its_floats_contains_those_of_its_block_children() {
 /// "aa ", a child of the given element css, then `after`.
 fn unsized_paragraph_with_child(child_css: &str, after: &str) -> (Document, CascadeResult, usize) {
     let (mut doc, _cascade, root) = ahem_paragraph("aa ", "");
-    doc.append_element(Some(root), "span", taffy::Style::default(), Some(child_css));
+    doc.append_element(
+        Some(root),
+        "span",
+        crate::LayoutStyle::default(),
+        Some(child_css),
+    );
     doc.append_text(root, after);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -6052,7 +6057,7 @@ fn a_right_float_inside_a_narrow_block_child_sits_at_the_block_edge() {
         let float = doc.append_element(
             Some(block),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;float:right;width:10px;height:10px"),
         );
         doc.mark_in_document_flags();
@@ -6108,7 +6113,7 @@ fn an_inline_element_has_its_pinned_border_box() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(format!("display:inline;{SPAN_EDGES}").as_str()),
             );
             doc.append_text(inner, "bb");
@@ -6140,7 +6145,7 @@ fn a_padded_root_places_the_inline_element_inside_its_content_box() {
                 let inner = doc.append_element(
                     Some(root),
                     "span",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:inline;padding:0 3px"),
                 );
                 doc.append_text(inner, "bb");
@@ -6172,7 +6177,7 @@ fn a_root_with_a_top_border_places_the_inline_element_below_it() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             doc.append_text(inner, "bb");
@@ -6197,7 +6202,7 @@ fn a_wrapping_inline_element_has_the_bounding_box_of_its_pieces() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(format!("display:inline;{SPAN_EDGES}").as_str()),
         );
         doc.append_text(inner, "aaaa bbbb");
@@ -6218,14 +6223,14 @@ fn nested_inline_elements_accumulate_to_their_own_boxes() {
         let outer = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;padding:0 1px"),
         );
         doc.append_text(outer, "b");
         let inner = doc.append_element(
             Some(outer),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;padding:0 2px"),
         );
         doc.append_text(inner, "c");
@@ -6248,7 +6253,7 @@ fn an_empty_inline_element_has_a_zero_width_box_on_its_line() {
         span_id = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
     });
@@ -6266,7 +6271,7 @@ fn an_inline_element_without_a_piece_gets_an_empty_layout() {
             span_id = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:none;padding:0 3px"),
             );
             doc.append_text(span_id, "bb");
@@ -6294,7 +6299,7 @@ fn a_second_layout_does_not_keep_the_stale_box_of_a_removed_element() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;padding:0 3px"),
         );
         doc.append_text(inner, "bb");
@@ -6322,7 +6327,7 @@ fn a_wide_padding_does_not_make_the_layout_check_zero_the_element() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;padding:0 40px"),
         );
         doc.append_text(inner, "a b");
@@ -6348,7 +6353,7 @@ fn relayout_records_the_boxes_again_for_the_new_lines() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             doc.append_text(inner, "aaaa bbbb");
@@ -6379,7 +6384,7 @@ fn pages_with_a_breaking_inline() -> (usize, bool) {
         let inner = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;break-before:page"),
         );
         doc.append_text(inner, "bb");
@@ -6405,7 +6410,7 @@ fn a_relative_inline_element_is_located_with_its_offset() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;position:relative;left:5px;top:2px"),
         );
         doc.append_text(inner, "bb");
@@ -6427,7 +6432,7 @@ fn a_relative_inline_is_located() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline;position:relative;right:4px;bottom:3px"),
             );
             doc.append_text(inner, "bb");
@@ -6453,14 +6458,14 @@ fn a_child_of_a_relative_inline_moves_with_it() {
         let outer = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;position:relative;left:5px"),
         );
         doc.append_text(outer, "a");
         let inner = doc.append_element(
             Some(outer),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_text(inner, "b");
@@ -6482,13 +6487,13 @@ fn an_element_inside_a_contents_element_is_located_from_the_nearest_box() {
         let wrapper = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:contents"),
         );
         let inner = doc.append_element(
             Some(wrapper),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;padding:0 3px"),
         );
         doc.append_text(inner, "bb");
@@ -6511,13 +6516,13 @@ fn a_block_inside_a_contents_child_of_a_paragraph_still_breaks_the_page() {
             let wrapper = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:contents"),
             );
             let block = doc.append_element(
                 Some(wrapper),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;break-before:page"),
             );
             doc.append_text(block, "bb");

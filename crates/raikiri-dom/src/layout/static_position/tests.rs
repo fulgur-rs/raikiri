@@ -1,8 +1,8 @@
 use crate::Document;
+use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 /// An absolute rect: x, y, width and height.
 type Rect = (f32, f32, f32, f32);

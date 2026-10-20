@@ -1,9 +1,9 @@
 //! Public-layout regression coverage for whitespace between inline boxes.
 
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
-use taffy::Style;
 
 #[test]
 fn public_layout_preserves_collapsed_whitespace_between_inline_boxes() {

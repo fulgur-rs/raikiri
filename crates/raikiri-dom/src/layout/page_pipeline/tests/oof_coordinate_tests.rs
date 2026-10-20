@@ -1,7 +1,7 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::test_support::page_box_800x600;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 #[test]
 fn percentage_width_under_page_positioned_box_uses_its_owner_page() {

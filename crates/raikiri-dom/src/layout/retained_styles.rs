@@ -5,20 +5,20 @@ use crate::node::arena::BoxKey;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RetainedLayoutStyles {
-    styles: HashMap<BoxKey, taffy::Style>,
+    styles: HashMap<BoxKey, crate::LayoutStyle>,
     pub(crate) calc_values: Vec<Arc<crate::taffy_impl::ArenaCalc>>,
 }
 
 impl RetainedLayoutStyles {
-    pub(crate) fn insert(&mut self, key: BoxKey, style: taffy::Style) {
+    pub(crate) fn insert(&mut self, key: BoxKey, style: crate::LayoutStyle) {
         self.styles.insert(key, style);
     }
 
-    pub(crate) fn get(&self, key: BoxKey) -> Option<&taffy::Style> {
+    pub(crate) fn get(&self, key: BoxKey) -> Option<&crate::LayoutStyle> {
         self.styles.get(&key)
     }
 
-    pub(crate) fn get_mut(&mut self, key: BoxKey) -> Option<&mut taffy::Style> {
+    pub(crate) fn get_mut(&mut self, key: BoxKey) -> Option<&mut crate::LayoutStyle> {
         self.styles.get_mut(&key)
     }
 

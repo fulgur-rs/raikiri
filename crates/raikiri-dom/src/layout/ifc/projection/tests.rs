@@ -141,7 +141,7 @@ fn wbr_is_transformed_when_its_computed_style_enables_word_space_transform() {
         doc.append_element(
             Some(root),
             "wbr",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_text(root, "b");
@@ -157,7 +157,7 @@ fn a_br_forces_a_break() {
         doc.append_element(
             Some(root),
             "br",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_text(root, "bb");
@@ -205,7 +205,7 @@ fn an_img_and_an_inline_svg_are_atomic() {
             doc.append_element(
                 Some(root),
                 tag,
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline;width:10px;height:10px"),
             );
         });
@@ -242,7 +242,7 @@ fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
-            doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
+            doc.append_element(Some(root), tag, crate::LayoutStyle::default(), Some(css));
         });
         let projected = project(&fixture).expect(css);
         assert_eq!(projected.meta.boxes.len(), 1, "{tag} {css}");
@@ -266,7 +266,7 @@ fn positioned_boxes_of_every_kind_are_out_of_flow_boxes() {
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa ");
-            doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
+            doc.append_element(Some(root), tag, crate::LayoutStyle::default(), Some(css));
         });
         let projected = project(&fixture).expect(css);
         assert_eq!(projected.meta.boxes.len(), 1, "{tag} {css}");
@@ -308,8 +308,8 @@ fn an_invalid_root_is_reported() {
 
 #[test]
 fn generated_text_of_the_root_is_projected_before_its_content() {
+    use crate::LayoutStyle as Style;
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::Style;
     let mut doc = crate::Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
@@ -360,17 +360,17 @@ fn an_image_marker_without_text_or_pixels_projects_nothing() {
 fn text_align_is_inherited_from_ancestors() {
     // `text-align:center` on <body>: the block inherits it.
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("text-align:center"),
     );
     let root = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;font-family:Ahem;font-size:10px"),
     );
     doc.append_text(root, "aa");
@@ -397,15 +397,35 @@ fn text_align_is_inherited_from_ancestors() {
 #[test]
 fn language_is_inherited_normalized_and_stopped_by_an_empty_value() {
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", taffy::Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", crate::LayoutStyle::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
     doc.set_element_attribute(html, "lang", " JA-jp ")
         .expect("set language");
-    let inherit = doc.append_element(Some(body), "div", taffy::Style::default(), None::<&str>);
-    let cleared = doc.append_element(Some(body), "div", taffy::Style::default(), None::<&str>);
+    let inherit = doc.append_element(
+        Some(body),
+        "div",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
+    let cleared = doc.append_element(
+        Some(body),
+        "div",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
     doc.set_element_attribute(cleared, "lang", "")
         .expect("clear language");
-    let below = doc.append_element(Some(cleared), "span", taffy::Style::default(), None::<&str>);
+    let below = doc.append_element(
+        Some(cleared),
+        "span",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
     assert_eq!(language_of(&doc, inherit).as_deref(), Some("ja-jp"));
     assert_eq!(language_of(&doc, cleared), None);
     assert_eq!(language_of(&doc, below), None);
@@ -468,7 +488,7 @@ fn non_rendered_html_elements_contribute_no_text() {
             let hidden = doc.append_element(
                 Some(root),
                 tag,
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             doc.append_text(hidden, "zz");
@@ -538,7 +558,7 @@ fn a_block_level_image_or_svg_is_a_block_child() {
             doc.append_element(
                 Some(root),
                 tag,
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;width:10px;height:10px"),
             );
         });
@@ -584,7 +604,7 @@ fn a_cleared_line_break_is_recorded_with_its_physical_side() {
             doc.append_element(
                 Some(root),
                 "br",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(format!("display:inline;clear:{clear}").as_str()),
             );
         }
@@ -674,8 +694,8 @@ fn a_float_and_an_atomic_directly_under_the_root_are_still_projected() {
 fn generated_text_of_a_contents_element_is_projected_in_place() {
     // A `display: contents` element has no box, but its pseudo-elements do:
     // they sit before and after its children (CSS Display 3, 2.5).
+    use crate::LayoutStyle as Style;
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::Style;
     let mut doc = crate::Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
@@ -970,9 +990,12 @@ fn inside_marker_precedes_before_and_increases_empty_item_height() {
             doc.append_text(root, "b");
         },
     );
-    let head = fixture
-        .doc
-        .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    let head = fixture.doc.append_element(
+        Some(0),
+        "style",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
     fixture.doc.append_text(
         head,
         r#"div::before { content: "a" } div::marker { color:red;font-size:20px }"#,
@@ -1007,10 +1030,12 @@ fn inside_marker_preserves_spaces_does_not_wrap_or_inherit_text_transform() {
                 doc.append_text(root, "ab");
             },
         );
-        let sheet =
-            fixture
-                .doc
-                .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+        let sheet = fixture.doc.append_element(
+            Some(0),
+            "style",
+            crate::LayoutStyle::default(),
+            None::<&str>,
+        );
         fixture.doc.append_text(sheet, author_marker);
         fixture.doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&fixture.doc);

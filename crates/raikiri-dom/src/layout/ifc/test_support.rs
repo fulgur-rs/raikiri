@@ -2,10 +2,10 @@
 
 use super::font::{BundledFace, bundled_collection};
 use crate::Document;
+use crate::LayoutStyle as Style;
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use shodo::font::FontCollection;
 use shodo::limits::Limits;
-use taffy::Style;
 
 pub(crate) const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

@@ -17,7 +17,7 @@ fn vertical_block_children_with_inside_counter_text_qualify_the_parent() {
             child = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:list-item;list-style:inside none"),
             );
         },
@@ -48,7 +48,7 @@ fn ancestor_counters_qualify_empty_and_block_only_inside_markers() {
                     let child = doc.append_element(
                         Some(root),
                         "p",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some("display:block"),
                     );
                     doc.append_text(child, "body");
@@ -105,7 +105,7 @@ fn suppressed_inside_markers_leave_block_children_on_the_block_path() {
                 let child = doc.append_element(
                     Some(root),
                     "p",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block;margin-top:20px"),
                 );
                 doc.append_text(child, "body");
@@ -223,46 +223,46 @@ fn empty_ruby_items_with_forced_breaks_in_multicol_are_an_inline_formatting_root
             let ruby = doc.append_element(
                 Some(root),
                 "ruby",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             first_ruby.get_or_insert(ruby);
             doc.append_element(
                 Some(ruby),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline-block;width:25px;height:75px"),
             );
             let rt = doc.append_element(
                 Some(ruby),
                 "rt",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             doc.append_element(
                 Some(rt),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline-block;width:25px;height:25px"),
             );
             doc.append_element(
                 Some(root),
                 "br",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
         }
         let hidden = doc.append_element(
             first_ruby,
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:none"),
         );
         doc.append_text(hidden, "hidden text");
         detached_child = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_comment(Some(root), "layout-neutral comment");
@@ -282,14 +282,14 @@ fn ruby_multicol_with_text_remains_an_inline_formatting_root() {
         let ruby = doc.append_element(
             Some(root),
             "ruby",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_text(ruby, "base");
         doc.append_element(
             Some(root),
             "br",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
     });
@@ -306,19 +306,19 @@ fn direct_text_in_ruby_multicol_remains_an_inline_formatting_root() {
         let ruby = doc.append_element(
             Some(root),
             "ruby",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_element(
             Some(ruby),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline-block;width:25px;height:75px"),
         );
         doc.append_element(
             Some(root),
             "br",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
     });
@@ -334,13 +334,13 @@ fn ruby_multicol_without_forced_breaks_remains_an_inline_formatting_root() {
         let ruby = doc.append_element(
             Some(root),
             "ruby",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_element(
             Some(ruby),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline-block;width:25px;height:75px"),
         );
     });
@@ -356,25 +356,25 @@ fn empty_ruby_in_a_single_column_multicol_is_an_inline_formatting_root() {
         let ruby = doc.append_element(
             Some(root),
             "ruby",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_element(
             Some(ruby),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline-block;width:100px;height:50px"),
         );
         let rt = doc.append_element(
             Some(ruby),
             "rt",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_element(
             Some(rt),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline-block;width:100px;height:50px"),
         );
     });
@@ -477,7 +477,7 @@ fn a_vertical_block_only_container_is_an_ifc_root() {
                 let child = doc.append_element(
                     Some(root),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
                 doc.append_text(child, text);
@@ -498,7 +498,7 @@ fn empty_vertical_block_children_do_not_make_an_ifc_root() {
                 doc.append_element(
                     Some(root),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
             }
@@ -518,7 +518,7 @@ fn vertical_multicol_block_children_stay_on_the_multicol_path() {
                 let child = doc.append_element(
                     Some(root),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
                 doc.append_text(child, "aa");
@@ -550,7 +550,7 @@ fn add_sibling(doc: &mut crate::Document, root: usize, display: &str) {
     let sibling = doc.append_element(
         Some(parent),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(format!("display:{display}").as_str()),
     );
     doc.append_text(sibling, "x");
@@ -981,7 +981,7 @@ fn a_float_beside_an_ancestor_leaves_the_paragraph_a_root() {
     let float = fixture.doc.append_element(
         Some(outer),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;float:left;width:30px"),
     );
     fixture.doc.append_text(float, "x");
@@ -1295,7 +1295,7 @@ fn a_paragraph_with_only_an_image_is_a_root() {
         doc.append_element(
             Some(root),
             "img",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;width:10px;height:10px"),
         );
     });
@@ -1398,9 +1398,12 @@ fn a_paragraph_with_generated_text_is_a_root() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa");
     });
-    let head = fixture
-        .doc
-        .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    let head = fixture.doc.append_element(
+        Some(0),
+        "style",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
     fixture
         .doc
         .append_text(head, r#"div::before { content: "x" }"#);
@@ -1416,7 +1419,7 @@ fn a_paragraph_with_generated_text_is_a_root() {
 fn with_block_child(css: &'static str) -> impl FnOnce(&mut crate::Document, usize) {
     move |doc, root| {
         doc.append_text(root, "aa ");
-        let block = doc.append_element(Some(root), "div", taffy::Style::default(), Some(css));
+        let block = doc.append_element(Some(root), "div", crate::LayoutStyle::default(), Some(css));
         doc.append_text(block, "bb");
         doc.append_text(root, " cc");
     }
@@ -1454,10 +1457,11 @@ fn a_page_break_inside_a_box_of_the_paragraph_is_still_a_root() {
             let block = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
-            let inner = doc.append_element(Some(block), "div", taffy::Style::default(), Some(css));
+            let inner =
+                doc.append_element(Some(block), "div", crate::LayoutStyle::default(), Some(css));
             doc.append_text(inner, "bb");
             doc.append_text(root, " cc");
         });
@@ -1521,7 +1525,7 @@ fn a_paragraph_inside_a_float_of_a_root_is_still_a_root() {
         let inner = doc.append_element(
             Some(float),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block"),
         );
         doc.append_text(inner, "bb cc");
@@ -1570,7 +1574,7 @@ fn many_paragraphs(n: usize) -> Fixture {
             let p = doc.append_element(
                 Some(body),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
             );
             doc.append_text(p, format!("aa bb cc dd ee ff {i}"));
@@ -1588,7 +1592,7 @@ fn many_fallback_paragraphs(n: usize) -> Fixture {
             let p = doc.append_element(
                 Some(body),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;font-family:Ahem,NotoSansTest;font-size:10px;line-height:10px"),
             );
             doc.append_text(p, format!("aa \u{0E70} bb cc {i}"));
@@ -1771,7 +1775,7 @@ fn many_mixed_script_paragraphs(n: usize) -> Fixture {
             let p = doc.append_element(
                 Some(body),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;font-size:10px;line-height:12px"),
             );
             doc.append_text(p, format!("{} {i}", SAMPLES[i % SAMPLES.len()]));
@@ -1857,7 +1861,7 @@ fn a_cleared_line_break_is_a_root() {
         doc.append_element(
             Some(root),
             "br",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;clear:both"),
         );
     });
@@ -1873,13 +1877,23 @@ fn svg_elements_are_never_roots_and_a_form_control_lays_out_its_label() {
     // label is a paragraph of its own.
     let mut nodes = Vec::new();
     let mut fixture = block_fixture("display:flex", |doc, root| {
-        let svg = doc.append_element(Some(root), "svg", taffy::Style::default(), None::<&str>);
-        let title = doc.append_element(Some(svg), "title", taffy::Style::default(), None::<&str>);
+        let svg = doc.append_element(
+            Some(root),
+            "svg",
+            crate::LayoutStyle::default(),
+            None::<&str>,
+        );
+        let title = doc.append_element(
+            Some(svg),
+            "title",
+            crate::LayoutStyle::default(),
+            None::<&str>,
+        );
         doc.append_text(title, "Close");
         let button = doc.append_element(
             Some(root),
             "button",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline-block"),
         );
         doc.append_text(button, "OK");

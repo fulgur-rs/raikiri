@@ -1,7 +1,7 @@
 //! `Document::extract_nodes`: copying part of a tree into a new document.
 
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 #[test]
 fn listed_nodes_are_copied_in_order_with_their_tree_and_data() {

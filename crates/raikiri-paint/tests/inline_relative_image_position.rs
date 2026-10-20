@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_paint::paint_single_page_with_images;
 use raikiri_style::{DisplayValue, build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
-use taffy::Style;
 use url::Url;
 
 struct OneImageSource(Url, Arc<DecodedImage>);

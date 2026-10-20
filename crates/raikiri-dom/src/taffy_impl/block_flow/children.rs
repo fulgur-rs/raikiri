@@ -2,6 +2,7 @@
 
 use super::context::{BlockContext, BoxProbe};
 use super::{Metrics, child_inputs, child_style, commit, shares_context};
+use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
 use crate::taffy_impl::resolve_calc;
@@ -10,7 +11,7 @@ use taffy::{
     AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, BlockItemStyle,
     BoxGenerationMode, Clear, CollapsibleMarginSet, CoreStyle, Direction, Float, FloatDirection,
     LayoutInput, LayoutOutput, Line, MaybeResolve, NodeId, Point, Position, Rect, RunMode, Size,
-    Style, TraversePartialTree,
+    TraversePartialTree,
 };
 
 pub(super) struct Flow {

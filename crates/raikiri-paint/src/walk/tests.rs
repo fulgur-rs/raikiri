@@ -2,10 +2,10 @@ use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use raikiri_dom::Document;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_style::property::ContentComponent;
 use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
 use raikiri_traits::PaintRect;
-use taffy::Style;
 
 mod gradient_tests;
 mod image_sharing_tests;
@@ -5288,7 +5288,7 @@ fn conic_angular_offsets_cover_missing_angle_and_percent() {
     let id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(red 45deg, blue)"),
     );
     let rules = build_rule_tree(&document);
@@ -5347,13 +5347,13 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     let center_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(at 25% 25%, red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let angle_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(from 90deg, red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let rules = build_rule_tree(&document);
@@ -5387,7 +5387,7 @@ fn conic_paint_covers_empty_and_square_boxes() {
     let square_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let rules = build_rule_tree(&document);
@@ -5421,7 +5421,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
     let conic_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let rules = build_rule_tree(&document);
@@ -7154,25 +7154,25 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
     let auto_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("position: fixed"),
     );
     let left_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("position: fixed; left: 10px"),
     );
     let percent_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("position: fixed; top: calc(10% + 5px)"),
     );
     let bottom_id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some("position: fixed; bottom: calc(50% - 10px)"),
     );
     let rules = build_rule_tree(&document);

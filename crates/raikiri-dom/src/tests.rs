@@ -1,7 +1,8 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use raikiri_traits::{Dom, Element, Node, NodeId, NodeKind};
 use taffy::prelude::*;
-use taffy::{AvailableSpace, Dimension, Display, Size, Style};
+use taffy::{AvailableSpace, Dimension, Display, Size};
 
 fn compute_root_layout(
     doc: &mut Document,

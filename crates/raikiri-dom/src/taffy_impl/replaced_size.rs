@@ -1,11 +1,12 @@
 //! The size of a replaced leaf with an intrinsic ratio and an `auto` side.
 
 use super::{calc_has_percentage, resolve_calc};
+use crate::LayoutStyle as Style;
 use crate::image_geometry::constrain_with_ratio;
 use crate::taffy_impl::content_limits::ContentLimits;
 use taffy::{
     BoxSizing, Dimension, ExpandedDimension, ExpandedLengthPercentageAuto, LayoutInput,
-    LengthPercentageAuto, MaybeResolve, ResolveOrZero, Size, SizingMode, Style,
+    LengthPercentageAuto, MaybeResolve, ResolveOrZero, Size, SizingMode,
 };
 
 /// The content-box size a replaced leaf takes when `width`, `height` or both

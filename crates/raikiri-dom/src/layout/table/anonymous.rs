@@ -58,7 +58,7 @@ pub(crate) struct TableObjects {
     pub(crate) headers: super::headers::HeaderRepeats,
     pub(crate) cells: Vec<AnonymousCell>,
     /// The layout views of `cells`, moved into the node arena once built.
-    cell_nodes: Vec<(Node, taffy::Style)>,
+    cell_nodes: Vec<(Node, crate::LayoutStyle)>,
     pub(crate) tables: Vec<AnonymousTable>,
     /// The anonymous table index of each wrapped row or row group.
     table_by_part: HashMap<usize, usize>,
@@ -67,7 +67,7 @@ pub(crate) struct TableObjects {
     content_by_owner: HashMap<usize, Vec<Content>>,
     overlay_contents_by_owner: HashMap<usize, Vec<usize>>,
     overlay_contents_owner: HashMap<usize, usize>,
-    prototypes_by_owner: HashMap<usize, (Node, taffy::Style)>,
+    prototypes_by_owner: HashMap<usize, (Node, crate::LayoutStyle)>,
     pub(crate) rows: HashMap<usize, Vec<Row>>,
     pub(crate) paragraph_owner: Vec<Option<usize>>,
     pub(crate) part_background_cells: HashMap<usize, Vec<raikiri_traits::PaintRect>>,
@@ -180,11 +180,11 @@ fn children(
     out
 }
 
-fn anonymous_prototype(doc: &Document, owner: usize) -> (Node, taffy::Style) {
+fn anonymous_prototype(doc: &Document, owner: usize) -> (Node, crate::LayoutStyle) {
     let source = &doc.layout_node_with_style(owner).unwrap();
     // Anonymous boxes have no source attributes, children or retained layout
     // payloads. Text/style projection reads the original owner instead.
-    let mut style = taffy::Style {
+    let mut style = crate::LayoutStyle {
         direction: doc
             .layout_style(owner)
             .expect("anonymous cell owner has a style")
@@ -516,9 +516,13 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
 /// The layout view of the anonymous table in `parent` around `parts`. It
 /// inherits its inherited table properties from `parent` and has initial
 /// values for the rest.
-fn anonymous_table_node(doc: &Document, parent: usize, parts: &[usize]) -> (Node, taffy::Style) {
+fn anonymous_table_node(
+    doc: &Document,
+    parent: usize,
+    parts: &[usize],
+) -> (Node, crate::LayoutStyle) {
     let source = &doc.layout_node_with_style(parent).unwrap();
-    let mut style = taffy::Style {
+    let mut style = crate::LayoutStyle {
         direction: doc
             .layout_style(parent)
             .expect("anonymous table parent has a style")

@@ -1,13 +1,13 @@
 //! Regression coverage for cumulative counter snapshot resource limits.
 
 use anyrender::Scene;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{
     Document, MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES, counter_snapshots, layout_single_page,
 };
 use raikiri_paint::{paint_single_page, paint_single_page_with_origin};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{LayoutError, LimitKind, PageBox, RenderError};
-use taffy::Style;
 
 #[test]
 fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {

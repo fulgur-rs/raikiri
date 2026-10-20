@@ -1,8 +1,8 @@
 use crate::Document;
+use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 #[test]
 fn paginating_a_vertical_root_preserves_percentage_width_limits() {

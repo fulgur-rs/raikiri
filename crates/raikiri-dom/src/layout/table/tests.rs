@@ -1,3 +1,4 @@
+use crate::LayoutStyle as Style;
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use raikiri_style::property::{
@@ -6,7 +7,7 @@ use raikiri_style::property::{
 use raikiri_style::{ComputedLength, ResolveContext, build_rule_tree, cascade, resolve_border};
 use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
-use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
+use taffy::{AvailableSpace, LayoutInput, Rect, Size};
 
 mod anonymous_table_tests;
 mod authored_length_tests;

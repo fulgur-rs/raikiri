@@ -1,11 +1,11 @@
 //! Paint coverage for lines that carry text-autospace boundaries.
 
 use anyrender::{Scene, recording::RenderCommand};
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_paint::paint_single_page;
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
-use taffy::Style;
 
 /// Glyph runs in the same font on one autospace line share a baseline, even
 /// when only some of them sit next to an autospace boundary.

@@ -1,9 +1,9 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::PositionedLines;
 use crate::layout::ifc::test_support::{Fixture, block_fixture, sheet_fixture};
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{page_box_800x600, with_ahem};
-use taffy::Style;
 
 fn element(doc: &mut Document, parent: usize, tag: &str, style: &str) -> usize {
     doc.append_element(Some(parent), tag, Style::default(), Some(style))

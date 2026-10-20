@@ -1,7 +1,8 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::{AlignItems, Style};
+use taffy::AlignItems;
 
 /// `html > body(margin:0) > div(parent_css) > div(wrapper_css) > div(fixed_css)`
 /// laid out on an 800x600 page with no margins. Returns the document and the

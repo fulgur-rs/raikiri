@@ -1781,19 +1781,38 @@ fn stylesheet_collection_sees_style_appended_directly_under_template() {
     use crate::sink::{HeadStylesheetSource, collect_head_stylesheet_sources};
 
     let mut doc = raikiri_dom::Document::new();
-    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
-    let head = doc.append_element(Some(html), "head", taffy::Style::default(), None::<&str>);
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        raikiri_dom::LayoutStyle::default(),
+        None::<&str>,
+    );
+    let head = doc.append_element(
+        Some(html),
+        "head",
+        raikiri_dom::LayoutStyle::default(),
+        None::<&str>,
+    );
     let tmpl = doc.append_element(
         Some(head),
         "template",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         None::<&str>,
     );
-    let real_style = doc.append_element(Some(tmpl), "style", taffy::Style::default(), None::<&str>);
+    let real_style = doc.append_element(
+        Some(tmpl),
+        "style",
+        raikiri_dom::LayoutStyle::default(),
+        None::<&str>,
+    );
     doc.append_text(real_style, "p{color:green}");
     let frag = doc.allocate_template_fragment_root(tmpl);
-    let inert_style =
-        doc.append_element(Some(frag), "style", taffy::Style::default(), None::<&str>);
+    let inert_style = doc.append_element(
+        Some(frag),
+        "style",
+        raikiri_dom::LayoutStyle::default(),
+        None::<&str>,
+    );
     doc.append_text(inert_style, "p{color:red}");
     doc.mark_in_document_flags();
 
@@ -3913,9 +3932,24 @@ fn img_defaults_to_inline_block_via_ua_css() {
     use raikiri_style::Origin;
 
     let mut doc = raikiri_dom::Document::new();
-    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", taffy::Style::default(), None::<&str>);
-    let img = doc.append_element(Some(body), "img", taffy::Style::default(), None::<&str>);
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        raikiri_dom::LayoutStyle::default(),
+        None::<&str>,
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        raikiri_dom::LayoutStyle::default(),
+        None::<&str>,
+    );
+    let img = doc.append_element(
+        Some(body),
+        "img",
+        raikiri_dom::LayoutStyle::default(),
+        None::<&str>,
+    );
 
     let mut tree = raikiri_style::build_rule_tree(&doc);
     tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);

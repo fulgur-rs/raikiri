@@ -25,7 +25,7 @@ pub(crate) fn ahem_paragraph(text: &str, css: &str) -> (Document, CascadeResult,
                     doc.append_element(
                         Some(root),
                         "br",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some("display:inline"),
                     );
                 }
@@ -90,31 +90,31 @@ pub(crate) fn ahem_paragraph_in_block_wrapper(
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("{AHEM_FAMILY_CSS}{wrapper_css}")),
     );
     let inner = doc.append_element(
         Some(wrapper),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let root = doc.append_element(
         Some(inner),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;{AHEM_FAMILY_CSS}line-height:10px")),
     );
     doc.append_text(root, text);
@@ -135,19 +135,19 @@ pub(crate) fn ahem_paragraph_beside_floats(
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;width:100px;{AHEM_FAMILY_CSS}line-height:10px"
         )),
@@ -158,7 +158,7 @@ pub(crate) fn ahem_paragraph_beside_floats(
             doc.append_element(
                 Some(wrapper),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(&format!("display:block;{css}")),
             )
         })
@@ -166,7 +166,7 @@ pub(crate) fn ahem_paragraph_beside_floats(
     let root = doc.append_element(
         Some(wrapper),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;{root_css}")),
     );
     doc.append_text(root, text);
@@ -190,14 +190,14 @@ pub(crate) fn ahem_span_beside_float(
     let style_element = doc.append_element(
         Some(root),
         "style",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:none"),
     );
     doc.append_text(style_element, sheet);
     let span = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:inline;{span_css}")),
     );
     doc.append_text(span, text);
@@ -246,19 +246,19 @@ pub(crate) fn ahem_paragraph_with_float(
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let root = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;width:100px;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
         )),
@@ -267,7 +267,7 @@ pub(crate) fn ahem_paragraph_with_float(
     let float = doc.append_element(
         Some(root),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;{float_css}")),
     );
     doc.append_text(root, after);
@@ -289,19 +289,19 @@ pub(crate) fn ahem_paragraph_with_atomic(
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let root = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;width:100px;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
         )),
@@ -310,7 +310,7 @@ pub(crate) fn ahem_paragraph_with_atomic(
     let atomic = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:inline-block;{atomic_css}")),
     );
     doc.append_text(root, after);
@@ -327,13 +327,13 @@ fn html_body() -> (Document, usize) {
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     (doc, body)
@@ -357,13 +357,13 @@ pub(crate) fn ahem_paragraph_in(
     let parent = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;{AHEM_FAMILY_CSS}{parent_css}")),
     );
     let root = doc.append_element(
         Some(parent),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;line-height:10px;{css}")),
     );
     doc.append_text(root, text);
@@ -380,12 +380,17 @@ pub(crate) fn flex_container_with_inline_item(text: &str) -> (Document, CascadeR
     let flex = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:flex;align-items:flex-start;{AHEM_FAMILY_CSS}line-height:10px"
         )),
     );
-    let item = doc.append_element(Some(flex), "span", taffy::Style::default(), None::<&str>);
+    let item = doc.append_element(
+        Some(flex),
+        "span",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
     doc.append_text(item, text);
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
@@ -402,20 +407,20 @@ pub(crate) fn body_with_text_and_block_child(
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;{AHEM_FAMILY_CSS}line-height:10px")),
     );
     doc.append_text(body, text);
     let div = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     doc.append_text(div, inner);
@@ -434,7 +439,7 @@ fn ahem_root_with(
     let root = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
         )),
@@ -452,7 +457,7 @@ pub(crate) fn paragraph_with_only_atomic(atomic_css: &str) -> (Document, Cascade
         doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(atomic_css),
         );
     })
@@ -465,7 +470,7 @@ pub(crate) fn paragraph_with_only_br(count: usize) -> (Document, CascadeResult, 
             doc.append_element(
                 Some(root),
                 "br",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
         }
@@ -480,7 +485,7 @@ pub(crate) fn paragraph_with_only_an_empty_span(
         doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!("display:inline;{span_css}")),
         );
     })
@@ -498,7 +503,7 @@ pub(crate) fn paragraph_with_inline_block(
         inline_block = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!("display:inline-block;width:{width}px")),
         );
         doc.append_text(inline_block, text);
@@ -516,7 +521,7 @@ pub(crate) fn ahem_paragraph_in_text_only(
     let parent = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;{AHEM_FAMILY_CSS}line-height:10px;{parent_css}"
         )),
@@ -539,7 +544,7 @@ pub(crate) fn ahem_table(
     let table = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
         )),
@@ -547,13 +552,13 @@ pub(crate) fn ahem_table(
     let row = doc.append_element(
         Some(table),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-row"),
     );
     let cell = doc.append_element(
         Some(row),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:table-cell;{cell_css}")),
     );
     build(&mut doc, cell);
@@ -572,7 +577,7 @@ pub(crate) fn ahem_table_with_only_text(
     let table = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
         )),

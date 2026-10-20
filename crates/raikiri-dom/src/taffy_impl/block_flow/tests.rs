@@ -1,9 +1,10 @@
 use crate::Document;
+use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use raikiri_style::property::{DisplayValue, PositionValue, TextAlign, TextAlignLast};
 use taffy::{
     AvailableSpace, Dimension, Display, Float, LayoutInput, LengthPercentage, LengthPercentageAuto,
-    Line, NodeId, RequestedAxis, RunMode, Size, SizingMode, Style,
+    Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 fn block_layout(
@@ -77,7 +78,7 @@ fn minimum_height_drops_the_last_child_margin_it_separates() {
             },
             margin: taffy::Rect {
                 bottom: LengthPercentageAuto::length(100.0),
-                ..Style::<String>::default().margin
+                ..Style::default().margin
             },
             ..Style::default()
         },
@@ -115,7 +116,7 @@ fn auto_height_encloses_a_float_before_end_padding() {
                 },
                 padding: taffy::Rect {
                     bottom: LengthPercentage::length(40.0),
-                    ..Style::<String>::default().padding
+                    ..Style::default().padding
                 },
                 ..Style::default()
             },
@@ -164,7 +165,7 @@ fn fixed_children_do_not_participate_in_block_flow() {
             inset: taffy::Rect {
                 left: LengthPercentageAuto::length(10.0),
                 top: LengthPercentageAuto::length(15.0),
-                ..Style::<String>::default().inset
+                ..Style::default().inset
             },
             ..Style::default()
         },
@@ -273,7 +274,7 @@ fn absolute_child_overflow_is_reported_without_growing_the_block() {
             inset: taffy::Rect {
                 left: LengthPercentageAuto::length(210.0),
                 top: LengthPercentageAuto::length(15.0),
-                ..Style::<String>::default().inset
+                ..Style::default().inset
             },
             ..Style::default()
         },
@@ -422,7 +423,7 @@ fn intrinsic_width_children_use_their_final_width_for_auto_margins() {
             margin: taffy::Rect {
                 left: LengthPercentageAuto::auto(),
                 right: LengthPercentageAuto::auto(),
-                ..Style::<String>::default().margin
+                ..Style::default().margin
             },
             ..Style::default()
         },
@@ -905,7 +906,7 @@ fn scrollable_overflow_keeps_the_end_padding_after_content() {
             padding: taffy::Rect {
                 right: LengthPercentage::length(20.0),
                 bottom: LengthPercentage::length(20.0),
-                ..Style::<String>::default().padding
+                ..Style::default().padding
             },
             ..Style::default()
         },

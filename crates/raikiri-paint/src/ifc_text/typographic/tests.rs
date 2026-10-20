@@ -1,8 +1,8 @@
 use super::*;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
-use taffy::Style;
 
 #[test]
 fn inside_text_marker_group_lookup_has_a_work_bound() {

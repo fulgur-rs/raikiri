@@ -6,13 +6,13 @@ fn cloned_projection_keeps_marker_text_after_the_original_is_dropped() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     document.append_element(
         Some(body),
         "li",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:list-item;list-style-type:decimal;font:10px Ahem"),
     );
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
@@ -61,7 +61,7 @@ fn marker_projection_propagates_the_fixed_counter_snapshot_budget() {
     let parent = document.append_element(
         Some(0),
         "ol",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("display:block;counter-reset:{names}")),
     );
     let mut owner = 0;
@@ -69,7 +69,7 @@ fn marker_projection_propagates_the_fixed_counter_snapshot_budget() {
         owner = document.append_element(
             Some(parent),
             "li",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:list-item"),
         );
     }
@@ -155,7 +155,8 @@ fn ellipsis_text_is_one_ellipsis_or_one_period_per_glyph() {
 #[test]
 fn a_typographic_box_is_not_reported_as_generated_before_text() {
     let mut document = Document::new();
-    let owner = document.append_element(Some(0), "div", taffy::Style::default(), None::<&str>);
+    let owner =
+        document.append_element(Some(0), "div", crate::LayoutStyle::default(), None::<&str>);
     let letter = crate::generated_content::generated_node_id(owner, PseudoElem::FirstLetter);
     assert_eq!(run_source(&document, letter), None);
     for (pseudo, kind) in [
@@ -196,16 +197,20 @@ fn container_items(container: &str, items: &[&str]) -> (Document, CascadeResult,
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
-    let container_node =
-        document.append_element(Some(body), "div", taffy::Style::default(), Some(container));
+    let container_node = document.append_element(
+        Some(body),
+        "div",
+        crate::LayoutStyle::default(),
+        Some(container),
+    );
     for style in items {
         let item = document.append_element(
             Some(container_node),
             "p",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;margin:0;{}",
                 style.replace("empty", "")
@@ -317,7 +322,7 @@ fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let mut roots = [0; 2];
@@ -325,7 +330,7 @@ fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
         *root = document.append_element(
             Some(body),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;width:10px;font:10px/10px Ahem"),
         );
         document.append_text(*root, vec!["X"; count].join(" "));
@@ -589,13 +594,13 @@ fn a_grid_first_line_includes_text_directly_in_the_grid() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let grid = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:grid;padding-top:7px;font:10px/20px Ahem"),
     );
     document.append_text(grid, "X".to_string());
@@ -641,33 +646,33 @@ fn ruby_annotations_project_above_their_base_without_its_decorations() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem;text-decoration:underline"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby"),
     );
     let base = document.append_element(
         Some(ruby),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px"),
     );
     document.append_text(annotation, "xx");
     let underlined = document.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:overline"),
     );
     document.append_text(underlined, "yy");
@@ -720,33 +725,33 @@ fn annotation_decorations_stay_on_the_annotation_baseline() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby"),
     );
     let base = document.append_element(
         Some(ruby),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(base, "aaaa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:underline"),
     );
     document.append_text(annotation, "xx");
     let raised = document.append_element(
         Some(annotation),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("vertical-align:super"),
     );
     document.append_text(raised, "yy");
@@ -789,26 +794,26 @@ fn blockified_rubies_take_their_transforms() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby;position:absolute;left:0;top:0;transform:translate(7px,0)"),
     );
     let base = document.append_element(
         Some(ruby),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px"),
     );
     document.append_text(annotation, "xx");
@@ -848,26 +853,26 @@ fn inter_character_annotations_draw_no_decorations() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby;text-decoration:underline;ruby-position:inter-character"),
     );
     let base = document.append_element(
         Some(ruby),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:underline"),
     );
     document.append_text(annotation, "xx");
@@ -915,45 +920,45 @@ fn nested_ruby_bases_keep_their_annotation_decorations() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let outer = document.append_element(
         Some(body),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby"),
     );
     let base = document.append_element(
         Some(outer),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(outer),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-decoration:underline"),
     );
     let inner = document.append_element(
         Some(annotation),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby"),
     );
     let inner_base = document.append_element(
         Some(inner),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(inner_base, "bb");
     let inner_annotation = document.append_element(
         Some(inner),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px"),
     );
     document.append_text(inner_annotation, "yy");
@@ -1002,26 +1007,26 @@ fn floated_ruby_decorations_skip_its_annotations() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby;float:left;text-decoration:underline"),
     );
     let base = document.append_element(
         Some(ruby),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px"),
     );
     document.append_text(annotation, "xx");
@@ -1068,39 +1073,39 @@ fn box_paint_shift_translates_the_boxes_layout_finds_transformable() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let paragraph = document.append_element(
         Some(body),
         "p",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let translated = "display:inline;transform:translateX(10px)";
     let span = document.append_element(
         Some(paragraph),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(translated),
     );
     document.append_text(span, "X".to_string());
     let button = document.append_element(
         Some(paragraph),
         "button",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(translated),
     );
     let math = document.append_element(
         Some(paragraph),
         "math",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(translated),
     );
     let floated = document.append_element(
         Some(paragraph),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!("{translated};float:left")),
     );
     document.mark_in_document_flags();
@@ -1141,26 +1146,26 @@ fn inter_character_annotation_glyphs_are_reported_upright_one_below_the_other() 
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/20px Ahem"),
     );
     let ruby = document.append_element(
         Some(body),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby;ruby-position:inter-character"),
     );
     let base = document.append_element(
         Some(ruby),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     document.append_text(base, "aa");
     let annotation = document.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text;font-size:5px;text-orientation:sideways"),
     );
     document.append_text(annotation, "xx");
@@ -1217,19 +1222,19 @@ fn a_fixed_outside_marker_ignores_the_body_relative_translation() {
         let html = document.append_element(
             Some(0),
             "html",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block"),
         );
         let body = document.append_element(
             Some(html),
             "body",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(format!(
                 "display:block;margin:0;font:20px/1 Ahem;position:relative;top:{body_offset}px"
             )),
         );
         let fixed = document.append_element(
-            Some(body), "li", taffy::Style::default(),
+            Some(body), "li", crate::LayoutStyle::default(),
             Some("display:list-item;list-style:decimal outside;position:fixed;left:0;top:70px;padding-top:20px"),
         );
         document.append_text(fixed, "X");

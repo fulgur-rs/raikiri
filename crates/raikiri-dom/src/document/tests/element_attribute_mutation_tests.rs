@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use raikiri_traits::{Dom as _, Element as _, Node as _, NodeId};
-use taffy::Style;
 
 fn element_attributes(doc: &Document, id: usize) -> Vec<(String, String)> {
     let NodeData::Element(element) = &doc.nodes[id].data else {

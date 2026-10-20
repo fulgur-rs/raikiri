@@ -443,22 +443,22 @@ fn absolute_auto_width_respects_space_after_its_inset() {
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let parent = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;position:relative;width:200px;height:100px"),
     );
-    let child = doc.append_element(Some(parent), "div", taffy::Style::default(), Some("display:block;position:absolute;left:120px;font-family:Ahem;font-size:10px;line-height:10px"));
+    let child = doc.append_element(Some(parent), "div", crate::LayoutStyle::default(), Some("display:block;position:absolute;left:120px;font-family:Ahem;font-size:10px;line-height:10px"));
     doc.append_text(child, "aaaa bbbb cccc");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -617,38 +617,43 @@ fn baseline_aligned_tops(scroller_style: &str, container: &str) -> (f32, f32) {
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
-    let parent = doc.append_element(Some(body), "div", taffy::Style::default(), Some(container));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        crate::LayoutStyle::default(),
+        Some(container),
+    );
     let wrapper = doc.append_element(
         Some(parent),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:100px"),
     );
     let scroller = doc.append_element(
         Some(wrapper),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(scroller_style),
     );
     doc.append_element(
         Some(scroller),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("width:20px;height:80px"),
     );
     let sibling = doc.append_element(
         Some(parent),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("width:10px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -693,25 +698,25 @@ fn line_height_around_inline_block(fill: impl FnOnce(&mut crate::Document, usize
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let line = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     let inline_block = doc.append_element(
         Some(line),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline-block"),
     );
     fill(&mut doc, inline_block);
@@ -729,7 +734,7 @@ fn two_lines_in(doc: &mut crate::Document, parent: usize, css: &str) -> usize {
     let boxed = doc.append_element(
         Some(parent),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(format!("display:block;width:40px;{css}")),
     );
     doc.append_text(boxed, "aaaa bbbb");
@@ -765,7 +770,7 @@ fn a_scroll_container_inside_another_is_clamped_to_both() {
         let outer = doc.append_element(
             Some(inline_block),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:10px;overflow:hidden"),
         );
         two_lines_in(doc, outer, "height:30px;overflow:hidden");
@@ -781,13 +786,13 @@ fn a_scroll_container_scrolled_out_of_another_is_clamped_to_the_outer_edge() {
         let outer = doc.append_element(
             Some(inline_block),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:10px;overflow:hidden"),
         );
         doc.append_element(
             Some(outer),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:20px"),
         );
         two_lines_in(doc, outer, "height:10px;overflow:hidden");

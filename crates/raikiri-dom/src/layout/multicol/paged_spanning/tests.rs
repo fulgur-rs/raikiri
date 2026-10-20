@@ -1,7 +1,7 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::fragment::FragmentRect;
 use crate::layout::page_pipeline::PageLayoutControl;
-use taffy::Style;
 
 fn source_fragments() -> (Document, usize, usize, usize) {
     let mut tree = Document::new();

@@ -361,7 +361,7 @@ impl Document {
         for id in 1..doc.nodes.len() {
             doc.retained_layout_styles.insert(
                 crate::node::arena::BoxKey::Source(id),
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
             );
         }
         // Rebuild O(1) parent pointers from the validated `children` lists.

@@ -39,7 +39,7 @@ fn child_size(root_css: &str, lead: &str, child_css: &str, body: Body) -> (f32, 
         child = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!("display:block;{child_css}")),
         );
         match body {
@@ -50,7 +50,7 @@ fn child_size(root_css: &str, lead: &str, child_css: &str, body: Body) -> (f32, 
                 doc.append_element(
                     Some(child),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some(&format!("display:block;width:{width}px;height:{height}px")),
                 );
             }
@@ -59,7 +59,7 @@ fn child_size(root_css: &str, lead: &str, child_css: &str, body: Body) -> (f32, 
                     doc.append_element(
                         Some(child),
                         "span",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some(&format!("display:inline-block;width:{width}px;height:10px")),
                     );
                 }
@@ -79,10 +79,10 @@ fn text(root_css: &str, child_css: &str) -> (f32, f32) {
 #[test]
 fn replaced_keyword_bounds_handles_nonreplaced_missing_invalid_and_sized_nodes() {
     let mut doc = crate::document::Document::new();
-    let plain = doc.append_element(None, "div", taffy::Style::default(), None::<&str>);
-    let missing = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
-    let invalid = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
-    let sized = doc.append_element(None, "img", taffy::Style::default(), None::<&str>);
+    let plain = doc.append_element(None, "div", crate::LayoutStyle::default(), None::<&str>);
+    let missing = doc.append_element(None, "img", crate::LayoutStyle::default(), None::<&str>);
+    let invalid = doc.append_element(None, "img", crate::LayoutStyle::default(), None::<&str>);
+    let sized = doc.append_element(None, "img", crate::LayoutStyle::default(), None::<&str>);
     for (idx, intrinsic) in [
         (invalid, raikiri_traits::IntrinsicBox::new(0.0, 10.0)),
         (sized, raikiri_traits::IntrinsicBox::new(20.0, 10.0)),
@@ -138,7 +138,7 @@ fn replaced_keyword_bounds_follow_the_box_the_ratio_relates() {
     // A 2:1 border box 100px high is 200px wide; the ratio of the content box
     // would give a 90px high content box 180px beside the 40px of padding.
     let mut doc = crate::document::Document::new();
-    let style = taffy::Style {
+    let style = crate::LayoutStyle {
         aspect_ratio: Some(2.0),
         box_sizing: taffy::BoxSizing::BorderBox,
         size: Size {
@@ -151,7 +151,7 @@ fn replaced_keyword_bounds_follow_the_box_the_ratio_relates() {
             top: taffy::LengthPercentage::length(0.0),
             bottom: taffy::LengthPercentage::length(10.0),
         },
-        ..taffy::Style::default()
+        ..crate::LayoutStyle::default()
     };
     let image = doc.append_element(None, "img", style, None::<&str>);
     if let crate::node::NodeData::Element(element) = &mut doc.nodes[image].data {
@@ -459,7 +459,7 @@ fn a_fit_content_function_limit_without_a_container_width_is_sized_by_the_room()
         inner = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;width:10px;min-width:fit-content(50%)"),
         );
         doc.append_text(inner, "AAAA BBBB");
@@ -481,14 +481,14 @@ fn a_keyword_width_limit_feeds_the_intrinsic_width_of_its_container() {
         inner = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;min-width:fit-content;width:10px"),
         );
         for _ in 0..2 {
             doc.append_element(
                 Some(inner),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline-block;width:50px;height:10px"),
             );
         }
@@ -505,14 +505,14 @@ fn a_keyword_width_limit_feeds_the_intrinsic_width_of_its_container() {
         let inner = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;max-width:fit-content;width:200px"),
         );
         for _ in 0..2 {
             doc.append_element(
                 Some(inner),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline-block;width:50px;height:10px"),
             );
         }
@@ -650,7 +650,7 @@ fn border_box_percentage_height_basis_subtracts_edges_once() {
         child = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(
                 "box-sizing:border-box;height:100px;min-height:120px;\
                  padding:5px 0;border:2px solid",
@@ -816,7 +816,7 @@ fn absolute_min_content_width_zeros_a_cyclic_percentage_on_a_replaced_child() {
         child = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(
                 "position:absolute;left:0;right:0;top:0;width:0;min-width:min-content;\
                  border:3px solid;padding:2px",
@@ -825,7 +825,7 @@ fn absolute_min_content_width_zeros_a_cyclic_percentage_on_a_replaced_child() {
         let canvas = doc.append_element(
             Some(child),
             "canvas",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;width:100%"),
         );
         doc.set_element_attribute(canvas, "width", "20")
@@ -849,7 +849,7 @@ fn positioned_intrinsic_height_limits_keep_the_authored_percentage_basis_for_chi
             let child = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(&format!(
                     "position:absolute;left:0;top:0;width:10px;{preferred_height};\
                      {height_limit};border:3px solid;padding:2px"
@@ -858,7 +858,7 @@ fn positioned_intrinsic_height_limits_keep_the_authored_percentage_basis_for_chi
             let canvas = doc.append_element(
                 Some(child),
                 "canvas",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;height:100%"),
             );
             doc.set_element_attribute(canvas, "width", "10")
@@ -942,25 +942,25 @@ fn normal_block_min_height_keywords_treat_cyclic_percentage_children_as_auto() {
         article = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:100px;min-height:min-content"),
         );
         let aside = doc.append_element(
             Some(article),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:50%"),
         );
         doc.append_element(
             Some(aside),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:150px"),
         );
         doc.append_element(
             Some(article),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:30px"),
         );
     });
@@ -1186,7 +1186,7 @@ fn positioned_keyword_limits_restore_the_bridged_style_after_layout() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(
                     "position:absolute;left:10px;right:20px;top:0;\
                      min-width:max-content;max-height:min-content",
@@ -1208,7 +1208,7 @@ fn absolute_keyword_limits_apply_inside_inline_containing_blocks() {
         let inline = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline;position:relative"),
         );
         doc.append_text(inline, "X");
@@ -1226,7 +1226,7 @@ fn absolute_keyword_limits_apply_inside_inline_containing_blocks() {
             let child = doc.append_element(
                 Some(inline),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(&format!("display:inline;position:absolute;{style}")),
             );
             doc.append_text(child, "AAAA BBBB");
@@ -1277,7 +1277,7 @@ fn nested_oof_content_limits_do_not_grow_exponentially_by_depth() {
             parent = doc.append_element(
                 Some(parent),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;position:absolute;min-width:max-content"),
             );
             candidates.push(NodeId::from(parent));
@@ -1322,7 +1322,7 @@ fn nested_oof_prepasses_do_not_reuse_an_unconstrained_descendant_cache() {
             let parent = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(
                     "display:block;position:absolute;left:0;top:0;width:100px;height:100px;\
                  min-width:max-content",
@@ -1332,13 +1332,13 @@ fn nested_oof_prepasses_do_not_reuse_an_unconstrained_descendant_cache() {
             let intermediate = doc.append_element(
                 Some(parent),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;position:absolute;left:0;top:0;width:50px;height:50px"),
             );
             descendant = doc.append_element(
                 Some(intermediate),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;position:absolute;left:0;top:0;width:0;min-width:max-content"),
             );
             doc.append_text(descendant, "AAAA BBBB");
@@ -1356,7 +1356,7 @@ fn the_stretch_fit_width_is_the_containing_block_less_margins_within_the_room() 
         child = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;margin:0 10px 0 auto"),
         );
     });
@@ -1408,7 +1408,7 @@ fn boxes_with_keyword_limits_nested_deeply_are_measured_once_per_level() {
             parent = doc.append_element(
                 Some(parent),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(
                     "display:block;min-width:min-content;max-width:max-content;\
                      min-height:min-content",
@@ -1459,7 +1459,7 @@ fn limits_are_resolved_for_block_inline_and_flex_grid_boxes_that_are_not_being_m
         child = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;min-width:min-content"),
         );
     });
@@ -1503,7 +1503,7 @@ fn canvas_intrinsic_contribution_size(container_display: &str, canvas_css: &str)
         outer = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:{container_display};width:max-content;border:5px solid;margin:5px"
             )),
@@ -1511,7 +1511,7 @@ fn canvas_intrinsic_contribution_size(container_display: &str, canvas_css: &str)
         canvas = doc.append_element(
             Some(outer),
             "canvas",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!("display:block;width:max-content;{canvas_css}")),
         );
         doc.set_element_attribute(canvas, "width", "50")
@@ -1553,7 +1553,7 @@ fn an_out_of_flow_replaced_min_height_keyword_uses_its_inset_width() {
         canvas = doc.append_element(
             Some(root),
             "canvas",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(
                 "position:absolute;left:5px;right:5px;top:0;width:auto;height:0;\
                  min-height:max-content",
@@ -1724,7 +1724,7 @@ fn flex_item_intrinsic_min_max_styles_are_restored_after_layout() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;flex:none;width:10px;min-width:min-content;max-height:max-content"),
             );
             doc.append_text(child, "AAAA BBBB");
@@ -1746,14 +1746,14 @@ fn an_explicit_intrinsic_flex_item_minimum_changes_sibling_space_distribution() 
             first = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;flex:1 1 auto;width:100px;min-width:max-content"),
             );
             doc.append_text(first, "AAAA BBBB");
             second = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;flex:1 1 auto;width:100px"),
             );
             doc.append_text(second, "A");
@@ -1825,7 +1825,7 @@ fn grid_items_honor_intrinsic_min_width_values_on_fixed_and_auto_tracks() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;grid-column:1;grid-row:1;width:10px;min-width:max-content"),
             );
             doc.append_text(child, "AAAA BBBB");
@@ -1846,7 +1846,7 @@ fn grid_percentage_fit_content_uses_container_basis_without_track_details() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("grid-column:1;grid-row:1;width:10px;min-width:fit-content(50%)"),
             );
             doc.append_text(child, "AAAA BBBB");
@@ -1917,7 +1917,7 @@ fn flex_grid_boxes_do_not_preserve_logical_min_block_size_keywords() {
                 child = doc.append_element(
                     Some(root),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("min-block-size:min-content"),
                 );
             },
@@ -2023,7 +2023,12 @@ fn intrinsic_container_size(display: &str, root_css: &str) -> (f32, f32) {
         _ => unreachable!(),
     };
     let fixture = block_fixture_with_ahem(&format!("{display_css};{root_css}"), |doc, root| {
-        let item = doc.append_element(Some(root), "div", taffy::Style::default(), Some(item_css));
+        let item = doc.append_element(
+            Some(root),
+            "div",
+            crate::LayoutStyle::default(),
+            Some(item_css),
+        );
         doc.append_text(item, "AAAA BBBB");
     });
     let root = fixture.root;
@@ -2123,7 +2128,8 @@ fn flex_and_grid_min_width_probes_ignore_own_cross_axis_dimensions_and_limits() 
         );
         let mut child = 0;
         let fixture = block_fixture_with_ahem(&css, |doc, root| {
-            child = doc.append_element(Some(root), "div", taffy::Style::default(), Some(item));
+            child =
+                doc.append_element(Some(root), "div", crate::LayoutStyle::default(), Some(item));
         });
         let root = fixture.root;
         let mut doc = fixture.doc;
@@ -2207,13 +2213,13 @@ fn nested_flex_and_grid_containers_resolve_their_own_intrinsic_limits() {
         flex = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:flex;width:20px;min-width:max-content;align-items:flex-start"),
         );
         grid = doc.append_element(
             Some(flex),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(
                 "display:grid;width:20px;min-width:max-content;\
                  grid-template-columns:auto;grid-template-rows:auto;\
@@ -2223,7 +2229,7 @@ fn nested_flex_and_grid_containers_resolve_their_own_intrinsic_limits() {
         let item = doc.append_element(
             Some(grid),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;grid-column:1;grid-row:1"),
         );
         doc.append_text(item, "AAAA BBBB");
@@ -2242,7 +2248,7 @@ fn a_flex_container_remeasures_percentage_fit_content_after_available_width_chan
             let item = doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;flex:1 1 auto"),
             );
             doc.append_text(item, "AAAA BBBB");

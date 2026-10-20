@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 fn fixture(page_css: &str, html_style: &str) -> (Document, CascadeResult) {
     fixture_with_text(page_css, html_style, "hi")

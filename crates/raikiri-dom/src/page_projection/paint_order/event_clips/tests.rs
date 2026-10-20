@@ -68,11 +68,15 @@ fn a_paginated_block_pseudo_keeps_its_placement_fragmentainer_clip() {
             let wrapper = doc.append_element(
                 Some(root),
                 "section",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;overflow:hidden"),
             );
-            let paragraph =
-                doc.append_element(Some(wrapper), "p", taffy::Style::default(), None::<&str>);
+            let paragraph = doc.append_element(
+                Some(wrapper),
+                "p",
+                crate::LayoutStyle::default(),
+                None::<&str>,
+            );
             doc.append_text(paragraph, "X");
         },
     );

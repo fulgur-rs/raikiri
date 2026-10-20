@@ -1,5 +1,5 @@
 use super::super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 #[test]
 fn hyperlink_cascade_and_query_preserve_empty_html_and_legacy_svg_href() {

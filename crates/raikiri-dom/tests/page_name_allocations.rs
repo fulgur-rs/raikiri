@@ -3,8 +3,8 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout::first_page_name};
-use taffy::Style;
 
 struct CountingAllocator;
 

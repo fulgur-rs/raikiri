@@ -26,12 +26,13 @@
 use crate::layout::context::LayoutSession;
 use std::collections::HashMap;
 
+use crate::LayoutStyle as Style;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
     AbsoluteAxis, AvailableSpace, AxisStaticEdge, AxisStaticPosition, Baselines, BoxSizing,
     CollapsibleMarginSet, Layout, LayoutInput, LayoutOutput, LengthPercentage, Line, NodeId, Point,
-    Position as TaffyPosition, Rect, Size, SizingMode, Style, TraversePartialTree,
+    Position as TaffyPosition, Rect, Size, SizingMode, TraversePartialTree,
 };
 
 use super::block_flow::compute_block_flow;

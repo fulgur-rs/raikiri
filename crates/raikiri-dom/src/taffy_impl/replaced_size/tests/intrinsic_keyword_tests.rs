@@ -158,12 +158,12 @@ fn content_box_min_content_bound_subtracts_padding_from_border_box_size() {
         padding: taffy::Rect {
             left: taffy::LengthPercentage::length(5.0),
             right: taffy::LengthPercentage::length(5.0),
-            ..Style::<String>::default().padding
+            ..Style::default().padding
         },
         border: taffy::Rect {
             left: taffy::LengthPercentage::length(1.0),
             right: taffy::LengthPercentage::length(1.0),
-            ..Style::<String>::default().border
+            ..Style::default().border
         },
         ..ratio_style(Dimension::auto(), Dimension::auto())
     };
@@ -199,12 +199,12 @@ fn content_box_max_content_bound_subtracts_padding_from_border_box_size() {
         padding: taffy::Rect {
             left: taffy::LengthPercentage::length(5.0),
             right: taffy::LengthPercentage::length(5.0),
-            ..Style::<String>::default().padding
+            ..Style::default().padding
         },
         border: taffy::Rect {
             left: taffy::LengthPercentage::length(1.0),
             right: taffy::LengthPercentage::length(1.0),
-            ..Style::<String>::default().border
+            ..Style::default().border
         },
         ..ratio_style(Dimension::auto(), Dimension::auto())
     };

@@ -96,7 +96,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         // does not reconstruct block margins, clearance or constrained wrapper sizes.
         // Leave those boxes to the existing geometry-preserving strategies.
         let zero = LengthPercentageAuto::length(0.0);
-        let defaults: taffy::Style = taffy::Style::default();
+        let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
         if projected
             && (node.style.margin.top != zero
                 || node.style.margin.right != zero

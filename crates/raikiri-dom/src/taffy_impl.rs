@@ -8,14 +8,15 @@
 //! - `LayoutBlockContainer / LayoutFlexboxContainer / LayoutGridContainer`:
 //!   style getter marker impls
 
+use crate::LayoutStyle as Style;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
     AvailableSpace, BoxGenerationMode, Cache, CacheTree, CollapsibleMarginSet,
     ContainingBlockClaims, CoreStyle, DetailedGridInfo, ExpandedDimension, Layout,
     LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput,
-    LayoutPartialTree, MaybeMath, NodeId, Position as TaffyPosition, Size, Style,
-    TraversePartialTree, TraverseTree, compute_cached_layout, compute_flexbox_layout,
-    compute_grid_layout, compute_leaf_layout,
+    LayoutPartialTree, MaybeMath, NodeId, Position as TaffyPosition, Size, TraversePartialTree,
+    TraverseTree, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
+    compute_leaf_layout,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -483,7 +484,7 @@ impl Document {
 
     /// The style of the flex container with a vertical main axis that holds
     /// box `node` as an item, if there is one.
-    pub(crate) fn column_flex_container_of(&self, node: usize) -> Option<&taffy::Style> {
+    pub(crate) fn column_flex_container_of(&self, node: usize) -> Option<&crate::LayoutStyle> {
         let style = self
             .layout_node_with_style(self.taffy_parent_of(node)?)?
             .style;
@@ -550,7 +551,7 @@ impl CacheTree for LayoutSession<'_> {
 }
 
 impl LayoutPartialTree for LayoutSession<'_> {
-    type CustomIdent = String;
+    type CustomIdent = smol_str::SmolStr;
     type CoreContainerStyle<'a>
         = BlockChildStyle<'a>
     where
@@ -2683,7 +2684,7 @@ fn center_absolute_children_in_block_axis(
     idx: usize,
     inputs: &LayoutInput,
     size: Size<f32>,
-    grid: Option<&DetailedGridInfo<String>>,
+    grid: Option<&DetailedGridInfo<smol_str::SmolStr>>,
 ) {
     use taffy::{MaybeResolve, Overflow, ResolveOrZero};
 
@@ -3469,7 +3470,7 @@ impl<'a> BlockChildStyle<'a> {
 }
 
 impl CoreStyle for BlockChildStyle<'_> {
-    type CustomIdent = String;
+    type CustomIdent = smol_str::SmolStr;
 
     fn box_generation_mode(&self) -> BoxGenerationMode {
         self.style.box_generation_mode()
@@ -3553,10 +3554,10 @@ impl taffy::OofItemStyle for BlockChildStyle<'_> {
     fn is_table(&self) -> bool {
         self.oof_table
     }
-    fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<String>> {
+    fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<smol_str::SmolStr>> {
         self.style.grid_row.clone()
     }
-    fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<String>> {
+    fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<smol_str::SmolStr>> {
         self.style.grid_column.clone()
     }
 }
@@ -3783,7 +3784,7 @@ impl TraverseTree for Document {}
 /// (CSS Grid 1 §7.2 explicit tracks, §7.6 implicit tracks).
 fn row_sizing_functions(
     style: &Style,
-    rows: &taffy::DetailedGridTracksInfo<String>,
+    rows: &taffy::DetailedGridTracksInfo<smol_str::SmolStr>,
 ) -> Vec<taffy::TrackSizingFunction> {
     use taffy::prelude::TaffyAuto;
     use taffy::{GridTemplateComponent, RepetitionCount, TrackSizingFunction};

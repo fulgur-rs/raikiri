@@ -1,5 +1,5 @@
 use super::super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 /// Builds a `Document` with a single `<div>` element (child of root)
 /// carrying one attribute, and returns the element's arena id.

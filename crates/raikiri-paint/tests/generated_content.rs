@@ -1,11 +1,11 @@
 //! Integration coverage for generated-content paint flow.
 
 use anyrender::{Scene, recording::RenderCommand};
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_paint::paint_single_page;
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
-use taffy::Style;
 
 #[test]
 fn nested_block_generated_counter_content_paints_in_flow() {

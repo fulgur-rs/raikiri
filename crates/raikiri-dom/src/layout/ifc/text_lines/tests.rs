@@ -42,7 +42,7 @@ fn a_line_shared_by_two_text_nodes_belongs_to_both() {
     let span = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline"),
     );
     let inner = doc.append_text(span, "bb");
@@ -63,7 +63,7 @@ fn a_root_indexes_each_text_owner_once_per_line() {
     let span = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline"),
     );
     let inner = doc.append_text(span, "bb cc");
@@ -132,7 +132,7 @@ fn an_inline_element_is_not_a_text_node() {
     let span = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline"),
     );
     doc.append_text(span, "bb");
@@ -149,7 +149,7 @@ fn a_line_belongs_only_to_the_text_nodes_that_have_glyphs_on_it() {
     let span = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline"),
     );
     let inner = doc.append_text(span, "bbbb");

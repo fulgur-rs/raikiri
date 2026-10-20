@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 /// `body > div (container) > wrapper > [text,] spanner [, text]`, laid out.
 /// Returns the document and the wrapper.

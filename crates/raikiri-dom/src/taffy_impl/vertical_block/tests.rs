@@ -1,7 +1,8 @@
 use crate::Document;
+use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::{LengthPercentage, Style};
+use taffy::LengthPercentage;
 
 /// A document whose body (8px margin) holds a container styled
 /// `container_css` with one child per entry of `children`, each a

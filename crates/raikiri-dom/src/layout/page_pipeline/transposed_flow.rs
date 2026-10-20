@@ -164,7 +164,7 @@ impl FlowAxes {
 
     /// A taffy style with its physical sizes and sides on transposed axes,
     /// for the properties the paginator reads.
-    fn style(self, style: &taffy::Style) -> taffy::Style {
+    fn style(self, style: &crate::LayoutStyle) -> crate::LayoutStyle {
         let mut style = style.clone();
         style.size = Size {
             width: style.size.height,
@@ -265,7 +265,7 @@ pub(super) struct TransposedDocument {
     physical: Vec<TaffyLayout>,
     /// The layout of each key as it was handed to the paginator.
     transposed: Vec<TaffyLayout>,
-    styles: Vec<taffy::Style>,
+    styles: Vec<crate::LayoutStyle>,
 }
 
 impl TransposedDocument {

@@ -2,11 +2,11 @@
 //! with the other axis `auto`, and along axes that repeat or do not.
 
 use anyrender::Scene;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, ImageRasterSize, PageBox};
 use std::sync::{Arc, Mutex};
-use taffy::Style;
 
 const RED: [u8; 3] = [255, 0, 0];
 const BLUE: [u8; 3] = [0, 0, 255];

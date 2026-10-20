@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
 use crate::node::FormattingContext;
@@ -18,7 +19,7 @@ use raikiri_style::property::PositionValue;
 use taffy::{
     AvailableSpace, BoxSizing, Cache, Dimension, ExpandedDimension, LayoutInput, LayoutOutput,
     LengthPercentageAuto, Line, MaybeResolve, NodeId, RequestedAxis, ResolveOrZero, RunMode, Size,
-    SizingMode, Style,
+    SizingMode,
 };
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords

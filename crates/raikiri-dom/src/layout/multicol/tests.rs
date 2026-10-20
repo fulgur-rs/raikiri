@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::node::FormattingContext;
-use taffy::Style;
 
 #[test]
 fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {

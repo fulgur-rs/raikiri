@@ -20,19 +20,19 @@ fn fixture(depth: usize) -> (Document, usize, Vec<usize>) {
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:20px/20px Ahem"),
     );
     let mc = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px;orphans:1;widows:1"),
     );
     let mut chain = Vec::new();
@@ -41,7 +41,7 @@ fn fixture(depth: usize) -> (Document, usize, Vec<usize>) {
         parent = doc.append_element(
             Some(parent),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;width:80px;margin:0"),
         );
         chain.push(parent);
@@ -123,44 +123,44 @@ fn column_clips_keep_overhanging_ruby_annotations() {
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:20px/20px Ahem"),
     );
     let mc = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px;orphans:1;widows:1"),
     );
     let leaf = doc.append_element(
         Some(mc),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:80px;margin:0"),
     );
     let ruby = doc.append_element(
         Some(leaf),
         "ruby",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby;ruby-position:inter-character"),
     );
     let base = doc.append_element(
         Some(ruby),
         "rb",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-base"),
     );
     doc.append_text(base, "AAAA");
     let annotation = doc.append_element(
         Some(ruby),
         "rt",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:ruby-text"),
     );
     doc.append_text(annotation, "XX");

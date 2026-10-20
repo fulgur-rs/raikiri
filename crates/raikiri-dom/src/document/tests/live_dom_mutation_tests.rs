@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 #[test]
 fn append_child_moves_elements_and_rejects_cycles() {

@@ -1,7 +1,8 @@
 use super::auto_sides_size;
+use crate::LayoutStyle as Style;
 use crate::taffy_impl::push_calc;
 use raikiri_style::property::CalcLengthPercentage;
-use taffy::{AvailableSpace, Dimension, LayoutInput, Line, RunMode, Size, SizingMode, Style};
+use taffy::{AvailableSpace, Dimension, LayoutInput, Line, RunMode, Size, SizingMode};
 
 mod intrinsic_keyword_tests;
 mod ratio_box_tests;

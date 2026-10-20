@@ -9,11 +9,16 @@ fn spread_document() -> (Document, CascadeResult, Vec<PageSlice>) {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/10px Ahem"),
     );
     let block = |document: &mut Document, parent, style: &str| {
-        document.append_element(Some(parent), "div", taffy::Style::default(), Some(style))
+        document.append_element(
+            Some(parent),
+            "div",
+            crate::LayoutStyle::default(),
+            Some(style),
+        )
     };
     let translucent = block(&mut document, body, "display:block;opacity:.5");
     let text = block(&mut document, translucent, "display:block;width:10px");
@@ -28,14 +33,14 @@ fn spread_document() -> (Document, CascadeResult, Vec<PageSlice>) {
     let list = document.append_element(
         Some(body),
         "ol",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     for _ in 0..6 {
         let item = document.append_element(
             Some(list),
             "li",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:list-item;margin-left:20px"),
         );
         document.append_text(item, "X");
@@ -184,33 +189,33 @@ fn first_letter_spans(spans: usize) -> (Document, raikiri_style::CascadeResult) 
     let html = document.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let style = document.append_element(
         Some(html),
         "style",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:none"),
     );
     document.append_text(style, "p::first-letter{opacity:.5}");
     let body = document.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:10px/10px Ahem"),
     );
     let paragraph = document.append_element(
         Some(body),
         "p",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     for _ in 0..spans {
         let span = document.append_element(
             Some(paragraph),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("opacity:.5"),
         );
         document.append_text(span, "\"");
@@ -319,7 +324,12 @@ fn letter_groups_up_to_the_id_limit_keep_their_own_opacity() {
 fn document_with_hidden_nodes() -> (Document, CascadeResult, usize) {
     let mut document = Document::new();
     let element = |document: &mut Document, parent, tag, style| {
-        document.append_element(Some(parent), tag, taffy::Style::default(), Some(style))
+        document.append_element(
+            Some(parent),
+            tag,
+            crate::LayoutStyle::default(),
+            Some(style),
+        )
     };
     let html = element(&mut document, 0, "html", "display:block");
     let head = element(&mut document, html, "head", "display:none");
