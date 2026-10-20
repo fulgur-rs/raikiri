@@ -1525,6 +1525,8 @@ pub fn holds_negative_stack_level(
         stack.extend(node.children.iter().copied());
     }
     while let Some(id) = stack.pop() {
+        #[cfg(test)]
+        crate::page_projection::work_tests::paragraph_node();
         let Some(node) = document
             .get_node(id)
             .filter(|node| node.kind() == NodeKind::Element)

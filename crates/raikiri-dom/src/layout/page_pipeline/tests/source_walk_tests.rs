@@ -190,7 +190,7 @@ fn area(source: &PageFragmentSource) -> (f32, f32, f32, f32) {
 fn horizontal_lines_are_placed_from_the_block_start_edge_of_their_paragraph() {
     let paragraphs = paragraphs_at_100_50();
     let owned = lines(&[(30.0, 40.0), (40.0, 50.0)]);
-    let source = paragraphs.line_source(&text_source(), (5.0, 3, 2, owned), (0.0, 0.0));
+    let source = paragraphs.line_source(&text_source(), (5.0, 3, 2, &owned), (0.0, 0.0));
     // Offset along the line, then down to the top of the first line.
     assert_eq!(area(&source), (105.0, 80.0, 90.0, 20.0));
     assert!(!source.lines_along_x);
@@ -210,7 +210,7 @@ fn right_to_left_vertical_lines_stack_from_the_right_edge_of_their_paragraph() {
     let mut paragraphs = paragraphs_at_100_50();
     paragraphs.vertical.insert(7, (200.0, true));
     let owned = lines(&[(0.0, 10.0), (10.0, 20.0)]);
-    let source = paragraphs.line_source(&text_source(), (5.0, 0, 0, owned), (0.0, 0.0));
+    let source = paragraphs.line_source(&text_source(), (5.0, 0, 0, &owned), (0.0, 0.0));
     // The lines end 20px in from the right edge of the 200px content box.
     assert_eq!(area(&source), (280.0, 55.0, 20.0, 90.0));
     assert!(source.lines_along_x);
@@ -221,7 +221,7 @@ fn left_to_right_vertical_lines_stack_from_the_left_edge_of_their_paragraph() {
     let mut paragraphs = paragraphs_at_100_50();
     paragraphs.vertical.insert(7, (200.0, false));
     let owned = lines(&[(10.0, 20.0), (20.0, 30.0)]);
-    let source = paragraphs.line_source(&text_source(), (5.0, 0, 0, owned), (0.0, 0.0));
+    let source = paragraphs.line_source(&text_source(), (5.0, 0, 0, &owned), (0.0, 0.0));
     assert_eq!(area(&source), (110.0, 55.0, 20.0, 90.0));
     assert!(source.lines_along_x);
 }
@@ -229,7 +229,7 @@ fn left_to_right_vertical_lines_stack_from_the_left_edge_of_their_paragraph() {
 #[test]
 fn lines_of_a_paragraph_the_walk_has_not_met_are_placed_from_the_fallback_origin() {
     let paragraphs = Paragraphs::default();
-    let source = paragraphs.line_source(&text_source(), (5.0, 0, 0, lines(&[])), (11.0, 22.0));
+    let source = paragraphs.line_source(&text_source(), (5.0, 0, 0, &lines(&[])), (11.0, 22.0));
     // No lines have no extent along the block axis.
     assert_eq!(area(&source), (16.0, 22.0, 90.0, 0.0));
     assert_eq!(source.line_metrics, Some(Vec::new()));

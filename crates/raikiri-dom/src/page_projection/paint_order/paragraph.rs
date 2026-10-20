@@ -3,8 +3,7 @@
 //! images, its `::first-letter` pieces, and its text.
 
 use super::{
-    LineBoxes, LinePart, PageItems, PaintEvent, TextLines, generated_group, is_inline_group,
-    pseudo_on_paragraph,
+    LineBoxes, LinePart, PageItems, PaintEvent, TextLines, generated_group, pseudo_on_paragraph,
 };
 use crate::page_projection::generated_boxes::{BoxPiece, GeneratedBox, LineBox};
 use crate::page_projection::generated_images::GeneratedImageId;
@@ -13,7 +12,7 @@ use crate::{Document, Fragment, GeneratedKind, Node, TextLineId, paint_rules};
 use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintRect};
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// Lists a paragraph's inline element boxes, then its text, in document order.
 ///
@@ -31,7 +30,7 @@ use std::rc::Rc;
 /// Only the content on the lines of `part` is listed. An inline element
 /// only on the first line, or only on later lines, lists its box with
 /// those lines; one on both lists its line pieces on the lines of `part`.
-pub(super) fn push_paragraph<'a>(
+fn list_paragraph_content<'a>(
     document: &'a Document,
     items: &PageItems<'a>,
     root: usize,
@@ -45,9 +44,9 @@ pub(super) fn push_paragraph<'a>(
     };
     // The elements with boxes on the first line and on lines after it.
     let line_boxes = if part == LinePart::All {
-        Rc::default()
+        Arc::default()
     } else {
-        items.line_boxes(root, root_node)
+        Arc::clone(&document.paragraph_structure(items.cascade, root).line_boxes)
     };
     ParagraphListing {
         document,
@@ -62,6 +61,55 @@ pub(super) fn push_paragraph<'a>(
     .list(events)
 }
 
+/// One listing prepared for this page and supplied line set.
+#[derive(Default)]
+pub(super) struct ListedParagraph<'a> {
+    pub(super) events: Vec<PaintEvent<'a>>,
+    pub(super) nested: Vec<usize>,
+}
+
+pub(super) fn listed_paragraph<'a>(
+    document: &'a Document,
+    items: &PageItems<'a>,
+    root: usize,
+    group: Option<usize>,
+    part: LinePart,
+) -> std::rc::Rc<ListedParagraph<'a>> {
+    let key = (root, group, part);
+    if let Some(listed) = items.paragraph_listings.borrow().get(&key) {
+        return std::rc::Rc::clone(listed);
+    }
+    let mut events = Vec::new();
+    let nested = list_paragraph_content(
+        document,
+        items,
+        root,
+        group,
+        items.source_lines.as_ref(),
+        part,
+        &mut events,
+    );
+    let listed = std::rc::Rc::new(ListedParagraph { events, nested });
+    items
+        .paragraph_listings
+        .borrow_mut()
+        .insert(key, std::rc::Rc::clone(&listed));
+    listed
+}
+
+pub(super) fn push_paragraph<'a>(
+    document: &'a Document,
+    items: &PageItems<'a>,
+    root: usize,
+    group: Option<usize>,
+    part: LinePart,
+    events: &mut Vec<PaintEvent<'a>>,
+) -> Vec<usize> {
+    let listed = listed_paragraph(document, items, root, group, part);
+    events.extend_from_slice(&listed.events);
+    listed.nested.clone()
+}
+
 /// What the listing of a paragraph's content reads: the paragraph, the inline
 /// opacity group whose content it lists, and the lines it covers.
 struct ParagraphListing<'x, 'a> {
@@ -74,19 +122,7 @@ struct ParagraphListing<'x, 'a> {
     part: LinePart,
     /// The elements with boxes on the first line and on lines after it; empty
     /// when the listing covers every line.
-    line_boxes: Rc<LineBoxes>,
-}
-
-/// The inline content of a paragraph or of one of its inline opacity groups,
-/// in document order.
-struct InlineContent {
-    /// The elements whose own boxes or generated boxes are listed, each with
-    /// the pseudo-element it stands for if it is not the element's own box.
-    elements: Vec<(usize, Option<GeneratedKind>)>,
-    /// The inline opacity groups nested directly in the content.
-    nested: Vec<usize>,
-    /// The text nodes of the content.
-    texts: Vec<usize>,
+    line_boxes: Arc<LineBoxes>,
 }
 
 /// One `::first-letter` piece listed under the element whose box it follows.
@@ -118,23 +154,50 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
         {
             return self.list_pseudo_group(group, events);
         }
-        // The listed content starts at the group element itself, or inside
-        // the paragraph root around the root's own generated content.
-        let (first, children) = match self.group {
-            Some(group) => {
-                let Some(node) = self.document.get_node(group) else {
-                    return Vec::new(); // cov:ignore: groups are arena elements
-                };
-                (group, node.children.as_slice())
-            }
-            None => (self.root, self.root_node.children.as_slice()),
+        let structure = self
+            .document
+            .paragraph_structure(self.items.cascade, self.root);
+        let Some(content) = structure.contents.get(&self.group) else {
+            return Vec::new();
         };
-        let InlineContent {
-            elements,
-            mut nested,
-            texts,
-        } = self.collect_content(first, children);
+        let first = self.group.unwrap_or(self.root);
+        let page_slots = self.items.page_paragraph_slots(self.root, &structure);
+        let mut nested = match self.part {
+            LinePart::All => content.nested.clone(),
+            LinePart::First => page_slots
+                .first_nested
+                .get(&self.group)
+                .cloned()
+                .unwrap_or_default(),
+            LinePart::Rest => page_slots
+                .rest_nested
+                .get(&self.group)
+                .cloned()
+                .unwrap_or_default(),
+        };
+        #[cfg(test)]
+        if self.items.full_paragraph_listing {
+            nested = content.nested.clone();
+        }
+        #[cfg(test)]
+        for _ in &nested {
+            crate::page_projection::work_tests::paragraph_node();
+        }
         let pieces = first_letter_pieces(self.document, self.items, self.root);
+        let letters = self.held_letters(&pieces, first);
+        let mut positions = self
+            .items
+            .paragraph_slots(self.root, &structure, self.group);
+        // A letter can use an anchor without a box fragment of its own.
+        for letter in &letters {
+            if let Some((group, slots)) = structure.slots.get(&letter.anchor)
+                && *group == self.group
+            {
+                positions.extend(slots.iter().copied());
+            }
+        }
+        positions.sort_unstable();
+        positions.dedup();
         // A first letter with an opacity of its own is a group nested in the
         // group that holds its letters.
         for own in letter_groups(&pieces, self.lines, self.root, self.group) {
@@ -142,8 +205,10 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
                 nested.push(own);
             }
         }
-        let letters = self.held_letters(&pieces, first, &elements);
-        for (node_id, kind) in elements {
+        for position in positions {
+            #[cfg(test)]
+            crate::page_projection::work_tests::paragraph_node();
+            let (node_id, kind) = content.elements[position];
             match kind {
                 None => self.list_box(events, node_id),
                 Some(kind) => self.list_generated(events, node_id, kind, &letters, &mut nested),
@@ -152,71 +217,21 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
         if self.lines.is_some() {
             self.push_lines(events);
         } else {
-            for node_id in texts {
-                self.push_kind(events, node_id, PageFragmentKind::Text);
+            let slots = self.items.page_paragraph_slots(self.root, &structure);
+            let positions = slots.texts.get(&self.group).cloned().unwrap_or_default();
+            #[cfg(test)]
+            let positions = if self.items.full_paragraph_listing {
+                (0..content.texts.len()).collect()
+            } else {
+                positions
+            };
+            for position in positions {
+                #[cfg(test)]
+                crate::page_projection::work_tests::paragraph_node();
+                self.push_kind(events, content.texts[position], PageFragmentKind::Text);
             }
         }
         nested
-    }
-
-    /// Walk the inline content below `children`, starting at element `first`.
-    /// The walk stops at the boxes laid out beside the lines and at the
-    /// inline opacity groups, which are returned to list after the content.
-    fn collect_content(&self, first: usize, children: &[usize]) -> InlineContent {
-        let (document, items) = (self.document, self.items);
-        let beside_lines: HashSet<usize> = self.root_node.ifc_boxes().into_iter().collect();
-        let mut elements = Vec::new();
-        if self.group.is_some() {
-            elements.push((first, None));
-        }
-        elements.push((first, Some(GeneratedKind::Before)));
-        // A `::first-letter` box wraps letters inside the element they come
-        // from, so it follows that element's box and `::before` box, or its
-        // `::after` box when the letters are that pseudo-element's.
-        elements.push((first, Some(GeneratedKind::FirstLetter)));
-        let mut nested = Vec::new();
-        let mut texts = Vec::new();
-        let mut stack: Vec<_> = children.iter().rev().map(|&id| (id, false)).collect();
-        while let Some((node_id, after)) = stack.pop() {
-            if after {
-                elements.push((node_id, Some(GeneratedKind::After)));
-                continue;
-            }
-            if beside_lines.contains(&node_id) {
-                continue;
-            }
-            let Some(node) = document.get_node(node_id) else {
-                continue; // cov:ignore: child ids come from the arena
-            };
-            if !node.is_in_document() || node.is_non_rendered_html_element() {
-                continue;
-            }
-            match node.kind() {
-                NodeKind::Element
-                    if !node.is_display_none() && !node.is_hidden_by_text_overflow() =>
-                {
-                    if items.cascade.computed.get(node_id).is_some_and(|cv| {
-                        is_inline_group(document, items.cascade, self.root, node_id, node, cv)
-                    }) {
-                        nested.push(node_id);
-                        continue;
-                    }
-                    elements.push((node_id, None));
-                    elements.push((node_id, Some(GeneratedKind::Before)));
-                    elements.push((node_id, Some(GeneratedKind::FirstLetter)));
-                    stack.push((node_id, true));
-                    stack.extend(node.children.iter().rev().map(|&id| (id, false)));
-                }
-                NodeKind::Text => texts.push(node_id),
-                _ => {}
-            }
-        }
-        elements.push((first, Some(GeneratedKind::After)));
-        InlineContent {
-            elements,
-            nested,
-            texts,
-        }
     }
 
     /// The `::first-letter` pieces this listing covers, each with the element
@@ -225,17 +240,11 @@ impl<'x, 'a> ParagraphListing<'x, 'a> {
     /// the block whose first letter it is, which can be an ancestor of the
     /// paragraph. Pieces whose letters come from no element listed here, such
     /// as the root's own text, go first.
-    fn held_letters<'p>(
-        &self,
-        pieces: &[LetterPiece<'p>],
-        first: usize,
-        elements: &[(usize, Option<GeneratedKind>)],
-    ) -> Vec<HeldLetter<'p>> {
-        let listed: HashSet<usize> = elements
-            .iter()
-            .filter(|&&(id, kind)| kind.is_none() && id != first)
-            .map(|&(id, _)| id)
-            .collect();
+    fn held_letters<'p>(&self, pieces: &[LetterPiece<'p>], first: usize) -> Vec<HeldLetter<'p>> {
+        let structure = self
+            .document
+            .paragraph_structure(self.items.cascade, self.root);
+        let listed = &structure.members[&self.group];
         pieces
             .iter()
             .filter(|letter| letter.own.is_none() && letter.held == self.group)
@@ -641,7 +650,7 @@ fn first_letter_anchor(
 
 /// One `::first-letter` piece of a paragraph, with the opacity groups
 /// around it.
-struct LetterPiece<'p> {
+pub(super) struct LetterPiece<'p> {
     /// The element whose letters the piece wraps, when known.
     anchor: Option<usize>,
     /// Whether the letters are the `::after` text of the anchor.
@@ -652,7 +661,7 @@ struct LetterPiece<'p> {
     /// The innermost opacity group around the letters, other than the
     /// piece's own: a `::before` or `::after` group they are the text of,
     /// or the inline group of the anchor.
-    held: Option<usize>,
+    pub(super) held: Option<usize>,
     /// The piece's own opacity group, when its `::first-letter` has one.
     own: Option<usize>,
 }
@@ -666,7 +675,7 @@ impl LetterPiece<'_> {
 
 /// The `::first-letter` pieces of paragraph `root` on the page, in paint
 /// order.
-fn first_letter_pieces<'p>(
+pub(super) fn first_letter_pieces<'p>(
     document: &Document,
     items: &PageItems<'p>,
     root: usize,

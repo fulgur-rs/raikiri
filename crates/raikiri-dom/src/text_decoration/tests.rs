@@ -146,7 +146,7 @@ fn an_undecorated_paragraph_builds_no_line_decorations() {
         });
         layout_single_page(with_ahem(&mut document), &cascade, page_box_800x600()).unwrap();
         let positioned = crate::PositionedLines::new(&document, &cascade, root, None).unwrap();
-        let line = positioned.line_at(0).unwrap();
+        let line = positioned.lines().find(|line| line.index == 0).unwrap();
         let base = context_for_root(&document, &cascade, root);
         let decorations =
             positioned_line_decorations(&document, &cascade, root, &base, &line, (0.0, 0.0));

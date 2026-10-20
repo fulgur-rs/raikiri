@@ -1,10 +1,10 @@
 //! Positioned glyph runs of the paragraphs on a page, for a painter that
 //! draws text itself.
 
-use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
+use super::records::{PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
-use crate::layout::{LineGlyph, PositionedLine, PositionedLines, PositionedRun};
+use crate::layout::{LineGlyph, PositionedLine, PositionedRun};
 use crate::node::FormattingContext;
 use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
@@ -36,6 +36,10 @@ pub(super) struct MarkerText {
 }
 
 impl MarkerText {
+    pub(super) fn first_page(&self) -> Option<u32> {
+        self.first_page
+    }
+
     /// Number of stable line identities in the prepared standalone marker.
     pub(super) fn line_count(&self) -> usize {
         self.shaped.lines().len()
@@ -1560,7 +1564,7 @@ fn root_runs<'a>(
     document: &'a Document,
     cascade: &'a CascadeResult,
     page: &PageFragment,
-    pages: &[PageFragment],
+    selection: &super::text_index::PageLines,
     context: &RunContext,
     root: &ProjectedTextRoot,
     out: &mut Vec<PositionedGlyphRun<'a>>,
@@ -1573,7 +1577,10 @@ fn root_runs<'a>(
     };
     let shift = placement(document, cascade, context, root.node).ok()?;
     let transform = run_transform(document, cascade, context, page, root.node);
-    let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
+    let positioned = document
+        .page_projection
+        .text_index
+        .view(document, cascade, root)?;
     // A repeated paragraph sits at the same place on every page; any other
     // is placed in its page's slice of the flow. The paint shift moves the
     // lines, not the page they belong to.
@@ -1581,19 +1588,9 @@ fn root_runs<'a>(
     let x = page.content_box.x + root.x + shift.0 + dx;
     let y = page.content_box.y + root.y + shift.1 + dy;
     let decoration_context = crate::text_decoration::context_for_root(document, cascade, root.node);
-    for (index, line) in positioned.all_lines().iter().enumerate() {
-        let Some(offset) = positioned.line_offset(index) else {
-            continue;
-        };
-        if flow_range.is_some() {
-            let top = root.y + offset.1 + line.block_offset();
-            let (top, bottom) = page
-                .flow_axis
-                .line_extent(root, top, top + line.block_size());
-            if !page.owns_line(pages, top, bottom) {
-                continue;
-            }
-        }
+    for index in selection.indices(&positioned) {
+        #[cfg(test)]
+        super::work_tests::line_candidate();
         let Some(line) = positioned.line_at(index) else {
             continue;
         };
@@ -1666,119 +1663,8 @@ fn pseudo_turn(
 }
 
 /// The node whose table-header repeat moves the runs of text root `node`.
-fn text_source(document: &Document, node: usize) -> usize {
+pub(super) fn text_source(document: &Document, node: usize) -> usize {
     generated_origin(node).map_or_else(|| document.ifc_source_owner(node), |(owner, _)| owner)
-}
-
-/// The block-axis span of the lines of `root` in shared flow coordinates,
-/// over the lines [`root_runs`] can draw: the lowest and highest line center
-/// across the page, or the top of the first line and the bottom of the last
-/// down the page, which [`PageFragment::owns_line`] can give to every page
-/// they reach. `None` when no line has a finite extent.
-fn line_span(
-    document: &Document,
-    cascade: &CascadeResult,
-    root: &ProjectedTextRoot,
-    axis: FlowAxis,
-) -> Option<(f32, f32)> {
-    let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
-    let mut span: Option<(f32, f32)> = None;
-    for (index, line) in positioned.all_lines().iter().enumerate() {
-        let Some(offset) = positioned.line_offset(index) else {
-            continue;
-        };
-        // The same arithmetic as `root_runs`.
-        let top = root.y + offset.1 + line.block_offset();
-        let (top, bottom) = axis.line_extent(root, top, top + line.block_size());
-        let (low, high) = match axis {
-            FlowAxis::Y => (top, bottom),
-            FlowAxis::X { .. } => {
-                let center = (top + bottom) * 0.5;
-                (center, center)
-            }
-        };
-        if !low.is_finite() || !high.is_finite() {
-            continue;
-        }
-        span = Some(span.map_or((low, high), |(first, last)| {
-            (first.min(low), last.max(high))
-        }));
-    }
-    span
-}
-
-/// For each page fragment, by position in `pages`, the indices into `roots`
-/// of the text roots that can draw on it, in document order.
-///
-/// A root is left out only when [`Document::page_text_runs`] would draw
-/// nothing of it on that page: a paragraph none of whose lines that page
-/// owns, or a marker on a page other than its first.
-/// Repeated roots, and roots that a repeated table header may move, are kept
-/// on every page and filtered per page as before.
-pub(super) fn roots_by_page(
-    document: &Document,
-    cascade: &CascadeResult,
-    roots: &[ProjectedTextRoot],
-    markers: &BTreeMap<usize, MarkerText>,
-    pages: &[PageFragment],
-) -> Vec<Vec<usize>> {
-    let mut by_page = vec![Vec::new(); pages.len()];
-    // Flow slices in increasing order allow a binary search for the pages a
-    // paragraph spans; otherwise every page is checked.
-    let ordered = pages.iter().all(|page| page.flow_range.is_some())
-        && pages.windows(2).all(|pair| {
-            let (Some(first), Some(second)) = (pair[0].flow_range, pair[1].flow_range) else {
-                return false; // cov:ignore: every slice was checked above
-            };
-            first.0 <= second.0 && first.1 <= second.1
-        });
-    for (index, root) in roots.iter().enumerate() {
-        let moved_by_header = document
-            .table_objects
-            .headers
-            .owner(text_source(document, root.node))
-            .is_some();
-        if root.is_repeat || moved_by_header {
-            for page in &mut by_page {
-                page.push(index);
-            }
-            continue;
-        }
-        if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
-            let first_page = markers.get(&owner).and_then(|marker| marker.first_page);
-            for (position, page) in pages.iter().enumerate() {
-                if first_page == Some(page.page_index) {
-                    by_page[position].push(index);
-                }
-            }
-            continue;
-        }
-        let axis = pages
-            .first()
-            .map_or_else(Default::default, |page| page.flow_axis);
-        let Some((low, high)) = line_span(document, cascade, root, axis) else {
-            continue;
-        };
-        // A superset of the pages `PageFragment::owns_line` gives a line: those
-        // holding its center, or reached by its extent down the page.
-        let reaches = |range: (f32, f32)| high >= range.0 - 0.001 && low < range.1 - 0.001;
-        let first = if ordered {
-            pages.partition_point(|page| page.flow_range.is_some_and(|(_, end)| end - 0.001 <= low))
-        } else {
-            0
-        };
-        for (position, page) in pages.iter().enumerate().skip(first) {
-            let Some(range) = page.flow_range else {
-                continue;
-            };
-            if reaches(range) {
-                by_page[position].push(index);
-            } else if ordered && range.0 - 0.001 > high {
-                break;
-            }
-        }
-    }
-    by_page
 }
 
 impl Document {
@@ -1793,8 +1679,8 @@ impl Document {
         let mut runs = Vec::new();
         let projection = &self.page_projection;
         let context = &projection.run_context;
-        let pages = projection.pages.iter().enumerate();
-        for (position, page) in pages.filter(|(_, page)| page.page_index == page_index) {
+        for &position in projection.text_index.positions(page_index) {
+            let page = &projection.pages[position];
             let indices = projection.text_roots_by_page.get(position);
             for &index in indices.into_iter().flatten() {
                 let mut root = projection.text_roots[index];
@@ -1824,7 +1710,10 @@ impl Document {
                         self,
                         cascade,
                         page,
-                        &projection.pages,
+                        projection
+                            .text_index
+                            .lines(position, index)
+                            .expect("indexed paragraph has selected lines"),
                         context,
                         &root,
                         &mut runs,

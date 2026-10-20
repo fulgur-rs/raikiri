@@ -79,3 +79,5 @@ fn column_fragments_move_their_lines_and_drop_the_others() {
     let lines = PositionedLines::new(&doc, &cascade, root, Some(0)).expect("lines");
     assert_eq!(lines.lines().count(), 0);
 }
+
+mod geometry_tests;

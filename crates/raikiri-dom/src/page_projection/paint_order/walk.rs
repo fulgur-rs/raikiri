@@ -323,7 +323,10 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
             document.paragraph_frames(cascade, node_id, boxes, groups, part, first_line);
         // The blocks inside the paragraph paint above the content positioned
         // below them and below the rest of it.
-        if paint_rules::holds_negative_stack_level(document, cascade, node_id) {
+        if document
+            .paragraph_structure(cascade, node_id)
+            .holds_negative
+        {
             frames.blocks = document
                 .paragraph_blocks(cascade, node_id)
                 .into_iter()
@@ -352,27 +355,18 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         group: Option<usize>,
         part: LinePart,
     ) -> (Vec<usize>, Vec<usize>) {
-        let (document, items, lines) = (self.document, self.items, self.lines);
-        let nested = push_paragraph(document, items, root, group, lines, part, content);
-        let nested = document.groups_with_content(items, root, nested, lines, part);
+        let (document, items) = (self.document, self.items);
+        let nested = push_paragraph(document, items, root, group, part, content);
+        let nested = document.groups_with_content(items, root, nested, part);
         let boxes = document.ifc_boxes_in_group(self.cascade, root, group, part);
         (nested, boxes)
     }
 
     /// The paragraph of anonymous cell `key`.
     fn paragraph(&mut self, key: usize) {
-        let (document, cascade, items, lines) =
-            (self.document, self.cascade, self.items, self.lines);
+        let (document, cascade, items) = (self.document, self.cascade, self.items);
         let mut content = Vec::new();
-        let groups = push_paragraph(
-            document,
-            items,
-            key,
-            None,
-            lines,
-            LinePart::All,
-            &mut content,
-        );
+        let groups = push_paragraph(document, items, key, None, LinePart::All, &mut content);
         let frames =
             document.paragraph_frames(cascade, key, Vec::new(), groups, LinePart::All, false);
         self.list_content(content, 0, frames);
@@ -490,7 +484,6 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
                     self.items,
                     node_id,
                     None,
-                    self.lines,
                     LinePart::All,
                     &mut self.events,
                 );
@@ -740,7 +733,9 @@ impl<'a, 'l> PaintWalk<'a, 'l> {
         // backgrounds before its lines. With content positioned below them,
         // the paragraph's content lists them after that content.
         let blocks: Vec<usize> = if node.is_ifc_root()
-            && !paint_rules::holds_negative_stack_level(document, cascade, node_id)
+            && !document
+                .paragraph_structure(cascade, node_id)
+                .holds_negative
         {
             document.paragraph_blocks(cascade, node_id)
         } else {
