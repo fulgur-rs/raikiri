@@ -10,21 +10,38 @@ pub struct AlignedCalc {
 }
 const _: () = assert!(std::mem::align_of::<AlignedCalc>() >= 8);
 impl AlignedCalc {
+    pub(crate) fn expression(&self) -> CalcLengthPercentage {
+        self.value
+    }
+    pub(crate) fn non_negative(&self) -> bool {
+        self.non_negative
+    }
     /// Construct a payload with the property's range policy.
     pub const fn new(value: CalcLengthPercentage, non_negative: bool) -> Self {
-        Self { value, non_negative }
+        Self {
+            value,
+            non_negative,
+        }
     }
     /// Resolve against a CSS percentage basis, applying range checking.
     pub fn resolve(&self, basis: f32) -> f32 {
         let value = basis * self.value.percent / 100.0 + self.value.px;
-        if !value.is_finite() { 0.0 } else if self.non_negative { value.max(0.0) } else { value }
+        if !value.is_finite() {
+            0.0
+        } else if self.non_negative {
+            value.max(0.0)
+        } else {
+            value
+        }
     }
     pub(crate) fn matches(&self, value: CalcLengthPercentage, non_negative: bool) -> bool {
-        self.value.px.to_bits() == value.px.to_bits() &&
-        self.value.percent.to_bits() == value.percent.to_bits() &&
-        self.non_negative == non_negative
+        self.value.px.to_bits() == value.px.to_bits()
+            && self.value.percent.to_bits() == value.percent.to_bits()
+            && self.non_negative == non_negative
     }
-    pub(crate) fn pointer(&self) -> *const () { std::ptr::from_ref(self).cast() }
+    pub(crate) fn pointer(&self) -> *const () {
+        std::ptr::from_ref(self).cast()
+    }
 }
 
 /// Which Grid list contains a calc expression.

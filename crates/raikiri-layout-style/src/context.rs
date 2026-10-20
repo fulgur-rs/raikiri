@@ -70,9 +70,48 @@ pub enum LengthProperty {
     MinBlock,
 }
 impl LengthProperty {
-    pub(crate) const ALL: &'static [Self] = &[Self::Width, Self::Height, Self::MinWidth, Self::MinHeight, Self::MaxWidth, Self::MaxHeight, Self::MarginTop, Self::MarginRight, Self::MarginBottom, Self::MarginLeft, Self::PaddingTop, Self::PaddingRight, Self::PaddingBottom, Self::PaddingLeft, Self::BorderTop, Self::BorderRight, Self::BorderBottom, Self::BorderLeft, Self::Top, Self::Right, Self::Bottom, Self::Left, Self::FlexBasis, Self::ColumnGap, Self::RowGap, Self::LogicalWidth, Self::LogicalHeight, Self::MinBlock];
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::Width,
+        Self::Height,
+        Self::MinWidth,
+        Self::MinHeight,
+        Self::MaxWidth,
+        Self::MaxHeight,
+        Self::MarginTop,
+        Self::MarginRight,
+        Self::MarginBottom,
+        Self::MarginLeft,
+        Self::PaddingTop,
+        Self::PaddingRight,
+        Self::PaddingBottom,
+        Self::PaddingLeft,
+        Self::BorderTop,
+        Self::BorderRight,
+        Self::BorderBottom,
+        Self::BorderLeft,
+        Self::Top,
+        Self::Right,
+        Self::Bottom,
+        Self::Left,
+        Self::FlexBasis,
+        Self::ColumnGap,
+        Self::RowGap,
+        Self::LogicalWidth,
+        Self::LogicalHeight,
+        Self::MinBlock,
+    ];
     pub(crate) fn non_negative(self) -> bool {
-        !matches!(self, Self::MarginTop | Self::MarginRight | Self::MarginBottom | Self::MarginLeft | Self::Top | Self::Right | Self::Bottom | Self::Left)
+        !matches!(
+            self,
+            Self::MarginTop
+                | Self::MarginRight
+                | Self::MarginBottom
+                | Self::MarginLeft
+                | Self::Top
+                | Self::Right
+                | Self::Bottom
+                | Self::Left
+        )
     }
 }
 
@@ -107,12 +146,18 @@ impl StyleFlags {
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.
-    pub const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
     /// Whether a fact is set.
-    pub const fn contains(self, flag: Self) -> bool { self.0 & flag.0 == flag.0 }
+    pub const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 == flag.0
+    }
 }
 impl Default for StyleFlags {
-    fn default() -> Self { Self::BLOCK }
+    fn default() -> Self {
+        Self::BLOCK
+    }
 }
 
 /// Box facts independent of a particular layout invocation.
@@ -127,7 +172,11 @@ pub struct StyleMetadata {
 }
 impl Default for StyleMetadata {
     fn default() -> Self {
-        Self { flags: StyleFlags::default(), used_writing_mode: WritingMode::HorizontalTb, claims: None }
+        Self {
+            flags: StyleFlags::default(),
+            used_writing_mode: WritingMode::HorizontalTb,
+            claims: None,
+        }
     }
 }
 
@@ -155,6 +204,10 @@ pub struct ViewContext {
 }
 impl Default for ViewContext {
     fn default() -> Self {
-        Self { layout_wm: WritingMode::HorizontalTb, align_axis_is_inline: false, percent_basis: PercentBasis::Taffy }
+        Self {
+            layout_wm: WritingMode::HorizontalTb,
+            align_axis_is_inline: false,
+            percent_basis: PercentBasis::Taffy,
+        }
     }
 }
