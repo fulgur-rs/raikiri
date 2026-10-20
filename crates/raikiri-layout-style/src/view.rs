@@ -87,7 +87,7 @@ impl<'a> LayoutStyleView<'a> {
                 flags.contains(StyleFlags::IGNORE_LIMIT_KEYWORDS) && intrinsic
             }
             _ => false,
-        } || (property == MinHeight
+        } || (source == MinBlock
             && flags.contains(StyleFlags::IGNORE_LOGICAL_MIN_BLOCK));
         if ignore {
             value = L::Auto;
@@ -123,15 +123,9 @@ impl<'a> LayoutStyleView<'a> {
                 top: right,
                 bottom: left,
             },
-            VerticalLr => taffy::Rect {
+            VerticalLr | SidewaysLr => taffy::Rect {
                 left: top,
                 right: bottom,
-                top: left,
-                bottom: right,
-            },
-            SidewaysLr => taffy::Rect {
-                left: bottom,
-                right: top,
                 top: left,
                 bottom: right,
             },
