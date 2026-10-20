@@ -815,6 +815,28 @@ fn a_size_contained_box_keeps_the_width_of_an_empty_box_for_a_content_keyword() 
 }
 
 #[test]
+fn inline_size_containment_of_a_horizontal_box_keeps_the_width_of_an_empty_box() {
+    assert_eq!(
+        ratio_box_size_with(
+            "contain:inline-size;width:min-content;height:25px;aspect-ratio:4/1",
+            Some("width:30px;height:10px")
+        ),
+        (0.0, 25.0)
+    );
+}
+
+#[test]
+fn inline_size_containment_of_a_vertical_box_leaves_the_width_to_the_ratio() {
+    assert_eq!(
+        ratio_box_size_with(
+            "writing-mode:vertical-rl;contain:inline-size;width:min-content;height:25px;aspect-ratio:4/1",
+            Some("width:30px;height:10px")
+        ),
+        (100.0, 25.0)
+    );
+}
+
+#[test]
 fn a_percentage_height_that_cannot_resolve_sizes_a_content_keyword_width_by_its_content() {
     assert_eq!(
         ratio_box_size(

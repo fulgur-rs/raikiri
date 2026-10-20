@@ -487,10 +487,11 @@ fn apply_computed_to_style_in_session_inner(
         doc.nodes[idx].text_group_align = shodo_group_align(cv.text_group_align);
         // Size containment removes the natural size and aspect ratio of
         // replaced content, so only an `aspect-ratio` of the box itself can
-        // stand in for an `auto` size.
+        // stand in for an `auto` size. Only a contained width keeps a content
+        // keyword width at the width of an empty box.
         if containment.width || containment.height {
             let style = &mut doc.layout_node_with_style_mut(idx).unwrap().style;
-            style.aspect_ratio = preferred_aspect_ratio(cv, None, true);
+            style.aspect_ratio = preferred_aspect_ratio(cv, None, containment.width);
             if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.width = Dimension::auto();
             }
