@@ -1589,120 +1589,30 @@ fn strip_css_comments(input: &str) -> String {
     output
 }
 
-fn inject_default_page_margin(input: &str) -> String {
-    let lower = input.to_ascii_lowercase();
-    let mut page_rules = Vec::new();
-    let mut search = 0;
-    while let Some(relative) = lower[search..].find("@page") {
-        let page_start = search + relative;
-        let before_ok = page_start == 0
-            || !lower.as_bytes()[page_start - 1].is_ascii_alphanumeric()
-                && lower.as_bytes()[page_start - 1] != b'-'
-                && lower.as_bytes()[page_start - 1] != b'_';
-        let after_name = page_start + "@page".len();
-        let after_ok = lower
-            .as_bytes()
-            .get(after_name)
-            .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
-        if !before_ok || !after_ok {
-            search = after_name;
-            continue;
-        }
-        let Some(open_rel) = lower[page_start..].find('{') else {
-            break;
-        };
-        let open = page_start + open_rel;
-        let Some(close) = css_block_end(input, open) else {
-            break;
-        };
-        let top_level_end = top_level_css_block_end(input, open, close);
-        let top_level = &input[open + 1..top_level_end];
-        let mut margin_sides = [false; 4];
-        let mut has_authored_border = false;
-        for declaration in top_level.split(';') {
-            let Some((key, _)) = declaration.split_once(':') else {
-                continue;
-            };
-            let key = key
-                .rsplit("*/")
-                .next()
-                .unwrap_or(key)
-                .trim()
-                .to_ascii_lowercase();
-            match key.as_str() {
-                "margin" => margin_sides = [true; 4],
-                "margin-top" => margin_sides[0] = true,
-                "margin-right" => margin_sides[1] = true,
-                "margin-bottom" => margin_sides[2] = true,
-                "margin-left" => margin_sides[3] = true,
-                "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
-                | "border-width" | "border-style" | "border-color" => {
-                    has_authored_border = true;
-                }
-                _ if key.starts_with("border-") => has_authored_border = true,
-                _ => {}
-            }
-        }
-        // A selector-less @page rule is the only rule that can establish the
-        // low-specificity baseline for all page contexts.  Strip comments so
-        // that a formatting comment between `@page` and `{` does not make a
-        // default rule look like a named or pseudo page.
-        let selector = strip_css_comments(&input[after_name..open]);
-        let selector = selector.trim();
-        let is_unqualified = selector.is_empty();
-        page_rules.push((open + 1, is_unqualified, margin_sides, has_authored_border));
-        search = close + 1;
-    }
+/// One `@page` rule that [`scan_page_rules`] found.
+struct PageRuleEdges {
+    /// Where the rule's block starts, right after its `{`.
+    block_start: usize,
+    /// Whether the rule has no page selector, which makes it apply to every
+    /// page.
+    unqualified: bool,
+    /// Whether the top-level declarations set the top, right, bottom and left
+    /// margin.
+    margins: [bool; 4],
+    /// Whether the top-level declarations set a border.
+    border: bool,
+}
 
-    let has_unqualified_rule = page_rules.iter().any(|(_, unqualified, _, _)| *unqualified);
-    let insertions: Vec<(usize, String)> = if has_unqualified_rule {
-        // Fill only the omitted physical sides of an unqualified rule.  This
-        // keeps the fallback lower-specificity than named/pseudo rules and
-        // lets an authored `margin: 0` (or individual side) win normally.
-        page_rules
-            .iter()
-            .filter_map(|(position, unqualified, margins, has_border)| {
-                if !*unqualified || *has_border {
-                    return None;
-                }
-                let names = [
-                    ("margin-top", 0),
-                    ("margin-right", 1),
-                    ("margin-bottom", 2),
-                    ("margin-left", 3),
-                ];
-                let mut declarations = String::new();
-                for (name, index) in names {
-                    if !margins[index] {
-                        declarations.push_str(name);
-                        declarations.push_str(": 48px;");
-                    }
-                }
-                (!declarations.is_empty()).then_some((*position, declarations))
-            })
-            .collect()
-    } else {
-        // Preserve the historical behavior for documents that define only a
-        // named/pseudo page rule: its default margin is local to that rule, so
-        // an unselected page keeps the test setup fallback geometry.
-        let has_authored_page_edge = page_rules
-            .iter()
-            .any(|(_, _, margins, has_border)| margins.iter().any(|value| *value) || *has_border);
-        if has_authored_page_edge {
-            page_rules
-                .first()
-                .filter(|(_, _, margins, has_border)| {
-                    !margins.iter().any(|value| *value) && !*has_border
-                })
-                .map(|(position, _, _, _)| vec![(*position, "margin: 48px;".to_owned())])
-                .unwrap_or_default()
-        } else {
-            page_rules
-                .iter()
-                .map(|(position, _, _, _)| (*position, "margin: 48px;".to_owned()))
-                .collect()
-        }
-    };
+impl PageRuleEdges {
+    /// Whether the rule sets a margin on any side or a border.
+    fn has_authored_edge(&self) -> bool {
+        self.margins.iter().any(|value| *value) || self.border
+    }
+}
+
+fn inject_default_page_margin(input: &str) -> String {
+    let page_rules = scan_page_rules(input);
+    let insertions = default_margin_insertions(&page_rules);
     if insertions.is_empty() {
         return input.to_string();
     }
@@ -1721,22 +1631,16 @@ fn inject_default_page_margin(input: &str) -> String {
     output
 }
 
-fn page_rule_edge_summaries(input: &str) -> Vec<([bool; 4], bool, bool)> {
+/// Find the `@page` rules of `input`, in source order. The scan stops at an
+/// `@page` rule whose block does not close.
+fn scan_page_rules(input: &str) -> Vec<PageRuleEdges> {
     let lower = input.to_ascii_lowercase();
-    let mut summaries = Vec::new();
+    let mut page_rules = Vec::new();
     let mut search = 0;
     while let Some(relative) = lower[search..].find("@page") {
         let page_start = search + relative;
-        let before_ok = page_start == 0
-            || !lower.as_bytes()[page_start - 1].is_ascii_alphanumeric()
-                && lower.as_bytes()[page_start - 1] != b'-'
-                && lower.as_bytes()[page_start - 1] != b'_';
         let after_name = page_start + "@page".len();
-        let after_ok = lower
-            .as_bytes()
-            .get(after_name)
-            .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
-        if !before_ok || !after_ok {
+        if !is_page_keyword(lower.as_bytes(), page_start, after_name) {
             search = after_name;
             continue;
         }
@@ -1748,55 +1652,129 @@ fn page_rule_edge_summaries(input: &str) -> Vec<([bool; 4], bool, bool)> {
             break;
         };
         let top_level_end = top_level_css_block_end(input, open, close);
-        let top_level = &input[open + 1..top_level_end];
-        let mut margins = [false; 4];
-        let mut border = false;
-        for declaration in top_level.split(';') {
-            let Some((key, _)) = declaration.split_once(':') else {
-                continue;
-            };
-            let key = key
-                .rsplit("*/")
-                .next()
-                .unwrap_or(key)
-                .trim()
-                .to_ascii_lowercase();
-            match key.as_str() {
-                "margin" => margins = [true; 4],
-                "margin-top" => margins[0] = true,
-                "margin-right" => margins[1] = true,
-                "margin-bottom" => margins[2] = true,
-                "margin-left" => margins[3] = true,
-                "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
-                | "border-width" | "border-style" | "border-color" => border = true,
-                _ if key.starts_with("border-") => border = true,
-                _ => {}
-            }
-        }
+        let (margins, border) = authored_page_edges(&input[open + 1..top_level_end]);
+        // A selector-less @page rule is the only rule that can establish the
+        // low-specificity baseline for all page contexts.  Strip comments so
+        // that a formatting comment between `@page` and `{` does not make a
+        // default rule look like a named or pseudo page.
         let selector = strip_css_comments(&input[after_name..open]);
         let selector = selector.trim();
-        summaries.push((margins, border, selector.is_empty()));
+        page_rules.push(PageRuleEdges {
+            block_start: open + 1,
+            unqualified: selector.is_empty(),
+            margins,
+            border,
+        });
         search = close + 1;
     }
-    summaries
+    page_rules
+}
+
+/// Whether the `@page` at `page_start..after_name` is the whole at-keyword,
+/// not part of a longer identifier on either side.
+fn is_page_keyword(lower: &[u8], page_start: usize, after_name: usize) -> bool {
+    let before_ok = page_start == 0
+        || !lower[page_start - 1].is_ascii_alphanumeric()
+            && lower[page_start - 1] != b'-'
+            && lower[page_start - 1] != b'_';
+    let after_ok = lower
+        .get(after_name)
+        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
+    before_ok && after_ok
+}
+
+/// Which margin sides (top, right, bottom, left) and whether a border the
+/// declarations of an `@page` block set.
+fn authored_page_edges(top_level: &str) -> ([bool; 4], bool) {
+    let mut margins = [false; 4];
+    let mut border = false;
+    for declaration in top_level.split(';') {
+        let Some((key, _)) = declaration.split_once(':') else {
+            continue;
+        };
+        let key = key
+            .rsplit("*/")
+            .next()
+            .unwrap_or(key)
+            .trim()
+            .to_ascii_lowercase();
+        match key.as_str() {
+            "margin" => margins = [true; 4],
+            "margin-top" => margins[0] = true,
+            "margin-right" => margins[1] = true,
+            "margin-bottom" => margins[2] = true,
+            "margin-left" => margins[3] = true,
+            "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
+            | "border-width" | "border-style" | "border-color" => border = true,
+            _ if key.starts_with("border-") => border = true,
+            _ => {}
+        }
+    }
+    (margins, border)
+}
+
+/// The declarations to insert, and where, so that pages get the default
+/// margin.
+fn default_margin_insertions(page_rules: &[PageRuleEdges]) -> Vec<(usize, String)> {
+    if page_rules.iter().any(|rule| rule.unqualified) {
+        // Fill only the omitted physical sides of an unqualified rule.  This
+        // keeps the fallback lower-specificity than named/pseudo rules and
+        // lets an authored `margin: 0` (or individual side) win normally.
+        page_rules
+            .iter()
+            .filter_map(|rule| {
+                if !rule.unqualified || rule.border {
+                    return None;
+                }
+                let names = [
+                    ("margin-top", 0),
+                    ("margin-right", 1),
+                    ("margin-bottom", 2),
+                    ("margin-left", 3),
+                ];
+                let mut declarations = String::new();
+                for (name, index) in names {
+                    if !rule.margins[index] {
+                        declarations.push_str(name);
+                        declarations.push_str(": 48px;");
+                    }
+                }
+                (!declarations.is_empty()).then_some((rule.block_start, declarations))
+            })
+            .collect()
+    } else if page_rules.iter().any(PageRuleEdges::has_authored_edge) {
+        // Preserve the historical behavior for documents that define only a
+        // named/pseudo page rule: its default margin is local to that rule, so
+        // an unselected page keeps the test setup fallback geometry.
+        page_rules
+            .first()
+            .filter(|rule| !rule.has_authored_edge())
+            .map(|rule| vec![(rule.block_start, "margin: 48px;".to_owned())])
+            .unwrap_or_default()
+    } else {
+        page_rules
+            .iter()
+            .map(|rule| (rule.block_start, "margin: 48px;".to_owned()))
+            .collect()
+    }
 }
 
 fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
-    let test_rules = page_rule_edge_summaries(test_html);
-    let has_unqualified = test_rules.iter().any(|(_, _, unqualified)| *unqualified);
+    let test_rules = scan_page_rules(test_html);
+    let has_unqualified = test_rules.iter().any(|rule| rule.unqualified);
     // Only mirror the pure UA fallback.  If the test has an authored margin,
     // the reference normally supplies its own matching geometry.
     let test_uses_only_default_margin = has_unqualified
         && test_rules
             .iter()
-            .filter(|(_, _, unqualified)| *unqualified)
-            .all(|(margins, border, _)| !margins.iter().any(|value| *value) && !*border);
+            .filter(|rule| rule.unqualified)
+            .all(|rule| !rule.has_authored_edge());
     if !test_uses_only_default_margin {
         return reference_html.to_owned();
     }
-    let reference_has_authored_edge = page_rule_edge_summaries(reference_html)
+    let reference_has_authored_edge = scan_page_rules(reference_html)
         .iter()
-        .any(|(margins, border, _)| margins.iter().any(|value| *value) || *border);
+        .any(PageRuleEdges::has_authored_edge);
     if reference_has_authored_edge {
         return reference_html.to_owned();
     }
