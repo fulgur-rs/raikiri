@@ -43,6 +43,15 @@ pub(crate) struct NodeArena {
 }
 
 impl NodeArena {
+    /// Every current source and generated layout key, without allocating.
+    #[cfg(test)]
+    pub(crate) fn layout_keys(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.source.len())
+            .chain((0..self.anonymous_tables.len()).map(|index| self.anonymous_table_key(index)))
+            .chain((0..self.anonymous_cells.len()).map(|index| self.anonymous_cell_key(index)))
+            .chain(self.initial_containing_block_key())
+    }
+
     /// What `key` names, or `None` when it names nothing in this arena.
     pub(crate) fn box_key(&self, key: usize) -> Option<BoxKey> {
         if key == INITIAL_CONTAINING_BLOCK_KEY {

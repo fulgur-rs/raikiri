@@ -92,6 +92,8 @@ pub(crate) struct NodeLayoutState {
 pub(crate) struct LayoutSession<'doc> {
     pub(crate) document: &'doc mut Document,
     pub(crate) context: LayoutContext,
+    #[cfg(test)]
+    pub(crate) style_views: Option<super::style_views::StyleViews<'doc>>,
 }
 
 impl<'doc> LayoutSession<'doc> {
@@ -99,6 +101,20 @@ impl<'doc> LayoutSession<'doc> {
         Self {
             document,
             context: LayoutContext::default(),
+            #[cfg(test)]
+            style_views: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_cascade(
+        document: &'doc mut Document,
+        cascade: &'doc raikiri_style::CascadeResult,
+    ) -> Self {
+        Self {
+            document,
+            context: LayoutContext::default(),
+            style_views: Some(super::style_views::StyleViews::new(cascade)),
         }
     }
 

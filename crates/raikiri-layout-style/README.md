@@ -13,6 +13,12 @@ their owners throughout layout. The same expression with another
 an arena from getters. A bare Grid calc breadth has both a min and max slot.
 Logical size sources have separate slots when present in the computed values.
 
+`PreparedStyle::prepare` borrows the CV and owns its calc bindings;
+`prepare_shared` also retains an `Arc<ComputedValues>`. These forms avoid
+self-references when a session owns prepared styles. Preparation allocates;
+querying does not. `PreparedStyle` is cloneable, while the borrowed
+`LayoutStyleView` remains `Copy`.
+
 `LayoutStyleView::new` then borrows that prepared style, `ViewContext`, and
 two sparse slices of `PropertyOverride`. It does not scan the entire style.
 Getters apply computed values and prepared policy, then pass overrides, then
@@ -20,6 +26,9 @@ scoped overrides, and finally project physical values into the requested
 layout axes. Later entries within a slice win. Explicit `auto` and `None`
 hide the base value; an absent entry exposes it. Resolved lengths have an
 explicit tag so percentage edges are not resolved twice.
+`OwnedPropertyOverride` keeps any calc owner alive and is projected by
+`LayoutStyleView::with_owned_overrides` without cloning an Arc. A resolved
+owned length must contain physical pixels.
 
 `StyleMetadata` contains adapter-computed facts rather than DOM logic. Supply
 flags for actual box identity, replaced elements and sizing-keyword policy;
@@ -35,6 +44,9 @@ they do not implement vertical flex/grid layout on their own. Algorithms also
 need coordinated input/output, overflow, baseline and OOF transformations.
 Grid tracks and gaps retain their CSS inline/block meaning rather than being
 unconditionally exchanged with physical width/height.
+Template tracks and line names return `Some` even for an empty iterator,
+matching the current `taffy::Style` implementation. Absent template areas
+remain `None`.
 
 ## Calc safety
 

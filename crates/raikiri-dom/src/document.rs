@@ -378,6 +378,13 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
     pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
+    #[cfg(test)]
+    pub(crate) synthetic_style_values: std::collections::HashMap<
+        crate::node::arena::BoxKey,
+        std::sync::Arc<raikiri_style::ComputedValues>,
+    >,
+    #[cfg(test)]
+    pub(crate) style_view_comparisons: crate::layout::style_views::checked::ComparisonStats,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
@@ -664,6 +671,10 @@ impl Document {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
             retained_layout_styles,
+            #[cfg(test)]
+            synthetic_style_values: Default::default(),
+            #[cfg(test)]
+            style_view_comparisons: Default::default(),
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
             focused: None,
@@ -2056,6 +2067,10 @@ impl Document {
             flags_dirty: _,
             stylesheets,
             retained_layout_styles: _,
+            #[cfg(test)]
+                synthetic_style_values: _,
+            #[cfg(test)]
+                style_view_comparisons: _,
             fragment_tree: _,
             column_rules: _,
             quirks_mode,

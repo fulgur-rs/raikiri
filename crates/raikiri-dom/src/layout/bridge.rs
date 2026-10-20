@@ -165,6 +165,8 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    #[cfg(test)]
+    doc.begin_style_bridge();
     doc.context.table_cache.clear();
     // Keep the previous payloads alive while styles are rebuilt in place.
     // A later error or unwind may leave some styles with old handles and
@@ -173,12 +175,63 @@ pub(crate) fn apply_computed_to_style_in_session(
     let old_calc_len = doc.document.retained_layout_styles.calc_values.len();
     let result = apply_computed_to_style_in_session_inner(doc, cascade);
     if result.is_ok() {
+        #[cfg(test)]
+        doc.prepare_style_views();
         doc.document
             .retained_layout_styles
             .calc_values
             .drain(..old_calc_len);
     }
     result
+}
+
+#[cfg(test)]
+pub(super) fn view_sizing_flags(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> raikiri_layout_style::StyleFlags {
+    use raikiri_layout_style::StyleFlags as F;
+    if doc.nodes[idx].kind() != NodeKind::Element {
+        return F::EMPTY;
+    }
+    let cv = &cascade.computed[idx];
+    let mut flags = F::EMPTY;
+    let content_keyword = |size| {
+        matches!(
+            size,
+            ComputedLengthPercentageOrAuto::MaxContent
+                | ComputedLengthPercentageOrAuto::FitContent
+                | ComputedLengthPercentageOrAuto::FitContentOf(_)
+        )
+    };
+    let logical = vertical_logical_size(cascade, idx);
+    let width = logical.map_or(cv.width, |size| size.width);
+    let height = logical.map_or(cv.height, |size| size.height);
+    if logical.is_some() {
+        flags = flags.union(F::VERTICAL_LOGICAL_SIZE);
+    }
+    if min_content_width_is_auto(doc, cascade, idx) {
+        flags = flags.union(F::MIN_CONTENT_WIDTH_AUTO);
+    }
+    if !sized_by_content_keyword(doc, cascade, idx, cv) {
+        if content_keyword(width) {
+            flags = flags.union(F::IGNORE_WIDTH_KEYWORD);
+        }
+        if logical.is_some() && content_keyword(height) {
+            flags = flags.union(F::IGNORE_HEIGHT_KEYWORD);
+        }
+    }
+    if !honors_content_limits(doc, cascade, idx, cv) {
+        flags = flags.union(F::IGNORE_LIMIT_KEYWORDS);
+    }
+    if cv.min_block_size.is_some_and(is_sizing_keyword)
+        && (is_supported_flex_grid_item(doc, cascade, idx, cv)
+            || is_supported_flex_grid_container(doc, idx, cv))
+    {
+        flags = flags.union(F::IGNORE_LOGICAL_MIN_BLOCK);
+    }
+    flags
 }
 
 fn apply_computed_to_style_in_session_inner(
@@ -300,6 +353,13 @@ fn apply_computed_to_style_in_session_inner(
             .unwrap()
             .style
             .aspect_ratio = preferred_ratio;
+        #[cfg(test)]
+        if natural_ratio.is_some() {
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(preferred_ratio),
+            );
+        }
         doc.nodes[idx].svg_width_follows_available = false;
         // SVG 2 geometry: auto dimensions on svg are treated as 100%.
         // With only a viewBox ratio and no definite height, width establishes
@@ -323,6 +383,16 @@ fn apply_computed_to_style_in_session_inner(
                     .style
                     .size
                     .width = Dimension::percent(1.0);
+                #[cfg(test)]
+                doc.record_pass_override(
+                    idx,
+                    raikiri_layout_style::OwnedPropertyOverride::length(
+                        raikiri_layout_style::LengthProperty::Width,
+                        ComputedLengthPercentageOrAuto::Percent(100.0),
+                        false,
+                    )
+                    .expect("physical SVG width"),
+                );
             } else if !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 // Taffy transfers max-height to max-width through this ratio
                 // even for a definite width. SVG leaf measurement handles its
@@ -331,6 +401,11 @@ fn apply_computed_to_style_in_session_inner(
                     .unwrap()
                     .style
                     .aspect_ratio = None;
+                #[cfg(test)]
+                doc.record_pass_override(
+                    idx,
+                    raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
+                );
             }
         }
         if let Some((intrinsic_width, intrinsic_height)) =
@@ -344,6 +419,22 @@ fn apply_computed_to_style_in_session_inner(
             }
             if matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.height = Dimension::length(intrinsic_height);
+            }
+            #[cfg(test)]
+            {
+                use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
+                for (property, value, original) in [
+                    (P::Width, intrinsic_width, cv.width),
+                    (P::Height, intrinsic_height, cv.height),
+                ] {
+                    if matches!(original, ComputedLengthPercentageOrAuto::Auto) {
+                        doc.record_pass_override(
+                            idx,
+                            O::length(property, ComputedLengthPercentageOrAuto::Px(value), false)
+                                .expect("physical fallback size"),
+                        );
+                    }
+                }
             }
         }
         doc.document.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
@@ -427,7 +518,23 @@ fn apply_computed_to_style_in_session_inner(
             container = doc.nodes[ancestor].parent;
         }
         if let Some(container) = container {
-            bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[container]);
+            let _overrides =
+                bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[container]);
+            #[cfg(test)]
+            {
+                if let Some(value) = _overrides.0 {
+                    doc.record_pass_override(
+                        idx,
+                        raikiri_layout_style::OwnedPropertyOverride::align_self(Some(value)),
+                    );
+                }
+                if let Some(value) = _overrides.1 {
+                    doc.record_pass_override(
+                        idx,
+                        raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(value)),
+                    );
+                }
+            }
         }
         bridge_gap(
             &mut style,
@@ -490,13 +597,31 @@ fn apply_computed_to_style_in_session_inner(
         // stand in for an `auto` size. Only a contained width keeps a content
         // keyword width at the width of an empty box.
         if containment.width || containment.height {
+            let contained_ratio = preferred_aspect_ratio(cv, None, containment.width);
             let style = &mut doc.layout_node_with_style_mut(idx).unwrap().style;
-            style.aspect_ratio = preferred_aspect_ratio(cv, None, containment.width);
+            style.aspect_ratio = contained_ratio;
             if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.width = Dimension::auto();
             }
             if containment.height && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.height = Dimension::auto();
+            }
+            #[cfg(test)]
+            {
+                use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
+                doc.record_pass_override(idx, O::aspect_ratio(contained_ratio));
+                for (property, contained, original) in [
+                    (P::Width, containment.width, cv.width),
+                    (P::Height, containment.height, cv.height),
+                ] {
+                    if contained && matches!(original, ComputedLengthPercentageOrAuto::Auto) {
+                        doc.record_pass_override(
+                            idx,
+                            O::length(property, ComputedLengthPercentageOrAuto::Auto, false)
+                                .expect("physical contained size"),
+                        );
+                    }
+                }
             }
         }
         if stretches_on_both_grid_axes(doc, idx, cv)
@@ -506,24 +631,48 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .aspect_ratio = None;
+            #[cfg(test)]
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
+            );
         }
         if is_stretched_by_replaced_keyword_width_in_grid(doc, cascade, idx) {
             doc.layout_node_with_style_mut(idx)
                 .unwrap()
                 .style
                 .justify_self = Some(TaffyAlignItems::START);
+            #[cfg(test)]
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(
+                    TaffyAlignItems::START,
+                )),
+            );
         }
         if is_stretched_by_keyword_width(doc, cascade, idx) {
             doc.layout_node_with_style_mut(idx)
                 .unwrap()
                 .style
                 .align_self = Some(TaffyAlignItems::FLEX_START);
+            #[cfg(test)]
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::align_self(Some(
+                    TaffyAlignItems::FLEX_START,
+                )),
+            );
         }
         if let Some(fallback) = unstretched_keyword_height_alignment(doc, cascade, idx) {
             doc.layout_node_with_style_mut(idx)
                 .unwrap()
                 .style
                 .align_self = Some(fallback);
+            #[cfg(test)]
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),
+            );
         }
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
@@ -695,6 +844,10 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
 /// §3.1), the reverse of `vertical-lr`, whose axes the box lays out on; its
 /// direction is flipped so that the inline start stays at the bottom.
 fn bridge_direction(style: &mut crate::LayoutStyle, cv: &ComputedValues, vertical_axes: bool) {
+    style.direction = direction_for_axes(cv, vertical_axes);
+}
+
+pub(super) fn direction_for_axes(cv: &ComputedValues, vertical_axes: bool) -> TaffyDirection {
     let upright = vertical_axes
         && cv.text_orientation == TextOrientation::Upright
         && matches!(
@@ -703,11 +856,11 @@ fn bridge_direction(style: &mut crate::LayoutStyle, cv: &ComputedValues, vertica
         );
     let rtl = matches!(cv.direction, Direction::Rtl) && !upright;
     let bottom_to_top = vertical_axes && cv.cssom_writing_mode == WritingMode::SidewaysLr;
-    style.direction = if rtl != bottom_to_top {
+    if rtl != bottom_to_top {
         TaffyDirection::Rtl
     } else {
         TaffyDirection::Ltr
-    };
+    }
 }
 
 /// The computed values the layout of element `idx` reads: `vertical_sized` when
@@ -1782,9 +1935,10 @@ fn bridge_inherited_last_baseline(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     parent: &ComputedValues,
-) {
+) -> (Option<TaffyAlignItems>, Option<TaffyAlignItems>) {
+    let mut overrides = (None, None);
     if !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
-        return;
+        return overrides;
     }
     let auto = |value: ComputedLengthPercentageOrAuto| {
         matches!(value, ComputedLengthPercentageOrAuto::Auto)
@@ -1795,6 +1949,7 @@ fn bridge_inherited_last_baseline(
         && auto(cv.bottom)
     {
         style.align_self = Some(TaffyAlignItems::SAFE_SELF_END);
+        overrides.0 = Some(TaffyAlignItems::SAFE_SELF_END);
     }
     if matches!(cv.justify_self, AlignSelfValue::Auto)
         && parent.justify_items == SelfAlignmentValue::LastBaseline
@@ -1802,7 +1957,9 @@ fn bridge_inherited_last_baseline(
         && auto(cv.right)
     {
         style.justify_self = Some(TaffyAlignItems::SAFE_SELF_END);
+        overrides.1 = Some(TaffyAlignItems::SAFE_SELF_END);
     }
+    overrides
 }
 
 /// [`AlignSelfValue`] → `Option<taffy::AlignItems>` mapping — shared by

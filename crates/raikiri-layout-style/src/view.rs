@@ -10,8 +10,27 @@ use raikiri_style::{ComputedLengthPercentageOrAuto as L, ComputedLengthPercentag
 pub struct LayoutStyleView<'a> {
     pub(crate) prepared: &'a PreparedStyle<'a>,
     pub(crate) context: ViewContext,
-    pass: &'a [PropertyOverride<'a>],
-    scoped: &'a [PropertyOverride<'a>],
+    pass: OverrideLayer<'a>,
+    scoped: OverrideLayer<'a>,
+}
+#[derive(Clone, Copy)]
+enum OverrideLayer<'a> {
+    Borrowed(&'a [PropertyOverride<'a>]),
+    Owned(&'a [OwnedPropertyOverride]),
+}
+impl<'a> OverrideLayer<'a> {
+    fn len(self) -> usize {
+        match self {
+            Self::Borrowed(values) => values.len(),
+            Self::Owned(values) => values.len(),
+        }
+    }
+    fn get(self, index: usize) -> PropertyOverride<'a> {
+        match self {
+            Self::Borrowed(values) => values[index],
+            Self::Owned(values) => values[index].as_borrowed(),
+        }
+    }
 }
 impl<'a> LayoutStyleView<'a> {
     /// Construct a query without cloning, scanning or allocating computed style.
@@ -24,16 +43,33 @@ impl<'a> LayoutStyleView<'a> {
         Self {
             prepared,
             context,
-            pass,
-            scoped,
+            pass: OverrideLayer::Borrowed(pass),
+            scoped: OverrideLayer::Borrowed(scoped),
         }
     }
-    pub(crate) fn overrides(&self) -> impl Iterator<Item = &OverrideKind<'a>> {
-        self.scoped
-            .iter()
+    /// Query owning override layers without allocating borrowed entry arrays.
+    pub const fn with_owned_overrides(
+        prepared: &'a PreparedStyle<'a>,
+        context: ViewContext,
+        pass: &'a [OwnedPropertyOverride],
+        scoped: &'a [OwnedPropertyOverride],
+    ) -> Self {
+        Self {
+            prepared,
+            context,
+            pass: OverrideLayer::Owned(pass),
+            scoped: OverrideLayer::Owned(scoped),
+        }
+    }
+    pub(crate) fn overrides(&self) -> impl Iterator<Item = OverrideKind<'a>> {
+        (0..self.scoped.len())
             .rev()
-            .chain(self.pass.iter().rev())
-            .map(|entry| &entry.0)
+            .map(|index| self.scoped.get(index).0)
+            .chain(
+                (0..self.pass.len())
+                    .rev()
+                    .map(|index| self.pass.get(index).0),
+            )
     }
     pub(crate) fn flags(&self) -> StyleFlags {
         self.prepared.metadata.flags
@@ -43,7 +79,7 @@ impl<'a> LayoutStyleView<'a> {
     }
     pub(crate) fn length(&self, property: LengthProperty) -> LengthValue<'a> {
         if let Some(value) = self.overrides().find_map(|entry| match entry {
-            OverrideKind::Length(p, v) if *p == property => Some(*v),
+            OverrideKind::Length(p, v) if p == property => Some(v),
             _ => None,
         }) {
             return value;

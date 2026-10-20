@@ -37,13 +37,13 @@ pub(crate) fn items(value: A) -> taffy::AlignItems {
 impl LayoutStyleView<'_> {
     pub(crate) fn self_alignment(&self, inline: bool) -> Option<taffy::AlignSelf> {
         if let Some(value) = self.overrides().find_map(|o| match o {
-            OverrideKind::AlignSelf(v) if !inline => Some(*v),
-            OverrideKind::JustifySelf(v) if inline => Some(*v),
+            OverrideKind::AlignSelf(v) if !inline => Some(v),
+            OverrideKind::JustifySelf(v) if inline => Some(v),
             _ => None,
         }) {
             return value;
         }
-        let c = self.prepared.values;
+        let c = &*self.prepared.values;
         let value = if inline { c.justify_self } else { c.align_self };
         match value {
             AlignSelfValue::Value(A::LastBaseline)
@@ -124,7 +124,7 @@ impl taffy::FlexboxItemStyle for LayoutStyleView<'_> {
     fn flex_shrink(&self) -> f32 {
         self.overrides()
             .find_map(|o| match o {
-                OverrideKind::FlexShrink(v) => Some(*v),
+                OverrideKind::FlexShrink(v) => Some(v),
                 _ => None,
             })
             .unwrap_or(self.prepared.values.flex_shrink)

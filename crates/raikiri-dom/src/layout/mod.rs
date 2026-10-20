@@ -46,6 +46,8 @@ use taffy::{
 
 pub(crate) mod context;
 pub(crate) mod retained_styles;
+#[cfg(test)]
+pub(crate) mod style_views;
 pub(crate) mod table;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {
@@ -73,6 +75,7 @@ mod static_position;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+#[cfg(not(test))]
 use body_overflow::propagate_body_overflow_to_viewport;
 pub(crate) use body_overflow::viewport_overflow_source;
 pub(crate) use box_tree::{BoxParentScope, box_parent};

@@ -215,6 +215,19 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
         },
     ];
     let prepared = PreparedStyle::new(&cv, StyleMetadata::default(), &bindings).unwrap();
+    let owned = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let shared = PreparedStyle::prepare_shared(Arc::new(cv.clone()), StyleMetadata::default());
+    let owned_pass = [
+        OwnedPropertyOverride::aspect_ratio(Some(2.0)),
+        OwnedPropertyOverride::overflow(Axis::X, OverflowValue::Hidden),
+        OwnedPropertyOverride::flex_shrink(0.5),
+        OwnedPropertyOverride::length(LengthProperty::MarginLeft, L::Calc(expr), false).unwrap(),
+    ];
+    let owned_scoped = [
+        OwnedPropertyOverride::align_self(Some(taffy::AlignItems::CENTER)),
+        OwnedPropertyOverride::justify_self(None),
+        OwnedPropertyOverride::length(LengthProperty::PaddingBottom, L::Px(7.0), true).unwrap(),
+    ];
     let pass = [
         PropertyOverride::aspect_ratio(Some(2.0)),
         PropertyOverride::overflow(Axis::X, OverflowValue::Hidden),
@@ -257,6 +270,20 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
                 for _ in 0..100 {
                     read_all(black_box(&v));
                     black_box(v);
+                    for prepared in [&owned, &shared] {
+                        let v = LayoutStyleView::with_owned_overrides(
+                            prepared,
+                            ViewContext {
+                                layout_wm: mode,
+                                percent_basis: basis,
+                                ..ViewContext::default()
+                            },
+                            &owned_pass,
+                            &owned_scoped,
+                        );
+                        read_all(black_box(&v));
+                        black_box(v);
+                    }
                 }
             }
         }

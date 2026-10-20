@@ -876,3 +876,55 @@ fn reversing_a_center_static_position_keeps_its_alignment_centered() {
     assert_eq!(reversed.align.safety, taffy::AlignmentSafety::Safe);
     assert_eq!(reversed.align.fallback, taffy::AxisStaticEdge::Start);
 }
+
+#[test]
+fn comparison_unwind_restores_transposed_stack_and_percentage_padding() {
+    use crate::layout::{context::LayoutSession, style_views::tests::fixture_with_styles};
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "writing-mode:vertical-rl;width:200px;height:100px",
+        "display:flex;writing-mode:horizontal-tb;width:20px;height:10px;padding-left:10%",
+    );
+    with_ahem(&mut doc);
+    let parent = doc.nodes[child].parent.unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let padding = tree.layout_style_for_key(child).unwrap().padding;
+    let block = super::TransposedBlock {
+        container: parent,
+        block_space: Some(200.0),
+        container_style: tree.layout_style_for_key(parent).unwrap().clone(),
+        child_styles: [(child, tree.layout_style_for_key(child).unwrap().clone())].into(),
+        placed: Vec::new(),
+    };
+    tree.context.transposed_blocks.push(block);
+    tree.layout_style_for_key_mut(child).unwrap().size.width = taffy::Dimension::length(99.0);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tree.compute_transposed_child(
+            taffy::NodeId::from(child),
+            taffy::LayoutInput {
+                run_mode: taffy::RunMode::ComputeSize,
+                parent_size: taffy::Size {
+                    width: Some(100.0),
+                    height: Some(200.0),
+                },
+                ..taffy::LayoutInput::HIDDEN
+            },
+            None,
+        );
+    }));
+    let error = panic.expect_err("injected independent size disagreement must fail");
+    assert!(
+        error
+            .downcast_ref::<String>()
+            .unwrap()
+            .contains("style view mismatch")
+    );
+    assert_eq!(tree.context.transposed_blocks.len(), 1);
+    assert_eq!(tree.context.transposed_blocks[0].container, parent);
+    assert_eq!(tree.layout_style_for_key(child).unwrap().padding, padding);
+    assert_eq!(
+        taffy::CoreStyle::padding(&tree.style_view(child)).left,
+        padding.left
+    );
+}

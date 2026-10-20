@@ -27,7 +27,7 @@ fn box_identity_position_containment_and_overflow_policies_are_explicit() {
         (PositionValue::Relative, taffy::Position::Relative),
         (PositionValue::Sticky, taffy::Position::Relative),
         (PositionValue::Absolute, taffy::Position::Absolute),
-        (PositionValue::Fixed, taffy::Position::Fixed),
+        (PositionValue::Fixed, taffy::Position::Absolute),
     ] {
         cv.position = position;
         for (contain, expected_contain) in [
@@ -216,13 +216,13 @@ fn scalar_calc_slots_resolve_values_with_the_right_range() {
 }
 
 #[test]
-fn empty_grid_and_definite_gap_basis_are_distinct_from_absence() {
+fn empty_grid_iterators_and_absent_areas_keep_the_legacy_representation() {
     let mut cv = ComputedValues::initial();
     cv.column_gap = N::Px(4.0);
     cv.align_self = AlignSelfValue::Auto;
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-    assert!(v.grid_template_columns().is_none());
+    assert_eq!(v.grid_template_columns().unwrap().len(), 0);
     assert!(v.grid_template_areas().is_none());
     assert_eq!(
         (
@@ -244,8 +244,8 @@ fn empty_grid_and_definite_gap_basis_are_distinct_from_absence() {
     );
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
-    assert!(v.grid_template_columns().is_none());
-    assert!(v.grid_template_column_names().is_none());
+    assert_eq!(v.grid_template_columns().unwrap().len(), 0);
+    assert_eq!(v.grid_template_column_names().unwrap().len(), 0);
     for input in [L::Percent(25.0), L::FitContentOf(P::Px(7.0))] {
         cv.width = input;
         let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();

@@ -143,6 +143,8 @@ impl StyleFlags {
     pub const CONTAIN_WIDTH: Self = Self(1 << 10);
     /// Prepared contain height policy.
     pub const CONTAIN_HEIGHT: Self = Self(1 << 11);
+    /// Direction follows the source box's vertical axes even for physical size queries.
+    pub const SOURCE_VERTICAL_DIRECTION: Self = Self(1 << 12);
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.

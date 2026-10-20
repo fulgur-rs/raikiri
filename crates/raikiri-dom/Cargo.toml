@@ -18,6 +18,7 @@ cssparser      = { workspace = true }
 shodo          = { workspace = true }
 skrifa         = { workspace = true }
 raikiri-style  = { workspace = true }
+raikiri-layout-style = { workspace = true }
 raikiri-traits = { workspace = true }
 rayon          = "1.8"
 smol_str       = { workspace = true }
@@ -27,6 +28,7 @@ wuff           = { workspace = true }
 url            = { workspace = true }
 
 [dev-dependencies]
+raikiri-net = { workspace = true }
 serde_json = "1"
 criterion = { workspace = true }
 raikiri-html = { workspace = true }
