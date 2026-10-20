@@ -109,7 +109,7 @@ impl Document {
         self.nodes.push(Node::new_text(SmolStr::new(data)));
         self.retained_layout_styles.insert(
             crate::node::arena::BoxKey::Source(id),
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
         );
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -127,7 +127,7 @@ impl Document {
         self.nodes.push(Node::new_document_fragment());
         self.retained_layout_styles.insert(
             crate::node::arena::BoxKey::Source(id),
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
         );
         self.invalidate_layout_cache();
         self.flags_dirty = true;
@@ -286,8 +286,11 @@ impl Document {
         }
         let node = match &self.nodes[id].data {
             NodeData::Element(element) => {
-                let mut copy =
-                    Node::new_element(element.tag_name.clone(), taffy::Style::default(), None);
+                let mut copy = Node::new_element(
+                    element.tag_name.clone(),
+                    crate::LayoutStyle::default(),
+                    None,
+                );
                 if let NodeData::Element(copy_element) = &mut copy.data {
                     copy_element.inline_style = element.inline_style.clone();
                     copy_element.namespace = element.namespace.clone();
@@ -310,7 +313,7 @@ impl Document {
         self.nodes.push(node);
         self.retained_layout_styles.insert(
             crate::node::arena::BoxKey::Source(copy),
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
         );
         if has_template_contents {
             self.allocate_template_fragment_root(copy);

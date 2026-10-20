@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
-use taffy::Style;
 
 fn enforce_layout_invariants_for_test(document: &mut Document, root: usize) -> Vec<LayoutWarn> {
     let mut session = LayoutSession::new(document);
@@ -46,7 +46,7 @@ fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
 ///
 /// The fixture is a **non-body element** (`<p>`) — because `<body>`'s size will be clobbered by the
 /// subsequent `apply_page_content_box_to_body`.
-fn guarded_style_for(inline: &str) -> taffy::Style {
+fn guarded_style_for(inline: &str) -> crate::LayoutStyle {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

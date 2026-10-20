@@ -2,13 +2,13 @@
 //! fixed boxes. A table lays its cells out itself, so it hands the boxes a row
 //! or row group contains over to that part.
 
+use crate::LayoutStyle as Style;
 use crate::document::Document;
 use crate::layout::page_pipeline::{
     PageLayoutControl, layout_pages_with_page_geometry_and_control,
 };
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 const FIXED_CSS: &str = "position:fixed;left:10px;top:15px;width:30px;height:10px";
 const ABSOLUTE_CSS: &str = "position:absolute;left:10px;top:15px;width:30px;height:10px";

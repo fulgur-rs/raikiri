@@ -6,7 +6,7 @@ fn computed_for(style: &str) -> ComputedValues {
     let id = document.append_element(
         Some(document.root_index()),
         "div",
-        taffy::Style::default(),
+        raikiri_dom::LayoutStyle::default(),
         Some(style),
     );
     let rules = build_rule_tree(&document);

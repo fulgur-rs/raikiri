@@ -1,11 +1,11 @@
 //! Page projection contracts.
 
 use super::super::super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::test_support::{absolute_rect, ahem_paragraph_with, with_ahem};
 use raikiri_style::{Origin, build_rule_tree, cascade};
 use raikiri_traits::{NodeId, PageBox};
 use smol_str::SmolStr;
-use taffy::Style;
 
 #[test]
 fn many_sibling_inline_boxes_project_within_two_seconds() {
@@ -749,7 +749,7 @@ fn a_text_inside_a_span_starts_at_the_root_content_origin() {
     let span = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline;padding-left:3px"),
     );
     let text = doc.append_text(span, "bbbb");
@@ -790,7 +790,7 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
     let span = doc.append_element(
         Some(root),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline"),
     );
     let text = doc.append_text(span, "bbbb cccc dddd");
@@ -825,7 +825,7 @@ fn an_ifc_paragraph_that_would_leave_one_line_behind_moves() {
         let spacer = doc.append_element(
             Some(body),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:25px"),
         );
         doc.nodes[body].children.retain(|&c| c != spacer);
@@ -872,7 +872,7 @@ fn pages_of_a_fixed_height_paragraph(
         let spacer = doc.append_element(
             Some(body),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(format!("display:block;height:{spacer_height}px").as_str()),
         );
         doc.nodes[body].children.retain(|&c| c != spacer);
@@ -936,7 +936,7 @@ fn ranges_of_a_text_below_a_span(
         let span = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_text(span, "aa ");
@@ -945,7 +945,7 @@ fn ranges_of_a_text_below_a_span(
         let spacer = doc.append_element(
             Some(body),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;height:15px"),
         );
         doc.nodes[body].children.retain(|&c| c != spacer);
@@ -1005,13 +1005,13 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
         let section = doc.append_element(
             Some(body),
             "section",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;page:a"),
         );
         let named = doc.append_element(
             Some(section),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;page:b;font-family:Ahem;font-size:10px;line-height:10px"),
         );
         doc.append_text(named, "x");
@@ -1020,7 +1020,7 @@ fn pages_of_a_paragraph_after_a_named_box() -> Vec<(Vec<Option<String>>, Vec<u32
         let next = doc.append_element(
             Some(section),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px"),
         );
         doc.append_text(next, "bbbb");
@@ -1073,7 +1073,7 @@ fn paginating_an_ifc_paragraph_twice_gives_the_same_fragments() {
     let spacer = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;height:25px"),
     );
     doc.nodes[body].children.retain(|&c| c != spacer);

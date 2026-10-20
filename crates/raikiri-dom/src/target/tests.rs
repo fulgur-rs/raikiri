@@ -1,7 +1,7 @@
 use super::*;
 
+use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 #[test]
 fn counter_snapshot_limit_error_has_stable_display() {

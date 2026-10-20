@@ -1,7 +1,7 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 /// `html(html_css) > body(body_css) > div(child_css)`, cascaded. Returns the
 /// document, its cascade, the body and the child.

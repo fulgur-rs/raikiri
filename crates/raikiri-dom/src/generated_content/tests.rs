@@ -1,8 +1,8 @@
 use super::*;
 
+use crate::LayoutStyle as Style;
 use raikiri_style::{PseudoElem, StyleNodeId, build_rule_tree, cascade};
 use raikiri_traits::Symbol;
-use taffy::Style;
 
 #[test]
 fn generated_ids_round_trip_and_stay_above_document_ids() {

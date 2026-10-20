@@ -26,7 +26,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             return None;
         }
         let node = &tree.layout_node_with_style(child).unwrap();
-        let defaults: taffy::Style = taffy::Style::default();
+        let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
         if node.display() != DisplayValue::Block
             || node.style.direction != direction
             || node.style.float.is_floated()

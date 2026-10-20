@@ -1,7 +1,7 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use raikiri_traits::{IntrinsicBox, ResolveDisposition, ResolvedIntrinsic};
 use std::cell::Cell;
-use taffy::Style;
 
 struct FixedSizeResolver(f32, f32);
 impl ReplacedResolver for FixedSizeResolver {

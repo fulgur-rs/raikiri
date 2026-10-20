@@ -44,7 +44,7 @@ impl BoxProperties {
     }
 
     /// Preserve the display and position accepted by programmatic constructors.
-    pub(crate) fn from_taffy_style(style: &taffy::Style) -> Self {
+    pub(crate) fn from_taffy_style(style: &crate::LayoutStyle) -> Self {
         let display = match style.display {
             taffy::Display::None => DisplayValue::None,
             taffy::Display::Block => DisplayValue::Block,
@@ -123,7 +123,7 @@ impl BoxProperties {
     /// Refresh the derived identity exported to Taffy and the public style API.
     pub(crate) fn apply_to_style(
         &self,
-        style: &mut taffy::Style,
+        style: &mut crate::LayoutStyle,
         multicol: bool,
         kind: NodeKind,
         root: bool,

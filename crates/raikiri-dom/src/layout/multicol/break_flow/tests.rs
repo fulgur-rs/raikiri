@@ -1,7 +1,7 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::context::LayoutSession;
 use crate::node::FormattingContext;
-use taffy::Style;
 
 fn layout(
     tree: &mut Document,

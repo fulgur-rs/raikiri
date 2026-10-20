@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 fn contents_chain(body_style: &str) -> (Document, CascadeResult, [usize; 4]) {
     let mut document = Document::new();

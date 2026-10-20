@@ -105,7 +105,7 @@ fn page_start_names_a_block_that_begins_the_page() {
             blocks.push(doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;height:15px"),
             ));
         }
@@ -130,7 +130,7 @@ fn continuation_cascade_drops_breaks_before_the_token() {
             blocks.push(doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(style),
             ));
         }
@@ -161,7 +161,7 @@ fn page_start_skips_a_float_that_comes_first() {
             blocks.push(doc.append_element(
                 Some(root),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(style),
             ));
         }

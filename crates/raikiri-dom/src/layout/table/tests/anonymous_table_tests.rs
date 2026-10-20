@@ -1,10 +1,10 @@
 //! Rows and row groups outside any table, which an anonymous table wraps
 //! (CSS 2.1 §17.2.1 rule 3, CSS Tables 3 §3.9).
 
+use crate::LayoutStyle as Style;
 use crate::document::Document;
 use crate::layout::test_support::absolute_rect;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 fn div(doc: &mut Document, parent: usize, css: &str) -> usize {
     doc.append_element(Some(parent), "div", Style::default(), Some(css))

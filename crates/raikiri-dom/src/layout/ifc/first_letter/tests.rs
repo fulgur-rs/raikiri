@@ -110,7 +110,7 @@ fn opening_the_letter_inline_box_reports_the_item_budget_boundary() {
         let span = doc.append_element(
             Some(root),
             "span",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline"),
         );
         doc.append_text(span, "A");
@@ -267,7 +267,7 @@ fn preserved_whitespace_before_an_inner_block_stops_ancestor_letter_selection() 
             let block = doc.append_element(
                 Some(root),
                 "p",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(block, "A");
@@ -414,12 +414,13 @@ fn adjacent_letter_selection_skips_hidden_and_out_of_flow_inline_subtrees() {
         let mut next = 0;
         let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
             owner = doc.append_text(root, "(");
-            let skipped = doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
+            let skipped =
+                doc.append_element(Some(root), tag, crate::LayoutStyle::default(), Some(css));
             doc.append_text(skipped, "Z");
             let span = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             next = doc.append_text(span, "Ab");
@@ -454,7 +455,7 @@ fn adjacent_letter_selection_stops_at_a_line_break() {
         let mut owner = 0;
         let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
             owner = doc.append_text(root, " ");
-            doc.append_element(Some(root), "br", taffy::Style::default(), Some(css));
+            doc.append_element(Some(root), "br", crate::LayoutStyle::default(), Some(css));
             doc.append_text(root, "Ab");
         });
         let mut letter = FirstLetter::new(
@@ -526,13 +527,13 @@ fn generated_text_in_a_preceding_contents_sibling_blocks_ancestor_letter_styling
             doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:contents"),
             );
             child = doc.append_element(
                 Some(root),
                 "section",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(child, "Ab");
@@ -554,7 +555,7 @@ fn first_letter_predecessor_work_is_bounded_across_many_ifc_roots() {
             let root = doc.append_element(
                 Some(parent),
                 "section",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(root, "A");
@@ -730,7 +731,7 @@ fn review_logical_float_predecessors_follow_the_projected_in_flow_blocks() {
                 let child = doc.append_element(
                     Some(root),
                     "p",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some(css.as_str()),
                 );
                 roots.push(child);
@@ -768,7 +769,7 @@ fn review_pre_line_predecessor_spaces_match_anonymous_line_eligibility() {
                 child = doc.append_element(
                     Some(root),
                     "p",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
                 doc.append_text(child, "B");
@@ -801,21 +802,21 @@ fn review_empty_inline_predecessors_do_not_form_a_first_letter_barrier() {
             let span = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some(format!("display:{display}").as_str()),
             );
             if nested {
                 doc.append_element(
                     Some(span),
                     "span",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:inline"),
                 );
             }
             child = doc.append_element(
                 Some(root),
                 "p",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(child, "A");
@@ -853,14 +854,14 @@ fn review_inline_predecessors_keep_text_generated_and_forced_line_barriers() {
             let inline = doc.append_element(
                 Some(root),
                 tag,
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             doc.append_text(inline, content);
             child = doc.append_element(
                 Some(root),
                 "p",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(child, "B");
@@ -881,14 +882,14 @@ fn review_empty_inline_subtree_work_stays_document_bounded() {
             nested = doc.append_element(
                 Some(nested),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline"),
             );
             for _ in 0..8 {
                 doc.append_element(
                     Some(nested),
                     "span",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:inline"),
                 );
             }
@@ -897,7 +898,7 @@ fn review_empty_inline_subtree_work_stays_document_bounded() {
             let block = doc.append_element(
                 Some(root),
                 "p",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block"),
             );
             doc.append_text(block, "A");
@@ -948,13 +949,13 @@ fn review_generated_inline_predecessors_keep_before_after_atomic_barriers() {
                     doc.append_element(
                         Some(root),
                         "span",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some("display:inline"),
                     );
                     child = doc.append_element(
                         Some(root),
                         "p",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some("display:block"),
                     );
                     doc.append_text(child, "A");
@@ -984,14 +985,14 @@ fn review_empty_generated_ancestors_and_predecessors_keep_the_block_child_bounda
                     doc.append_element(
                         Some(root),
                         "span",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some("display:contents"),
                     );
                 }
                 child = doc.append_element(
                     Some(root),
                     "p",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
                 doc.append_text(child, "A");
@@ -1013,14 +1014,14 @@ fn child_origins(sheet: &str, follows_contents_span: bool) -> (usize, Vec<usize>
             doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:contents"),
             );
         }
         child = doc.append_element(
             Some(root),
             "p",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block"),
         );
         doc.append_text(child, "A");
@@ -1116,7 +1117,7 @@ fn review_resolved_nonempty_generated_predecessors_still_block_ancestor_letters(
                     doc.append_element(
                         Some(root),
                         "span",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some("display:contents"),
                     )
                 };
@@ -1124,7 +1125,7 @@ fn review_resolved_nonempty_generated_predecessors_still_block_ancestor_letters(
                 child = doc.append_element(
                     Some(root),
                     "p",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:block"),
                 );
                 doc.append_text(child, "A");
@@ -1144,7 +1145,12 @@ fn review_empty_atomic_generated_boxes_remain_first_letter_barriers() {
             "",
             |doc, root| {
                 doc.append_text(root, "(");
-                doc.append_element(Some(root), "span", taffy::Style::default(), None::<&str>);
+                doc.append_element(
+                    Some(root),
+                    "span",
+                    crate::LayoutStyle::default(),
+                    None::<&str>,
+                );
                 doc.append_text(root, "A");
             },
         );
@@ -1183,7 +1189,12 @@ fn review_empty_ordinary_generated_text_keeps_adjacent_source_continuations() {
                 "",
                 |doc, root| {
                     owners.push(doc.append_text(root, "("));
-                    doc.append_element(Some(root), "span", taffy::Style::default(), None::<&str>);
+                    doc.append_element(
+                        Some(root),
+                        "span",
+                        crate::LayoutStyle::default(),
+                        None::<&str>,
+                    );
                     owners.push(doc.append_text(root, "A"));
                 },
             );
@@ -1217,14 +1228,14 @@ fn review_adjacent_owners_use_their_own_segment_break_modes() {
                     let first = doc.append_element(
                         Some(root),
                         "span",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some(&format!("white-space:{first_mode}")),
                     );
                     owners.push(doc.append_text(first, "“"));
                     let second = doc.append_element(
                         Some(root),
                         "span",
-                        taffy::Style::default(),
+                        crate::LayoutStyle::default(),
                         Some(&format!("white-space:{second_mode}")),
                     );
                     doc.set_element_attributes(second, vec![("id".into(), "second".into())]);

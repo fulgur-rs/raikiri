@@ -446,9 +446,9 @@ fn apply_computed_to_style_in_session_inner(
             // §2.5). Where layout still keeps a node for it, the node stands
             // in for the anonymous box its contents would get, so none of
             // the element's own box properties apply to it.
-            style = taffy::Style {
+            style = crate::LayoutStyle {
                 direction: style.direction,
-                ..taffy::Style::default()
+                ..crate::LayoutStyle::default()
             };
             // Taffy never lays out a contents element whose children it
             // lifts into their container; zero its layout so it adds
@@ -694,7 +694,7 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
 /// `sideways-lr` runs its inline axis from bottom to top (CSS Writing Modes 4
 /// §3.1), the reverse of `vertical-lr`, whose axes the box lays out on; its
 /// direction is flipped so that the inline start stays at the bottom.
-fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes: bool) {
+fn bridge_direction(style: &mut crate::LayoutStyle, cv: &ComputedValues, vertical_axes: bool) {
     let upright = vertical_axes
         && cv.text_orientation == TextOrientation::Upright
         && matches!(
@@ -980,7 +980,7 @@ fn lays_out_without_columns(display: DisplayValue) -> bool {
 /// **Known taffy `block_layout` limitation**: a same-BFC child narrower than
 /// its own BFC root can get float insets computed against the root's width
 /// instead of its own — not yet worked around or covered by a test here.
-fn bridge_float(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_float(style: &mut crate::LayoutStyle, cv: &ComputedValues) {
     style.float = match cv.float {
         FloatValue::None => TaffyFloat::None,
         FloatValue::Left => TaffyFloat::Left,
@@ -1011,7 +1011,7 @@ fn bridge_float(style: &mut taffy::Style, cv: &ComputedValues) {
 ///
 /// See [`computed_length_percentage_or_auto_to_taffy_length_percentage_auto`] for length policy.
 fn bridge_margin(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
@@ -1047,7 +1047,7 @@ fn bridge_margin(
 ///
 /// See [`computed_length_percentage_to_taffy_length_percentage`] for length policy.
 fn bridge_padding(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
@@ -1123,7 +1123,7 @@ fn bridge_padding(
 ///   Consuming color and line patterns from [`ComputedValues::border`] is
 ///   future work for the paint layer.
 /// - `border-image` and `border-radius` are out of scope.
-fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+fn bridge_border(style: &mut crate::LayoutStyle, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     style.border = taffy_border_widths(&cv.border, diag);
 }
 
@@ -1140,7 +1140,7 @@ pub(super) fn taffy_border_widths(
     }
 }
 
-fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_overflow(style: &mut crate::LayoutStyle, cv: &ComputedValues) {
     fn map(value: OverflowValue) -> TaffyOverflow {
         match value {
             OverflowValue::Visible => TaffyOverflow::Visible,
@@ -1157,7 +1157,7 @@ fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
 }
 
 fn bridge_inset(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
@@ -1498,7 +1498,7 @@ fn bridge_known_image_intrinsic_size(
 /// Each of the four callers passes its own `site` label: `min-width`,
 /// `min-height`, `max-width`, or `max-height` (for [`LayoutWarn::NonFiniteClamped`] diagnostics).
 fn bridge_min_max_size(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     vertical_axes: bool,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
@@ -1584,7 +1584,7 @@ fn bridge_min_max_size(
 /// mapping is complete with its two `ContentBox` and `BorderBox` arms.
 ///
 /// [`BoxSizing`]: raikiri_style::property::BoxSizing
-fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_box_sizing(style: &mut crate::LayoutStyle, cv: &ComputedValues) {
     // Taffy 0.14 treats content-box width auto as content equal to the
     // containing width, leaving side borders to overflow the parent. CSS
     // requires the border box to fill the containing width for auto
@@ -1655,7 +1655,7 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 /// - `Content` → [`taffy::Dimension::content`] (the 0.14 flex-basis-specific
 ///   keyword, mapped without changing its meaning).
 fn bridge_flex(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
@@ -1743,7 +1743,7 @@ fn bridge_flex(
 /// docs. The `safety` field is always `AlignmentSafety::Unsafe`, because this
 /// crate does not accept the `safe` / `unsafe` prefix
 /// (see `parse_content_alignment` / `parse_self_alignment` docs).
-fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
+fn bridge_alignment(style: &mut crate::LayoutStyle, cv: &ComputedValues) {
     style.justify_content =
         content_alignment_to_taffy(cv.justify_content).unwrap_or(TaffyAlignContent::NORMAL);
     style.align_content =
@@ -1779,7 +1779,7 @@ fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
 /// behaves as `normal` and the box stays at the start.
 // spec: https://www.w3.org/TR/css-align-3/#valdef-justify-self-auto
 fn bridge_inherited_last_baseline(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     parent: &ComputedValues,
 ) {
@@ -1896,7 +1896,7 @@ fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
 /// percent `/100.0` conversion and the non-finite [`sanitize_taffy`] guard.
 /// This reuses [`bridge_padding`]'s helper instead of duplicating it.
 fn bridge_gap(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
@@ -1946,7 +1946,7 @@ fn computed_gap_component_to_taffy(
 /// - `grid-row-start`/`grid-row-end` / `grid-column-start`/`grid-column-end`
 ///   → `style.grid_row` / `style.grid_column` (`Line<GridPlacement>`, §8.3)
 fn bridge_grid(
-    style: &mut taffy::Style,
+    style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
@@ -1975,7 +1975,7 @@ fn bridge_grid(
                 .areas
                 .iter()
                 .map(|a| TaffyGridTemplateArea {
-                    name: a.name.to_string(),
+                    name: a.name.clone(),
                     row_start: saturate_u16(a.row_start),
                     row_end: saturate_u16(a.row_end),
                     column_start: saturate_u16(a.column_start),
@@ -2028,7 +2028,7 @@ fn bridge_grid(
 }
 
 /// [`ComputedGridTemplateTracks`] → taffy's `(Vec<GridTemplateComponent>,
-/// Vec<Vec<String>>)` pair — [`bridge_grid`]'s `grid_template_columns`/
+/// Vec<Vec<smol_str::SmolStr>>)` pair — [`bridge_grid`]'s `grid_template_columns`/
 /// `grid_template_rows` field **and** their paired `_names` field share one
 /// helper because taffy's `NamedLineResolver` consumes both in lock-step
 /// (one name-list entry per top-level component, plus one trailing entry
@@ -2047,40 +2047,35 @@ fn grid_template_tracks_to_taffy(
     tracks: &ComputedGridTemplateTracks,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
-) -> (Vec<GridTemplateComponent<String>>, Vec<Vec<String>>) {
+) -> (
+    Vec<GridTemplateComponent<smol_str::SmolStr>>,
+    Vec<Vec<smol_str::SmolStr>>,
+) {
     match tracks {
         ComputedGridTemplateTracks::None => (Vec::new(), Vec::new()),
         ComputedGridTemplateTracks::List(list) => {
             let components = list
                 .components
                 .iter()
-                .cloned()
                 .map(|component| match component {
                     ComputedGridTrackListComponent::Size(size) => GridTemplateComponent::Single(
-                        grid_track_size_to_taffy(calc_values, size, site, diag),
+                        grid_track_size_to_taffy(calc_values, *size, site, diag),
                     ),
                     ComputedGridTrackListComponent::Repeat(repeat) => {
                         GridTemplateComponent::Repeat(GridTemplateRepetition {
                             count: grid_repeat_count_to_taffy(repeat.count),
                             tracks: repeat
                                 .tracks
-                                .into_iter()
+                                .iter()
+                                .copied()
                                 .map(|t| grid_track_size_to_taffy(calc_values, t, site, diag))
                                 .collect(),
-                            line_names: repeat
-                                .line_names
-                                .into_iter()
-                                .map(|names| names.iter().map(ToString::to_string).collect())
-                                .collect(),
+                            line_names: repeat.line_names.clone(),
                         })
                     }
                 })
                 .collect();
-            let line_names = list
-                .line_names
-                .iter()
-                .map(|names| names.iter().map(ToString::to_string).collect())
-                .collect();
+            let line_names = list.line_names.clone();
             (components, line_names)
         }
     }
@@ -2218,17 +2213,17 @@ fn grid_track_breadth_to_taffy_max(
 /// silently saturating at [`i16::MIN`]/[`i16::MAX`]/[`u16::MAX`] rather
 /// than adding new [`LayoutWarn`] machinery, same rationale as
 /// [`grid_repeat_count_to_taffy`].
-fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
+fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement<smol_str::SmolStr> {
     match v {
         GridLineValue::Auto => GridPlacement::Auto,
         GridLineValue::Line(n) => taffy_style_helpers::line(saturate_i16(*n)),
-        GridLineValue::Named(name) => GridPlacement::NamedLine(name.to_string(), 1),
+        GridLineValue::Named(name) => GridPlacement::NamedLine(name.clone(), 1),
         GridLineValue::NamedLine(name, n) => {
-            GridPlacement::NamedLine(name.to_string(), saturate_i16(*n))
+            GridPlacement::NamedLine(name.clone(), saturate_i16(*n))
         }
         GridLineValue::Span(n) => GridPlacement::Span(saturate_u16(*n)),
         GridLineValue::SpanNamed(name, n) => {
-            GridPlacement::NamedSpan(name.to_string(), saturate_u16(*n))
+            GridPlacement::NamedSpan(name.clone(), saturate_u16(*n))
         }
         // cov:ignore: unreachable while GridLineValue is the 6 variants
         // matched above only; required for its #[non_exhaustive] contract.

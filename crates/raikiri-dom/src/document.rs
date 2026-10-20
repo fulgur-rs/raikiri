@@ -21,11 +21,11 @@
 //!   get automatic synchronization only during parsing and must explicitly
 //!   call `mark_in_document_flags()` after post-parse mutations.
 
+use crate::LayoutStyle as Style;
 use smol_str::SmolStr;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use taffy::Style;
 
 use raikiri_traits::{QuirksMode, StylesheetKind};
 

@@ -15,10 +15,10 @@ use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::{QuirksMode, Tracer, TreeBuilder};
 use markup5ever::ns;
 use raikiri_dom::Document;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_traits::{Dom, Node, NodeId, NodeKind, RenderWarning, WarningKind};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
-use taffy::Style;
 
 use crate::fetch::mime_essence;
 use crate::types::UncascadedDocument;

@@ -6,7 +6,7 @@
 //! appendChild stay linear instead of quadratic.
 
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 #[test]
 fn parent_of_tracks_append_primitives() {

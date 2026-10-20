@@ -1,9 +1,8 @@
 use crate::Document;
+use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::{
-    AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode, Style,
-};
+use taffy::{AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode};
 
 /// Rects of a column of two Ahem paragraphs in a positioned container under
 /// a root with `root_css`. `column_css` styles the column.

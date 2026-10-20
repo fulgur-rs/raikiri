@@ -1,10 +1,11 @@
 //! The page-area initial containing block, outside the source DOM.
 
 use crate::Document;
+use crate::LayoutStyle as Style;
 use crate::node::{Node, NodeFlags};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::{Contain, DisplayValue};
-use taffy::{Dimension, Size, Style};
+use taffy::{Dimension, Size};
 
 /// The document element whose principal box is a child of the ICB.
 /// Source parents and children remain the DOM tree throughout layout.

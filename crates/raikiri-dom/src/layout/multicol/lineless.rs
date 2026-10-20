@@ -165,7 +165,7 @@ fn is_plain_block_with_display(
     allow_lines: bool,
 ) -> bool {
     let node = &tree.layout_node_with_style(child).unwrap();
-    let defaults: taffy::Style = taffy::Style::default();
+    let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
     let display = node.display();
     !(display != DisplayValue::Block && !(allow_flow_root && display == DisplayValue::FlowRoot)
         // An orthogonal flow is monolithic in the column's block axis.
@@ -403,7 +403,7 @@ fn is_horizontal(node: &crate::Node) -> bool {
 
 /// The block-start and block-end margins of a child, when they are
 /// non-negative lengths and its inline margins are zero.
-fn block_margins(style: &taffy::Style) -> Option<(f32, f32)> {
+fn block_margins(style: &crate::LayoutStyle) -> Option<(f32, f32)> {
     let zero = LengthPercentageAuto::length(0.0);
     let margin = style.margin;
     if margin.left != zero || margin.right != zero {
@@ -415,7 +415,7 @@ fn block_margins(style: &taffy::Style) -> Option<(f32, f32)> {
     Some((length(margin.top)?, length(margin.bottom)?))
 }
 
-fn has_block_edge_decorations(style: &taffy::Style) -> bool {
+fn has_block_edge_decorations(style: &crate::LayoutStyle) -> bool {
     let zero = LengthPercentage::length(0.0);
     let (padding, border) = (style.padding, style.border);
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero

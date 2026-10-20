@@ -2,11 +2,11 @@
 //! area, not in the inline box.
 
 use anyrender::Scene;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
 use std::sync::Arc;
-use taffy::Style;
 
 const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

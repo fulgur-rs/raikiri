@@ -1,10 +1,10 @@
 //! Literal font and paint checks for typographic first-letter styling.
 
 use anyrender::{Scene, recording::RenderCommand};
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use raikiri_traits::PageBox;
-use taffy::Style;
 
 const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

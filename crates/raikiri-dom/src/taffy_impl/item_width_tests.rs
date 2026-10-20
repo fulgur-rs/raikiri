@@ -24,7 +24,7 @@ fn item_rect(container_css: &str, item_css: &str, body: Body) -> (f32, f32, f32,
         item = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!("display:block;{item_css}")),
         );
         match body {
@@ -35,7 +35,7 @@ fn item_rect(container_css: &str, item_css: &str, body: Body) -> (f32, f32, f32,
                 doc.append_element(
                     Some(item),
                     "div",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some(&format!("display:block;width:{width}px;height:10px")),
                 );
             }

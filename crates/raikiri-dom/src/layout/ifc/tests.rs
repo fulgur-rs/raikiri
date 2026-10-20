@@ -181,7 +181,7 @@ fn a_huge_font_size_or_line_height_lays_out_in_bounded_time() {
 /// child of a zero-margin body (plus `text` after it), in a document of the
 /// given quirks mode.
 fn replaced_offset_y(mode: raikiri_traits::QuirksMode, tag: &str, text: &str) -> f32 {
-    use taffy::Style;
+    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -230,7 +230,7 @@ fn image_line_geometry(
     vertical_align: &str,
     second_line_text: bool,
 ) -> (f32, Vec<f32>) {
-    use taffy::Style;
+    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -275,7 +275,7 @@ fn mixed_image_line_geometry(
     wrapped: bool,
     vertical_aligns: &[&str],
 ) -> (Vec<f32>, Vec<(f32, f32)>) {
-    use taffy::Style;
+    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -413,7 +413,7 @@ fn quirks_mode_inline_axis_padding_preserves_its_line_height() {
 }
 
 fn nested_inline_line_height(mode: raikiri_traits::QuirksMode, inner_css: &str) -> f32 {
-    use taffy::Style;
+    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -461,7 +461,7 @@ fn quirks_mode_parent_inline_without_direct_text_has_no_strut() {
 
 #[test]
 fn quirks_mode_generated_text_keeps_only_its_own_inline_strut() {
-    use taffy::Style;
+    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(raikiri_traits::QuirksMode::Quirks);
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -492,7 +492,7 @@ fn quirks_mode_generated_text_keeps_only_its_own_inline_strut() {
 
 #[test]
 fn a_line_break_is_placed_on_the_line_it_ends() {
-    use taffy::Style;
+    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(
@@ -536,8 +536,8 @@ fn a_line_break_is_placed_on_the_line_it_ends() {
 
 #[test]
 fn quirks_mode_a_line_break_uses_the_box_generating_ancestor_of_a_contents_body() {
+    use crate::LayoutStyle as Style;
     use raikiri_traits::QuirksMode;
-    use taffy::Style;
     for (tag, display, expected) in [
         ("body", "contents", [20.0, 10.0]),
         ("span", "contents", [20.0, 10.0]),
@@ -652,8 +652,12 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
             let mut child = None;
             let (mut doc, cascade, _root) = ahem_paragraph_with(root_css, |doc, root| {
                 doc.append_text(root, "AA");
-                let id =
-                    doc.append_element(Some(root), "div", taffy::Style::default(), Some(child_css));
+                let id = doc.append_element(
+                    Some(root),
+                    "div",
+                    crate::LayoutStyle::default(),
+                    Some(child_css),
+                );
                 doc.append_text(id, "B");
                 child = Some(id);
             });
@@ -677,25 +681,25 @@ fn inline_block_paragraph_in_an_auto_wrapper(max_css: &str) -> (f32, f32) {
     let html = doc.append_element(
         Some(0),
         "html",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block"),
     );
     let root = doc.append_element(
         Some(wrapper),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(&format!(
             "display:inline-block;width:100px;font-family:Ahem;font-size:10px;line-height:10px;height:100px;{max_css}"
         )),
@@ -704,7 +708,7 @@ fn inline_block_paragraph_in_an_auto_wrapper(max_css: &str) -> (f32, f32) {
     let child = doc.append_element(
         Some(root),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("float:left;width:10px;height:50%"),
     );
     doc.append_text(child, "B");

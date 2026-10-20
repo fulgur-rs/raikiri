@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::Node;
-use taffy::Style;
 
 #[test]
 fn source_constructors_keep_styles_and_public_getter_excludes_layout_boxes() {

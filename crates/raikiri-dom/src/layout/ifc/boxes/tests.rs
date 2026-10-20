@@ -68,7 +68,7 @@ fn many_atomics_keep_placement_and_visibility_work_linear() {
                 atomics.push(doc.append_element(
                     Some(root),
                     "span",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:inline-block;width:1px;height:10px"),
                 ));
             }
@@ -139,7 +139,7 @@ fn ellipsis_hides_only_atomic_fragments_it_removes() {
                 atomics.push(doc.append_element(
                     Some(root),
                     "span",
-                    taffy::Style::default(),
+                    crate::LayoutStyle::default(),
                     Some("display:inline-block;width:10px;height:10px"),
                 ));
             }
@@ -349,7 +349,7 @@ fn a_probe_does_not_record_an_inline_element_and_a_performed_layout_does() {
             span_id = doc.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:inline;padding:0 3px"),
             );
             doc.append_text(span_id, "bb");

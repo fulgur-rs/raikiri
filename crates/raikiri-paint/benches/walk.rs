@@ -93,7 +93,7 @@ use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 // cov:ignore: bench harness — same reason as above.
 use raikiri_traits::PageBox;
 // cov:ignore: bench harness — same reason as above.
-use taffy::Style;
+use raikiri_dom::LayoutStyle as Style;
 
 /// Shared `.expect()` message for this file's `cascade()` and
 /// `layout_single_page()` setup calls.

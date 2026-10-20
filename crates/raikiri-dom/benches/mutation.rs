@@ -5,7 +5,7 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
 use raikiri_dom::Document;
-use taffy::Style;
+use raikiri_dom::LayoutStyle as Style;
 
 // Put the target after a populated sibling subtree so repeated parent lookup
 // must traverse both preceding nodes and the target's shrinking child list.

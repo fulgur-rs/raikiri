@@ -1,7 +1,7 @@
 use super::*;
 
+use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 fn cascaded(doc: &Document) -> CascadeResult {
     let rules = build_rule_tree(doc);

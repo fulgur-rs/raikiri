@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
 
 fn engine_document() -> Document {
     let mut doc = Document::new();

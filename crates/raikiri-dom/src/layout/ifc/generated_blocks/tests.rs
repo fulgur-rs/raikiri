@@ -982,7 +982,7 @@ fn before_after_sibling_float(css: &str, float_css: &str) -> (f32, f32) {
     let style_element = doc.append_element(
         Some(root),
         "style",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:none"),
     );
     doc.append_text(

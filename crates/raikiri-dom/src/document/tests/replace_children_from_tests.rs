@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::node::NodeFlags;
-use taffy::Style;
 
 #[test]
 fn replace_children_from_empty_source_invalidates_and_preserves_detached_subtrees() {

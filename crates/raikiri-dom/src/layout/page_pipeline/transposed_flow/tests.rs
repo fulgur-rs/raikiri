@@ -1,6 +1,6 @@
 use super::*;
+use crate::LayoutStyle as Style;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::Style;
 
 /// Paginate an 800x600 page holding a root styled `html_css` and a body
 /// styled `body_css` (Ahem text, 10px lines) with one block child per entry

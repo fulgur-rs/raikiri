@@ -7,10 +7,11 @@
 
 mod box_properties;
 
+use crate::LayoutStyle as Style;
 use box_properties::BoxProperties;
 pub(crate) use box_properties::BoxPropertiesRef;
 use smol_str::SmolStr;
-use taffy::{Cache, Layout, Style};
+use taffy::{Cache, Layout};
 
 use crate::fragment::{MulticolGroup, MulticolStyle};
 

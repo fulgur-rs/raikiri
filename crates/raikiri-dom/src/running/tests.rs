@@ -1,7 +1,7 @@
 use super::*;
 
+use crate::LayoutStyle as Style;
 use smol_str::SmolStr;
-use taffy::Style;
 
 #[test]
 fn element_string_value_resolves_bare_content_to_element_text_value() {

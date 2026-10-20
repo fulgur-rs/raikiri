@@ -1,5 +1,61 @@
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
+
+#[test]
+fn grid_bridge_shares_long_identifiers_with_computed_values() {
+    let name = smol_str::SmolStr::new("a-grid-identifier-longer-than-the-inline-string-capacity");
+    let mut cv = ComputedValues::initial();
+    cv.grid_column_start = GridLineValue::Named(name.clone());
+    cv.grid_column_end = GridLineValue::SpanNamed(name.clone(), 2);
+    cv.grid_template_columns =
+        ComputedGridTemplateTracks::List(std::sync::Arc::new(ComputedGridTrackList {
+            line_names: vec![vec![name.clone()], vec![]],
+            components: vec![ComputedGridTrackListComponent::Repeat(
+                ComputedGridTrackRepeat {
+                    count: GridRepeatCount::Count(2),
+                    line_names: vec![vec![name.clone()], vec![]],
+                    tracks: vec![ComputedGridTrackSize::Breadth(
+                        ComputedGridTrackBreadth::Px(20.0),
+                    )],
+                },
+            )],
+        }));
+    cv.grid_template_areas =
+        GridTemplateAreasValue::Areas(std::sync::Arc::new(GridTemplateAreas {
+            row_strings: vec![name.clone()],
+            areas: vec![GridTemplateAreaEntry {
+                name: name.clone(),
+                row_start: 1,
+                row_end: 2,
+                column_start: 1,
+                column_end: 2,
+            }],
+            row_count: 1,
+            column_count: 1,
+        }));
+    let mut style = Style::default();
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut Vec::new());
+    let GridPlacement::NamedLine(line, 1) = style.grid_column.start.clone() else {
+        panic!("named line");
+    };
+    let GridPlacement::NamedSpan(span, 2) = style.grid_column.end.clone() else {
+        panic!("named span");
+    };
+    let GridTemplateComponent::Repeat(repeat) = &style.grid_template_columns[0] else {
+        panic!("repeat");
+    };
+    let area = &style.grid_template_areas.as_ref().unwrap().areas[0].name;
+    for bridged in [
+        line.as_str(),
+        span.as_str(),
+        style.grid_template_column_names[0][0].as_str(),
+        repeat.line_names[0][0].as_str(),
+        area.as_str(),
+    ] {
+        assert_eq!(bridged, name.as_str());
+        assert_eq!(bridged.as_ptr(), name.as_str().as_ptr());
+    }
+}
 
 #[test]
 fn apply_computed_to_style_bridges_display_to_taffy() {
@@ -37,7 +93,7 @@ fn apply_computed_to_style_bridges_display_to_taffy() {
         Display::None
     );
 
-    let default_style = <taffy::Style as Default>::default();
+    let default_style = <crate::LayoutStyle as Default>::default();
     assert_eq!(
         doc.layout_node_with_style(body).unwrap().style.size,
         default_style.size
@@ -569,7 +625,10 @@ fn apply_computed_to_style_bridges_min_size_to_taffy() {
     }
 
     // Case 1: unspecified → taffy default (initial min `auto` round-trip).
-    assert_eq!(min_for(None), <taffy::Style as Default>::default().min_size);
+    assert_eq!(
+        min_for(None),
+        <crate::LayoutStyle as Default>::default().min_size
+    );
 
     // Case 2: `min-width: 100px; min-height: 50%` → length + percent.
     assert_eq!(
@@ -616,7 +675,10 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     }
 
     // Case 1: unspecified → taffy default (initial max `none` round-trip).
-    assert_eq!(max_for(None), <taffy::Style as Default>::default().max_size);
+    assert_eq!(
+        max_for(None),
+        <crate::LayoutStyle as Default>::default().max_size
+    );
 
     // Case 2: `max-width: 100px; max-height: 50%` → length + percent.
     assert_eq!(
@@ -2053,16 +2115,16 @@ fn bridge_grid_maps_every_grid_line_placement_variant() {
         (GridLineValue::Line(-2), taffy_style_helpers::line(-2i16)),
         (
             GridLineValue::Named("col".into()),
-            GridPlacement::NamedLine("col".to_string(), 1),
+            GridPlacement::NamedLine("col".into(), 1),
         ),
         (
             GridLineValue::NamedLine("col".into(), 3),
-            GridPlacement::NamedLine("col".to_string(), 3),
+            GridPlacement::NamedLine("col".into(), 3),
         ),
         (GridLineValue::Span(4), GridPlacement::Span(4)),
         (
             GridLineValue::SpanNamed("col".into(), 2),
-            GridPlacement::NamedSpan("col".to_string(), 2),
+            GridPlacement::NamedSpan("col".into(), 2),
         ),
     ] {
         // cov:ignore: panic-message literal only executed on assertion
@@ -2095,7 +2157,7 @@ fn bridge_grid_maps_grid_row_and_grid_column_from_the_4_longhands() {
     assert_eq!(
         style.grid_column,
         TaffyLine {
-            start: GridPlacement::NamedLine("main".to_string(), 1),
+            start: GridPlacement::NamedLine("main".into(), 1),
             end: GridPlacement::Auto,
         }
     );
@@ -2144,12 +2206,12 @@ fn bridge_grid_maps_track_list_with_repeat_minmax_fr_and_named_lines() {
                 min: MinTrackSizingFunction::length(0.0),
                 max: MaxTrackSizingFunction::fr(1.0),
             }],
-            line_names: vec![vec!["b".to_string()], vec![]],
+            line_names: vec![vec!["b".into()], vec![]],
         })
     );
     assert_eq!(
         style.grid_template_column_names,
-        vec![vec!["a".to_string()], vec![], vec![]]
+        vec![vec![smol_str::SmolStr::new_static("a")], vec![], vec![]]
     );
 }
 
@@ -2176,7 +2238,7 @@ fn bridge_grid_maps_grid_template_areas() {
         style.grid_template_areas,
         Some(taffy::style::GridTemplateAreas {
             areas: vec![TaffyGridTemplateArea {
-                name: "header".to_string(),
+                name: "header".into(),
                 row_start: 1,
                 row_end: 2,
                 column_start: 1,

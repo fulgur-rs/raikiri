@@ -61,14 +61,19 @@ fn an_uncascaded_descendant_keeps_the_existing_decoration_context() {
     let root = document.append_element(
         Some(0),
         "p",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("text-decoration:underline"),
     );
     let rules = raikiri_style::build_rule_tree(&document);
     let cascade = raikiri_style::cascade(&document, &rules).unwrap();
     let base = context_for_root(&document, &cascade, root);
     assert_eq!(base.specs().len(), 1);
-    let span = document.append_element(Some(root), "span", taffy::Style::default(), None::<&str>);
+    let span = document.append_element(
+        Some(root),
+        "span",
+        crate::LayoutStyle::default(),
+        None::<&str>,
+    );
     let text = document.append_text(span, "ab");
     let result = context_for_text(
         &document,
@@ -93,7 +98,7 @@ fn inline_baseline_shifts_require_the_documents_font_collection() {
             span = document.append_element(
                 Some(root),
                 "span",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("vertical-align:super"),
             );
             document.append_text(span, "ab");
@@ -140,8 +145,12 @@ fn an_undecorated_paragraph_builds_no_line_decorations() {
 
     for (style, lines) in [("", 0), ("text-decoration:underline", 1)] {
         let (mut document, cascade, root) = ahem_paragraph_with("", |document, root| {
-            let span =
-                document.append_element(Some(root), "span", taffy::Style::default(), Some(style));
+            let span = document.append_element(
+                Some(root),
+                "span",
+                crate::LayoutStyle::default(),
+                Some(style),
+            );
             document.append_text(span, "ab");
         });
         layout_single_page(with_ahem(&mut document), &cascade, page_box_800x600()).unwrap();

@@ -1,5 +1,5 @@
 use super::*;
-use taffy::Style;
+use crate::LayoutStyle as Style;
 
 fn external_calc_ptr() -> *const () {
     static TOKEN: usize = 0;

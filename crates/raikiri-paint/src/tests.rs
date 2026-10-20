@@ -2,10 +2,11 @@ use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use peniko::Color;
+use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
-use taffy::{Dimension, Display, Size, Style};
+use taffy::{Dimension, Display, Size};
 
 /// Return a Document + CascadeResult for hello-world
 /// (`<html><head></head><body><p style="color:red">Hi</p></body></html>`)

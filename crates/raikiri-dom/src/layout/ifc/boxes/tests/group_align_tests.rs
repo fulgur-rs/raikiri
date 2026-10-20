@@ -150,7 +150,7 @@ fn paragraph(doc: &mut crate::Document, parent: usize, style: &str, text: &str) 
     let block = doc.append_element(
         Some(parent),
         "p",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some(format!("display:block;margin:0;{style}").as_str()),
     );
     doc.append_text(block, text);
@@ -172,7 +172,7 @@ fn the_lines_of_block_children_align_as_one_group() {
         let outer = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:block"),
         );
         vec![
@@ -260,7 +260,7 @@ fn nested_group_roots_are_laid_out_in_linear_time() {
             parent = doc.append_element(
                 Some(parent),
                 "div",
-                taffy::Style::default(),
+                crate::LayoutStyle::default(),
                 Some("display:block;text-group-align:end"),
             );
         }
@@ -296,7 +296,7 @@ fn an_independent_block_with_its_own_group_leaves_the_outer_measure_alone() {
         let independent = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:flow-root;text-group-align:end"),
         );
         paragraph(doc, independent, "", "A");

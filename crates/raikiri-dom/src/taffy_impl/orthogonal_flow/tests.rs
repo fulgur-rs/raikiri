@@ -1,7 +1,7 @@
 use crate::Document;
+use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::Style;
 
 /// The rect of a box styled `css` under an 8px-margin body, holding either
 /// the Ahem text "aa bb" or a 50px square block.

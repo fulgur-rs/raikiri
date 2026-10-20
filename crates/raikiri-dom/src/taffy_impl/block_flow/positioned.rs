@@ -1,9 +1,10 @@
 //! Collect out-of-flow children for their containing-block dispatch.
 
 use super::sizing::Metrics;
+use crate::LayoutStyle as Style;
 use taffy::{
     AlignItems, AxisStaticPosition, Direction, Line, OofCandidate, OofCandidates,
-    OofPositioningArea, Point, Position, Size, Style,
+    OofPositioningArea, Point, Position, Size,
 };
 
 /// Record the out-of-flow child `node` of a block container for the

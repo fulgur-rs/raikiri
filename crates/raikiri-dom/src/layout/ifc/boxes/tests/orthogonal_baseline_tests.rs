@@ -14,7 +14,7 @@ fn paragraph_height(box_css: &str, text: &str) -> f32 {
         let atomic = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some(&format!("display:inline-block;{box_css}")),
         );
         if !text.is_empty() {
@@ -58,13 +58,13 @@ fn a_display_contents_ancestor_does_not_make_a_parallel_inline_block_orthogonal(
         let wrapper = doc.append_element(
             Some(root),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:contents;writing-mode:vertical-lr"),
         );
         let atomic = doc.append_element(
             Some(wrapper),
             "div",
-            taffy::Style::default(),
+            crate::LayoutStyle::default(),
             Some("display:inline-block;writing-mode:horizontal-tb;height:50px"),
         );
         doc.append_text(atomic, "A");

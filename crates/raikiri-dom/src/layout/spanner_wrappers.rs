@@ -85,7 +85,7 @@ fn collect_wrappers(
 fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     doc.layout_node_with_style(id).is_some_and(|node| {
         let zero = LengthPercentageAuto::length(0.0);
-        let defaults: taffy::Style = taffy::Style::default();
+        let defaults: crate::LayoutStyle = crate::LayoutStyle::default();
         let style = node.style;
         let cv = &cascade.computed[id];
         node.display() == DisplayValue::Block
@@ -206,7 +206,7 @@ fn lift_into_container(doc: &mut LayoutSession<'_>, id: usize) {
     let direction = doc.layout_node_with_style(id).unwrap().style.direction;
     *doc.layout_node_with_style_mut(id).unwrap().style = taffy::Style {
         direction,
-        ..taffy::Style::default()
+        ..crate::LayoutStyle::default()
     };
     doc.nodes[id].unrounded_layout = taffy::Layout::default();
     doc.nodes[id].multicol_auto_width = true;

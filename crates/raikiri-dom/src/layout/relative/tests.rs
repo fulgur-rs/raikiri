@@ -7,13 +7,21 @@ fn child_in(container: &str, child: &str) -> (Document, raikiri_style::CascadeRe
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
-    let container =
-        document.append_element(Some(body), "div", taffy::Style::default(), Some(container));
-    let child =
-        document.append_element(Some(container), "div", taffy::Style::default(), Some(child));
+    let container = document.append_element(
+        Some(body),
+        "div",
+        crate::LayoutStyle::default(),
+        Some(container),
+    );
+    let child = document.append_element(
+        Some(container),
+        "div",
+        crate::LayoutStyle::default(),
+        Some(child),
+    );
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -70,25 +78,25 @@ fn a_display_contents_ancestor_is_skipped() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let block = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:100px;height:100px"),
     );
     let contents = document.append_element(
         Some(block),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:contents"),
     );
     let child = document.append_element(
         Some(contents),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("float:left;position:relative;left:10%;top:20%"),
     );
     document.mark_in_document_flags();
@@ -167,25 +175,25 @@ fn an_inline_ancestor_is_not_the_containing_block() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let block = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:300px;height:100px"),
     );
     let span = document.append_element(
         Some(block),
         "span",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:inline"),
     );
     let child = document.append_element(
         Some(span),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("float:left;position:relative;left:10%;top:10%;width:10px;height:10px"),
     );
     document.mark_in_document_flags();
@@ -264,8 +272,13 @@ fn relative_body(
     body: &str,
 ) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", taffy::Style::default(), html);
-    let body = document.append_element(Some(html), "body", taffy::Style::default(), Some(body));
+    let html = document.append_element(Some(0), "html", crate::LayoutStyle::default(), html);
+    let body = document.append_element(
+        Some(html),
+        "body",
+        crate::LayoutStyle::default(),
+        Some(body),
+    );
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -311,25 +324,25 @@ fn a_stretched_flex_item_has_a_definite_height() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let flex = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:flex;height:100px"),
     );
     let item = document.append_element(
         Some(flex),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:50px"),
     );
     let child = document.append_element(
         Some(item),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("float:left;position:relative;top:10%;width:5px;height:5px"),
     );
     document.mark_in_document_flags();
@@ -350,12 +363,27 @@ fn nested_offset(outer: &str, inner: &str, child: &str) -> (f32, f32) {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
-    let outer = document.append_element(Some(body), "div", taffy::Style::default(), Some(outer));
-    let inner = document.append_element(Some(outer), "span", taffy::Style::default(), Some(inner));
-    let child = document.append_element(Some(inner), "div", taffy::Style::default(), Some(child));
+    let outer = document.append_element(
+        Some(body),
+        "div",
+        crate::LayoutStyle::default(),
+        Some(outer),
+    );
+    let inner = document.append_element(
+        Some(outer),
+        "span",
+        crate::LayoutStyle::default(),
+        Some(inner),
+    );
+    let child = document.append_element(
+        Some(inner),
+        "div",
+        crate::LayoutStyle::default(),
+        Some(child),
+    );
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -411,25 +439,25 @@ fn a_spanner_keeps_its_own_definite_height() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let multicol = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;width:200px;column-count:2;column-gap:20px"),
     );
     let spanner = document.append_element(
         Some(multicol),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;column-span:all;height:100px"),
     );
     let child = document.append_element(
         Some(spanner),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("float:left;position:relative;width:5px;height:5px;top:50%"),
     );
     document.mark_in_document_flags();
@@ -450,31 +478,31 @@ fn an_anonymous_table_cell_is_a_containing_block() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let table = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table;width:200px;border-spacing:0"),
     );
     let row = document.append_element(
         Some(table),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-row"),
     );
     let child = document.append_element(
         Some(row),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("float:left;position:relative;width:50px;height:5px;left:50%"),
     );
     document.append_element(
         Some(row),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-cell;width:150px"),
     );
     document.mark_in_document_flags();
@@ -495,25 +523,25 @@ fn a_table_cell_resolves_against_its_table() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let table = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table;width:200px;height:100px;border-spacing:0"),
     );
     let row = document.append_element(
         Some(table),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-row"),
     );
     let cell = document.append_element(
         Some(row),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-cell;position:relative;left:50%;top:50%"),
     );
     document.mark_in_document_flags();
@@ -534,31 +562,31 @@ fn a_cell_in_a_row_outside_a_table_resolves_against_the_anonymous_table() {
     let body = document.append_element(
         Some(0),
         "body",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:block;margin:0"),
     );
     let row = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-row"),
     );
     document.append_element(
         Some(row),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-cell;width:80px;height:40px"),
     );
     let row = document.append_element(
         Some(body),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-row"),
     );
     let cell = document.append_element(
         Some(row),
         "div",
-        taffy::Style::default(),
+        crate::LayoutStyle::default(),
         Some("display:table-cell;position:relative;left:50%;top:50%;height:20px"),
     );
     document.mark_in_document_flags();

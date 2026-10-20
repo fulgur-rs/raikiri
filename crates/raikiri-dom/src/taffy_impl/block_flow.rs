@@ -7,6 +7,7 @@ mod sizing;
 
 pub(crate) use positioned::aligned_static_position;
 
+use crate::LayoutStyle as Style;
 use crate::layout::context::{LayoutSession, TextGroupScope};
 use crate::taffy_impl::{measure_against_parent_height, resolve_calc};
 use context::{BlockContext, BlockFormattingContext};
@@ -15,7 +16,7 @@ pub(crate) use sizing::Metrics;
 use taffy::{
     AvailableSpace, BlockItemStyle, BoxGenerationMode, CoreStyle, Float, LayoutBlockContainer,
     LayoutInput, LayoutOutput, LayoutPartialTree, Line, MaybeMath, NodeId, Position, Rect,
-    RequestedAxis, ResolveOrZero, RunMode, Size, SizingMode, Style, TraversePartialTree,
+    RequestedAxis, ResolveOrZero, RunMode, Size, SizingMode, TraversePartialTree,
 };
 
 /// How far block flow moves a child of a left-to-right container to the

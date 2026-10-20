@@ -81,7 +81,7 @@ impl LayoutContainingBlock for LayoutSession<'_> {
         }
     }
 
-    fn get_detailed_layout_info(&self, node: NodeId) -> &DetailedLayoutInfo<String> {
+    fn get_detailed_layout_info(&self, node: NodeId) -> &DetailedLayoutInfo<smol_str::SmolStr> {
         self.context
             .grid_layout_info
             .get(&usize::from(node))

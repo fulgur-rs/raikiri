@@ -1,9 +1,10 @@
 //! Resolve the physical box constraints used by project block flow.
 
+use crate::LayoutStyle as Style;
 use crate::taffy_impl::resolve_calc;
 use taffy::{
     BoxSizing, CoreStyle, LayoutInput, MaybeMath, MaybeResolve, Overflow, Rect, ResolveOrZero,
-    Size, SizingMode, Style,
+    Size, SizingMode,
 };
 
 #[derive(Clone, Copy)]
