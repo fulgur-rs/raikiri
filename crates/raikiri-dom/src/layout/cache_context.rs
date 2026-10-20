@@ -74,31 +74,21 @@ struct CacheNodeState {
     context: Option<CacheFingerprint>,
     stamp: u64,
     overrides: u64,
-    publication: CacheEpoch,
     walk_session: u64,
     layout: super::context::NodeLayoutState,
 }
 
 impl CacheNodeState {
-    fn new(key: BoxKey, publication: CacheEpoch) -> Self {
+    fn new(key: BoxKey) -> Self {
         Self {
             context: None,
             stamp: 0,
             overrides: 0,
-            publication,
             walk_session: 0,
             layout: super::context::NodeLayoutState {
                 box_key: key,
                 taffy_child_walks: None,
             },
-        }
-    }
-    fn synchronize(&mut self, publication: CacheEpoch) {
-        if self.publication != publication {
-            self.context = None;
-            self.overrides = 0;
-            self.layout.taffy_child_walks = None;
-            self.publication = publication;
         }
     }
 }
@@ -135,7 +125,7 @@ impl NodeStates {
             self.rest.get_mut(key)
         }
     }
-    fn get_or_insert(&mut self, key: BoxKey, publication: CacheEpoch) -> &mut CacheNodeState {
+    fn get_or_insert(&mut self, key: BoxKey) -> &mut CacheNodeState {
         if self.rest.is_empty() {
             if let Some(index) = self
                 .first
@@ -145,7 +135,7 @@ impl NodeStates {
                 return &mut self.first[index].as_mut().expect("inline state exists").1;
             }
             if let Some(index) = self.first.iter().position(Option::is_none) {
-                self.first[index] = Some((key, CacheNodeState::new(key, publication)));
+                self.first[index] = Some((key, CacheNodeState::new(key)));
                 return &mut self.first[index]
                     .as_mut()
                     .expect("inline state was inserted")
@@ -160,7 +150,7 @@ impl NodeStates {
         }
         self.rest
             .entry(key)
-            .or_insert_with(|| CacheNodeState::new(key, publication))
+            .or_insert_with(|| CacheNodeState::new(key))
     }
     fn values_mut(&mut self) -> impl Iterator<Item = &mut CacheNodeState> {
         self.first
@@ -266,11 +256,9 @@ impl LayoutCacheContext {
         key: BoxKey,
         dirty: bool,
     ) -> RefMut<'_, super::context::NodeLayoutState> {
-        let publication = self.publication_epoch;
         let session = self.walk_session;
         RefMut::map(self.entries.borrow_mut(), |entries| {
-            let state = entries.get_or_insert(key, publication);
-            state.synchronize(publication);
+            let state = entries.get_or_insert(key);
             if state.walk_session != session || dirty {
                 state.layout.taffy_child_walks = None;
                 state.walk_session = session;
@@ -315,6 +303,8 @@ impl LayoutCacheContext {
         self.metadata = self.metadata.wrapping_add(1);
         // Synthetic identities may be reused after reconstruction; retain only source entries.
         self.entries.get_mut().retain(|key, state| {
+            state.context = None;
+            state.overrides = 0;
             state.layout.taffy_child_walks = None;
             matches!(key, BoxKey::Source(_))
         });
@@ -322,11 +312,7 @@ impl LayoutCacheContext {
 
     pub(crate) fn override_changed(&mut self, key: BoxKey) {
         self.invalidate();
-        let state = self
-            .entries
-            .get_mut()
-            .get_or_insert(key, self.publication_epoch);
-        state.synchronize(self.publication_epoch);
+        let state = self.entries.get_mut().get_or_insert(key);
         state.overrides = state.overrides.wrapping_add(1);
         state.context = None;
     }
@@ -337,7 +323,6 @@ impl LayoutCacheContext {
             .entries
             .borrow()
             .get(&key)
-            .filter(|state| state.publication == self.publication_epoch)
             .map_or(0, |state| state.overrides);
         CacheFingerprint::new(view, self.source, self.metadata, overrides)
     }
@@ -360,11 +345,7 @@ impl LayoutCacheContext {
         key: BoxKey,
         fingerprint: impl FnOnce(u64) -> CacheFingerprint,
     ) -> CacheFrame {
-        let state = self
-            .entries
-            .get_mut()
-            .get_or_insert(key, self.publication_epoch);
-        state.synchronize(self.publication_epoch);
+        let state = self.entries.get_mut().get_or_insert(key);
         let fingerprint = fingerprint(state.overrides);
         let changed = state.context.is_some_and(|last| last != fingerprint);
         state.context = Some(fingerprint);

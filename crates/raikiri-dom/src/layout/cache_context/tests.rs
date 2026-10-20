@@ -541,3 +541,27 @@ fn transient_override_keeps_walk_and_session_change_keeps_cache() {
     assert!(cache.node_state(key, false).taffy_child_walks.is_none());
     assert!(cache.can_read(key));
 }
+
+#[test]
+fn metadata_publication_resets_context_even_after_epoch_exhaustion() {
+    let mut cache = LayoutCacheContext::default();
+    let key = BoxKey::Source(0);
+    let view = ViewContext::default();
+    cache.epoch.namespace = u64::MAX;
+    cache.epoch.value = u64::MAX;
+    cache.publish_metadata();
+    cache.override_changed(key);
+    let frame = cache.enter_view(key, view);
+    cache.leave(frame);
+    cache.node_state(key, false).taffy_child_walks = Some(vec![taffy::NodeId::from(1usize)]);
+    cache.publish_metadata();
+    assert_eq!(
+        cache.fingerprint(key, view),
+        CacheFingerprint::new(view, cache.source, cache.metadata, 0)
+    );
+    assert!(cache.node_state(key, false).taffy_child_walks.is_none());
+    assert!(!cache.can_read(key));
+    let frame = cache.enter_view(key, view);
+    assert!(!cache.can_store(key));
+    cache.leave(frame);
+}
