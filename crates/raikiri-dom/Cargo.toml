@@ -12,6 +12,7 @@ logical-snapshot = []
 snapshot-serde = ["logical-snapshot", "dep:serde"]
 
 [dependencies]
+rustc-hash = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
 bitflags       = "2"
 cssparser      = { workspace = true }

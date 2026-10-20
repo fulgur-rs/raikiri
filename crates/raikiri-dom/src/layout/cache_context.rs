@@ -1,10 +1,8 @@
 use crate::{layout::context::LayoutSession, node::arena::BoxKey};
 use raikiri_layout_style::{PercentBasis, ViewContext};
 use raikiri_style::property::WritingMode;
-use std::{
-    cell::{RefCell, RefMut},
-    collections::HashMap,
-};
+use rustc_hash::FxHashMap;
+use std::cell::{RefCell, RefMut};
 
 mod scopes;
 
@@ -109,7 +107,8 @@ impl CacheNodeState {
 #[derive(Debug, Default)]
 struct NodeStates {
     first: [Option<(BoxKey, CacheNodeState)>; 4],
-    rest: HashMap<BoxKey, CacheNodeState>,
+    // Keys come from validated arena identities, never external strings or arbitrary integers.
+    rest: FxHashMap<BoxKey, CacheNodeState>,
     expected: usize,
 }
 
