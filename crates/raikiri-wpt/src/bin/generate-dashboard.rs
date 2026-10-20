@@ -565,6 +565,9 @@ fn area_of(file: &str) -> Option<&str> {
     (!area.is_empty()).then_some(area)
 }
 
+/// Counts of every area, with the counts of each of its subdirectories.
+type AreaTallies = BTreeMap<String, (Tally, BTreeMap<String, Tally>)>;
+
 fn summarize(
     files: &[String],
     reftests: &Reftests,
@@ -574,14 +577,41 @@ fn summarize(
     known_issues: &[(String, String)],
     sweep: Option<&BTreeMap<String, Outcome>>,
 ) -> Result<Summary, String> {
-    let area_reason = |area_path: &str| {
-        known_issues
-            .iter()
-            .find(|(pattern, _)| pattern == area_path)
-            .map(|(_, reason)| reason.clone())
+    check_scope_lists(print_scope, tracked_areas, known_issues)?;
+    let (per_area, waived) = tally_areas(files, reftests, baseline, known_issues, sweep);
+    let mut summary = Summary {
+        waived,
+        xml_reftests: reftests.xml.len(),
+        unreadable: reftests.unreadable,
+        ..Summary::default()
     };
+    classify_areas(
+        &mut summary,
+        per_area,
+        print_scope,
+        tracked_areas,
+        known_issues,
+    );
+    sort_rows(&mut summary);
+    Ok(summary)
+}
+
+/// The reason `known-issues.txt` gives for leaving out exactly this area.
+fn area_reason<'a>(known_issues: &'a [(String, String)], area_path: &str) -> Option<&'a str> {
+    known_issues
+        .iter()
+        .find(|(pattern, _)| pattern == area_path)
+        .map(|(_, reason)| reason.as_str())
+}
+
+/// Refuse an area that is listed in two of the three scope lists.
+fn check_scope_lists(
+    print_scope: &[String],
+    tracked_areas: &[String],
+    known_issues: &[(String, String)],
+) -> Result<(), String> {
     for area in print_scope {
-        if area_reason(area).is_some() {
+        if area_reason(known_issues, area).is_some() {
             return Err(format!(
                 "{area} is listed in both print-scope.txt and known-issues.txt"
             ));
@@ -593,20 +623,27 @@ fn summarize(
                 "{area} is listed in both print-scope.txt and tracked-areas.txt"
             ));
         }
-        if area_reason(area).is_some() {
+        if area_reason(known_issues, area).is_some() {
             return Err(format!(
                 "{area} is listed in both tracked-areas.txt and known-issues.txt"
             ));
         }
     }
+    Ok(())
+}
 
+/// Count the runnable reftests of every area of the inventory, and how many
+/// of them a narrower known-issues entry waives.
+fn tally_areas(
+    files: &[String],
+    reftests: &Reftests,
+    baseline: &HashSet<String>,
+    known_issues: &[(String, String)],
+    sweep: Option<&BTreeMap<String, Outcome>>,
+) -> (AreaTallies, usize) {
     let baseline_files: HashSet<&str> = baseline.iter().map(|id| strip_query(id)).collect();
-    let mut per_area: BTreeMap<String, (Tally, BTreeMap<String, Tally>)> = BTreeMap::new();
-    let mut summary = Summary {
-        xml_reftests: reftests.xml.len(),
-        unreadable: reftests.unreadable,
-        ..Summary::default()
-    };
+    let mut per_area = AreaTallies::new();
+    let mut waived = 0;
     // Every area of the inventory gets a row, even one without reftests.
     for file in files {
         if let Some(area) = area_of(file)
@@ -621,26 +658,16 @@ fn summarize(
             continue;
         };
         let area_path = format!("css/{area}/");
-        let area_out_of_scope = area_reason(&area_path).is_some();
+        let area_out_of_scope = area_reason(known_issues, &area_path).is_some();
         if !area_out_of_scope
             && known_issues
                 .iter()
                 .any(|(pattern, _)| matches_known_issue(file, pattern))
         {
-            summary.waived += 1;
+            waived += 1;
             continue;
         }
-        let mut tally = Tally {
-            reftests: 1,
-            baseline: usize::from(baseline_files.contains(file.as_str())),
-            ..Tally::default()
-        };
-        match sweep.and_then(|sweep| sweep.get(file)) {
-            Some(Outcome::Pass) => tally.pass = 1,
-            Some(Outcome::Fail) => tally.fail = 1,
-            Some(Outcome::Error) => tally.error = 1,
-            None => {}
-        }
+        let tally = reftest_tally(file, &baseline_files, sweep);
         let (area_tally, children) = per_area.entry(area.to_owned()).or_default();
         area_tally.add(tally);
         let rest = &file[area_path.len()..];
@@ -651,29 +678,51 @@ fn summarize(
                 .add(tally);
         }
     }
+    (per_area, waived)
+}
 
+/// The counts of one reftest file.
+fn reftest_tally(
+    file: &str,
+    baseline_files: &HashSet<&str>,
+    sweep: Option<&BTreeMap<String, Outcome>>,
+) -> Tally {
+    let mut tally = Tally {
+        reftests: 1,
+        baseline: usize::from(baseline_files.contains(file)),
+        ..Tally::default()
+    };
+    match sweep.and_then(|sweep| sweep.get(file)) {
+        Some(Outcome::Pass) => tally.pass = 1,
+        Some(Outcome::Fail) => tally.fail = 1,
+        Some(Outcome::Error) => tally.error = 1,
+        None => {}
+    }
+    tally
+}
+
+/// Turn the counts of each area into a row of the table it belongs to.
+fn classify_areas(
+    summary: &mut Summary,
+    per_area: AreaTallies,
+    print_scope: &[String],
+    tracked_areas: &[String],
+    known_issues: &[(String, String)],
+) {
     for (area, (tally, children)) in per_area {
         let area_path = format!("css/{area}/");
-        if let Some(reason) = area_reason(&area_path) {
+        if let Some(reason) = area_reason(known_issues, &area_path) {
             summary.out_of_scope.push(OutOfScopeRow {
                 path: format!("css/{area}"),
                 reftests: tally.reftests,
-                reason,
+                reason: reason.to_owned(),
             });
             continue;
         }
-        let mut children: Vec<(String, Tally)> = children.into_iter().collect();
-        children.sort_by(|(left_name, left), (right_name, right)| {
-            right
-                .reftests
-                .cmp(&left.reftests)
-                .then_with(|| left_name.cmp(right_name))
-        });
-        children.truncate(5);
         let row = AreaRow {
             path: format!("css/{area}"),
             tally,
-            children,
+            children: largest_children(children),
         };
         if print_scope.contains(&area_path) {
             summary.in_scope.push(row);
@@ -683,7 +732,23 @@ fn summarize(
             summary.unclassified.push(row);
         }
     }
+}
 
+/// The five subdirectories with the most reftests, ties by name.
+fn largest_children(children: BTreeMap<String, Tally>) -> Vec<(String, Tally)> {
+    let mut children: Vec<(String, Tally)> = children.into_iter().collect();
+    children.sort_by(|(left_name, left), (right_name, right)| {
+        right
+            .reftests
+            .cmp(&left.reftests)
+            .then_with(|| left_name.cmp(right_name))
+    });
+    children.truncate(5);
+    children
+}
+
+/// Order every table by reftest count, ties by path.
+fn sort_rows(summary: &mut Summary) {
     let by_reftests = |left: &AreaRow, right: &AreaRow| {
         right
             .tally
@@ -700,7 +765,6 @@ fn summarize(
             .cmp(&left.reftests)
             .then_with(|| left.path.cmp(&right.path))
     });
-    Ok(summary)
 }
 
 fn rate_cell(passed: usize, denominator: usize) -> String {
