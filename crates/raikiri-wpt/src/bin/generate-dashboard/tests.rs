@@ -238,6 +238,67 @@ fn summarize_splits_areas_and_counts_sweep_outcomes() {
 }
 
 #[test]
+fn reftest_tally_counts_the_baseline_and_the_sweep_outcome_of_one_file() {
+    let baseline: HashSet<&str> = ["a.html"].into_iter().collect();
+    let sweep: BTreeMap<String, Outcome> = [
+        ("a.html".to_owned(), Outcome::Pass),
+        ("b.html".to_owned(), Outcome::Fail),
+        ("c.html".to_owned(), Outcome::Error),
+    ]
+    .into_iter()
+    .collect();
+    let tally = |file: &str, sweep: Option<&BTreeMap<String, Outcome>>| {
+        reftest_tally(file, &baseline, sweep)
+    };
+    let one = Tally {
+        reftests: 1,
+        ..Tally::default()
+    };
+    assert_eq!(
+        tally("a.html", Some(&sweep)),
+        Tally {
+            pass: 1,
+            baseline: 1,
+            ..one
+        }
+    );
+    assert_eq!(tally("b.html", Some(&sweep)), Tally { fail: 1, ..one });
+    assert_eq!(tally("c.html", Some(&sweep)), Tally { error: 1, ..one });
+    assert_eq!(tally("d.html", Some(&sweep)), one);
+    assert_eq!(tally("a.html", None), Tally { baseline: 1, ..one });
+}
+
+#[test]
+fn largest_children_keeps_the_five_with_the_most_reftests_ties_by_name() {
+    let children: BTreeMap<String, Tally> = [
+        ("css/a/b", 1),
+        ("css/a/c", 3),
+        ("css/a/d", 3),
+        ("css/a/e", 2),
+        ("css/a/f", 1),
+        ("css/a/g", 5),
+        ("css/a/h", 4),
+    ]
+    .into_iter()
+    .map(|(name, reftests)| {
+        let tally = Tally {
+            reftests,
+            ..Tally::default()
+        };
+        (name.to_owned(), tally)
+    })
+    .collect();
+    let names: Vec<String> = largest_children(children)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(
+        names,
+        ["css/a/g", "css/a/h", "css/a/c", "css/a/d", "css/a/e"]
+    );
+}
+
+#[test]
 fn summarize_rejects_an_area_in_both_scope_lists() {
     let (files, reftests) = reftest_fixture();
     let error = summarize(
