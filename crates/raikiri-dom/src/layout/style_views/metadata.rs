@@ -14,6 +14,9 @@ pub(super) fn prepare_metadata(
     } else {
         StyleFlags::EMPTY
     };
+    if source && !neutral_contents && super::super::bridge::uses_vertical_axes(cascade, idx) {
+        flags = flags.union(StyleFlags::SOURCE_VERTICAL_DIRECTION);
+    }
     if !neutral_contents && node.taffy_display() == taffy::Display::Block {
         flags = flags.union(StyleFlags::BLOCK);
     }

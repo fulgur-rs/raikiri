@@ -27,7 +27,7 @@ fn box_identity_position_containment_and_overflow_policies_are_explicit() {
         (PositionValue::Relative, taffy::Position::Relative),
         (PositionValue::Sticky, taffy::Position::Relative),
         (PositionValue::Absolute, taffy::Position::Absolute),
-        (PositionValue::Fixed, taffy::Position::Fixed),
+        (PositionValue::Fixed, taffy::Position::Absolute),
     ] {
         cv.position = position;
         for (contain, expected_contain) in [

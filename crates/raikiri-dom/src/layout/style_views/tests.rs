@@ -369,3 +369,25 @@ fn viewport_overflow_is_recorded_when_the_body_write_happens() {
         raikiri_style::property::OverflowValue::Hidden
     );
 }
+
+#[test]
+fn fixed_and_vertical_direction_match_physical_legacy_getters() {
+    for css in [
+        "position:fixed",
+        "writing-mode:sideways-lr;direction:ltr",
+        "writing-mode:vertical-rl;text-orientation:upright;direction:rtl",
+    ] {
+        let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", css);
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        let view = session.style_view(child);
+        let old = session.layout_style_for_key(child).unwrap();
+        assert_eq!(view.position(), old.position(), "{css}");
+        assert_eq!(view.direction(), old.direction(), "{css}");
+        assert_eq!(
+            view.size(),
+            old.size(),
+            "physical sizes stay unprojected: {css}"
+        );
+    }
+}

@@ -182,3 +182,6 @@ impl LayoutSession<'_> {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(feature = "snapshot-serde")]
+mod corpus_tests;

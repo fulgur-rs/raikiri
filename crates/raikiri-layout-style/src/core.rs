@@ -45,14 +45,16 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     fn direction(&self) -> taffy::Direction {
         let c = &*self.prepared.values;
-        let upright = self.vertical()
+        let vertical =
+            self.vertical() || self.flags().contains(StyleFlags::SOURCE_VERTICAL_DIRECTION);
+        let upright = vertical
             && c.text_orientation == TextOrientation::Upright
             && matches!(
                 c.cssom_writing_mode,
                 WritingMode::VerticalRl | WritingMode::VerticalLr
             );
         let rtl = c.direction == Direction::Rtl && !upright;
-        let reversed = self.vertical() && c.cssom_writing_mode == WritingMode::SidewaysLr;
+        let reversed = vertical && c.cssom_writing_mode == WritingMode::SidewaysLr;
         if rtl != reversed {
             taffy::Direction::Rtl
         } else {
@@ -84,8 +86,7 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     fn position(&self) -> taffy::Position {
         match self.prepared.values.position {
-            PositionValue::Absolute => taffy::Position::Absolute,
-            PositionValue::Fixed => taffy::Position::Fixed,
+            PositionValue::Absolute | PositionValue::Fixed => taffy::Position::Absolute,
             PositionValue::Relative | PositionValue::Sticky => taffy::Position::Relative,
             _ => taffy::Position::Static,
         }
