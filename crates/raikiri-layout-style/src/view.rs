@@ -48,6 +48,9 @@ impl<'a> LayoutStyleView<'a> {
         }) {
             return value;
         }
+        self.base_length(property)
+    }
+    pub(crate) fn base_length(&self, property: LengthProperty) -> LengthValue<'a> {
         use LengthProperty::*;
         let flags = self.flags();
         let mut source = property;

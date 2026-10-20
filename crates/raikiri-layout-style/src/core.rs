@@ -34,7 +34,9 @@ impl CoreStyle for LayoutStyleView<'_> {
             && matches!(c.padding.top, P::Px(0.0) | P::Percent(0.0))
             && matches!(c.padding.bottom, P::Px(0.0) | P::Percent(0.0));
         if matches!(c.box_sizing, BoxSizing::BorderBox)
-            || (matches!(c.width, L::Auto) && side_borders && vertical_clean)
+            || (matches!(self.base_length(LengthProperty::Width).value, L::Auto)
+                && side_borders
+                && vertical_clean)
         {
             taffy::BoxSizing::BorderBox
         } else {
@@ -117,11 +119,11 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     fn aspect_ratio(&self) -> Option<f32> {
         let c = self.prepared.values;
-        let base = if matches!(c.width, L::Auto)
-            || (!self.flags().contains(StyleFlags::CONTAIN_WIDTH)
-                && !self.is_replaced()
-                && c.width.is_content_keyword())
-            || matches!(c.height, L::Auto)
+        let width = self.base_length(LengthProperty::Width).value;
+        let height = self.base_length(LengthProperty::Height).value;
+        let base = if matches!(width, L::Auto)
+            || (!self.flags().contains(StyleFlags::CONTAIN_WIDTH) && width.is_content_keyword())
+            || matches!(height, L::Auto)
         {
             c.aspect_ratio.preferred(None)
         } else {

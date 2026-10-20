@@ -59,7 +59,7 @@ impl LayoutStyleView<'_> {
                     safety: taffy::AlignmentSafety::Safe,
                 })
             }
-            AlignSelfValue::Value(A::Normal) => None,
+            AlignSelfValue::Value(A::Normal) => Some(taffy::AlignItems::NORMAL),
             AlignSelfValue::Value(value) => Some(items(value)),
             _ => None,
         }

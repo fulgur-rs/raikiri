@@ -155,14 +155,7 @@ fn all_flex_and_alignment_keywords_have_explicit_results() {
         cv.align_self = AlignSelfValue::Value(input);
         query(&cv, StyleFlags::default(), |v| {
             assert_eq!(v.align_items(), expected);
-            assert_eq!(
-                v.align_self(),
-                if input == SelfAlignmentValue::Normal {
-                    None
-                } else {
-                    Some(expected)
-                }
-            );
+            assert_eq!(v.align_self(), Some(expected));
         });
     }
 }

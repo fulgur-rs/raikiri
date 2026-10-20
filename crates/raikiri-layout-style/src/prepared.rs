@@ -39,6 +39,38 @@ impl std::error::Error for PrepareError {}
 /// };
 /// drop(prepared);
 /// ```
+///
+/// Payload owners are borrowed as well, even when the computed values survive.
+///
+/// ```compile_fail
+/// use raikiri_layout_style::*;
+/// use raikiri_style::{ComputedValues, ComputedLengthPercentageOrAuto as L, property::CalcLengthPercentage};
+/// let mut values = ComputedValues::initial();
+/// let expression = CalcLengthPercentage { px: 1.0, percent: 20.0 };
+/// values.width = L::Calc(expression);
+/// let prepared = {
+///     let payload = AlignedCalc::new(expression, true);
+///     let bindings = [PreparedCalc { slot: CalcSlot::Property(LengthProperty::Width), payload: &payload }];
+///     PreparedStyle::new(&values, StyleMetadata::default(), &bindings).unwrap()
+/// };
+/// let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+/// let _ = taffy::CoreStyle::size(&view);
+/// ```
+///
+/// Keeping both owners and bindings alive makes the same query valid.
+///
+/// ```
+/// use raikiri_layout_style::*;
+/// use raikiri_style::{ComputedValues, ComputedLengthPercentageOrAuto as L, property::CalcLengthPercentage};
+/// let mut values = ComputedValues::initial();
+/// let expression = CalcLengthPercentage { px: 1.0, percent: 20.0 };
+/// values.width = L::Calc(expression);
+/// let payload = AlignedCalc::new(expression, true);
+/// let bindings = [PreparedCalc { slot: CalcSlot::Property(LengthProperty::Width), payload: &payload }];
+/// let prepared = PreparedStyle::new(&values, StyleMetadata::default(), &bindings).unwrap();
+/// let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+/// let _ = taffy::CoreStyle::size(&view);
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct PreparedStyle<'a> {
     pub(crate) values: &'a ComputedValues,

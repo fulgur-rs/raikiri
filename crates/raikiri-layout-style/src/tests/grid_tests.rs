@@ -22,13 +22,18 @@ fn grid_track_calc_slots_preserve_repeat_axis_and_range() {
         percent: 25.0,
     };
     let payload = AlignedCalc::new(expr, true);
+    let max_expr = CalcLengthPercentage {
+        px: 20.0,
+        percent: 50.0,
+    };
+    let max_payload = AlignedCalc::new(max_expr, true);
     let mut cv = ComputedValues::initial();
     cv.grid_template_rows = ComputedGridTemplateTracks::List(Arc::new(ComputedGridTrackList {
         line_names: vec![vec![], vec![]],
         components: vec![C::Repeat(ComputedGridTrackRepeat {
             count: GridRepeatCount::AutoFit,
             line_names: vec![vec![], vec![]],
-            tracks: vec![S::MinMax(B::Calc(expr), B::Calc(expr))],
+            tracks: vec![S::MinMax(B::Calc(expr), B::Calc(max_expr))],
         })],
     }));
     cv.grid_auto_columns = Arc::new(vec![S::Breadth(B::Calc(expr))]);
@@ -64,8 +69,19 @@ fn grid_track_calc_slots_preserve_repeat_axis_and_range() {
     ];
     let bindings = slots.map(|slot| PreparedCalc {
         slot,
-        payload: &payload,
+        payload: if slot == slots[1] {
+            &max_payload
+        } else {
+            &payload
+        },
     });
+    let mut swapped = bindings;
+    swapped[0].payload = &max_payload;
+    swapped[1].payload = &payload;
+    assert_eq!(
+        PreparedStyle::new(&cv, StyleMetadata::default(), &swapped).unwrap_err(),
+        PrepareError::Mismatch(slots[0])
+    );
     assert!(PreparedStyle::new(&cv, StyleMetadata::default(), &bindings[..3]).is_err());
     let p = PreparedStyle::new(&cv, StyleMetadata::default(), &bindings).unwrap();
     let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
@@ -84,7 +100,7 @@ fn grid_track_calc_slots_preserve_repeat_axis_and_range() {
         );
         assert_eq!(
             track.max.definite_value(Some(basis), resolve),
-            Some(expected)
+            Some(basis * 0.5 + 20.0)
         );
         assert_eq!(
             auto.max.definite_value(Some(basis), resolve),
