@@ -88,6 +88,14 @@ impl FlowGeometry {
             (self.insets.top, self.insets.bottom)
         }
     }
+
+    /// Physical size of the root border box represented by this geometry.
+    pub(crate) fn border_box_size(self) -> PhysicalSize {
+        PhysicalSize {
+            width: self.content_size.width + self.insets.left + self.insets.right,
+            height: self.content_size.height + self.insets.top + self.insets.bottom,
+        }
+    }
 }
 
 /// How many times a line is laid out again because the space turned out to

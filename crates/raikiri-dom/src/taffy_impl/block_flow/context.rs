@@ -437,6 +437,16 @@ impl BlockContext<'_> {
         }
     }
 
+    pub(crate) fn has_top_adjoining_float(&self, clear: Clear) -> bool {
+        let adjoining = self.top_adjoining_floats();
+        match clear {
+            Clear::None => false,
+            Clear::Left => adjoining[0],
+            Clear::Right => adjoining[1],
+            Clear::Both => adjoining[0] || adjoining[1],
+        }
+    }
+
     pub(crate) fn commit_strut(&mut self) {
         self.state
             .leading_adjoining

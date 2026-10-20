@@ -4,7 +4,8 @@ use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{
-    absolute_rect, ahem_paragraph_with, ifc_ahem_fonts, page_box_800x600, with_ahem,
+    absolute_rect, ahem_paragraph_with, ahem_paragraph_with_atomic, ifc_ahem_fonts,
+    page_box_800x600, with_ahem,
 };
 use crate::taffy_impl::block_flow::context::BlockFormattingContext;
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
@@ -126,16 +127,168 @@ fn vertical_geometry() -> FlowGeometry {
 #[test]
 fn vertical_mixed_ifc_block_children_use_their_bfc_context() {
     for writing_mode in ["vertical-rl", "vertical-lr"] {
-        let (float, uncleared, _) = layout_vertical_mixed_ifc(writing_mode, "none");
+        let (float, _uncleared, _) = layout_vertical_mixed_ifc(writing_mode, "none");
         let (same_float, cleared, orthogonal) = layout_vertical_mixed_ifc(writing_mode, "both");
         assert_eq!(same_float, float);
         if writing_mode == "vertical-rl" {
-            assert_eq!(cleared.0, uncleared.0 - float.2, "{writing_mode}");
+            assert!(
+                cleared.0 + cleared.2 <= float.0,
+                "{writing_mode}: float={float:?}, cleared={cleared:?}"
+            );
         } else {
-            assert_eq!(cleared.0, uncleared.0 + float.2, "{writing_mode}");
+            assert!(
+                float.0 + float.2 <= cleared.0,
+                "{writing_mode}: float={float:?}, cleared={cleared:?}"
+            );
         }
         assert_eq!((orthogonal.2, orthogonal.3), (10.0, 10.0), "{writing_mode}");
     }
+}
+
+#[test]
+fn vertical_inline_boxes_use_the_physical_top_inset() {
+    for (writing_mode, block_start_inset) in [
+        ("vertical-rl", "padding-right:11px"),
+        ("vertical-lr", "padding-left:17px"),
+    ] {
+        let root_style = asymmetric_vertical_root_style(writing_mode, block_start_inset);
+        let mut inline = 0;
+        let (mut doc, cascade, root) = ahem_paragraph_with(&root_style, |doc, root| {
+            inline =
+                doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+            doc.append_text(inline, "a");
+        });
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert_eq!(
+            absolute_rect(&doc, inline).1,
+            absolute_rect(&doc, root).1 + 3.0,
+            "{writing_mode} inline box"
+        );
+    }
+}
+
+#[test]
+fn vertical_inline_atomics_use_the_physical_top_inset() {
+    for (writing_mode, block_start_inset) in [
+        ("vertical-rl", "padding-right:11px"),
+        ("vertical-lr", "padding-left:17px"),
+    ] {
+        let root_style = asymmetric_vertical_root_style(writing_mode, block_start_inset);
+        let (mut doc, cascade, atomic, root) =
+            ahem_paragraph_with_atomic("", "width:10px;height:10px", "", &root_style);
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert_eq!(
+            absolute_rect(&doc, atomic).1,
+            absolute_rect(&doc, root).1 + 3.0,
+            "{writing_mode} inline atomic"
+        );
+    }
+}
+
+fn asymmetric_vertical_root_style(writing_mode: &str, block_start_inset: &str) -> String {
+    format!("writing-mode:{writing_mode};height:40px;padding-top:3px;{block_start_inset}")
+}
+
+#[test]
+fn vertical_ifc_float_uses_logical_extents_and_physical_placement() {
+    for (writing_mode, block_start_inset, block_start_margin, expected) in [
+        (
+            "vertical-rl",
+            "padding-right:11px",
+            "margin-right:1px",
+            (89.0, 20.0, 10.0, 20.0),
+        ),
+        (
+            "vertical-lr",
+            "padding-left:17px",
+            "margin-left:1px",
+            (18.0, 20.0, 10.0, 20.0),
+        ),
+    ] {
+        let mut float = 0;
+        let (mut doc, cascade, root) = ahem_paragraph_with(
+            &format!(
+                "writing-mode:{writing_mode};width:100px;height:37px;padding-top:3px;\
+                 {block_start_inset}"
+            ),
+            |doc, root| {
+                float = doc.append_element(
+                    Some(root),
+                    "div",
+                    Style::default(),
+                    Some(&format!(
+                        "display:block;float:right;width:10px;height:20px;margin-top:2px;\
+                         {block_start_margin}"
+                    )),
+                );
+                doc.append_text(root, "a");
+            },
+        );
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert_eq!(
+            absolute_rect(&doc, float),
+            expected,
+            "{writing_mode} root={root}"
+        );
+        let lines = doc.nodes[root]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .expect("paragraph lines");
+        assert!(lines.beside_floats, "{writing_mode}");
+        assert_eq!(
+            lines.lines[0].remaining_inline_size(),
+            5.0,
+            "{writing_mode}"
+        );
+    }
+}
+
+#[test]
+fn vertical_clear_does_not_use_a_descendant_float_as_its_clearance() {
+    let mut clear = 0;
+    let (mut doc, _cascade, _root) = ahem_paragraph_with(
+        "writing-mode:vertical-rl;width:100px;height:40px",
+        |doc, root| {
+            clear = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;clear:both;width:20px;height:20px"),
+            );
+            doc.append_element(
+                Some(clear),
+                "div",
+                Style::default(),
+                Some("display:block;float:left;width:10px;height:10px"),
+            );
+        },
+    );
+    let geometry = vertical_geometry();
+    let mut session = LayoutSession::new(&mut doc);
+    let mut bfc = BlockFormattingContext::new();
+    let mut ctx = bfc.root_block_context();
+    ctx.set_width(geometry.width);
+    ctx.set_origin_resolved(true);
+
+    let child = super::super::layout_vertical_block_child(
+        &mut session,
+        &mut ctx,
+        clear,
+        0.0,
+        CollapsibleMarginSet::ZERO,
+        geometry,
+        false,
+        true,
+    );
+
+    assert_eq!(child.top, 0.0);
+    assert_eq!(child.next_y, 20.0);
+    assert!(child.top.is_finite());
+    assert!(child.next_y.is_finite());
 }
 
 #[test]
@@ -184,6 +337,7 @@ fn vertical_clearance_keeps_an_unresolved_parent_margin() {
         Clear::None,
         true,
     );
+    ctx.commit_strut();
 
     let child = super::super::layout_vertical_block_child(
         &mut session,

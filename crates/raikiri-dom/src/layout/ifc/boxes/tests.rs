@@ -11,8 +11,8 @@ mod vertical_bfc_tests;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::test_support::with_ahem;
 use crate::layout::test_support::{
-    ahem_paragraph, ahem_paragraph_with_atomic, ahem_paragraph_with_float, ifc_ahem_fonts,
-    line_start_x,
+    absolute_rect, ahem_paragraph, ahem_paragraph_with_atomic, ahem_paragraph_with_float,
+    ifc_ahem_fonts, line_start_x,
 };
 
 pub(super) fn layout_with_boxes(
@@ -287,6 +287,31 @@ fn rtl_lines_use_the_physical_inset_from_a_right_float() {
 
     let line = &doc.nodes[root].ifc_lines().expect("ifc lines")[0];
     assert_eq!(line_start_x(line), Some(70.0));
+}
+
+#[test]
+fn horizontal_rtl_float_positions_remain_physical() {
+    for (float_side, expected_x) in [("left", 0.0), ("right", 90.0)] {
+        let (mut doc, cascade, float, root) = ahem_paragraph_with_float(
+            "",
+            &format!("float:{float_side};width:10px;height:20px"),
+            "a",
+            "direction:rtl",
+        );
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        crate::layout::layout_single_page(
+            with_ahem(&mut doc),
+            &cascade,
+            crate::layout::test_support::page_box_800x600(),
+        )
+        .expect("layout");
+
+        assert_eq!(
+            absolute_rect(&doc, float).0 - absolute_rect(&doc, root).0,
+            expected_x,
+            "float:{float_side}"
+        );
+    }
 }
 
 #[test]

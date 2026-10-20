@@ -1640,7 +1640,13 @@ fn measure_float(
     geometry: FlowGeometry,
 ) -> TentativeFloat {
     let margin = resolved_margins(tree, node, geometry.width);
-    let available = (geometry.width - margin.left - margin.right).max(0.0);
+    let vertical = geometry.axes.writing_mode() != WritingMode::HorizontalTb;
+    let (inline_margin, block_margin) = if vertical {
+        (margin.top + margin.bottom, margin.left + margin.right)
+    } else {
+        (margin.left + margin.right, margin.top + margin.bottom)
+    };
+    let available = (geometry.width - inline_margin).max(0.0);
     let output = perform_box_layout(
         tree,
         node,
@@ -1650,6 +1656,10 @@ fn measure_float(
         available,
     );
     let style = &tree.layout_node_with_style(node).unwrap().style;
+    let output_size = shodo::geometry::PhysicalSize {
+        width: output.size.width,
+        height: output.size.height,
+    };
     TentativeFloat {
         node,
         // The projection accepts only left and right floats.
@@ -1659,8 +1669,8 @@ fn measure_float(
             .unwrap_or(FloatDirection::Left),
         clear: style.clear,
         margin_box: Size {
-            width: output.size.width + margin.left + margin.right,
-            height: output.size.height + margin.top + margin.bottom,
+            width: geometry.axes.inline_extent(output_size) + inline_margin,
+            height: geometry.axes.block_extent(output_size) + block_margin,
         },
         margin,
         output,
@@ -2100,6 +2110,8 @@ fn layout_vertical_block_child(
     let clear_y = ctx
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
+    let clears_adjoining_float =
+        clear != taffy::Clear::None && collapse_top && ctx.has_top_adjoining_float(clear);
     let origin_resolved = ctx.origin_resolved();
     let mut guess = if origin_resolved && collapse_top {
         y.max(clear_y)
@@ -2189,8 +2201,8 @@ fn layout_vertical_block_child(
         } else {
             y + pending.collapse_with_set(top_set).resolve()
         };
-        let has_clearance = clear != taffy::Clear::None
-            && ((collapse_top && ctx.has_adjoining_float(clear)) || hypothetical < clear_y);
+        let has_clearance =
+            clear != taffy::Clear::None && (clears_adjoining_float || hypothetical < clear_y);
         let (block_start, after) = if has_clearance {
             let block_start = clear_y
                 - if collapse_top && !origin_resolved {
@@ -2808,7 +2820,7 @@ fn place_atomics(
             let physical = IfcAxes::new(geometry.axes.writing_mode(), direction).rect(size, rect);
             let location = taffy::Point {
                 x: geometry.edges.0 + physical.x + dx,
-                y: geometry.top_edge + physical.y + dy,
+                y: geometry.insets.top + physical.y + dy,
             };
             let mut child_candidates = translated_child_oof_candidates(output, location);
             candidates.append(&mut child_candidates);
@@ -2962,9 +2974,23 @@ pub(crate) fn commit_float(
         adjoins_top_margin,
     );
     if perform {
+        let (x, y) = if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+            (position.x, position.y)
+        } else {
+            let physical = geometry.axes.rect(
+                geometry.border_box_size(),
+                shodo::geometry::LogicalRect {
+                    inline_start: position.x,
+                    block_start: position.y,
+                    inline_size: float.margin_box.width,
+                    block_size: float.margin_box.height,
+                },
+            );
+            (physical.x, physical.y)
+        };
         let location = taffy::Point {
-            x: position.x + float.margin.left,
-            y: position.y + float.margin.top,
+            x: x + float.margin.left,
+            y: y + float.margin.top,
         };
         let mut child_candidates = translated_child_oof_candidates(&float.output, location);
         oof_candidates.append(&mut child_candidates);

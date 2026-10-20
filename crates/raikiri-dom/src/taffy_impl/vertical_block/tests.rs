@@ -89,6 +89,32 @@ fn vertical_rl_block_margins_follow_the_physical_sides() {
 }
 
 #[test]
+fn vertical_sibling_block_margins_collapse_to_the_larger_margin() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        for (end_margin, start_margin, collapsed_margin) in
+            [("10px", "20px", 20.0), ("10px", "-5px", 5.0)]
+        {
+            let first = format!("width:10px;height:10px;margin-block-end:{end_margin}");
+            let second = format!("width:10px;height:10px;margin-block-start:{start_margin}");
+            let rects = layout(
+                &format!("writing-mode:{writing_mode};width:100px;height:100px"),
+                &[&first, &second],
+            );
+            let distance = if writing_mode == "vertical-rl" {
+                rects[1].0 - rects[2].0
+            } else {
+                rects[2].0 - rects[1].0
+            };
+            assert_eq!(
+                distance,
+                10.0 + collapsed_margin,
+                "{writing_mode} end={end_margin} start={start_margin}: {rects:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn vertical_rl_container_padding_and_border_offset_its_children() {
     let rects = layout(
         "writing-mode:vertical-rl;width:300px;height:200px;box-sizing:border-box;\
@@ -446,50 +472,52 @@ fn same_mode_vertical_descendant_clear_sees_an_ancestor_float() {
 
 #[test]
 fn vertical_inline_content_shares_ancestor_floats() {
-    let (mut doc, body) = vertical_document("vertical-rl", "100px", "40px");
-    let root = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:flow-root;width:100px;height:40px"),
-    );
-    let float = doc.append_element(
-        Some(root),
-        "div",
-        Style::default(),
-        Some("display:block;float:right;width:10px;height:20px"),
-    );
-    let paragraph = doc.append_element(
-        Some(root),
-        "p",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    doc.append_text(paragraph, "a a a a");
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        let (mut doc, body) = vertical_document(writing_mode, "100px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:100px;height:40px"),
+        );
+        let float = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:right;width:10px;height:20px"),
+        );
+        let paragraph = doc.append_element(
+            Some(root),
+            "p",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        doc.append_text(paragraph, "a a a a");
 
-    layout_vertical_document(&mut doc);
+        layout_vertical_document(&mut doc);
 
-    let lines = doc.nodes[paragraph]
-        .ifc
-        .as_ref()
-        .and_then(|root| root.lines.as_ref())
-        .expect("paragraph lines");
-    assert!(
-        lines.beside_floats,
-        "vertical lines should use the shared float slots: float={:?}, paragraph={:?}, line_offsets={:?}, line_sizes={:?}",
-        absolute_rect(&doc, float),
-        absolute_rect(&doc, paragraph),
-        lines
-            .lines
-            .iter()
-            .map(|line| line.block_offset())
-            .collect::<Vec<_>>(),
-        lines
-            .lines
-            .iter()
-            .map(|line| line.block_size())
-            .collect::<Vec<_>>(),
-    );
+        let lines = doc.nodes[paragraph]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .expect("paragraph lines");
+        assert!(
+            lines.beside_floats,
+            "{writing_mode} lines should use the shared float slots: float={:?}, paragraph={:?}, line_offsets={:?}, line_sizes={:?}",
+            absolute_rect(&doc, float),
+            absolute_rect(&doc, paragraph),
+            lines
+                .lines
+                .iter()
+                .map(|line| line.block_offset())
+                .collect::<Vec<_>>(),
+            lines
+                .lines
+                .iter()
+                .map(|line| line.block_size())
+                .collect::<Vec<_>>(),
+        );
+    }
 }
 
 #[test]

@@ -84,9 +84,8 @@ pub(crate) fn record_inline_boxes(
         let origin = match parent.and_then(|id| boxes.get(&id)) {
             Some(parent_box) => (parent_box.x, parent_box.y),
             // A child of the root sits in the root's content box, which starts
-            // inside the root's border box by its left and top border and
-            // padding (`FlowGeometry::edges` is the physical left and right).
-            None => (-geometry.edges.0, -geometry.top_edge),
+            // inside the root's border box by its physical left and top insets.
+            None => (-geometry.insets.left, -geometry.insets.top),
         };
         let output = taffy::LayoutOutput::from_outer_size(taffy::Size {
             width: rect.map_or(0.0, |r| r.width),
