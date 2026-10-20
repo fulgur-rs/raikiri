@@ -2,6 +2,113 @@ use super::*;
 use crate::layout::context::LayoutSession;
 
 #[test]
+fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
+    use crate::layout::ifc::test_support::block_fixture_with_ahem;
+    use crate::taffy_impl::block_flow::context::BlockFormattingContext;
+    use taffy::{AvailableSpace, Clear, Line, RunMode, SizingMode};
+
+    fn fixture() -> (crate::Document, usize) {
+        let mut wrapper = 0;
+        let fixture = block_fixture_with_ahem(
+            "writing-mode:vertical-rl;width:100px;height:200px",
+            |doc, root| {
+                wrapper = doc.append_element(
+                    Some(root),
+                    "div",
+                    Style::default(),
+                    Some("display:block;writing-mode:vertical-rl;width:auto;height:auto"),
+                );
+                let seed = doc.append_element(
+                    Some(wrapper),
+                    "div",
+                    Style::default(),
+                    Some("display:block;width:10px;height:10px"),
+                );
+                doc.append_text(seed, "a");
+                for _ in 0..2 {
+                    let block = doc.append_element(
+                        Some(wrapper),
+                        "div",
+                        Style::default(),
+                        Some("display:block;width:50%;height:10px"),
+                    );
+                    doc.append_text(block, "a");
+                }
+                doc.append_element(
+                    Some(wrapper),
+                    "div",
+                    Style::default(),
+                    Some("display:block;float:left;width:10px;height:10px"),
+                );
+            },
+        );
+        (fixture.doc, wrapper)
+    }
+
+    fn input(known_width: Option<f32>) -> LayoutInput {
+        LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: taffy::RequestedAxis::Both,
+            known_dimensions: Size {
+                width: known_width,
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: known_width.is_some(),
+                height: false,
+            },
+            parent_size: Size {
+                width: Some(100.0),
+                height: Some(200.0),
+            },
+            available_space: Size {
+                width: known_width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+                height: AvailableSpace::Definite(200.0),
+            },
+            vertical_margins_are_collapsible: Line::TRUE,
+        }
+    }
+
+    let (mut doc, wrapper) = fixture();
+    let mut session = LayoutSession::new(&mut doc);
+    assert!(crate::taffy_impl::vertical_block::has_same_vertical_block_parent(&session, wrapper));
+    let mut owner = BlockFormattingContext::new();
+    let mut context = owner.root_block_context();
+    context.set_width(100.0);
+    context.set_origin_resolved(true);
+    let auto_output = compute_ifc_root(
+        &mut session,
+        NodeId::from(wrapper),
+        input(None),
+        Some(&mut context),
+    );
+    assert_eq!(auto_output.size.width, 50.0);
+    let auto_threshold = context.cleared_threshold(Clear::Both);
+    assert!(
+        auto_threshold.is_some(),
+        "the auto-size probe placed its float"
+    );
+
+    let (mut reference_doc, reference_wrapper) = fixture();
+    let mut reference_session = LayoutSession::new(&mut reference_doc);
+    let mut reference_owner = BlockFormattingContext::new();
+    let mut reference_context = reference_owner.root_block_context();
+    reference_context.set_width(100.0);
+    reference_context.set_origin_resolved(true);
+    let reference_output = compute_ifc_root(
+        &mut reference_session,
+        NodeId::from(reference_wrapper),
+        input(Some(auto_output.size.width)),
+        Some(&mut reference_context),
+    );
+    let reference_threshold = reference_context.cleared_threshold(Clear::Both);
+
+    assert_eq!(auto_output.size.width, reference_output.size.width);
+    assert_eq!(auto_threshold, reference_threshold);
+}
+
+#[test]
 fn leaf_intrinsic_ratio_derives_normal_image_ratio_and_ignores_inline_svg() {
     let mut doc = crate::document::Document::new();
     let image = doc.append_element(None, "img", Style::default(), None::<&str>);

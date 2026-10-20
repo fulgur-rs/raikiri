@@ -1922,12 +1922,28 @@ fn measure_ifc_root(
                 .min(measure.width_bounds.1)
                 .max(measure.width_bounds.0);
         }
-        if perform && let (Some(ctx), Some(snapshot)) = (block_ctx.as_deref_mut(), &probe_context) {
+        let needs_final_probe = (block_size - geometry.content_size.width).abs() > 0.01;
+        if (perform || needs_final_probe)
+            && let (Some(ctx), Some(snapshot)) = (block_ctx.as_deref_mut(), &probe_context)
+        {
             ctx.restore(snapshot);
         }
-        if (block_size - geometry.content_size.width).abs() > 0.01 {
+        if needs_final_probe {
             content_size.width = block_size;
             geometry = geometry_of(content_size);
+            if !perform {
+                // The bounded probe loop may end between widths. Keep the
+                // returned extent and shared float context on the same width.
+                lines = crate::layout::ifc::boxes::layout_with_boxes_in(
+                    tree,
+                    idx,
+                    geometry,
+                    block_ctx.as_deref_mut(),
+                    false,
+                    measure.top_margin_escapes,
+                    measure.bottom_margin_escapes,
+                );
+            }
         }
         (lines, block_size)
     } else {

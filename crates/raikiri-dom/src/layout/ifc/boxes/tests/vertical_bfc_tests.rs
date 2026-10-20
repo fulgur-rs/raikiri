@@ -336,6 +336,115 @@ fn vertical_independent_bfc_child_avoids_ancestor_float() {
 }
 
 #[test]
+fn vertical_independent_bfc_slot_probes_height_and_rtl_auto_margins() {
+    let mut child = 0;
+    let (mut doc, _cascade, _root) = ahem_paragraph_with(
+        "writing-mode:vertical-rl;width:100px;height:40px",
+        |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:flow-root;width:5px;height:10px;direction:rtl;margin-bottom:auto"),
+            );
+        },
+    );
+    let geometry = FlowGeometry::new(
+        IfcAxes::new(WritingMode::VerticalRl, Direction::Rtl),
+        PhysicalSize {
+            width: 100.0,
+            height: 40.0,
+        },
+        taffy::Rect::ZERO,
+    );
+    let mut session = LayoutSession::new(&mut doc);
+    let mut bfc = BlockFormattingContext::new();
+    let mut ctx = bfc.root_block_context();
+    ctx.set_width(geometry.width);
+    ctx.set_origin_resolved(true);
+    ctx.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 10.0,
+        },
+        0.0,
+        FloatDirection::Left,
+        Clear::None,
+        true,
+    );
+    ctx.place_floated_box(
+        Size {
+            width: 30.0,
+            height: 20.0,
+        },
+        10.0,
+        FloatDirection::Right,
+        Clear::None,
+        false,
+    );
+
+    let child = super::super::layout_vertical_block_child(
+        &mut session,
+        &mut ctx,
+        child,
+        0.0,
+        CollapsibleMarginSet::ZERO,
+        geometry,
+        false,
+        true,
+    );
+
+    assert_eq!(child.top, 0.0);
+    assert_eq!(child.next_y, 5.0);
+}
+
+#[test]
+fn vertical_shared_block_clearance_uses_the_pending_margin() {
+    let mut child = 0;
+    let (mut doc, _cascade, _root) = ahem_paragraph_with(
+        "writing-mode:vertical-rl;width:100px;height:40px",
+        |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;width:100px;height:40px;clear:both"),
+            );
+        },
+    );
+    let geometry = vertical_geometry();
+    let mut session = LayoutSession::new(&mut doc);
+    let mut bfc = BlockFormattingContext::new();
+    let mut ctx = bfc.root_block_context();
+    ctx.set_width(geometry.width);
+    ctx.set_origin_resolved(false);
+    ctx.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 10.0,
+        },
+        0.0,
+        FloatDirection::Left,
+        Clear::None,
+        true,
+    );
+
+    let child = super::super::layout_vertical_block_child(
+        &mut session,
+        &mut ctx,
+        child,
+        0.0,
+        CollapsibleMarginSet::from_margin(4.0),
+        geometry,
+        false,
+        true,
+    );
+
+    assert_eq!(child.top, 6.0);
+    assert_eq!(child.next_y, 106.0);
+}
+
+#[test]
 fn vertical_inline_boxes_use_the_physical_top_inset() {
     for (writing_mode, block_start_inset) in [
         ("vertical-rl", "padding-right:11px"),
