@@ -1328,112 +1328,158 @@ fn page_block_named<'a>(input: &'a str, name: &str) -> Option<&'a str> {
 /// Only an identifier at the start of a declaration names the property, so
 /// selectors such as `.page:hover` are not declarations.
 fn first_authored_page_name(input: &str) -> Option<String> {
-    fn find<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
-        let mut declaration_start = true;
-        // The last two significant tokens, to recognize `style="…"`.
-        let mut previous: [Option<cssparser::Token<'i>>; 2] = [None, None];
-        while let Ok(token) = input.next().cloned() {
-            match &token {
-                cssparser::Token::Ident(name)
-                    if declaration_start && name.eq_ignore_ascii_case("page") =>
-                {
-                    // An unquoted `style=…` attribute value ends at
-                    // whitespace or the end of the tag.
-                    let unquoted = matches!(
-                        &previous,
-                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
-                            if attribute.eq_ignore_ascii_case("style")
-                    );
-                    let value = input.try_parse(|input| {
-                        input.expect_colon()?;
-                        let value = input.expect_ident_cloned()?;
-                        // A declaration's value ends the declaration; a
-                        // selector such as `page :first-child {}` goes on.
-                        let end = input.state();
-                        if unquoted
-                            && matches!(
-                                input.next_including_whitespace(),
-                                Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Delim('>'))
-                            )
-                        {
-                            input.reset(&end);
-                            return Ok(value.to_string());
-                        }
-                        input.reset(&end);
-                        // Only `!important` may follow the value.
-                        if input.try_parse(|input| input.expect_delim('!')).is_ok() {
-                            input.expect_ident_matching("important")?;
-                        }
-                        let end = input.state();
-                        match input.next() {
-                            Err(_) | Ok(cssparser::Token::Semicolon) => input.reset(&end),
-                            Ok(_) => return Err(input.new_custom_error(())),
-                        }
-                        Ok::<_, cssparser::ParseError<'i, ()>>(value.to_string())
-                    });
-                    // `auto` names no page, CSS-wide keywords are not names,
-                    // and `default` is reserved.
-                    if let Ok(value) = value
-                        && ![
-                            "auto",
-                            "default",
-                            "initial",
-                            "inherit",
-                            "unset",
-                            "revert",
-                            "revert-layer",
-                        ]
-                        .iter()
-                        .any(|keyword| value.eq_ignore_ascii_case(keyword))
-                    {
-                        return Some(value);
-                    }
-                }
-                cssparser::Token::QuotedString(value)
-                    if matches!(
-                        &previous,
-                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
-                            if attribute.eq_ignore_ascii_case("style")
-                    ) =>
-                {
-                    let mut attribute = cssparser::ParserInput::new(value);
-                    if let Some(name) = find(&mut cssparser::Parser::new(&mut attribute), depth + 1)
-                    {
-                        return Some(name);
-                    }
-                }
-                cssparser::Token::CurlyBracketBlock if depth < 256 => {
-                    let name = input
-                        .parse_nested_block(|input| {
-                            let name = find(input, depth + 1);
-                            // The nested parser must be exhausted to succeed.
-                            while input.next().is_ok() {}
-                            Ok::<_, cssparser::ParseError<'i, ()>>(name)
-                        })
-                        .ok()
-                        .flatten();
-                    if name.is_some() {
-                        return name;
-                    }
-                }
-                _ => {}
-            }
-            // A declaration starts after `;` and after a nested rule's block.
-            declaration_start = matches!(
-                token,
-                cssparser::Token::Semicolon | cssparser::Token::CurlyBracketBlock
-            ) || matches!(
-                (&previous[1], &token),
-                (Some(cssparser::Token::Ident(attribute)), cssparser::Token::Delim('='))
-                    if attribute.eq_ignore_ascii_case("style")
-            );
-            previous = [previous[1].take(), Some(token)];
-        }
-        None
-    }
-
     let mut source = cssparser::ParserInput::new(input);
-    find(&mut cssparser::Parser::new(&mut source), 0)
+    find_page_name(&mut cssparser::Parser::new(&mut source), 0)
+}
+
+/// The last two significant tokens, to recognize `style="…"`.
+type PreviousTokens<'i> = [Option<cssparser::Token<'i>>; 2];
+
+/// Bounds the recursion into blocks and `style` attributes; deeper ones are
+/// not searched.
+const MAX_PAGE_NAME_DEPTH: usize = 256;
+
+/// Words that cannot be a page name: `auto` names no page, CSS-wide keywords
+/// are not names, and `default` is reserved.
+const NON_PAGE_NAMES: [&str; 7] = [
+    "auto",
+    "default",
+    "initial",
+    "inherit",
+    "unset",
+    "revert",
+    "revert-layer",
+];
+
+/// The value of the first `page` declaration found by reading `input`
+/// token by token, and the blocks and `style` attributes inside it.
+///
+/// `depth` counts the blocks and attributes entered so far.
+fn find_page_name<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
+    let mut declaration_start = true;
+    let mut previous: PreviousTokens<'i> = [None, None];
+    while let Ok(token) = input.next().cloned() {
+        let name = match &token {
+            cssparser::Token::Ident(name)
+                if declaration_start && name.eq_ignore_ascii_case("page") =>
+            {
+                // An identifier right after `style=` starts an unquoted
+                // attribute value, which ends at whitespace or the end of
+                // the tag.
+                page_declaration_name(input, follows_style_equals(&previous))
+            }
+            cssparser::Token::QuotedString(value) if follows_style_equals(&previous) => {
+                let mut attribute = cssparser::ParserInput::new(value);
+                find_page_name(&mut cssparser::Parser::new(&mut attribute), depth + 1)
+            }
+            cssparser::Token::CurlyBracketBlock if depth < MAX_PAGE_NAME_DEPTH => {
+                block_page_name(input, depth)
+            }
+            _ => None,
+        };
+        if name.is_some() {
+            return name;
+        }
+        // A declaration starts after `;` and after a nested rule's block.
+        declaration_start = matches!(
+            token,
+            cssparser::Token::Semicolon | cssparser::Token::CurlyBracketBlock
+        ) || is_style_equals(previous[1].as_ref(), Some(&token));
+        previous = [previous[1].take(), Some(token)];
+    }
+    None
+}
+
+/// Whether `ident` and `delim` spell `style=`, which opens an attribute value.
+fn is_style_equals(
+    ident: Option<&cssparser::Token<'_>>,
+    delim: Option<&cssparser::Token<'_>>,
+) -> bool {
+    matches!(
+        (ident, delim),
+        (Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('=')))
+            if attribute.eq_ignore_ascii_case("style")
+    )
+}
+
+/// Whether the token being read comes right after `style=`.
+fn follows_style_equals(previous: &PreviousTokens<'_>) -> bool {
+    is_style_equals(previous[0].as_ref(), previous[1].as_ref())
+}
+
+/// The page name that a `page` property, just read, declares, if it is one.
+///
+/// `unquoted` is set when the declaration is the value of an unquoted
+/// `style=…` attribute.
+fn page_declaration_name<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    unquoted: bool,
+) -> Option<String> {
+    input
+        .try_parse(|input| page_declaration_value(input, unquoted))
+        .ok()
+        .filter(|value| {
+            !NON_PAGE_NAMES
+                .iter()
+                .any(|keyword| value.eq_ignore_ascii_case(keyword))
+        })
+}
+
+/// Read `: ident` and the end of the declaration after a `page` property.
+fn page_declaration_value<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    unquoted: bool,
+) -> Result<String, cssparser::ParseError<'i, ()>> {
+    input.expect_colon()?;
+    let value = input.expect_ident_cloned()?;
+    // A declaration's value ends the declaration; a selector such as
+    // `page :first-child {}` goes on.
+    if !(unquoted && at_unquoted_value_end(input)) {
+        expect_declaration_end(input)?;
+    }
+    Ok(value.to_string())
+}
+
+/// Whether an unquoted attribute value ends at the next token, whitespace or
+/// the end of the tag. Nothing is consumed.
+fn at_unquoted_value_end(input: &mut cssparser::Parser<'_, '_>) -> bool {
+    let end = input.state();
+    let ended = matches!(
+        input.next_including_whitespace(),
+        Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Delim('>'))
+    );
+    input.reset(&end);
+    ended
+}
+
+/// Only `!important` may follow the value, and then the declaration ends at
+/// `;` or at the end of its block. Nothing after the value is consumed.
+fn expect_declaration_end<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+) -> Result<(), cssparser::ParseError<'i, ()>> {
+    if input.try_parse(|input| input.expect_delim('!')).is_ok() {
+        input.expect_ident_matching("important")?;
+    }
+    let end = input.state();
+    match input.next() {
+        Err(_) | Ok(cssparser::Token::Semicolon) => input.reset(&end),
+        Ok(_) => return Err(input.new_custom_error(())),
+    }
+    Ok(())
+}
+
+/// The page name that the block just opened declares, found by searching
+/// the block.
+fn block_page_name<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
+    input
+        .parse_nested_block(|input| {
+            let name = find_page_name(input, depth + 1);
+            // The nested parser must be exhausted to succeed.
+            while input.next().is_ok() {}
+            Ok::<_, cssparser::ParseError<'i, ()>>(name)
+        })
+        .ok()
+        .flatten()
 }
 
 fn css_block_end(input: &str, open: usize) -> Option<usize> {
