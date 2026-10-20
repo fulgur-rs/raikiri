@@ -1143,121 +1143,167 @@ struct PageRule<'a> {
 /// Every `@page` rule in `input`, including those nested in other blocks,
 /// in source order. Comments and strings are skipped by the tokenizer.
 fn page_rules(input: &str) -> Vec<PageRule<'_>> {
-    fn collect<'i>(
+    let mut rules = Vec::new();
+    let mut source = cssparser::ParserInput::new(input);
+    let _ = collect_page_rules(&mut cssparser::Parser::new(&mut source), &mut rules, 0);
+    rules
+}
+
+/// Add the `@page` rules of one block, and of the group rules in it, to
+/// `rules`.
+fn collect_page_rules<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    rules: &mut Vec<PageRule<'i>>,
+    depth: usize,
+) -> Result<(), cssparser::ParseError<'i, ()>> {
+    let mut scan = PageScan::new();
+    while let Ok(token) = input.next_including_whitespace().cloned() {
+        match &token {
+            // Whitespace only matters inside an `@page` selector, where
+            // it may not separate a pseudo-class from the rest of its
+            // selector.
+            cssparser::Token::WhiteSpace(_) => {
+                scan.whitespace(input);
+                continue;
+            }
+            cssparser::Token::AtKeyword(name) => scan.at_keyword(name),
+            cssparser::Token::Semicolon => scan.semicolon(),
+            cssparser::Token::CurlyBracketBlock => scan.block(input, rules, depth)?,
+            _ => scan.selector_token(&token, input),
+        }
+        scan.after_colon = matches!(token, cssparser::Token::Colon);
+    }
+    Ok(())
+}
+
+/// What the scan of one block of rules knows about the prelude it is in.
+struct PageScan {
+    /// `None` outside an `@page` prelude, else the names seen so far and
+    /// whether the selector is still valid.
+    page: Option<(Vec<String>, bool)>,
+    /// Whether the current prelude belongs to a conditional group rule,
+    /// the only blocks besides the top level that may hold `@page`.
+    group: bool,
+    /// Whether the last token was a colon.
+    after_colon: bool,
+    /// Whether the selector after the last comma has no component yet.
+    empty_selector: bool,
+    /// Whether the prelude is a comma-separated list.
+    list: bool,
+}
+
+impl PageScan {
+    fn new() -> Self {
+        PageScan {
+            page: None,
+            group: false,
+            after_colon: false,
+            empty_selector: true,
+            list: false,
+        }
+    }
+
+    fn whitespace(&mut self, input: &mut cssparser::Parser<'_, '_>) {
+        if let Some((_, valid)) = &mut self.page
+            && !self.empty_selector
+        {
+            let state = input.state();
+            if matches!(input.next(), Ok(cssparser::Token::Colon)) {
+                *valid = false;
+            }
+            input.reset(&state);
+        }
+    }
+
+    fn at_keyword(&mut self, name: &str) {
+        self.page = name
+            .eq_ignore_ascii_case("page")
+            .then(|| (Vec::new(), true));
+        self.empty_selector = true;
+        self.list = false;
+        self.group = ["media", "supports", "layer"]
+            .iter()
+            .any(|known| name.eq_ignore_ascii_case(known));
+    }
+
+    fn semicolon(&mut self) {
+        self.page = None;
+        self.group = false;
+    }
+
+    /// A block ends the prelude: an `@page` rule is read, a group rule is
+    /// scanned for `@page` rules of its own.
+    fn block<'i>(
+        &mut self,
         input: &mut cssparser::Parser<'i, '_>,
         rules: &mut Vec<PageRule<'i>>,
         depth: usize,
     ) -> Result<(), cssparser::ParseError<'i, ()>> {
-        // `None` outside an `@page` prelude, else the names seen so far and
-        // whether the selector is still valid.
-        let mut page: Option<(Vec<String>, bool)> = None;
-        // Whether the current prelude belongs to a conditional group rule,
-        // the only blocks besides the top level that may hold `@page`.
-        let mut group = false;
-        let mut after_colon = false;
-        // Whether the selector after the last comma has no component yet,
-        // and whether the prelude is a comma-separated list.
-        let mut empty_selector = true;
-        let mut list = false;
-        while let Ok(token) = input.next_including_whitespace().cloned() {
-            match &token {
-                // Whitespace only matters inside an `@page` selector, where
-                // it may not separate a pseudo-class from the rest of its
-                // selector.
-                cssparser::Token::WhiteSpace(_) => {
-                    if let Some((_, valid)) = &mut page
-                        && !empty_selector
-                    {
-                        let state = input.state();
-                        if matches!(input.next(), Ok(cssparser::Token::Colon)) {
-                            *valid = false;
-                        }
-                        input.reset(&state);
-                    }
-                    continue;
-                }
-                cssparser::Token::AtKeyword(name) => {
-                    page = name
-                        .eq_ignore_ascii_case("page")
-                        .then(|| (Vec::new(), true));
-                    empty_selector = true;
-                    list = false;
-                    group = ["media", "supports", "layer"]
-                        .iter()
-                        .any(|known| name.eq_ignore_ascii_case(known));
-                }
-                cssparser::Token::Semicolon => {
-                    page = None;
-                    group = false;
-                }
-                cssparser::Token::CurlyBracketBlock => {
-                    if let Some((names, mut valid)) = page.take() {
-                        // A list may not end with an empty selector, and a
-                        // colon needs its pseudo-class name.
-                        valid &= !(after_colon || list && empty_selector);
-                        let block = input.parse_nested_block(|input| {
-                            let start = input.position();
-                            while input.next().is_ok() {}
-                            Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
-                        })?;
-                        // As in the cascade, a rule with an invalid selector
-                        // is dropped.
-                        if valid {
-                            rules.push(PageRule { names, block });
-                        }
-                    } else if std::mem::take(&mut group) && depth < 256 {
-                        input.parse_nested_block(|input| collect(input, rules, depth + 1))?;
-                    }
-                }
-                _ => {
-                    if let Some((names, valid)) = &mut page {
-                        let starts_selector = empty_selector;
-                        if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
-                            empty_selector = false;
-                        }
-                        match &token {
-                            cssparser::Token::Ident(name) if after_colon => {
-                                *valid &= ["first", "left", "right", "blank"]
-                                    .iter()
-                                    .any(|class| name.eq_ignore_ascii_case(class));
-                            }
-                            // A selector has at most one page name, before
-                            // its pseudo-classes.
-                            cssparser::Token::Ident(name) => {
-                                *valid &= starts_selector;
-                                names.push(name.to_string());
-                            }
-                            // A pseudo-class name follows its colon directly.
-                            cssparser::Token::Colon => {
-                                let state = input.state();
-                                if matches!(
-                                    input.next_including_whitespace(),
-                                    Ok(cssparser::Token::WhiteSpace(_))
-                                ) {
-                                    *valid = false;
-                                }
-                                input.reset(&state);
-                            }
-                            // Each comma separates two non-empty selectors.
-                            cssparser::Token::Comma => {
-                                *valid &= !empty_selector && !after_colon;
-                                empty_selector = true;
-                                list = true;
-                            }
-                            _ => *valid = false,
-                        }
-                    }
-                }
+        if let Some((names, mut valid)) = self.page.take() {
+            // A list may not end with an empty selector, and a
+            // colon needs its pseudo-class name.
+            valid &= !(self.after_colon || self.list && self.empty_selector);
+            let block = input.parse_nested_block(|input| {
+                let start = input.position();
+                while input.next().is_ok() {}
+                Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
+            })?;
+            // As in the cascade, a rule with an invalid selector
+            // is dropped.
+            if valid {
+                rules.push(PageRule { names, block });
             }
-            after_colon = matches!(token, cssparser::Token::Colon);
+        } else if std::mem::take(&mut self.group) && depth < 256 {
+            input.parse_nested_block(|input| collect_page_rules(input, rules, depth + 1))?;
         }
         Ok(())
     }
 
-    let mut rules = Vec::new();
-    let mut source = cssparser::ParserInput::new(input);
-    let _ = collect(&mut cssparser::Parser::new(&mut source), &mut rules, 0);
-    rules
+    /// A token of the prelude of an `@page` rule; any other token is ignored.
+    fn selector_token(
+        &mut self,
+        token: &cssparser::Token<'_>,
+        input: &mut cssparser::Parser<'_, '_>,
+    ) {
+        let Some((names, valid)) = &mut self.page else {
+            return;
+        };
+        let starts_selector = self.empty_selector;
+        if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
+            self.empty_selector = false;
+        }
+        match token {
+            cssparser::Token::Ident(name) if self.after_colon => {
+                *valid &= ["first", "left", "right", "blank"]
+                    .iter()
+                    .any(|class| name.eq_ignore_ascii_case(class));
+            }
+            // A selector has at most one page name, before
+            // its pseudo-classes.
+            cssparser::Token::Ident(name) => {
+                *valid &= starts_selector;
+                names.push(name.to_string());
+            }
+            // A pseudo-class name follows its colon directly.
+            cssparser::Token::Colon => {
+                let state = input.state();
+                if matches!(
+                    input.next_including_whitespace(),
+                    Ok(cssparser::Token::WhiteSpace(_))
+                ) {
+                    *valid = false;
+                }
+                input.reset(&state);
+            }
+            // Each comma separates two non-empty selectors.
+            cssparser::Token::Comma => {
+                *valid &= !self.empty_selector && !self.after_colon;
+                self.empty_selector = true;
+                self.list = true;
+            }
+            _ => *valid = false,
+        }
+    }
 }
 
 fn page_block(input: &str) -> Option<&str> {

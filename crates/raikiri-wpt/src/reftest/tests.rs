@@ -2697,6 +2697,20 @@ fn page_rules_with_invalid_selectors_are_dropped() {
 }
 
 #[test]
+fn a_semicolon_ends_the_prelude_of_a_page_or_group_rule() {
+    // The block after `@page a;` belongs to no rule.
+    assert_eq!(
+        page_block("@page a;{size:1px}@page{size:2px}"),
+        Some("size:2px")
+    );
+    // `@media print;` has no body, so the block after it is not a group.
+    assert_eq!(
+        page_block("@media print;{@page{size:1px}}@page{size:2px}"),
+        Some("size:2px")
+    );
+}
+
+#[test]
 fn page_blocks_skip_comments_strings_and_escapes() {
     assert_eq!(
         page_block("/* @page{size:1px} */@page{size:2px}"),
