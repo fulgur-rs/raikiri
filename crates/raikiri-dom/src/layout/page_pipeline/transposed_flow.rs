@@ -317,6 +317,7 @@ impl TransposedDocument {
                 style,
             ));
         }
+        document.context.table_cache.clear();
         document.context.pagination_on_transposed_axes = true;
         Self {
             axes,
@@ -365,6 +366,7 @@ impl TransposedDocument {
                 .layout_style_for_key_mut(key)
                 .expect("transposed box has a retained style") = style;
         }
+        document.context.table_cache.clear();
         document.context.pagination_on_transposed_axes = false;
     }
 }

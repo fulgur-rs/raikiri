@@ -465,3 +465,73 @@ fn continuation_offsets_of_pages_along_x_are_along_the_flow() {
         Some(200.0)
     );
 }
+
+#[test]
+fn pagination_axis_changes_discard_cached_table_preparation() {
+    let mut doc = Document::new();
+    let root = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let table = doc.append_element(
+        Some(root),
+        "table",
+        Style::default(),
+        Some("display:table;border-collapse:collapse"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(Some(row), "td", Style::default(), Some("display:table-cell;width:30px;height:10px;border-left:7px solid red;border-top:2px solid blue"));
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut session = LayoutSession::new(&mut doc);
+    let input = taffy::LayoutInput {
+        run_mode: taffy::RunMode::PerformLayout,
+        sizing_mode: taffy::SizingMode::InherentSize,
+        axis: taffy::RequestedAxis::Horizontal,
+        known_dimensions: taffy::Size::NONE,
+        parent_size: taffy::Size::NONE,
+        available_space: taffy::Size {
+            width: taffy::AvailableSpace::MaxContent,
+            height: taffy::AvailableSpace::MaxContent,
+        },
+        known_dimensions_are_definite: taffy::Size {
+            width: false,
+            height: false,
+        },
+        vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+    };
+    let layout = |session: &mut LayoutSession<'_>| {
+        crate::layout::table::compute_table_layout(session, table.into(), input)
+    };
+    crate::layout::table::GRID_BUILDS.with(|count| count.set(0));
+    let original = layout(&mut session).size;
+    assert_eq!(
+        crate::layout::table::GRID_BUILDS.with(|count| count.get()),
+        1
+    );
+    let physical_cell = session.nodes[cell].unrounded_layout.size;
+    let transposed = TransposedDocument::transpose(
+        &mut session,
+        root,
+        FlowAxes {
+            right_to_left: false,
+        },
+        800.0,
+    );
+    let rotated = layout(&mut session).size;
+    assert_eq!(
+        crate::layout::table::GRID_BUILDS.with(|count| count.get()),
+        2
+    );
+    assert_ne!(rotated, original);
+    transposed.restore(&mut session);
+    assert_eq!(layout(&mut session).size, original);
+    assert_eq!(
+        crate::layout::table::GRID_BUILDS.with(|count| count.get()),
+        3
+    );
+    assert_eq!(session.nodes[cell].unrounded_layout.size, physical_cell);
+}

@@ -165,6 +165,7 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    doc.context.table_cache.clear();
     // Keep the previous payloads alive while styles are rebuilt in place.
     // A later error or unwind may leave some styles with old handles and
     // others with newly appended handles, so only a complete successful

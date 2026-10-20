@@ -13,6 +13,7 @@ pub(crate) struct LayoutContext {
     pub(crate) node_states: RefCell<HashMap<BoxKey, NodeLayoutState>>,
     pub(crate) layout_warnings: Vec<LayoutWarn>,
     pub(crate) table_layout_error: Option<String>,
+    pub(super) table_cache: super::table::cache::TableCache,
     pub(crate) ifc_width_probe: bool,
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
