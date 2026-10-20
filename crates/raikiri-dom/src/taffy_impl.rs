@@ -312,6 +312,47 @@ fn ifc_top_inset(style: &Style, parent_inline_size: Option<f32>) -> f32 {
     ifc_edge(style.padding.top, parent_inline_size) + ifc_edge(style.border.top, parent_inline_size)
 }
 
+fn ifc_block_edge_inset(
+    style: &Style,
+    parent_inline_size: Option<f32>,
+    writing_mode: shodo::geometry::WritingMode,
+    start: bool,
+) -> f32 {
+    use shodo::geometry::WritingMode;
+    let edge = match writing_mode {
+        WritingMode::HorizontalTb => {
+            if start {
+                (style.padding.top, style.border.top)
+            } else {
+                (style.padding.bottom, style.border.bottom)
+            }
+        }
+        WritingMode::VerticalRl | WritingMode::SidewaysRl => {
+            if start {
+                (style.padding.right, style.border.right)
+            } else {
+                (style.padding.left, style.border.left)
+            }
+        }
+        WritingMode::VerticalLr | WritingMode::SidewaysLr => {
+            if start {
+                (style.padding.left, style.border.left)
+            } else {
+                (style.padding.right, style.border.right)
+            }
+        }
+    };
+    ifc_edge(edge.0, parent_inline_size) + ifc_edge(edge.1, parent_inline_size)
+}
+
+fn ifc_block_size_is_auto(style: &Style, writing_mode: shodo::geometry::WritingMode) -> bool {
+    if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
+        style.size.height.is_auto()
+    } else {
+        style.size.width.is_auto()
+    }
+}
+
 /// Border plus padding on the left and right of an ifc root, resolved from
 /// its style like [`ifc_top_inset`].
 fn ifc_horizontal_edges(style: &Style, parent_inline_size: Option<f32>) -> (f32, f32) {
@@ -623,7 +664,7 @@ impl LayoutSession<'_> {
         &mut self,
         node_id: NodeId,
         mut inputs: LayoutInput,
-        block_ctx: Option<&mut BlockContext<'_>>,
+        mut block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
         let idx = usize::from(node_id);
         if let Some(parent) = self.nodes[idx].parent
@@ -646,7 +687,9 @@ impl LayoutSession<'_> {
                 self.context.text_group_shortest.take(),
             )
         });
-        let output = if let Some(output) = self.compute_transposed_child(node_id, inputs) {
+        let output = if let Some(output) =
+            self.compute_transposed_child(node_id, inputs, block_ctx.as_deref_mut())
+        {
             output
         } else {
             stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
@@ -1110,9 +1153,17 @@ fn compute_ifc_root(
     tree: &mut LayoutSession<'_>,
     node_id: NodeId,
     inputs: LayoutInput,
-    block_ctx: Option<&mut BlockContext<'_>>,
+    mut block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    if tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .is_some_and(|root| root.writing_mode != shodo::geometry::WritingMode::HorizontalTb)
+        && !crate::taffy_impl::vertical_block::has_same_vertical_block_parent(tree, idx)
+    {
+        block_ctx = None;
+    }
     let style = tree.layout_node_with_style(idx).unwrap().style.clone();
     let parent_inline_size = ifc_parent_inline_size(tree, idx, inputs.parent_size);
     let mut layout_style = ifc_style_with_inline_edge_basis(&style, parent_inline_size);
@@ -1171,6 +1222,14 @@ fn compute_ifc_root(
     let stretched_height = inputs.known_dimensions.height.is_some()
         || (inputs.sizing_mode == taffy::SizingMode::InherentSize
             && ifc_has_definite_height(&style, inputs.parent_size.height));
+    let writing_mode = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .map_or(shodo::geometry::WritingMode::HorizontalTb, |root| {
+            root.writing_mode
+        });
+    let block_start_inset = ifc_block_edge_inset(&style, parent_inline_size, writing_mode, true);
+    let block_end_inset = ifc_block_edge_inset(&style, parent_inline_size, writing_mode, false);
     let measure = IfcMeasure {
         run_mode: inputs.run_mode,
         stretched_width,
@@ -1197,20 +1256,15 @@ fn compute_ifc_root(
             && !style.contain.establishes_independent_formatting_context()
             && style.align_content.keyword == taffy::AlignContentKeyword::Normal
             && tree.nodes[idx].multicol.is_none()
-            && tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
-                root.writing_mode == shodo::geometry::WritingMode::HorizontalTb
-            })
-            && top_inset == 0.0,
+            && block_start_inset == 0.0,
         // CSS 2.1 8.3.1: the bottom margin of a last in-flow child and that
         // of its parent are adjoining when the parent has no bottom padding
         // or border and an `auto` height, and the parent is in the same
         // formatting context as its own parent (a block context is passed).
         bottom_margin_escapes: block_ctx.is_some()
             && inputs.vertical_margins_are_collapsible.end
-            && style.size.height.is_auto()
-            && ifc_edge(style.padding.bottom, parent_inline_size)
-                + ifc_edge(style.border.bottom, parent_inline_size)
-                == 0.0,
+            && ifc_block_size_is_auto(&style, writing_mode)
+            && block_end_inset == 0.0,
         column_height: None,
         definite_height: None,
     };
@@ -1359,9 +1413,23 @@ fn compute_ifc_root(
         inputs.parent_size.height,
         resolve_calc,
     );
-    let constrained_by_min_height =
-        min_height.is_some_and(|min| min > 0.0 && min >= output.size.height);
-    output.bottom_margin = if constrained_by_min_height {
+    let min_block_size = if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
+        min_height
+    } else {
+        taffy::util::MaybeResolve::maybe_resolve(
+            style.min_size.width,
+            inputs.parent_size.width,
+            resolve_calc,
+        )
+    };
+    let block_size = if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
+        output.size.height
+    } else {
+        output.size.width
+    };
+    let constrained_by_min_block_size =
+        min_block_size.is_some_and(|min| min > 0.0 && min >= block_size);
+    output.bottom_margin = if constrained_by_min_block_size {
         CollapsibleMarginSet::ZERO
     } else {
         escaping_margin
@@ -1941,7 +2009,12 @@ fn measure_ifc_root(
     } else {
         CollapsibleMarginSet::ZERO
     };
-    let escaping_margin = if known_height.is_none() {
+    let block_size_is_auto = if vertical {
+        known_width.is_none()
+    } else {
+        known_height.is_none()
+    };
+    let escaping_margin = if block_size_is_auto {
         lines.escaping_margin
     } else {
         CollapsibleMarginSet::ZERO
@@ -2532,8 +2605,10 @@ pub(crate) fn block_layout(
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     if let Some(right_to_left) = vertical_block::block_right_to_left(tree, idx) {
+        let block_ctx =
+            block_ctx.filter(|_| vertical_block::has_same_vertical_block_parent(tree, idx));
         let mut output =
-            vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left);
+            vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left, block_ctx);
         if inputs.run_mode == RunMode::PerformLayout {
             oof::layout_local_oof(tree, node_id, &mut output);
         }

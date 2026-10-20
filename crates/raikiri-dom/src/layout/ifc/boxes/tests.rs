@@ -7,6 +7,7 @@ mod intrinsic_block_size_tests;
 mod orthogonal_baseline_tests;
 mod percent_edge_tests;
 mod vertical_atomic_tests;
+mod vertical_bfc_tests;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::test_support::with_ahem;
 use crate::layout::test_support::{

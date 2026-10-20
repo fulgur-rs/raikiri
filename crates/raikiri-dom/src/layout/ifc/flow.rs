@@ -34,7 +34,7 @@ pub(crate) struct FlowGeometry {
     pub(crate) insets: taffy::Rect<f32>,
     /// Border plus padding on the physical left and right side.
     pub(crate) edges: (f32, f32),
-    /// Border plus padding above the content box.
+    /// Border plus padding at the block-start edge of the content box.
     pub(crate) top_edge: f32,
     /// The root's definite content-box height, the basis for the percentage
     /// heights of its floats and atomic inlines (CSS 2.1 §10.5). `None` when
@@ -48,13 +48,18 @@ pub(crate) struct FlowGeometry {
 
 impl FlowGeometry {
     pub(crate) fn new(axes: IfcAxes, content_size: PhysicalSize, insets: taffy::Rect<f32>) -> Self {
+        let top_edge = match axes.writing_mode() {
+            WritingMode::HorizontalTb => insets.top,
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => insets.right,
+            WritingMode::VerticalLr | WritingMode::SidewaysLr => insets.left,
+        };
         Self {
             width: axes.inline_extent(content_size),
             axes,
             content_size,
             insets,
             edges: (insets.left, insets.right),
-            top_edge: insets.top,
+            top_edge,
             definite_height: None,
             vertical_width: None,
         }
@@ -72,6 +77,16 @@ impl FlowGeometry {
             PhysicalSize { width, height: 0.0 },
             insets,
         )
+    }
+
+    /// Physical insets along the IFC's inline axis, in increasing coordinate
+    /// order for the block formatting context.
+    pub(crate) fn inline_axis_insets(self) -> (f32, f32) {
+        if self.axes.writing_mode() == WritingMode::HorizontalTb {
+            (self.insets.left, self.insets.right)
+        } else {
+            (self.insets.top, self.insets.bottom)
+        }
     }
 }
 
@@ -113,25 +128,25 @@ pub(crate) fn intrinsic_widths_with(
 /// Space of a line at block offset `y` that is `height` tall, from the float
 /// segments it spans.
 ///
-/// `content_left` and `content_top` are the distances from the context's
-/// border-box corner to the content-box corner (border plus padding). The
-/// result is relative to the content-box start and never wider than
-/// `content_width`.
+/// `content_inline_start` and `content_block_start` are the context's insets
+/// from its border-box origin to the content-box origin on each IFC axis.
+/// The result is relative to the content-box inline start and never wider
+/// than `content_width`.
 pub(crate) fn line_space(
     ctx: &BlockContext<'_>,
-    content_left: f32,
-    content_top: f32,
+    content_inline_start: f32,
+    content_block_start: f32,
     content_width: f32,
     y: f32,
     height: f32,
 ) -> LineSpace {
-    let y = content_top + y;
+    let y = content_block_start + y;
     let mut start = 0.0_f32;
     let mut end = content_width;
     let mut slot = ctx.find_content_slot(y, Clear::None, None);
     loop {
-        start = start.max(slot.x - content_left);
-        end = end.min(slot.x - content_left + slot.width);
+        start = start.max(slot.x - content_inline_start);
+        end = end.min(slot.x - content_inline_start + slot.width);
         // Without an active float the slot has no segment to continue from.
         let Some(segment) = slot.segment_id else {
             break;
