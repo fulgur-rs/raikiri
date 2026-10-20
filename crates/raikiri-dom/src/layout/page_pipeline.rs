@@ -2694,11 +2694,9 @@ fn clear_floats_at_forced_breaks<'name>(
             // the next box, as the paginator does.
             after_forced_break = page_edge_constraint(document, cascade, child, false).0;
             previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
-            let own_page_name = if page_applies_to_box(document, child) {
-                selected_page_name(cascade, child).or(inherited)
-            } else {
-                inherited
-            };
+            // child_boxes represents inline content as None; floats and static-position
+            // absolute boxes have already been handled above.
+            let own_page_name = selected_page_name(cascade, child).or(inherited);
             // Pagination does not break inside a monolithic box.
             if !is_monolithic_for_pagination_with_transposed_axes(
                 document,
