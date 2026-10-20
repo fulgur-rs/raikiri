@@ -2082,27 +2082,9 @@ fn layout_vertical_block_child(
         width: Some(geometry.content_size.width),
         height: Some(inline_basis),
     };
-    let stretch = (inline_basis - margin.top - margin.bottom).max(0.0);
-    let height = used_block_height(tree, node, inline_basis)
-        .or_else(|| {
-            content_keyword_width(tree, node, false, parent_size).map(|own| own.at(stretch))
-        })
-        .unwrap_or(stretch);
-    let height = clamp_block_height(tree, node, inline_basis, height);
-    let inline_free = inline_basis - height - margin.top - margin.bottom;
-    match (style_margin.top.is_auto(), style_margin.bottom.is_auto()) {
-        (true, true) if inline_free >= 0.0 => {
-            margin.top = inline_free / 2.0;
-            margin.bottom = inline_free / 2.0;
-        }
-        (true, true) => {
-            margin.top = 0.0;
-            margin.bottom = 0.0;
-        }
-        (true, false) => margin.top = inline_free.max(0.0),
-        (false, true) => margin.bottom = inline_free.max(0.0),
-        (false, false) => {}
-    }
+    let own_inline_size = used_block_height(tree, node, inline_basis)
+        .map(OwnWidth::Fixed)
+        .or_else(|| content_keyword_width(tree, node, false, parent_size));
     let shares_context = in_the_roots_formatting_context(tree, node)
         && tree
             .layout_node_with_style(node)
@@ -2111,8 +2093,13 @@ fn layout_vertical_block_child(
             .align_content
             .keyword
             == taffy::AlignContentKeyword::Normal
-        && crate::layout::ifc::style::shodo_writing_mode(tree.nodes[node].used_writing_mode, node)
-            .is_ok_and(|mode| mode == geometry.axes.writing_mode());
+        && crate::taffy_impl::block_right_to_left(tree, node).is_some_and(|node_direction| {
+            node_direction
+                == matches!(
+                    geometry.axes.writing_mode(),
+                    WritingMode::VerticalRl | WritingMode::SidewaysRl
+                )
+        });
     let clear = tree.layout_node_with_style(node).unwrap().style.clear;
     let clear_y = ctx
         .cleared_threshold(clear)
@@ -2120,13 +2107,130 @@ fn layout_vertical_block_child(
     let clears_adjoining_float =
         clear != taffy::Clear::None && collapse_top && ctx.has_top_adjoining_float(clear);
     let origin_resolved = ctx.origin_resolved();
+    let top_margin = pending.collapse_with_margin(block_start_margin);
+    let hypothetical = if collapse_top {
+        ctx.hypothetical_top_position(top_margin)
+            .unwrap_or(geometry.top_edge + y + top_margin.resolve())
+    } else {
+        geometry.top_edge + y + top_margin.resolve()
+    };
+    let adjoining_float = collapse_top && ctx.has_top_adjoining_float(taffy::Clear::Both);
+    let forced_clearance = clears_adjoining_float;
+    let min_y = if forced_clearance {
+        ctx.cleared_threshold(clear).unwrap_or(hypothetical)
+    } else if adjoining_float {
+        geometry.top_edge + y
+    } else {
+        hypothetical
+    };
+    // An independent vertical context still avoids the parent's floats, while
+    // its descendants lay out without receiving that context.
+    let mut slot = None;
+    let mut slot_separated = false;
+    let mut inline_stretch = (inline_basis - margin.top - margin.bottom).max(0.0);
+    let height = if !shares_context && (forced_clearance || ctx.has_active_floats(min_y)) {
+        let node_id = taffy::NodeId::from(node);
+        let placed = ctx.find_box_slot(
+            min_y,
+            [margin.top, margin.bottom],
+            if geometry.axes.direction() == Direction::Ltr {
+                taffy::Direction::Ltr
+            } else {
+                taffy::Direction::Rtl
+            },
+            clear,
+            |probe| match probe {
+                BoxProbe::Width { stretch } => {
+                    let stretch = stretch.max(-(margin.top + margin.bottom));
+                    clamp_block_height(
+                        tree,
+                        node,
+                        inline_basis,
+                        own_inline_size.map_or(stretch, |own| own.at(stretch)),
+                    )
+                }
+                BoxProbe::Height { width: inline_size } => {
+                    let inputs = LayoutInput {
+                        run_mode: RunMode::ComputeSize,
+                        sizing_mode: SizingMode::InherentSize,
+                        axis: RequestedAxis::Both,
+                        known_dimensions: Size {
+                            width,
+                            height: Some(inline_size),
+                        },
+                        known_dimensions_are_definite: Size {
+                            width: width.is_some(),
+                            height: true,
+                        },
+                        parent_size,
+                        available_space: Size {
+                            width: width
+                                .map_or(AvailableSpace::MaxContent, AvailableSpace::Definite),
+                            height: AvailableSpace::Definite(inline_size),
+                        },
+                        vertical_margins_are_collapsible: Line::FALSE,
+                    };
+                    tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
+                        .size
+                        .width
+                }
+            },
+        );
+        let separation_origin = if adjoining_float {
+            geometry.top_edge + y
+        } else {
+            hypothetical
+        };
+        slot_separated = forced_clearance || placed.slot.y > separation_origin + 0.001;
+        inline_stretch = placed.slot.stretch_width;
+        slot = Some(placed.slot);
+        placed.width
+    } else {
+        own_inline_size.map_or(inline_stretch, |own| own.at(inline_stretch))
+    };
+    let height = clamp_block_height(tree, node, inline_basis, height);
+    let inline_free = inline_stretch - height;
+    let auto_margins =
+        u8::from(style_margin.top.is_auto()) + u8::from(style_margin.bottom.is_auto());
+    let auto_top = if style_margin.top.is_auto() {
+        inline_free.max(0.0) / f32::from(auto_margins.max(1))
+    } else {
+        0.0
+    };
+    let auto_bottom = if style_margin.bottom.is_auto() {
+        inline_free.max(0.0) / f32::from(auto_margins.max(1))
+    } else {
+        0.0
+    };
+    if slot.is_none() {
+        if style_margin.top.is_auto() {
+            margin.top = auto_top;
+        }
+        if style_margin.bottom.is_auto() {
+            margin.bottom = auto_bottom;
+        }
+    }
+    let inline_insets = geometry.inline_axis_insets();
+    let inline_start = slot.map_or_else(
+        || match geometry.axes.direction() {
+            Direction::Ltr => margin.top,
+            Direction::Rtl => margin.bottom,
+        },
+        |slot| {
+            slot.x - inline_insets.0
+                + if geometry.axes.direction() == Direction::Ltr {
+                    auto_top
+                } else {
+                    auto_bottom
+                }
+        },
+    );
     let mut guess = if origin_resolved && collapse_top {
         y.max(clear_y)
     } else {
         (y + pending.collapse_with_margin(block_start_margin).resolve()).max(clear_y)
     };
     let snapshot = (shares_context && origin_resolved).then(|| ctx.snapshot());
-    let inline_insets = geometry.inline_axis_insets();
     let (
         output,
         floats_bottom,
@@ -2208,9 +2312,16 @@ fn layout_vertical_block_child(
         } else {
             y + pending.collapse_with_set(top_set).resolve()
         };
-        let has_clearance =
-            clear != taffy::Clear::None && (clears_adjoining_float || hypothetical < clear_y);
-        let (block_start, after) = if has_clearance {
+        let has_clearance = slot_separated
+            || clear != taffy::Clear::None && (clears_adjoining_float || hypothetical < clear_y);
+        let (block_start, after) = if let Some(slot) = slot {
+            let block_start = if collapse_top && !slot_separated {
+                y
+            } else {
+                slot.y - geometry.top_edge
+            };
+            (block_start, (block_start + output.size.width, bottom_set))
+        } else if has_clearance {
             let block_start = clear_y
                 - if collapse_top && !origin_resolved {
                     pending.resolve()
@@ -2257,10 +2368,6 @@ fn layout_vertical_block_child(
         );
     };
     ctx.add_child_floated_content_height_contribution(geometry.top_edge + guess + floats_bottom);
-    let inline_start = match geometry.axes.direction() {
-        Direction::Ltr => margin.top,
-        Direction::Rtl => margin.bottom,
-    };
     let physical = geometry.axes.rect(
         geometry.content_size,
         shodo::geometry::LogicalRect {

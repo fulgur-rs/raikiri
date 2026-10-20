@@ -1880,6 +1880,9 @@ fn measure_ifc_root(
     let perform = measure.run_mode == RunMode::PerformLayout;
     let auto_vertical_block_size = vertical && !measure.stretched_width;
     let (mut lines, mut measured_block_size) = if auto_vertical_block_size {
+        // Auto-size probes place floats even when they only measure; keep one probe in the
+        // shared context, and restore it before the performed layout.
+        let probe_context = block_ctx.as_deref().map(BlockContext::snapshot);
         let mut lines = crate::layout::ifc::boxes::layout_with_boxes_in(
             tree,
             idx,
@@ -1900,6 +1903,9 @@ fn measure_ifc_root(
             if (block_size - geometry.content_size.width).abs() <= 0.01 {
                 break;
             }
+            if let (Some(ctx), Some(snapshot)) = (block_ctx.as_deref_mut(), &probe_context) {
+                ctx.restore(snapshot);
+            }
             content_size.width = block_size;
             geometry = geometry_of(content_size);
             lines = crate::layout::ifc::boxes::layout_with_boxes_in(
@@ -1915,6 +1921,9 @@ fn measure_ifc_root(
                 .height
                 .min(measure.width_bounds.1)
                 .max(measure.width_bounds.0);
+        }
+        if perform && let (Some(ctx), Some(snapshot)) = (block_ctx.as_deref_mut(), &probe_context) {
+            ctx.restore(snapshot);
         }
         if (block_size - geometry.content_size.width).abs() > 0.01 {
             content_size.width = block_size;

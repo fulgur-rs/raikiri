@@ -471,6 +471,58 @@ fn same_mode_vertical_descendant_clear_sees_an_ancestor_float() {
 }
 
 #[test]
+fn matching_vertical_and_sideways_block_axes_share_floats() {
+    for (parent_mode, child_mode) in [
+        ("vertical-rl", "sideways-rl"),
+        ("vertical-lr", "sideways-lr"),
+    ] {
+        let (mut doc, body) = vertical_document(parent_mode, "100px", "40px");
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:100px;height:40px"),
+        );
+        let float = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:10px;height:20px"),
+        );
+        let wrapper = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some(
+                format!("display:block;writing-mode:{child_mode};width:100px;height:40px").as_str(),
+            ),
+        );
+        let cleared = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;clear:both;width:20px;height:20px"),
+        );
+
+        layout_vertical_document(&mut doc);
+
+        let float = absolute_rect(&doc, float);
+        let cleared = absolute_rect(&doc, cleared);
+        if parent_mode == "vertical-rl" {
+            assert!(
+                cleared.0 + cleared.2 <= float.0,
+                "parent={parent_mode}, child={child_mode}: {float:?} {cleared:?}"
+            );
+        } else {
+            assert!(
+                float.0 + float.2 <= cleared.0,
+                "parent={parent_mode}, child={child_mode}: {float:?} {cleared:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn vertical_inline_content_shares_ancestor_floats() {
     for writing_mode in ["vertical-rl", "vertical-lr"] {
         let (mut doc, body) = vertical_document(writing_mode, "100px", "40px");

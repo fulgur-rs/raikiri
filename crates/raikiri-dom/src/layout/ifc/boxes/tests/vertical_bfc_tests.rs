@@ -250,6 +250,91 @@ fn vertical_aligned_block_ifc_does_not_share_ancestor_floats() {
     }
 }
 
+fn layout_vertical_auto_width_ifc_with_float() -> (BoxRect, BoxRect) {
+    let mut float = 0;
+    let mut cleared = 0;
+    let (mut doc, cascade, _root) = ahem_paragraph_with(
+        "writing-mode:vertical-rl;width:100px;height:100px",
+        |doc, root| {
+            let wrapper = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;width:auto;height:auto"),
+            );
+            float = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;float:left;width:10px;height:10px"),
+            );
+            doc.append_text(wrapper, "a");
+            cleared = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:block;clear:both;width:10px;height:10px"),
+            );
+        },
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    (absolute_rect(&doc, float), absolute_rect(&doc, cleared))
+}
+
+#[test]
+fn vertical_auto_width_ifc_probe_does_not_duplicate_its_float() {
+    let (float, cleared) = layout_vertical_auto_width_ifc_with_float();
+
+    assert_eq!(float, (90.0, 0.0, 10.0, 10.0));
+    assert_eq!(cleared, (80.0, 0.0, 10.0, 10.0));
+}
+
+#[test]
+fn vertical_independent_bfc_child_avoids_ancestor_float() {
+    let mut child = 0;
+    let (mut doc, _cascade, _root) = ahem_paragraph_with(
+        "writing-mode:vertical-rl;width:100px;height:40px",
+        |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("display:flow-root;width:100px;height:40px"),
+            );
+        },
+    );
+    let geometry = vertical_geometry();
+    let mut session = LayoutSession::new(&mut doc);
+    let mut bfc = BlockFormattingContext::new();
+    let mut ctx = bfc.root_block_context();
+    ctx.set_width(geometry.width);
+    ctx.set_origin_resolved(true);
+    ctx.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 10.0,
+        },
+        0.0,
+        FloatDirection::Left,
+        Clear::None,
+        false,
+    );
+
+    let child = super::super::layout_vertical_block_child(
+        &mut session,
+        &mut ctx,
+        child,
+        0.0,
+        CollapsibleMarginSet::ZERO,
+        geometry,
+        false,
+        false,
+    );
+
+    assert_eq!(child.top, 10.0);
+}
+
 #[test]
 fn vertical_inline_boxes_use_the_physical_top_inset() {
     for (writing_mode, block_start_inset) in [

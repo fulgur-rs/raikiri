@@ -189,7 +189,9 @@ impl LayoutSession<'_> {
 fn same_vertical_block_mode(tree: &Document, parent: usize, child: usize) -> bool {
     !flows_horizontally(tree, parent)
         && !flows_horizontally(tree, child)
-        && used_writing_mode(tree, parent) == used_writing_mode(tree, child)
+        && block_right_to_left(tree, parent).is_some_and(|parent_direction| {
+            block_right_to_left(tree, child) == Some(parent_direction)
+        })
 }
 
 /// Whether `idx` has a parent whose block context uses the same transposed
