@@ -1370,6 +1370,32 @@ fn bridge_alignment_last_baseline_falls_back_to_end_for_abspos() {
 }
 
 #[test]
+fn bridge_alignment_baseline_falls_back_to_safe_start_for_abspos() {
+    // An absolutely positioned box takes no part in baseline alignment, so
+    // `baseline` keeps taffy's start placement with `safe` overflow alignment
+    // on both axes. A box in the flow keeps aligning to the baseline.
+    let safe_baseline = TaffyAlignItems {
+        keyword: taffy::AlignItemsKeyword::Baseline,
+        safety: taffy::AlignmentSafety::Safe,
+    };
+    for (position, expected) in [
+        (PositionValue::Absolute, safe_baseline),
+        (PositionValue::Fixed, safe_baseline),
+        (PositionValue::Static, TaffyAlignItems::BASELINE),
+    ] {
+        let label = format!("{position:?}");
+        let mut cv = ComputedValues::initial();
+        cv.position = position;
+        cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Baseline);
+        cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::Baseline);
+        let mut style = Style::default();
+        bridge_alignment(&mut style, &cv);
+        assert_eq!(style.align_self, Some(expected), "position: {label}");
+        assert_eq!(style.justify_self, Some(expected), "position: {label}");
+    }
+}
+
+#[test]
 fn abspos_auto_alignment_takes_last_baseline_fallback_from_the_container() {
     let mut parent = ComputedValues::initial();
     parent.align_items = SelfAlignmentValue::LastBaseline;

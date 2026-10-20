@@ -406,6 +406,43 @@ fn last_baseline_falls_back_to_the_self_end_edge_of_the_box() {
 }
 
 #[test]
+fn baseline_falls_back_to_safe_start_when_the_box_overflows_the_inset_area() {
+    // The box fits the containing block but not the inset-modified one. `start`
+    // keeps the default overflow alignment, which pulls the box back inside the
+    // containing block; the `safe start` fallback of `baseline` stays at the
+    // inset.
+    let rect = |container_css: &str, child_css: &str| aligned_rect(container_css, child_css).0;
+    assert_eq!(
+        rect(
+            "writing-mode:vertical-lr",
+            "left:70px;right:0;align-self:start"
+        ),
+        50.0
+    );
+    assert_eq!(
+        rect(
+            "writing-mode:vertical-lr",
+            "left:70px;right:0;align-self:baseline"
+        ),
+        70.0
+    );
+    assert_eq!(
+        rect(
+            "writing-mode:horizontal-tb",
+            "left:70px;right:0;justify-self:start"
+        ),
+        50.0
+    );
+    assert_eq!(
+        rect(
+            "writing-mode:horizontal-tb",
+            "left:70px;right:0;justify-self:baseline"
+        ),
+        70.0
+    );
+}
+
+#[test]
 fn auto_margins_take_the_free_space_before_alignment_does() {
     let rect = aligned_rect(
         "writing-mode:vertical-rl",
