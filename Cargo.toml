@@ -29,6 +29,7 @@ repository = "https://github.com/fulgur-rs/raikiri"
 raikiri-traits       = { version = "0.2.0", path = "./crates/raikiri-traits" }
 raikiri-svg          = { version = "0.1.0", path = "./crates/raikiri-svg" }
 raikiri-style        = { version = "0.1.0", path = "./crates/raikiri-style" }
+raikiri-layout-style = { version = "0.1.0", path = "./crates/raikiri-layout-style" }
 raikiri-net          = { version = "0.1.0", path = "./crates/raikiri-net" }
 raikiri-dom          = { version = "0.1.0", path = "./crates/raikiri-dom" }
 raikiri-html         = { version = "0.1.0", path = "./crates/raikiri-html" }

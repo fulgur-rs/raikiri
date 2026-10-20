@@ -15,6 +15,8 @@ pub struct LengthValue<'a> {
 /// An invalid override rejected before it reaches a getter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverrideError {
+    /// A preparation-only source is not a physical override target.
+    PreparationOnly,
     /// A computed calc needs an aligned payload rather than an inline expression.
     UnpreparedCalc,
     /// The payload uses another property's range.
@@ -76,7 +78,14 @@ impl<'a> PropertyOverride<'a> {
     ///
     /// # Errors
     /// Rejects a calc payload whose range differs from the target property.
+    /// Also rejects preparation-only logical source slots.
     pub fn length(property: LengthProperty, value: LengthValue<'a>) -> Result<Self, OverrideError> {
+        if matches!(
+            property,
+            LengthProperty::LogicalWidth | LengthProperty::LogicalHeight | LengthProperty::MinBlock
+        ) {
+            return Err(OverrideError::PreparationOnly);
+        }
         if value
             .payload
             .is_some_and(|p| p.non_negative() != property.non_negative())

@@ -127,6 +127,7 @@ impl GenericRepetition for GridRepetition<'_> {
             GridRepeatCount::Count(n) => taffy::RepetitionCount::Count(u16_sat(n)),
             GridRepeatCount::AutoFill => taffy::RepetitionCount::AutoFill,
             GridRepeatCount::AutoFit => taffy::RepetitionCount::AutoFit,
+            // cov:ignore: GridRepeatCount is non-exhaustive; all current variants are matched above.
             _ => taffy::RepetitionCount::Count(1),
         }
     }

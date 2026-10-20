@@ -233,3 +233,52 @@ fn unnamed_area_dimensions_are_preserved() {
     assert_eq!(v.grid_template_area_column_count(), 3);
     assert_eq!(v.grid_template_areas().unwrap().count(), 0);
 }
+
+#[test]
+fn repeat_counts_and_area_coordinates_saturate_like_the_bridge() {
+    for (count, expected) in [
+        (GridRepeatCount::Count(1), taffy::RepetitionCount::Count(1)),
+        (
+            GridRepeatCount::Count(u32::MAX),
+            taffy::RepetitionCount::Count(u16::MAX),
+        ),
+        (GridRepeatCount::AutoFill, taffy::RepetitionCount::AutoFill),
+        (GridRepeatCount::AutoFit, taffy::RepetitionCount::AutoFit),
+    ] {
+        let mut cv = ComputedValues::initial();
+        cv.grid_template_rows = ComputedGridTemplateTracks::List(Arc::new(ComputedGridTrackList {
+            line_names: vec![],
+            components: vec![C::Repeat(ComputedGridTrackRepeat {
+                count,
+                line_names: vec![],
+                tracks: vec![S::Breadth(B::Auto)],
+            })],
+        }));
+        cv.grid_template_areas = GridTemplateAreasValue::Areas(Arc::new(GridTemplateAreas {
+            row_strings: vec![],
+            row_count: u32::MAX,
+            column_count: u32::MAX,
+            areas: vec![GridTemplateAreaEntry {
+                name: SmolStr::new("area"),
+                row_start: 1,
+                row_end: u32::MAX,
+                column_start: 1,
+                column_end: u32::MAX,
+            }],
+        }));
+        let p = PreparedStyle::new(&cv, StyleMetadata::default(), &[]).unwrap();
+        let v = LayoutStyleView::new(&p, ViewContext::default(), &[], &[]);
+        let mut tracks = v.grid_template_rows().unwrap();
+        let T::Repeat(repeat) = tracks.next().unwrap() else {
+            panic!("repeat")
+        };
+        assert_eq!(repeat.count(), expected);
+        let mut areas = v.grid_template_areas().unwrap();
+        assert_eq!(areas.size_hint(), (1, Some(1)));
+        let area = areas.next().unwrap();
+        assert_eq!(area.row_end, u16::MAX);
+        assert_eq!(area.column_end, u16::MAX);
+        assert_eq!(v.grid_template_area_row_count(), u16::MAX);
+        assert_eq!(v.grid_template_area_column_count(), u16::MAX);
+    }
+}
