@@ -48,6 +48,7 @@
 /// Retained layout input with the same grid identifier type as computed styles.
 ///
 /// Long identifiers share their storage when Taffy clones a named placement.
+// cov:ignore: type aliases have no executable mapping; layout trait tests verify the type.
 pub type LayoutStyle = taffy::Style<smol_str::SmolStr>;
 
 mod diag;

@@ -1,6 +1,7 @@
 //! Allocation traffic during fresh layout, with parsing, cascade and drops excluded.
 //! Run separately from Criterion: allocator instrumentation distorts elapsed time.
 
+// cov:ignore: benchmark-only fixtures, not built by workspace coverage; release runs validate them.
 mod common {
     pub mod workloads;
 }
@@ -11,10 +12,14 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 
+// cov:ignore: benchmark-only allocator type, not built by workspace coverage.
 struct Counting;
 
+// cov:ignore: benchmark-only counter initialization, not built by workspace coverage.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+// cov:ignore: benchmark-only counter initialization, not built by workspace coverage.
 static COUNT: AtomicUsize = AtomicUsize::new(0);
+// cov:ignore: benchmark-only counter initialization, not built by workspace coverage.
 static BYTES: AtomicUsize = AtomicUsize::new(0);
 
 // cov:ignore: benchmark-only allocator, exercised by the release smoke run.
@@ -27,6 +32,7 @@ fn record(size: usize) {
 
 // SAFETY: every allocation and release is forwarded unchanged to System.
 // Counters include joined Rayon workers and never allocate.
+// cov:ignore: benchmark-only allocator implementation, validated by release allocation runs.
 #[allow(unsafe_code)]
 unsafe impl GlobalAlloc for Counting {
     // cov:ignore: benchmark-only allocator, exercised by the release smoke run.
@@ -66,9 +72,11 @@ unsafe impl GlobalAlloc for Counting {
     }
 }
 
+// cov:ignore: benchmark-only allocator registration, validated by release allocation runs.
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
+// cov:ignore: benchmark-only measurement guard, validated by release allocation runs.
 struct Measurement;
 
 // cov:ignore: benchmark-only guard, exercised by the release smoke run.
