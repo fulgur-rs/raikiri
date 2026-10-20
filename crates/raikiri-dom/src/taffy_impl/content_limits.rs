@@ -610,18 +610,28 @@ fn capture_oof_layout_inputs<R>(
     dispatch: &mut impl FnMut(&mut LayoutSession<'_>) -> R,
     suppress_nested_prepasses: bool,
 ) -> HashMap<usize, LayoutInput> {
+    let capture_depth = tree.context.oof_content_limit_inputs.len();
+    let prepass_depth = tree.context.oof_content_limit_prepass_depth;
     tree.context.oof_content_limit_inputs.push(HashMap::new());
     if suppress_nested_prepasses {
         tree.context.oof_content_limit_prepass_depth += 1;
     }
-    let _ = dispatch(tree);
-    if suppress_nested_prepasses {
-        tree.context.oof_content_limit_prepass_depth -= 1;
-    }
-    tree.context
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = dispatch(tree);
+    }));
+    tree.context.oof_content_limit_prepass_depth = prepass_depth;
+    let captured = tree
+        .context
         .oof_content_limit_inputs
         .pop()
-        .expect("OOF layout input capture was pushed above")
+        .expect("OOF layout input capture was pushed above");
+    tree.context
+        .oof_content_limit_inputs
+        .truncate(capture_depth);
+    match result {
+        Ok(()) => captured,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 /// Give `style`, a copy of the style of the block-flow child `child`, the

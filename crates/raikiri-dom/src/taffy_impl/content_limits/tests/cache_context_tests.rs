@@ -233,3 +233,57 @@ fn intrinsic_scope_unwind_restores_percentage_height_basis() {
     );
     assert_eq!(tree.context.content_limit_depth, 0);
 }
+
+#[test]
+fn oof_input_capture_restores_its_stack_and_prepass_depth_on_unwind() {
+    let mut doc = crate::Document::new();
+    let mut tree = LayoutSession::new(&mut doc);
+    tree.context
+        .oof_content_limit_inputs
+        .push(std::collections::HashMap::new());
+    tree.context.oof_content_limit_prepass_depth = 2;
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::super::capture_oof_layout_inputs(
+            &mut tree,
+            &mut |tree| {
+                assert_eq!(tree.context.oof_content_limit_inputs.len(), 2);
+                assert_eq!(tree.context.oof_content_limit_prepass_depth, 3);
+                panic!("OOF capture unwind");
+            },
+            true,
+        );
+    }));
+    assert!(panic.is_err());
+    assert_eq!(tree.context.oof_content_limit_inputs.len(), 1);
+    assert_eq!(tree.context.oof_content_limit_prepass_depth, 2);
+}
+
+#[test]
+fn oof_prepass_runs_again_after_an_unwind() {
+    let mut child = 0;
+    let fixture = block_fixture_with_ahem("width:200px", |doc, root| {
+        child = doc.append_element(
+            Some(root),
+            "div",
+            crate::LayoutStyle::default(),
+            Some("position:absolute;width:50px;max-height:max-content"),
+        );
+    });
+    let mut doc = fixture.doc;
+    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).unwrap();
+    let mut tree = LayoutSession::new(&mut doc);
+    let candidate = NodeId::from(child);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_oof_content_limits(&mut tree, Some(&[candidate]), &[], |_| {
+            panic!("OOF prepass")
+        })
+    }));
+    assert!(panic.is_err());
+    assert_eq!(tree.context.oof_content_limit_prepass_depth, 0);
+    assert!(tree.context.oof_content_limit_inputs.is_empty());
+    let mut calls = 0;
+    with_oof_content_limits(&mut tree, Some(&[candidate]), &[], |_| {
+        calls += 1;
+    });
+    assert_eq!(calls, 2);
+}
