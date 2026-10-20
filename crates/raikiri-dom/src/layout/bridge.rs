@@ -300,6 +300,7 @@ fn apply_computed_to_style_in_session_inner(
             .unwrap()
             .style
             .aspect_ratio = preferred_ratio;
+        doc.nodes[idx].svg_width_follows_available = false;
         // SVG 2 geometry: auto dimensions on svg are treated as 100%.
         // With only a viewBox ratio and no definite height, width establishes
         // the viewport and the ratio determines its auto height.
@@ -316,6 +317,7 @@ fn apply_computed_to_style_in_session_inner(
             if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
                 && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
             {
+                doc.nodes[idx].svg_width_follows_available = true;
                 doc.layout_node_with_style_mut(idx)
                     .unwrap()
                     .style

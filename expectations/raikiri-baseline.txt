@@ -5011,3 +5011,9 @@ css/css-break/trailing-child-margin-001.html
 css/css-multicol/multicol-span-all-margin-003.html
 css/css-multicol/resize-multicol-with-fixed-size-children-002.html
 css/css-multicol/intrinsic-size-004.html
+
+# --- a ratio-only svg sized within the min and max of both sides (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
+# A viewBox-only svg takes the room its container offers and is then brought within the min and max sizes of both sides, and a keyword min-width takes the width its height gives; 001 and 002 are KEEP in audit-vacuous-passes. 003 is VACUOUS-UNSTYLED because its square also appears without the subject properties; it stays as a negative guard, since it failed before a keyword min-width stopped being limited by max-width.
+css/css-sizing/replaced-aspect-ratio-stretch-fit-001.html
+css/css-sizing/replaced-aspect-ratio-stretch-fit-002.html
+css/css-sizing/replaced-aspect-ratio-stretch-fit-003.html
