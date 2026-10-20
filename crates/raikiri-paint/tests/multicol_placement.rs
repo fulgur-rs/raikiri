@@ -488,6 +488,39 @@ fn a_spanner_leaves_the_outline_of_a_paragraph_visible_past_its_column_group() {
 }
 
 #[test]
+fn a_box_with_a_block_border_slices_it_across_the_columns() {
+    // The border is where the box starts or ends, not at the break.
+    compare(
+        "<div class=mc><div style='height:150px;border-top:1px solid;background:lime'></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:99px;border-top:1px solid;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:51px;background:lime'></div>",
+    );
+    compare(
+        "<div class=mc><div style='height:100px;padding:10px 0;border-bottom:2px solid;background:lime'></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:100px;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:20px;border-bottom:2px solid;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_box_with_block_borders_cut_into_three_pieces_has_borders_on_the_outer_edges_only() {
+    compare(
+        "<div class=mc><div style='height:249px;border:solid;border-width:1px 0 2px;background:lime'></div></div>",
+        ".mc{width:160px;column-count:3;height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:99px;border-top:1px solid;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:100px;background:lime'></div><div style='position:absolute;left:120px;top:0;width:40px;height:50px;border-bottom:2px solid;background:lime'></div>",
+    );
+}
+
+#[test]
+fn a_wrapped_box_with_a_block_border_slices_it_across_the_columns() {
+    compare(
+        "<div class=mc><div><div style='height:150px;border-top:1px solid;background:lime'></div></div></div>",
+        ".mc{height:100px;column-fill:auto}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:99px;border-top:1px solid;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:51px;background:lime'></div>",
+    );
+}
+
+#[test]
 fn a_constrained_wrapper_background_includes_its_last_child_margin() {
     compare(
         "<div class=mc><div style='width:80px;overflow:hidden;background:lime'><p style='margin-bottom:20px'>A</p></div></div><p>B</p>",

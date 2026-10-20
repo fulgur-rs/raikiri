@@ -621,6 +621,10 @@ struct Item {
     margin_bottom: f32,
     splittable: bool,
     whole: bool,
+    /// The block-start and block-end border and padding of a box whose
+    /// pieces slice them: it is cut where it is taller than a column, but
+    /// not inside these insets.
+    slice: Option<(f32, f32)>,
 }
 
 pub(super) const EPSILON: f32 = 0.001;
@@ -718,8 +722,11 @@ fn place_columns(
         let splittable = item.splittable
             && !(item.whole
                 && (cursor + gap + item.height <= height_of(column) + EPSILON || moves_whole));
+        // A box that slices its decorations starts where its block-start
+        // border and padding fit with some content.
+        let leading = item.slice.map_or(0.0, |(leading, _)| leading);
         let fits_after_gap = if splittable {
-            cursor + gap < height_of(column) - EPSILON
+            cursor + gap + leading < height_of(column) - EPSILON
         } else {
             cursor + gap + item.height <= height_of(column) + EPSILON
         };
@@ -741,17 +748,34 @@ fn place_columns(
         pending_margin = item.margin_bottom;
         // A box that avoids breaks but is taller than a whole column breaks
         // anyway (CSS Fragmentation 3, 4.4), unless painting cannot slice it.
-        let breaks_anyway = !splittable && !item.whole && item.height > height_of(column) + EPSILON;
+        let breaks_anyway = !splittable
+            && (!item.whole || item.slice.is_some())
+            && item.height > height_of(column) + EPSILON;
         if splittable || breaks_anyway {
             let mut left = item.height;
             loop {
                 let room = height_of(column) - cursor;
+                // A break is not inside the block-end border and padding: the
+                // box ends in the next column with them, whole. At the top of
+                // a column that is taller than what is left, the next column
+                // offers no more room, so the border and padding are cut like
+                // any other box.
+                let room = match item.slice {
+                    Some((_, trailing))
+                        if left > room + EPSILON
+                            && left - room < trailing - EPSILON
+                            && (cursor > 0.0 || left - trailing > EPSILON) =>
+                    {
+                        (left - trailing).min(room)
+                    }
+                    _ => room,
+                };
                 // A gap that fills the column leaves no room for the box,
                 // which then starts in the next column.
                 if room < -EPSILON || (room <= EPSILON && left > EPSILON) {
                     // Columns too short for any of the box at their top
                     // would cut it at every one of them.
-                    if keep_whole && item.whole && cursor <= 0.0 {
+                    if keep_whole && item.whole && item.slice.is_none() && cursor <= 0.0 {
                         return Err(Stop::Cut);
                     }
                     piece_count += 1;
@@ -778,7 +802,7 @@ fn place_columns(
                     cursor += left;
                     break;
                 }
-                if keep_whole && item.whole {
+                if keep_whole && item.whole && item.slice.is_none() {
                     return Err(Stop::Cut);
                 }
                 pieces.push(Piece {
@@ -1292,6 +1316,8 @@ fn push_wrapped_block(
         y: first.top - wrapper_first.top,
     };
     tree.set_unrounded_layout(TaffyNodeId::from(leaf), &layout);
+    let sliced = pieces.len() > 1 && slices_decorations(&tree.layout_node_with_style(leaf)?);
+    let mut taken = 0.0f32;
     for (index, piece) in pieces.iter().enumerate() {
         let parent_index = parents
             .iter()
@@ -1301,12 +1327,15 @@ fn push_wrapped_block(
             node_id: leaf,
             parent: Some(records[parent_index]),
             fragmentainer: context.column_index + piece.column,
-            rect: FragmentRect {
-                x,
-                y: piece.top - parent.top,
-                width: size.width,
-                height: piece.height,
-            },
+            rect: sliced_rect(
+                FragmentRect {
+                    x,
+                    y: piece.top - parent.top,
+                    width: size.width,
+                    height: piece.height,
+                },
+                sliced.then_some((taken, size.height)),
+            ),
             // A box that stays in one column is not cut.
             fragmentainer_clip: (pieces.len() > 1).then_some(FragmentRect {
                 x: 0.0,
@@ -1319,14 +1348,72 @@ fn push_wrapped_block(
             line_start: None,
             line_end: None,
         })?;
+        taken += piece.height;
     }
     Some(())
 }
 
-/// The stream item of `child`, a box of block size `height`.
-fn item(tree: &Document, child: usize, height: f32) -> Item {
+/// The rect of a piece of a box that slices its decorations: the whole box,
+/// of block size `whole.1`, moved up by the `whole.0` the earlier pieces took.
+/// The clip of the column then cuts it to the piece. `rect` is the piece's own.
+fn sliced_rect(rect: FragmentRect, whole: Option<(f32, f32)>) -> FragmentRect {
+    match whole {
+        Some((taken, height)) => FragmentRect {
+            y: rect.y - taken,
+            height,
+            ..rect
+        },
+        None => rect,
+    }
+}
+
+/// Whether a box cut at a column end slices its block-axis borders and
+/// padding (CSS Fragmentation 3, 5.4): its pieces paint the whole box, moved
+/// up by what the earlier pieces took and clipped to the column, so no border
+/// shows where it breaks. Effects sized from the whole box, and decorations
+/// that repeat at each break, are not sliced.
+fn slices_decorations(node: &crate::document::LayoutNodeRef<'_>) -> bool {
+    has_block_edge_decorations(node.style)
+        && !node.clones_box_decorations
+        && !node.paints_whole_box_effects
+}
+
+/// Where the block-axis border and padding of a box whose pieces slice them
+/// are measured from.
+#[derive(Clone, Copy)]
+enum Insets {
+    /// Resolved against this inline size, that of the column a child of the
+    /// container sits in.
+    Against(f32),
+    /// Taken from the layout that placed the box, which resolved them against
+    /// the containing block the box has inside a wrapper.
+    Laid,
+}
+
+/// The stream item of `child`, a box of block size `height`. `slice` says how
+/// to measure the decorations when the pieces of a cut box are placed to
+/// slice them.
+fn item(tree: &Document, child: usize, height: f32, slice: Option<Insets>) -> Item {
     let node = &tree.layout_node_with_style(child).unwrap();
     let (margin_top, margin_bottom) = block_margins(node.style).unwrap_or_default();
+    let slice = slice
+        .filter(|_| slices_decorations(node))
+        .map(|insets| match insets {
+            Insets::Against(basis) => {
+                let inset = |value| super::multicol_resolve_inset(tree, value, basis);
+                (
+                    inset(node.style.padding.top) + inset(node.style.border.top),
+                    inset(node.style.padding.bottom) + inset(node.style.border.bottom),
+                )
+            }
+            Insets::Laid => {
+                let layout = &tree.nodes[child].unrounded_layout;
+                (
+                    layout.padding.top + layout.border.top,
+                    layout.padding.bottom + layout.border.bottom,
+                )
+            }
+        });
     Item {
         height,
         margin_top,
@@ -1335,12 +1422,13 @@ fn item(tree: &Document, child: usize, height: f32) -> Item {
             node.break_inside,
             BreakInside::Avoid | BreakInside::AvoidColumn
         ),
-        // Painting draws every fragment's decorations whole, so a box with
-        // block-axis borders or padding, or with effects sized from the
-        // whole box, would repeat them at each break instead of slicing them
-        // (CSS Fragmentation 3, 5.4). Such a box may still sit whole in one
-        // column.
-        whole: has_block_edge_decorations(node.style) || node.paints_whole_box_effects,
+        // A box with block-axis borders or padding, or with effects sized
+        // from the whole box, sits whole in the next column when it fits
+        // there. One taller than a column is cut only where its pieces slice
+        // the decorations, as a piece that does not would repeat them at each
+        // break.
+        whole: node.paints_whole_box_effects || has_block_edge_decorations(node.style),
+        slice,
     }
 }
 
@@ -1390,7 +1478,14 @@ pub(super) fn fill_rows(
 ) -> Option<Rows> {
     let items: Vec<Item> = children
         .iter()
-        .map(|&child| item(tree, child, tree.nodes[child].unrounded_layout.size.height))
+        .map(|&child| {
+            item(
+                tree,
+                child,
+                tree.nodes[child].unrounded_layout.size.height,
+                None,
+            )
+        })
         .collect();
     fill_item_rows(
         &items,
@@ -1599,15 +1694,23 @@ pub(super) fn layout(
         let first = items.len();
         match wrapped_tree {
             None => {
-                items.push(item(tree, child, size.height));
+                items.push(item(
+                    tree,
+                    child,
+                    size.height,
+                    Some(Insets::Against(context.column_width)),
+                ));
             }
             Some(wrapped_tree) => {
                 let leaves = wrapped_tree.leaf_ids();
-                items.extend(
-                    leaves.iter().map(|&leaf| {
-                        item(tree, leaf, tree.nodes[leaf].unrounded_layout.size.height)
-                    }),
-                );
+                items.extend(leaves.iter().map(|&leaf| {
+                    item(
+                        tree,
+                        leaf,
+                        tree.nodes[leaf].unrounded_layout.size.height,
+                        Some(Insets::Laid),
+                    )
+                }));
                 apply_wrapped_layout(tree, wrapped_tree, &mut items, first, context.column_width)?;
             }
         }
@@ -1762,18 +1865,26 @@ pub(super) fn layout(
         };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &layout);
         let mut records = Vec::with_capacity(pieces.len());
+        // How far each piece of a sliced box is moved up.
+        let mut shifts = Vec::with_capacity(pieces.len());
+        let sliced = pieces.len() > 1 && slices_decorations(&tree.layout_node_with_style(child)?);
+        let mut taken = 0.0f32;
         for (index, piece) in pieces.iter().enumerate() {
+            shifts.push(if sliced { taken } else { 0.0 });
             let x = origin.x + context.column_offset_x(piece.column);
             let record = tree.fragment_tree.try_push(LayoutFragment {
                 node_id: child,
                 parent: Some(container),
                 fragmentainer: context.column_index + piece.column,
-                rect: FragmentRect {
-                    x,
-                    y: origin.y + piece.top,
-                    width: size.width,
-                    height: piece.height,
-                },
+                rect: sliced_rect(
+                    FragmentRect {
+                        x,
+                        y: origin.y + piece.top,
+                        width: size.width,
+                        height: piece.height,
+                    },
+                    sliced.then_some((taken, size.height)),
+                ),
                 // A box that stays in one column is not cut. A cut one
                 // still shows its absolutely positioned boxes, which have
                 // clips of their own, where they reach past it inline.
@@ -1803,6 +1914,7 @@ pub(super) fn layout(
                 line_end: None,
             })?;
             records.push(record);
+            taken += piece.height;
         }
         if let (Some(wrapped_tree), Some(leaf_pieces)) =
             (&wrapped[order], &wrapped_leaf_pieces[order])
@@ -1818,12 +1930,21 @@ pub(super) fn layout(
             )?;
         }
         for piece in absolute {
+            // The piece was placed against the column, but a piece of a
+            // sliced box sits higher by what the pieces before it took.
+            let shift = shifts[piece.parent_piece];
             tree.fragment_tree.try_push(LayoutFragment {
                 node_id: piece.node,
                 parent: Some(records[piece.parent_piece]),
                 fragmentainer: context.column_index + piece.column,
-                rect: piece.rect,
-                fragmentainer_clip: Some(piece.clip),
+                rect: FragmentRect {
+                    y: piece.rect.y + shift,
+                    ..piece.rect
+                },
+                fragmentainer_clip: Some(FragmentRect {
+                    y: piece.clip.y + shift,
+                    ..piece.clip
+                }),
                 fragment_index: 0,
                 fragment_count: 1,
                 line_start: None,

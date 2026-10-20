@@ -712,13 +712,13 @@ fn compute_multicol_layout_spaces_min_height_children_when_slicing_fails() {
         Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
-    // A bordered box taller than a column would be cut, and painting
-    // cannot slice its borders, so the children are not sliced at all.
+    // A rounded box taller than a column would be cut, and painting cannot
+    // slice its corners, so the children are not sliced at all.
     doc.append_element(
         Some(container),
         "div",
         Style::default(),
-        Some("display:block;height:70px;border:2px solid"),
+        Some("display:block;height:70px;border:2px solid;border-radius:2px"),
     );
 
     let rules = build_rule_tree(&doc);
@@ -2946,8 +2946,26 @@ fn the_trailing_margin_of_blocks_without_lines_stays_in_the_container() {
 }
 
 #[test]
-fn blocks_with_block_edge_decorations_are_not_sliced() {
+fn blocks_with_block_edge_decorations_slice_them_as_the_whole_box_moved_up() {
     for decoration in ["border-top:2px solid", "padding-bottom:2px"] {
+        let (doc, _, children) = lineless_fixture(
+            "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+            &[&format!("display:block;height:150px;{decoration}")],
+        );
+        // Each piece is the whole box, moved up by what the pieces before it
+        // took, so the column clip shows only the part that belongs to it.
+        assert_eq!(
+            fragment_rects(&doc, children[0]),
+            vec![(0, 0.0, 0.0, 152.0), (1, 50.0, -100.0, 152.0)],
+            "{decoration}"
+        );
+    }
+    // A decoration that repeats at each break, or an effect sized from the
+    // whole box, cannot be sliced, so the box stays whole.
+    for decoration in [
+        "border-top:2px solid;box-decoration-break:clone",
+        "border-top:2px solid;border-radius:2px",
+    ] {
         let (doc, _, children) = lineless_fixture(
             "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
             &[&format!("display:block;height:200px;{decoration}")],
@@ -2959,6 +2977,84 @@ fn blocks_with_block_edge_decorations_are_not_sliced() {
         &["display:block;height:200px;border-left:2px solid"],
     );
     assert_eq!(fragment_rects(&doc, children[0]).len(), 2);
+}
+
+#[test]
+fn block_end_padding_taller_than_a_column_does_not_stall_the_columns() {
+    let (doc, _, children) = lineless_fixture(
+        "display:block;width:300px;height:100px;columns:3;column-gap:0;column-fill:auto",
+        &["display:block;height:1px;padding-bottom:101px"],
+    );
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![
+            (0, 0.0, 0.0, 102.0),
+            (1, 100.0, -1.0, 102.0),
+            (2, 200.0, -101.0, 102.0)
+        ]
+    );
+}
+
+#[test]
+fn the_padding_of_a_block_in_a_wrapper_resolves_against_the_wrapper() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Style::default(), Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;padding:0 20px"),
+    );
+    let leaf = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;height:105px;padding-bottom:50%"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    // The 50% is 30px of the wrapper's 60px content box, so the 135px block
+    // breaks at the column end 5px above its padding. Resolved against the
+    // 100px column it would be 50px, and the break would fall 15px early.
+    let rects = fragment_rects(&doc, leaf);
+    assert_eq!(
+        rects
+            .iter()
+            .map(|rect| (rect.0, rect.2))
+            .collect::<Vec<_>>(),
+        vec![(0, 0.0), (1, -100.0)]
+    );
+}
+
+#[test]
+fn an_absolute_box_in_a_sliced_block_stays_in_its_column() {
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative;height:150px;border-top:5px solid;border-bottom:5px solid",
+            &["position:absolute;top:130px;width:10px;height:10px"],
+        )],
+    );
+    let absolute = ids[0].1[0];
+    let fragments = &doc.fragment_tree.fragments;
+    let in_column: Vec<_> = fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == absolute)
+        .map(|fragment| {
+            // The parent piece is the whole block moved up by the 100px the
+            // first piece took; the box and its clip move up with it.
+            let parent = &fragments[fragment.parent.unwrap()];
+            let clip = fragment.fragmentainer_clip.unwrap();
+            (
+                fragment.fragmentainer,
+                parent.rect.y + fragment.rect.y,
+                parent.rect.y + clip.y,
+            )
+        })
+        .collect();
+    // 135px down the block is 35px down the second column.
+    assert_eq!(in_column, vec![(1, 35.0, 0.0)]);
 }
 
 #[test]
@@ -3433,13 +3529,14 @@ fn compute_multicol_layout_keeps_foundational_child_layouts_when_slicing_fails()
         Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
-    // A bordered box taller than a column would be cut, so the children
-    // are not sliced, and keep the layout of the unfragmented flow.
+    // A rounded box taller than a column would be cut, and painting cannot
+    // slice its corners, so the children are not sliced, and keep the layout
+    // of the unfragmented flow.
     doc.append_element(
         Some(container),
         "div",
         Style::default(),
-        Some("display:block;height:70px;border:2px solid"),
+        Some("display:block;height:70px;border:2px solid;border-radius:2px"),
     );
     let half = doc.append_element(
         Some(container),
