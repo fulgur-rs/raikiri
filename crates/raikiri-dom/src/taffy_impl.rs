@@ -1385,10 +1385,13 @@ fn compute_ifc_root(
         escaping_margin
     };
     if inputs.run_mode == RunMode::PerformLayout {
+        let in_flow_overflow = output.scrollable_overflow_rect;
         oof::layout_local_oof(tree, node_id, &mut output);
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
-        if let Some(area) = output.oof_positioning_area {
-            vertical_oof::align_hoisted_children(tree, idx, area);
+        if let Some(area) = output.oof_positioning_area
+            && let Some(hoisted_overflow) = vertical_oof::align_hoisted_children(tree, idx, area)
+        {
+            output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
         }
     }
     output
@@ -2563,12 +2566,16 @@ pub(crate) fn block_layout(
     if let Some(right_to_left) = vertical_block::block_right_to_left(tree, idx) {
         let mut output =
             vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left);
+        let in_flow_overflow = output.scrollable_overflow_rect;
         if inputs.run_mode == RunMode::PerformLayout {
             oof::layout_local_oof(tree, node_id, &mut output);
         }
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
-        if let Some(area) = output.oof_positioning_area {
-            vertical_oof::align_hoisted_children(tree, idx, area);
+        if let Some(area) = output.oof_positioning_area
+            && let Some(hoisted_overflow) = vertical_oof::align_hoisted_children(tree, idx, area)
+            && inputs.run_mode == RunMode::PerformLayout
+        {
+            output.scrollable_overflow_rect = in_flow_overflow.union(hoisted_overflow);
         }
         return output;
     }

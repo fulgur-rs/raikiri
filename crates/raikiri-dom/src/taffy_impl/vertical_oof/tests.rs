@@ -261,10 +261,11 @@ fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
     assert!(session.context.vertical_oof_containing_blocks.is_empty());
 }
 
-/// The page rect of a 50px square absolutely positioned child styled with
-/// `child_css`, in a 100px square positioned container styled with
-/// `container_css`, at the origin of the page.
-fn aligned_rect(container_css: &str, child_css: &str) -> (f32, f32, f32, f32) {
+/// A document laid out with a 50px square absolutely positioned child styled
+/// with `child_css`, in a 100px square positioned container styled with
+/// `container_css`, at the origin of the page. Returns the document, the
+/// container and the child.
+fn aligned_document(container_css: &str, child_css: &str) -> (Document, usize, usize) {
     let mut doc = Document::new();
     let body = doc.append_element(
         Some(0),
@@ -291,6 +292,12 @@ fn aligned_rect(container_css: &str, child_css: &str) -> (f32, f32, f32, f32) {
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    (doc, container, child)
+}
+
+/// The page rect of the child of [`aligned_document`].
+fn aligned_rect(container_css: &str, child_css: &str) -> (f32, f32, f32, f32) {
+    let (doc, _, child) = aligned_document(container_css, child_css);
     absolute_rect(&doc, child)
 }
 
@@ -483,6 +490,72 @@ fn an_overflowing_box_keeps_the_block_start_edge() {
         -50.0
     );
     assert_eq!(rect("writing-mode:vertical-lr;overflow:hidden", "end"), 0.0);
+}
+
+#[test]
+fn the_overflow_of_a_moved_box_is_that_of_its_new_position() {
+    // The 150px box does not fit the 100px container, so it hangs over the
+    // block-end edge: the left edge of `vertical-rl`, where Taffy aligned the
+    // box to the left edge and let it overflow to the right.
+    let overflow = |container_css: &str, child_css: &str| {
+        let (doc, container, _) = aligned_document(container_css, child_css);
+        let rect = doc.nodes[container]
+            .unrounded_layout
+            .scrollable_overflow_rect;
+        (rect.left, rect.right, rect.top, rect.bottom)
+    };
+    let wide = "left:0;right:0;width:150px;align-self:end";
+    assert_eq!(
+        overflow("writing-mode:vertical-rl", wide),
+        (-50.0, 100.0, 0.0, 50.0)
+    );
+    // In `vertical-lr` the box stays where Taffy put it.
+    assert_eq!(
+        overflow("writing-mode:vertical-lr", wide),
+        (0.0, 150.0, 0.0, 50.0)
+    );
+    // The inline axis of a `direction: rtl` box ends at the top.
+    assert_eq!(
+        overflow(
+            "writing-mode:vertical-lr;direction:rtl",
+            "top:0;bottom:0;height:150px;justify-self:end"
+        ),
+        (0.0, 100.0, -50.0, 100.0)
+    );
+}
+
+#[test]
+fn the_overflow_of_a_box_moved_in_a_container_with_lines_is_that_of_its_new_position() {
+    let mut doc = Document::new();
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:relative;writing-mode:vertical-rl;width:100px;height:100px;font:10px Ahem"),
+    );
+    doc.append_text(container, "x");
+    let child = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;position:absolute;width:150px;height:50px;left:0;right:0;align-self:end",
+        ),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    assert_eq!(absolute_rect(&doc, child).0, -50.0);
+    let rect = doc.nodes[container]
+        .unrounded_layout
+        .scrollable_overflow_rect;
+    assert_eq!((rect.left, rect.right), (-50.0, 100.0));
 }
 
 #[test]

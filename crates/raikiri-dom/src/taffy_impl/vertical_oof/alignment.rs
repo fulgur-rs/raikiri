@@ -17,12 +17,12 @@
 //! `auto`, with the alignment property and the start edge of that axis.
 //! Sizes are left as Taffy found them, and so are the axes in which an inset
 //! is `auto`, which the static position handles. The scrollable overflow
-//! Taffy merged from a box is not recomputed for its new position.
+//! Taffy merged from the boxes is recomputed for their new positions.
 
 use taffy::util::MaybeResolve;
 use taffy::{
-    AlignItemsKeyword, AlignSelf, AlignmentSafety, Direction, LayoutPartialTree, Line, NodeId,
-    OofPositioningArea,
+    AlignItemsKeyword, AlignSelf, AlignmentSafety, Contain, Direction, LayoutPartialTree, Line,
+    NodeId, OofPositioningArea, Overflow, Point, Rect, Size,
 };
 
 use super::super::{block_right_to_left, hoisted_children, resolve_calc};
@@ -206,24 +206,123 @@ impl AxisBox {
     }
 }
 
+/// The scrollable overflow that the boxes in `children` contribute to their
+/// containing block when they are at the positions of their layouts, laid out
+/// against `area`: what Taffy merges for them once it has laid them out.
+fn hoisted_overflow(
+    tree: &LayoutSession<'_>,
+    children: &[usize],
+    area: OofPositioningArea,
+    direction: Direction,
+    container_overflow: Point<Overflow>,
+) -> Rect<f32> {
+    let container_scrolls =
+        container_overflow.x.is_scroll_container() || container_overflow.y.is_scroll_container();
+    let mut rect = Rect::ZERO;
+    for &child in children {
+        let node = tree.layout_node_with_style(child).unwrap();
+        let layout = node.unrounded_layout;
+        // The location is measured from the scroll origin, which is the right
+        // edge under `direction: rtl`.
+        let x = layout.location.x - area.offset.x;
+        let location = Point {
+            x: if direction == Direction::Rtl {
+                area.size.width - x - layout.size.width
+            } else {
+                x
+            },
+            y: layout.location.y - area.offset.y,
+        };
+        rect = rect.union(overflow_contribution(
+            location,
+            layout.size,
+            layout.scrollable_overflow_rect,
+            node.style.overflow,
+            node.style.contain,
+            container_scrolls,
+        ));
+    }
+    rect
+}
+
+/// The scrollable overflow rect that a box at `location` with `size` and its
+/// own `overflow_rect` contributes to a container that scrolls when
+/// `container_scrolls` (<https://drafts.csswg.org/css-overflow-3/#scrollable>).
+/// A box that clips or contains its overflow contributes its border box only.
+fn overflow_contribution(
+    location: Point<f32>,
+    size: Size<f32>,
+    overflow_rect: Rect<f32>,
+    overflow: Point<Overflow>,
+    contain: Contain,
+    container_scrolls: bool,
+) -> Rect<f32> {
+    let clips = overflow.x.is_scroll_container()
+        || overflow.y.is_scroll_container()
+        || contain.contains_scrollable_overflow();
+    let propagates = |axis: Overflow| !clips && axis == Overflow::Visible;
+    let (propagates_x, propagates_y) = (propagates(overflow.x), propagates(overflow.y));
+    let end = Size {
+        width: if propagates_x {
+            size.width.max(overflow_rect.right)
+        } else {
+            size.width
+        },
+        height: if propagates_y {
+            size.height.max(overflow_rect.bottom)
+        } else {
+            size.height
+        },
+    };
+    if end.width <= 0.0 || end.height <= 0.0 {
+        return Rect::ZERO;
+    }
+    let start = Point {
+        x: if propagates_x {
+            overflow_rect.left.min(0.0)
+        } else {
+            0.0
+        },
+        y: if propagates_y {
+            overflow_rect.top.min(0.0)
+        } else {
+            0.0
+        },
+    };
+    let contribution = Rect {
+        left: location.x + start.x,
+        right: location.x + end.width,
+        top: location.y + start.y,
+        bottom: location.y + end.height,
+    };
+    // What lies before the origin of a scroll container cannot be reached.
+    if container_scrolls && (contribution.right <= 0.0 || contribution.bottom <= 0.0) {
+        Rect::ZERO
+    } else {
+        contribution
+    }
+}
+
 /// Align the absolutely positioned boxes that `idx` is the containing block
 /// of, laid out against `area`, when `idx` is a vertical block container or
 /// the root of vertical lines.
+///
+/// Returns the scrollable overflow of all the boxes at their positions, to
+/// replace what Taffy merged for them, when a box moved.
 pub(in crate::taffy_impl) fn align_hoisted_children(
     tree: &mut LayoutSession<'_>,
     idx: usize,
     area: OofPositioningArea,
-) {
+) -> Option<Rect<f32>> {
     // Only a box laid out on vertical axes has the physical axes swapped.
-    if block_right_to_left(tree, idx).is_none() {
-        return;
-    }
+    block_right_to_left(tree, idx)?;
     let mode = used_writing_mode(tree, idx);
     let container = &tree.layout_node_with_style(idx).unwrap().style;
     let direction = container.direction;
     let overflow = container.overflow;
     let children = hoisted_children(tree, idx);
-    for child in children {
+    let mut moved_any = false;
+    for &child in &children {
         let child_mode = used_writing_mode(tree, child);
         let node = tree.layout_node_with_style(child).unwrap();
         let style = &node.style;
@@ -309,8 +408,10 @@ pub(in crate::taffy_impl) fn align_hoisted_children(
         }
         if moved {
             tree.set_unrounded_layout(NodeId::from(child), &layout);
+            moved_any = true;
         }
     }
+    moved_any.then(|| hoisted_overflow(tree, &children, area, direction, overflow))
 }
 
 #[cfg(test)]

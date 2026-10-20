@@ -217,3 +217,106 @@ fn a_scroll_container_lets_the_box_overflow_in_the_scrolling_direction() {
     assert_eq!(location(true, false), 10.0);
     assert_eq!(location(true, true), 10.0 - 20.0);
 }
+
+/// The contribution of a 50px square box at (10, 20) whose own overflow
+/// rect is `(-5, -5)..(80, 90)`.
+fn contribution(overflow: Overflow, contain: Contain, container_scrolls: bool) -> Rect<f32> {
+    overflow_contribution(
+        Point { x: 10.0, y: 20.0 },
+        Size {
+            width: 50.0,
+            height: 50.0,
+        },
+        Rect {
+            left: -5.0,
+            right: 80.0,
+            top: -5.0,
+            bottom: 90.0,
+        },
+        Point {
+            x: overflow,
+            y: overflow,
+        },
+        contain,
+        container_scrolls,
+    )
+}
+
+fn rect(left: f32, right: f32, top: f32, bottom: f32) -> Rect<f32> {
+    Rect {
+        left,
+        right,
+        top,
+        bottom,
+    }
+}
+
+#[test]
+fn a_box_with_visible_overflow_contributes_its_overflow() {
+    assert_eq!(
+        contribution(Overflow::Visible, Contain::NONE, false),
+        rect(5.0, 90.0, 15.0, 110.0)
+    );
+}
+
+#[test]
+fn a_box_that_clips_or_contains_its_overflow_contributes_its_border_box() {
+    let border_box = rect(10.0, 60.0, 20.0, 70.0);
+    assert_eq!(
+        contribution(Overflow::Hidden, Contain::NONE, false),
+        border_box
+    );
+    assert_eq!(
+        contribution(Overflow::Scroll, Contain::NONE, false),
+        border_box
+    );
+    assert_eq!(
+        contribution(Overflow::Visible, Contain::LAYOUT, false),
+        border_box
+    );
+    assert_eq!(
+        contribution(Overflow::Visible, Contain::PAINT, false),
+        border_box
+    );
+}
+
+#[test]
+fn a_box_without_extent_contributes_nothing() {
+    let empty = overflow_contribution(
+        Point { x: 10.0, y: 20.0 },
+        Size {
+            width: 0.0,
+            height: 50.0,
+        },
+        Rect::ZERO,
+        Point {
+            x: Overflow::Visible,
+            y: Overflow::Visible,
+        },
+        Contain::NONE,
+        false,
+    );
+    assert_eq!(empty, Rect::ZERO);
+}
+
+#[test]
+fn a_scroll_container_cannot_reach_a_box_before_its_origin() {
+    let contribute = |container_scrolls| {
+        overflow_contribution(
+            Point { x: -80.0, y: 0.0 },
+            Size {
+                width: 50.0,
+                height: 50.0,
+            },
+            Rect::ZERO,
+            Point {
+                x: Overflow::Visible,
+                y: Overflow::Visible,
+            },
+            Contain::NONE,
+            container_scrolls,
+        )
+    };
+    assert_eq!(contribute(true), Rect::ZERO);
+    assert_eq!(contribute(false), rect(-80.0, -30.0, 0.0, 50.0));
+}
