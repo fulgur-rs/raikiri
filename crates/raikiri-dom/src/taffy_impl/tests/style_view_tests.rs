@@ -79,3 +79,40 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
     assert_eq!(old.min_size, original.min_size);
     assert_eq!(old.flex_shrink, original.flex_shrink);
 }
+
+#[test]
+fn flex_item_container_resolves_edges_during_indefinite_main_axis_measurement() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:flex;width:100px",
+        "display:flex;width:20px;height:10px;padding-left:10%",
+    );
+    crate::layout::test_support::with_ahem(&mut doc);
+    let parent = doc.nodes[child].parent.unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let padding = tree.layout_style_for_key(child).unwrap().padding;
+    tree.context.flex_item_percent_bases.push((
+        parent,
+        taffy::Size {
+            width: Some(100.0),
+            height: Some(100.0),
+        },
+    ));
+    let output = tree.compute_child_layout_with_block_ctx(
+        NodeId::from(child),
+        taffy::LayoutInput {
+            run_mode: taffy::RunMode::ComputeSize,
+            parent_size: taffy::Size {
+                width: None,
+                height: Some(100.0),
+            },
+            ..taffy::LayoutInput::HIDDEN
+        },
+        None,
+    );
+    assert_eq!(output.size.width, 30.0);
+    assert!(tree.style_view_comparisons.scoped_reads.get() > 0);
+    assert_eq!(tree.layout_style_for_key(child).unwrap().padding, padding);
+    assert_eq!(tree.style_view(child).padding().left, padding.left);
+}

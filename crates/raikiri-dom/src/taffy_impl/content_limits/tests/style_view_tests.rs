@@ -96,3 +96,42 @@ fn width_limit_scope_restores_after_callback_unwinds() {
     assert_eq!(session.size_scope_checkpoint(), 0);
     assert_eq!(session.context.content_limit_depth, 0);
 }
+
+#[test]
+fn oof_raw_prepass_temporarily_clears_numeric_limits_in_both_readers() {
+    let (mut doc, mut cascade, child, _) = fixture();
+    cascade.computed[child].position = raikiri_style::property::PositionValue::Absolute;
+    cascade.computed[child].min_width = L::Px(50.0);
+    cascade.computed[child].max_height = L::MaxContent;
+    crate::layout::test_support::with_ahem(&mut doc);
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let original = tree.layout_style_for_key(child).unwrap().min_size;
+    let inputs = taffy::LayoutInput {
+        run_mode: taffy::RunMode::ComputeSize,
+        parent_size: taffy::Size {
+            width: Some(100.0),
+            height: Some(100.0),
+        },
+        ..taffy::LayoutInput::HIDDEN
+    };
+    let mut saw_raw = false;
+    super::super::with_oof_content_limits(
+        &mut tree,
+        Some(&[taffy::NodeId::from(child)]),
+        &[],
+        |tree| {
+            if let Some(capture) = tree.context.oof_content_limit_inputs.last_mut() {
+                capture.insert(child, inputs);
+            }
+            let min = tree.layout_style_for_key(child).unwrap().min_size;
+            saw_raw |= min.width.is_auto();
+            assert_eq!(tree.style_view(child).min_size(), min);
+        },
+    );
+    assert!(saw_raw);
+    assert_eq!(tree.layout_style_for_key(child).unwrap().min_size, original);
+    assert_eq!(tree.style_view(child).min_size(), original);
+    assert_eq!(tree.style_override_depth(child), 0);
+}

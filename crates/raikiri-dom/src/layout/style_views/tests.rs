@@ -391,3 +391,71 @@ fn fixed_and_vertical_direction_match_physical_legacy_getters() {
         );
     }
 }
+
+#[test]
+fn source_metadata_covers_hidden_logical_and_keyword_policies() {
+    for (parent, child_css) in [
+        ("display:block", "display:none"),
+        ("display:block", "display:contents"),
+        (
+            "display:block",
+            "writing-mode:vertical-rl;inline-size:31px;block-size:19px",
+        ),
+        (
+            "display:block",
+            "display:flex;width:max-content;min-block-size:min-content",
+        ),
+        ("display:flex", "min-block-size:min-content"),
+        (
+            "display:block",
+            "writing-mode:vertical-rl;inline-size:max-content;block-size:max-content",
+        ),
+    ] {
+        let (mut doc, cascade, child, _) = fixture_with_styles(parent, child_css);
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        assert_neutral_getters(
+            tree.style_view(child),
+            tree.layout_style_for_key(child).unwrap(),
+        );
+        let neutral = super::metadata::neutral_values(&tree, &cascade, 0);
+        assert_eq!(neutral.width, L::Auto);
+        assert_eq!(neutral.direction, raikiri_style::property::Direction::Ltr);
+    }
+}
+
+#[test]
+fn invalid_scope_order_and_republication_are_rejected_without_losing_state() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let original = tree.style_view(child).size();
+    let outer = tree.save_size_scope(child);
+    let prepare =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tree.prepare_style_views()));
+    assert!(prepare.is_err());
+    let bridge =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tree.begin_style_bridge()));
+    assert!(bridge.is_err());
+    let inner = tree.save_size_scope(child);
+    let order = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tree.restore_size_scope(outer)
+    }));
+    assert!(order.is_err());
+    tree.restore_size_scope(inner);
+    tree.restore_size_scope(outer);
+    let outer = tree.push_style_overrides(child, width(17.0));
+    let inner = tree.push_style_overrides(child, width(23.0));
+    let order = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tree.restore_style_overrides(outer)
+    }));
+    assert!(order.is_err());
+    tree.restore_style_overrides(inner);
+    tree.restore_style_overrides(outer);
+    let unscoped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        tree.record_scoped_length(child, LengthProperty::Width, L::Px(99.0), false)
+    }));
+    assert!(unscoped.is_err());
+    assert_eq!(tree.style_override_depth(child), 0);
+    assert_eq!(tree.style_view(child).size(), original);
+}

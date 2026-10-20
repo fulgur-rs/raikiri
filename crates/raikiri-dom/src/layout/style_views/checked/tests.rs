@@ -302,3 +302,35 @@ fn actual_style_reads_count_scoped_and_restored_states() {
     assert!(tree.style_view_comparisons.scoped_reads.get() > 0);
     assert!(tree.style_view_comparisons.restored_reads.get() > 0);
 }
+
+#[test]
+fn grid_single_tracks_and_repeat_kind_faults_are_checked_on_consumption() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:grid;grid-template-columns:10px repeat(2,20px)",
+        "width:1px",
+    );
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let base = tree.layout_style_for_key(parent).unwrap().clone();
+    let view = tree.style_view(parent);
+    let stats = ComparisonStats::default();
+    let checked = CheckedStyle::new(&base, Some(view), context(ReadRole::GridContainer), &stats);
+    assert_eq!(checked.grid_template_columns().unwrap().count(), 2);
+    let mut faulty = base.clone();
+    faulty.grid_template_columns[0] = base.grid_template_columns[1].clone();
+    let checked = CheckedStyle::new(
+        &faulty,
+        Some(view),
+        context(ReadRole::GridContainer),
+        &stats,
+    );
+    let fault = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        checked.grid_template_columns().unwrap().next()
+    }));
+    let message = panic_text(fault.err().expect("component kind mismatch must panic"));
+    assert!(
+        message.contains("repeat") && message.contains("single"),
+        "{message}"
+    );
+}

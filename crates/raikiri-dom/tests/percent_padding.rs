@@ -240,3 +240,15 @@ fn percent_padding_of_a_vertical_flex_item_refers_to_the_container_height() {
     let ((_, _, _, height), _) = boxes(&html, "i");
     assert_close(height, 55.0, "border-box height", &html);
 }
+
+#[test]
+fn orthogonal_child_uses_the_vertical_containers_inline_padding_basis() {
+    let html = "<!doctype html><style>@page {size:800px 600px;margin:0} body {margin:0}</style>\
+        <div style='writing-mode:vertical-rl;width:200px;height:400px'>\
+        <div id=child style='writing-mode:horizontal-tb;width:20px;height:10px;padding-left:10%'></div></div>";
+    let ((x, _, width, height), (cx, _, cw, _)) = boxes(html, "child");
+    assert_close(width, 60.0, "orthogonal border-box width", html);
+    assert_close(height, 10.0, "orthogonal border-box height", html);
+    assert_close(cx - x, 40.0, "padding uses the 400px inline size", html);
+    assert_close(cw, 20.0, "orthogonal content width", html);
+}
