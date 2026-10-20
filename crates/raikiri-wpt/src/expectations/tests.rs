@@ -320,6 +320,46 @@ fn quarantine_rejects_unknown_platform() {
 }
 
 #[test]
+fn quarantine_rejects_unknown_arch_renderer_and_tolerance() {
+    let rows = [
+        (
+            "css/foo | linux | arm | vello_cpu | low | r | i | 2026-08-01\n",
+            "arch",
+            "arm",
+        ),
+        (
+            "css/foo | linux | x86_64 | cpu | low | r | i | 2026-08-01\n",
+            "renderer",
+            "cpu",
+        ),
+        (
+            "css/foo | linux | x86_64 | skia | exact | r | i | 2026-08-01\n",
+            "tolerance",
+            "exact",
+        ),
+    ];
+    for (content, column, column_value) in rows {
+        let (q, errs) = Quarantine::parse(content, "q.txt");
+        assert!(q.entries.is_empty());
+        assert_eq!(errs.len(), 1);
+        match &errs[0] {
+            ExpectError::UnknownEnum {
+                file,
+                line_no,
+                field,
+                value,
+            } => {
+                assert_eq!(file, "q.txt");
+                assert_eq!(*line_no, 1);
+                assert_eq!(*field, column);
+                assert_eq!(value, column_value);
+            }
+            other => panic!("expected UnknownEnum({column}), got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn quarantine_rejects_malformed_added_date() {
     let content = "css/foo | linux | x86_64 | vello_cpu | low | r | i | not-a-date\n";
     let (q, errs) = Quarantine::parse(content, "q.txt");
