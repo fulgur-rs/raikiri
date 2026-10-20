@@ -1935,6 +1935,7 @@ css/CSS2/visuren/split-inner-inline-2.html
 css/compositing/root-element-background-transparency.html
 css/compositing/svg/mix-blend-mode-in-svg-image.html
 css/compositing/svg/mix-blend-mode-svg-rectangle.html
+css/css-align/abspos/align-self-static-position-002.html
 css/css-align/abspos/align-self-stretch-auto-size.tentative.html
 css/css-align/baseline-rules/inline-table-inline-block-baseline.html
 css/css-align/blocks/justify-self-block-in-inline-002.html
@@ -4230,7 +4231,9 @@ css/css-writing-modes/direction-upright-001.html
 css/css-writing-modes/dynamic-offset-rtl-001.html
 css/css-writing-modes/dynamic-offset-rtl-002.html
 css/css-writing-modes/dynamic-offset-vrl-001.html
+css/css-writing-modes/dynamic-offset-vrl-002.html
 css/css-writing-modes/dynamic-offset-vrl-rtl-001.html
+css/css-writing-modes/dynamic-offset-vrl-rtl-002.html
 css/css-writing-modes/forms/checkbox-appearance-native-vertical-lr-baseline.optional.html
 css/css-writing-modes/forms/checkbox-appearance-native-vertical-rl-baseline.optional.html
 css/css-writing-modes/forms/radio-appearance-native-vertical-lr-baseline.optional.html
