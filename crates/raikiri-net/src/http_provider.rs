@@ -284,6 +284,17 @@ fn fetch_one_hop(
     provider_name: &str,
     request: Request,
 ) -> Result<FetchOutcome, NetworkError> {
+    check_fetchable(provider_name, &request)?;
+    let response = send_request(agent, provider_name, &request)?;
+    let status = response.status().as_u16();
+    if is_followable_redirect(status) {
+        return redirect_outcome(&response, &request.url, status);
+    }
+    read_body_outcome(response, request.kind)
+}
+
+/// Checks `request` before anything is sent for it.
+fn check_fetchable(provider_name: &str, request: &Request) -> Result<(), NetworkError> {
     // Only checked up front: a signal aborted after this point does not
     // interrupt a fetch already in progress.
     if request.signal.as_ref().is_some_and(|s| s.is_aborted()) {
@@ -295,7 +306,16 @@ fn fetch_one_hop(
             request.url
         )));
     }
+    Ok(())
+}
 
+/// Sends `request` and returns the response of the one hop, whatever its
+/// status.
+fn send_request(
+    agent: &ureq::Agent,
+    provider_name: &str,
+    request: &Request,
+) -> Result<ureq::http::Response<ureq::Body>, NetworkError> {
     let kind = request.kind;
     let url_str = request.url.as_str();
 
@@ -349,28 +369,39 @@ fn fetch_one_hop(
         }
     };
 
-    let mut response = result.map_err(|e| map_ureq_error(&request.url, kind, e))?;
+    result.map_err(|e| map_ureq_error(&request.url, kind, e))
+}
 
-    let status = response.status().as_u16();
-    if is_followable_redirect(status) {
-        let location = response
-            .headers()
-            .get(ureq::http::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                NetworkError::Other(format!(
-                    "redirect response ({status}) had no usable Location header"
-                ))
-            })?;
-        let resolved = request.url.join(location).map_err(|e| {
-            NetworkError::Other(format!("invalid redirect Location {location:?}: {e}"))
+/// The redirect that `response` (of status `status`) to the request for
+/// `request_url` asks for, with its `Location` resolved against that URL.
+fn redirect_outcome(
+    response: &ureq::http::Response<ureq::Body>,
+    request_url: &Url,
+    status: u16,
+) -> Result<FetchOutcome, NetworkError> {
+    let location = response
+        .headers()
+        .get(ureq::http::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| {
+            NetworkError::Other(format!(
+                "redirect response ({status}) had no usable Location header"
+            ))
         })?;
-        return Ok(FetchOutcome::Redirect {
-            location: resolved,
-            status,
-        });
-    }
+    let resolved = request_url
+        .join(location)
+        .map_err(|e| NetworkError::Other(format!("invalid redirect Location {location:?}: {e}")))?;
+    Ok(FetchOutcome::Redirect {
+        location: resolved,
+        status,
+    })
+}
 
+/// Reads the body of `response` into the resource it ends the chain with.
+fn read_body_outcome(
+    mut response: ureq::http::Response<ureq::Body>,
+    kind: ResourceKind,
+) -> Result<FetchOutcome, NetworkError> {
     let final_url = Url::parse(&response.get_uri().to_string())
         .map_err(|e| NetworkError::Other(format!("invalid final URL: {e}")))?;
     let content_type = response.body().mime_type().map(str::to_owned);
