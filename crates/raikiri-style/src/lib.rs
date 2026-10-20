@@ -162,7 +162,7 @@ use selectors::parser::{
     NonTSPseudoClass, ParseRelative, Parser as SelectorsParser, PseudoElement, SelectorImpl,
     SelectorList, SelectorParseErrorKind,
 };
-use smol_str::SmolStr;
+pub use smol_str::SmolStr;
 
 // ---------------------------------------------------------------------------
 // Atom — SmolStr newtype with a stable u32 precomputed hash.

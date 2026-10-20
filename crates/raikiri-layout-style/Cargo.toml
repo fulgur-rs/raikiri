@@ -1,0 +1,15 @@
+[package]
+name = "raikiri-layout-style"
+version = "0.1.0"
+description = "Borrowed ComputedValues views for Taffy layout styles"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+raikiri-style.workspace = true
+taffy.workspace = true
+
+[lints]
+workspace = true

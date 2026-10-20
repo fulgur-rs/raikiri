@@ -2706,6 +2706,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "raikiri-layout-style"
+version = "0.1.0"
+dependencies = [
+ "raikiri-style",
+ "taffy 0.15.0",
+]
+
+[[package]]
 name = "raikiri-net"
 version = "0.1.0"
 dependencies = [
