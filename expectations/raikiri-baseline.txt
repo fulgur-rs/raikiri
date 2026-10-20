@@ -468,6 +468,8 @@ css/css-break/flexbox/single-line-row-flex-fragmentation-049.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-050.html
 # --- css-break multicol block projection (exact, 800x600, 2026-09-22) ---
 css/css-break/borders-000.html
+css/css-break/borders-001.html
+css/css-break/borders-002.html
 # --- css-break overflow clipping (exact, 800x600, 2026-09-22) ---
 css/css-break/overflow-clip-013.html
 # --- css-break flex float height propagation (exact, 800x600, 2026-09-22) ---

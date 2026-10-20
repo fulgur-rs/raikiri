@@ -25,6 +25,7 @@ fn split(height: f32) -> Item {
         margin_bottom: 0.0,
         splittable: true,
         whole: false,
+        slice: None,
     }
 }
 
@@ -98,6 +99,81 @@ fn a_splittable_box_that_must_stay_whole_moves_to_the_next_column_when_it_fits_o
     assert_eq!(
         shape(&[split(95.0), whole(100.0)], 100.0),
         vec![vec![(0, 0.0, 95.0)], vec![(1, 0.0, 100.0)]]
+    );
+}
+
+/// A box taller than a column whose pieces slice its decorations, which take
+/// `leading` at its block start and `trailing` at its block end.
+fn sliced(height: f32, leading: f32, trailing: f32) -> Item {
+    Item {
+        whole: true,
+        slice: Some((leading, trailing)),
+        ..split(height)
+    }
+}
+
+#[test]
+fn a_box_that_slices_its_decorations_is_cut_where_it_is_taller_than_a_column() {
+    assert_eq!(
+        shape(&[sliced(250.0, 2.0, 2.0)], 100.0),
+        vec![vec![(0, 0.0, 100.0), (1, 0.0, 100.0), (2, 0.0, 50.0)]]
+    );
+    // One that fits the next column still moves there whole.
+    assert_eq!(
+        shape(&[split(95.0), sliced(100.0, 10.0, 10.0)], 100.0),
+        vec![vec![(0, 0.0, 95.0)], vec![(1, 0.0, 100.0)]]
+    );
+}
+
+#[test]
+fn a_box_that_slices_its_decorations_starts_where_they_fit_with_some_content() {
+    // The 10px border does not fit the 5px left in the first column.
+    assert_eq!(
+        shape(&[split(95.0), sliced(250.0, 10.0, 0.0)], 100.0),
+        vec![
+            vec![(0, 0.0, 95.0)],
+            vec![(1, 0.0, 100.0), (2, 0.0, 100.0), (3, 0.0, 50.0)]
+        ]
+    );
+    // The border and 5px of content fit the 15px left.
+    assert_eq!(
+        shape(&[split(85.0), sliced(250.0, 10.0, 0.0)], 100.0),
+        vec![
+            vec![(0, 0.0, 85.0)],
+            vec![
+                (0, 85.0, 15.0),
+                (1, 0.0, 100.0),
+                (2, 0.0, 100.0),
+                (3, 0.0, 35.0)
+            ]
+        ]
+    );
+}
+
+#[test]
+fn a_box_that_slices_its_decorations_does_not_break_inside_the_block_end_ones() {
+    // 5px would be left for the 10px border in the third column, so the
+    // second column ends 5px early and the border follows whole.
+    assert_eq!(
+        shape(&[sliced(205.0, 0.0, 10.0)], 100.0),
+        vec![vec![(0, 0.0, 100.0), (1, 0.0, 95.0), (2, 0.0, 10.0)]]
+    );
+    // A box of which only the border is left moves to the next column.
+    assert_eq!(
+        shape(&[sliced(105.0, 0.0, 10.0)], 100.0),
+        vec![vec![(0, 0.0, 95.0), (1, 0.0, 10.0)]]
+    );
+}
+
+#[test]
+fn a_box_that_avoids_breaks_and_slices_its_decorations_breaks_anyway_when_taller_than_a_column() {
+    let avoiding = Item {
+        splittable: false,
+        ..sliced(150.0, 2.0, 2.0)
+    };
+    assert_eq!(
+        shape(&[avoiding], 100.0),
+        vec![vec![(0, 0.0, 100.0), (1, 0.0, 50.0)]]
     );
 }
 

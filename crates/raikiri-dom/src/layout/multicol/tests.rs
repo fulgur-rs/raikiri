@@ -712,13 +712,13 @@ fn compute_multicol_layout_spaces_min_height_children_when_slicing_fails() {
         Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
-    // A bordered box taller than a column would be cut, and painting
-    // cannot slice its borders, so the children are not sliced at all.
+    // A rounded box taller than a column would be cut, and painting cannot
+    // slice its corners, so the children are not sliced at all.
     doc.append_element(
         Some(container),
         "div",
         Style::default(),
-        Some("display:block;height:70px;border:2px solid"),
+        Some("display:block;height:70px;border:2px solid;border-radius:2px"),
     );
 
     let rules = build_rule_tree(&doc);
@@ -2946,8 +2946,26 @@ fn the_trailing_margin_of_blocks_without_lines_stays_in_the_container() {
 }
 
 #[test]
-fn blocks_with_block_edge_decorations_are_not_sliced() {
+fn blocks_with_block_edge_decorations_slice_them_as_the_whole_box_moved_up() {
     for decoration in ["border-top:2px solid", "padding-bottom:2px"] {
+        let (doc, _, children) = lineless_fixture(
+            "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+            &[&format!("display:block;height:150px;{decoration}")],
+        );
+        // Each piece is the whole box, moved up by what the pieces before it
+        // took, so the column clip shows only the part that belongs to it.
+        assert_eq!(
+            fragment_rects(&doc, children[0]),
+            vec![(0, 0.0, 0.0, 152.0), (1, 50.0, -100.0, 152.0)],
+            "{decoration}"
+        );
+    }
+    // A decoration that repeats at each break, or an effect sized from the
+    // whole box, cannot be sliced, so the box stays whole.
+    for decoration in [
+        "border-top:2px solid;box-decoration-break:clone",
+        "border-top:2px solid;border-radius:2px",
+    ] {
         let (doc, _, children) = lineless_fixture(
             "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
             &[&format!("display:block;height:200px;{decoration}")],
@@ -3433,13 +3451,14 @@ fn compute_multicol_layout_keeps_foundational_child_layouts_when_slicing_fails()
         Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
-    // A bordered box taller than a column would be cut, so the children
-    // are not sliced, and keep the layout of the unfragmented flow.
+    // A rounded box taller than a column would be cut, and painting cannot
+    // slice its corners, so the children are not sliced, and keep the layout
+    // of the unfragmented flow.
     doc.append_element(
         Some(container),
         "div",
         Style::default(),
-        Some("display:block;height:70px;border:2px solid"),
+        Some("display:block;height:70px;border:2px solid;border-radius:2px"),
     );
     let half = doc.append_element(
         Some(container),
