@@ -3,6 +3,7 @@ use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use raikiri_style::{ComputedValues, property::CalcLengthPercentage};
 use taffy::{CoreStyle, FlexboxContainerStyle, FlexboxItemStyle};
 mod core_tests;
+mod grid_tests;
 
 #[test]
 fn initial_values_match_bridge() {

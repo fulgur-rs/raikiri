@@ -4,6 +4,8 @@ mod calc;
 mod context;
 mod core;
 mod flex;
+mod grid;
+pub use grid::{Areas, GridRepetition, LineNames, TemplateTracks, Tracks};
 mod length;
 mod overrides;
 mod prepared;
