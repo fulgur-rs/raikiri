@@ -5045,3 +5045,7 @@ css/css-sizing/aspect-ratio/replaced-element-034.html
 # --- a spanner cut at the page end (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
 # A spanner whose page ends below its last line is cut there and continues on the next page, as a block of the flow does, instead of moving whole to the next page; KEEP in audit-vacuous-passes.
 css/css-multicol/column-balancing-paged-001-print.html
+
+# --- a legend is a block box (WPT pin 97ea26e2, EXACT, Linux, 2026-10-20) ---
+# The UA stylesheet gave a legend no display, so it stayed an inline box inside its fieldset; as a block, a size-contained fieldset with a legend aligns on its baseline in a flex row as the reference does. KEEP in audit-vacuous-passes.
+css/css-contain/contain-size-fieldset-004.html
