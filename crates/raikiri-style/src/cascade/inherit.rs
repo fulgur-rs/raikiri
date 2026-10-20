@@ -1498,11 +1498,6 @@ pub(crate) fn apply_winners(
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(Box::new(
                     inherited_border_radius_value(inherited),
                 ))),
-                PropertyValue::TextDecorationThicknessInherit => {
-                    Some(PropertyValue::TextDecorationThickness(
-                        inherited_text_decoration_thickness(inherited),
-                    ))
-                }
                 PropertyValue::Deferred(deferred) => {
                     let resolved = deferred_resolver.resolve(deferred).map(to_slot);
                     let resolved = match resolved {
@@ -1557,11 +1552,6 @@ pub(crate) fn apply_winners(
                             | PropertyValue::BorderBottomColorCssWide(kw)
                             | PropertyValue::BorderLeftColorCssWide(kw),
                         ) => resolve_border_wide(kw, &mut deferred_resolver),
-                        Some(PropertyValue::TextDecorationThicknessInherit) => {
-                            Some(PropertyValue::TextDecorationThickness(
-                                inherited_text_decoration_thickness(inherited),
-                            ))
-                        }
                         Some(v) => Some(v),
                     }
                 }
@@ -2513,28 +2503,6 @@ fn inherited_border_width(computed: ComputedLength) -> Length {
     Length::Px(computed.0)
 }
 
-/// Lift a parent computed `text-decoration-thickness` into specified form for `inherit`.
-///
-/// CSS Cascading 4 section 7.3 takes the parent computed value even though
-/// CSS Text Decoration 4 marks this longhand non-inherited. The computed
-/// length is already absolute CSS px (see [`crate::resolve::resolve_text_decoration_thickness`]),
-/// so representing it as `Length::Px` is lossless. Keywords pass through unchanged.
-fn inherited_text_decoration_thickness(
-    inherited: &ComputedValues,
-) -> crate::property::TextDecorationThickness {
-    match inherited.text_decoration_thickness {
-        crate::resolve::ComputedTextDecorationThickness::Auto => {
-            crate::property::TextDecorationThickness::Auto
-        }
-        crate::resolve::ComputedTextDecorationThickness::FromFont => {
-            crate::property::TextDecorationThickness::FromFont
-        }
-        crate::resolve::ComputedTextDecorationThickness::Length(px) => {
-            crate::property::TextDecorationThickness::Length(Length::Px(px.0))
-        }
-    }
-}
-
 fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
     match inherited_box_length(value) {
         // Margins never compute to a sizing keyword; fall back to the initial 0.
@@ -3068,9 +3036,6 @@ pub(crate) fn resolve_against_inherited(
             bottom: inherited_margin_length(inherited.margin.bottom),
             left: inherited_margin_length(inherited.margin.left),
         })),
-        PropertyValue::TextDecorationThicknessInherit => {
-            PropertyValue::TextDecorationThickness(inherited_text_decoration_thickness(inherited))
-        }
         PropertyValue::BorderTopWidthCssWide(kw) => {
             PropertyValue::BorderTopWidth(resolve_border_page_longhand(kw, inherited, true, false, false))
         }
@@ -4010,10 +3975,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::BorderRightColorCssWide(_)
         | PropertyValue::BorderBottomColorCssWide(_)
         | PropertyValue::BorderLeftColorCssWide(_) => {}
-        // `text-decoration-thickness: inherit` is resolved in `apply_winners`
-        // before reaching here (it needs the parent computed value).
-        // Keep it panic-free for direct callers that bypass that phase.
-        PropertyValue::TextDecorationThicknessInherit => {}
         PropertyValue::Border(sides) => expand_border(sides, |v| apply_value(v, target)),
         PropertyValue::BorderTop(border) => expand_border_top(border, |v| apply_value(v, target)),
         PropertyValue::BorderRight(border) => {

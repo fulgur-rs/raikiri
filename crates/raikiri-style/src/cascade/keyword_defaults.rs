@@ -16,11 +16,14 @@ use std::sync::LazyLock;
 
 use crate::computed::ComputedValues;
 use crate::property::{
-    ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue, PropertyKey, PropertyValue,
+    ColumnWidthValue, CssWideKeyword, FloatValue, Length, PositionValue, PropertyKey,
+    PropertyValue, TextIndentValue,
 };
 use crate::resolve::{
     ComputedColumnWidth, lift_border_spacing, lift_flex_basis, lift_length_percentage_or_normal,
-    lift_letter_spacing, lift_line_height, lift_tab_size, lift_word_spacing,
+    lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_decoration_inset,
+    lift_text_decoration_thickness, lift_text_indent, lift_text_underline_offset,
+    lift_word_spacing,
 };
 
 static INITIAL: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
@@ -173,6 +176,24 @@ keyword_defaults! {
     ColumnWidth, false => PropertyValue::ColumnWidth(lift_column_width(source.column_width));
     OverflowX, false => PropertyValue::OverflowX(source.overflow.x);
     OverflowY, false => PropertyValue::OverflowY(source.overflow.y);
+    TextIndent, true => {
+        PropertyValue::TextIndent(TextIndentValue {
+            length: lift_text_indent(source.text_indent),
+            hanging: source.text_indent_hanging,
+            each_line: source.text_indent_each_line,
+        })
+    };
+    TextUnderlineOffset, true => {
+        PropertyValue::TextUnderlineOffset(lift_text_underline_offset(source.text_underline_offset))
+    };
+    TextDecorationThickness, false => {
+        PropertyValue::TextDecorationThickness(lift_text_decoration_thickness(
+            source.text_decoration_thickness,
+        ))
+    };
+    TextDecorationInset, false => {
+        PropertyValue::TextDecorationInset(lift_text_decoration_inset(source.text_decoration_inset))
+    };
 }
 
 /// The value the CSS-wide `keyword` gives the property `key` under the parent
