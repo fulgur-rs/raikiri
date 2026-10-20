@@ -301,3 +301,109 @@ fn an_html_element_inside_the_svg_lists_nothing() {
     );
     assert!(elements.is_empty(), "{elements:?}");
 }
+
+/// The declarations of the element with preorder index `index`.
+fn declaration_of(elements: &[InlineSvgElementDeclarations], index: usize) -> Option<&str> {
+    elements
+        .iter()
+        .find(|element| element.element_index == index)
+        .map(|element| element.declarations.as_str())
+}
+
+#[test]
+fn a_font_relative_stroke_length_outside_a_used_definition_is_written_in_px() {
+    // A renderer copies the text of an `inherit`, so a length that a
+    // definition may inherit through a `use` element is written where its font
+    // size is known.
+    let elements = declarations(
+        "<style>g{font-size:20px;stroke-width:2em;stroke-dasharray:1em 50% .5ex;stroke-dashoffset:-1em}</style>\
+         <svg width=50 height=50><g /></svg>",
+    );
+    assert_eq!(
+        declaration_of(&elements, 1),
+        Some(
+            "font-size:20px!important;stroke-width:40px!important;stroke-dasharray:20px 50% 5px!important;stroke-dashoffset:-20px!important;"
+        )
+    );
+}
+
+#[test]
+fn a_font_relative_stroke_length_in_a_used_definition_stays_relative() {
+    // Each `use` element resolves it against its own font size. The unused
+    // path is drawn in place, so its length is written in px.
+    let elements = declarations(
+        "<style>path{stroke-width:.25em}</style>\
+         <svg width=50 height=50><defs><path id=p /></defs><path id=q /><use href='#p' /></svg>",
+    );
+    assert_eq!(
+        declaration_of(&elements, 2),
+        Some("stroke-width:0.25em!important;")
+    );
+    assert_eq!(
+        declaration_of(&elements, 3),
+        Some("stroke-width:4px!important;")
+    );
+}
+
+#[test]
+fn a_stroke_length_inherited_in_a_used_definition_is_left_for_the_use_element() {
+    // The definition inherits from the `use` element, not from the `defs`
+    // element above it in the source.
+    let html = "<style>defs{font-size:5px;stroke-width:3em}use{stroke:black;stroke-width:2em;font-size:20px}\
+         path{font-size:10px;stroke-width:inherit}</style>\
+         <svg width=50 height=50><defs><path id=p /></defs><use href='#p' /></svg>";
+    let elements = declarations(html);
+    assert_eq!(
+        declaration_of(&elements, 1),
+        Some("font-size:5px!important;stroke-width:15px!important;")
+    );
+    assert_eq!(
+        declaration_of(&elements, 2),
+        Some("font-size:10px!important;stroke-width:inherit!important;")
+    );
+    assert_eq!(
+        declaration_of(&elements, 3),
+        Some(
+            "font-size:20px!important;stroke:rgba(0,0,0,1)!important;stroke-width:40px!important;"
+        )
+    );
+    // Without a `use` element nothing instantiates the path, and it takes the
+    // length of the `defs` element in px.
+    let elements = declarations(&html.replace("<use href='#p' />", ""));
+    assert_eq!(
+        declaration_of(&elements, 2),
+        Some("font-size:10px!important;stroke-width:15px!important;")
+    );
+}
+
+#[test]
+fn a_stroke_length_inherited_in_a_nested_use_target_is_left_for_the_nearest_use_element() {
+    // The path is a target of its own as well as part of the group that another
+    // `use` element instantiates. The copy under its own `use` element has no
+    // `g` above it, so it takes the length from there.
+    let elements = declarations(
+        "<style>.a{font-size:20px;stroke-width:2em}.p{font-size:10px;stroke-width:inherit}</style>\
+         <svg width=50 height=50><defs><g id=o><g class=a><path id=i class=p /></g></g></defs>\
+         <use href='#i' /><use href='#o' /></svg>",
+    );
+    assert_eq!(
+        declaration_of(&elements, 3),
+        Some("font-size:20px!important;stroke-width:2em!important;")
+    );
+    assert_eq!(
+        declaration_of(&elements, 4),
+        Some("font-size:10px!important;stroke-width:inherit!important;")
+    );
+}
+
+#[test]
+fn a_stroke_length_inherited_from_inside_a_used_definition_is_written_in_px() {
+    let elements = declarations(
+        "<style>g{font-size:20px;stroke-width:2em}path{font-size:10px;stroke-width:inherit}</style>\
+         <svg width=50 height=50><defs><g id=d><path /></g></defs><use href='#d' /></svg>",
+    );
+    assert_eq!(
+        declaration_of(&elements, 3),
+        Some("font-size:10px!important;stroke-width:40px!important;")
+    );
+}

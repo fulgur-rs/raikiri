@@ -59,6 +59,12 @@ pub struct SvgStyleProperty {
     /// [`PropertyKey::is_svg_presentation`]), which has no computed field.
     /// Other values use the node's computed value.
     pub expression: Option<String>,
+    /// The ancestor whose declaration `expression` takes the place of, when the
+    /// cascade resolved an `inherit` of a stroke length against the source
+    /// tree. A `<use>` instance inherits from the `use` element instead, so a
+    /// consumer that knows the instance falls back to the literal `inherit`
+    /// when this ancestor is not part of the instantiated subtree.
+    pub inherited_from: Option<StyleNodeId>,
 }
 
 /// Cascade result.
