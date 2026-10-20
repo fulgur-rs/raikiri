@@ -289,22 +289,17 @@ fn apply_computed_to_style_in_session_inner(
             .unwrap()
             .style
             .item_is_replaced = crate::paint_rules::lays_out_as_replaced(doc, idx);
-        // An intrinsic ratio only participates when at least one preferred
-        // dimension is auto; Taffy's leaf sizing otherwise floors an explicit
-        // height to the ratio-derived height.
+        // A resolver may give the natural size and leave its ratio unset; the
+        // ratio of that size is then the natural one.
+        let natural_ratio = crate::taffy_impl::leaf_intrinsic_ratio(&doc.nodes[idx]);
+        let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio);
+        doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
+        doc.nodes[idx].ratio_in_content_box =
+            cv.aspect_ratio.auto && cv.aspect_ratio.ratio.is_some();
         doc.layout_node_with_style_mut(idx)
             .unwrap()
             .style
-            .aspect_ratio = if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
-            || matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
-        {
-            doc.nodes[idx]
-                .image_intrinsic_box()
-                .and_then(|intrinsic| intrinsic.aspect_ratio)
-                .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
-        } else {
-            None
-        };
+            .aspect_ratio = preferred_ratio;
         // SVG 2 geometry: auto dimensions on svg are treated as 100%.
         // With only a viewBox ratio and no definite height, width establishes
         // the viewport and the ratio determines its auto height.
@@ -487,11 +482,12 @@ fn apply_computed_to_style_in_session_inner(
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
         doc.nodes[idx].text_group_align = shodo_group_align(cv.text_group_align);
-        // Replaced content with size containment has no natural size or
-        // aspect ratio to stand in for an `auto` size.
+        // Size containment removes the natural size and aspect ratio of
+        // replaced content, so only an `aspect-ratio` of the box itself can
+        // stand in for an `auto` size.
         if containment.width || containment.height {
             let style = &mut doc.layout_node_with_style_mut(idx).unwrap().style;
-            style.aspect_ratio = None;
+            style.aspect_ratio = preferred_aspect_ratio(cv, None);
             if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.width = Dimension::auto();
             }
@@ -1210,6 +1206,21 @@ fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues)
         .size = Size { width, height };
 }
 
+/// The preferred aspect ratio taffy sizes a box by (CSS Box Sizing 4 §5.1):
+/// the ratio the `aspect-ratio` property gives it, with `natural` standing for
+/// the natural ratio of replaced content. A ratio only participates when at
+/// least one preferred dimension is auto; Taffy's leaf sizing otherwise floors
+/// an explicit height to the ratio-derived height.
+fn preferred_aspect_ratio(cv: &ComputedValues, natural: Option<f32>) -> Option<f32> {
+    if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+        || matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+    {
+        cv.aspect_ratio.preferred(natural)
+    } else {
+        None
+    }
+}
+
 /// Whether element `idx` is a replaced box of a horizontal writing mode, which
 /// sizes itself by its `min-content` width as it does by `auto`.
 fn min_content_width_is_auto(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
@@ -1344,11 +1355,14 @@ fn unstretched_keyword_height_alignment(
     .then_some(fallback)
 }
 
-/// Whether in-flow replaced grid item `idx` with auto width and height is
-/// stretched along both axes, in which case its natural aspect ratio is
-/// ignored and it fills its grid area (CSS Grid 1 §6.2, csswg-drafts#5713).
-/// An auto margin in either axis turns that axis's stretch off, and so does a
-/// height that is a sizing keyword computed to `auto`
+/// Whether in-flow grid item `idx` is sized along both axes without its
+/// preferred aspect ratio, in which case the ratio is ignored: each axis is
+/// either given a definite size or stretched by an explicit `stretch`
+/// alignment, so the item fills its grid area on it (CSS Grid 1 §6.2,
+/// csswg-drafts#5713). A stretch alignment in one axis together with a
+/// definite size in the other leaves the ratio nothing to do, replaced
+/// content included. An auto margin in an axis turns that axis's stretch
+/// off, and so does a height that is a sizing keyword computed to `auto`
 /// ([`ComputedValues::height_keyword`]).
 ///
 /// The ratio is dropped from the item's style, which also removes it from
@@ -1357,32 +1371,26 @@ fn unstretched_keyword_height_alignment(
 fn stretches_on_both_grid_axes(doc: &LayoutSession<'_>, idx: usize, cv: &ComputedValues) -> bool {
     use taffy::AlignItemsKeyword;
     let style = &doc.layout_node_with_style(idx).unwrap().style;
-    if !style.item_is_replaced
-        || style.aspect_ratio.is_none()
-        || style.position == taffy::Position::Absolute
-        || !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
-        || !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
-        || cv.height_keyword.is_some()
-        || [
-            style.margin.left,
-            style.margin.right,
-            style.margin.top,
-            style.margin.bottom,
-        ]
-        .iter()
-        .any(|margin| margin.is_auto())
-    {
+    if style.aspect_ratio.is_none() || style.position == taffy::Position::Absolute {
         return false;
     }
     let stretch = |value: Option<taffy::AlignItems>, fallback: taffy::AlignItems| {
         value.unwrap_or(fallback).keyword == AlignItemsKeyword::Stretch
     };
+    let any_auto = |margins: [taffy::LengthPercentageAuto; 2]| margins.iter().any(|m| m.is_auto());
     doc.taffy_parent_of(idx).is_some_and(|parent| {
         let container = &doc.layout_node_with_style(parent).unwrap().style;
+        let horizontal = !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+            || (stretch(style.justify_self, container.justify_items)
+                && !any_auto([style.margin.left, style.margin.right]));
+        let vertical = !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+            || (cv.height_keyword.is_none()
+                && stretch(style.align_self, container.align_items)
+                && !any_auto([style.margin.top, style.margin.bottom]));
         container.display == taffy::Display::Grid
+            && horizontal
+            && vertical
             && has_only_fixed_rows(doc, parent)
-            && stretch(style.justify_self, container.justify_items)
-            && stretch(style.align_self, container.align_items)
     })
 }
 

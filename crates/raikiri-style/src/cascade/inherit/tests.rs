@@ -415,6 +415,106 @@ fn min_block_size_maps_to_the_authored_block_axis() {
 }
 
 #[test]
+fn min_block_size_competes_with_the_minimum_size_on_its_axis_in_cascade_order() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let min = |css: &str, inline: &str| {
+        let cv = cascade_doc(css, "div", Some(inline));
+        (cv.min_width, cv.min_height, cv.min_block_size)
+    };
+    // The later of the two wins, and the logical value is kept only while it
+    // does.
+    assert_eq!(
+        min("", "min-block-size: 5px; min-height: 10px"),
+        (Auto, Px(10.0), None)
+    );
+    assert_eq!(
+        min("", "min-height: 10px; min-block-size: 5px"),
+        (Auto, Px(5.0), Some(Px(5.0)))
+    );
+    assert_eq!(
+        min(
+            "",
+            "writing-mode: vertical-rl; min-block-size: 5px; min-width: 10px"
+        ),
+        (Px(10.0), Auto, None)
+    );
+    assert_eq!(
+        min(
+            "",
+            "writing-mode: vertical-rl; min-width: 10px; min-block-size: 5px"
+        ),
+        (Px(5.0), Auto, Some(Px(5.0)))
+    );
+    // The minimum size on the other axis is not in the competition.
+    assert_eq!(
+        min("", "min-block-size: 5px; min-width: 10px"),
+        (Px(10.0), Px(5.0), Some(Px(5.0)))
+    );
+    // Importance and specificity decide before the order does.
+    assert_eq!(
+        min("div { min-block-size: 5px !important }", "min-height: 10px"),
+        (Auto, Px(5.0), Some(Px(5.0)))
+    );
+    assert_eq!(
+        min("div { min-height: 10px } * { min-block-size: 5px }", ""),
+        (Auto, Px(10.0), None)
+    );
+    // A value that is invalid at computed-value time still takes its place in
+    // the order and computes to `auto`.
+    assert_eq!(
+        min("", "min-height: 10px; min-block-size: var(--missing)"),
+        (Auto, Auto, None)
+    );
+    assert_eq!(
+        min("", "min-block-size: 5px; min-height: var(--missing)"),
+        (Auto, Auto, None)
+    );
+}
+
+/// A size that rolls back stands in the order for the declaration it rolled
+/// back to, whichever of the logical and the physical size rolls back.
+#[test]
+fn a_size_that_rolled_back_competes_as_the_declaration_it_rolled_back_to() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let min = |css: &str| {
+        let cv = cascade_doc(css, "div", None);
+        (cv.min_width, cv.min_height, cv.min_block_size)
+    };
+    // The later `min-block-size` of the lower layer beats the `min-height`
+    // that layer holds, though the rollback itself sits in a higher layer.
+    assert_eq!(
+        min(
+            "@layer a, b; @layer a { div { min-height: 7px; min-block-size: 8px } } \
+             @layer b { div { min-height: revert-layer } }"
+        ),
+        (Auto, Px(8.0), Some(Px(8.0)))
+    );
+    // Nothing is left to roll back to, so only the logical size is declared.
+    assert_eq!(
+        min("@layer a, b; @layer a { div { min-block-size: 8px } } \
+             @layer b { div { min-height: revert-layer } }"),
+        (Auto, Px(8.0), Some(Px(8.0)))
+    );
+    // The logical size rolls back to a declaration of a lower layer, which
+    // loses to the `min-height` of the layer above it.
+    assert_eq!(
+        min("@layer a, b; @layer a { div { min-block-size: 3px } } \
+             @layer b { div { min-height: 9px; min-block-size: revert-layer } }"),
+        (Auto, Px(9.0), None)
+    );
+    // The preferred sizes follow the same rule.
+    let height = |css: &str| cascade_doc(css, "div", None).height;
+    assert_eq!(
+        height(
+            "@layer a, b, c; @layer a { div { height: 10px } } \
+             @layer b { div { block-size: 5px } } \
+             @layer c { div { height: revert-layer } }"
+        ),
+        Px(5.0)
+    );
+}
+
+#[test]
 fn block_size_keywords_compute_to_auto_for_an_element() {
     // An element sizes itself to its content along the block axis for
     // `min-content`, `max-content` and `fit-content` alike (CSS Sizing 3
@@ -11796,6 +11896,7 @@ fn svg_export_css_wide_values_resolve_inherit_initial_and_unset() {
     }
 }
 
+mod aspect_ratio_tests;
 mod border_image_tests;
 mod column_rule_tests;
 mod column_span_tests;

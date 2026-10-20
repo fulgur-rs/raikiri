@@ -3039,14 +3039,13 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -
             && radii[a][0] + radii[b][0] > width
             && radii[a][1] + radii[b][1] > height
     });
-    let mut common = (cropped && diagonal_overlap).then(|| {
-        vec![
-            Point::new(x0, y0),
-            Point::new(x1, y0),
-            Point::new(x1, y1),
-            Point::new(x0, y1),
-        ]
-    });
+    let square = [
+        Point::new(x0, y0),
+        Point::new(x1, y0),
+        Point::new(x1, y1),
+        Point::new(x0, y1),
+    ];
+    let mut common = (cropped && diagonal_overlap).then(|| square.to_vec());
     let [tl, tr, br, bl] = radii;
     let centers = [
         Point::new(x0 + tl[0], y0 + tl[1]),
@@ -3054,64 +3053,16 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -
         Point::new(x1 - br[0], y1 - br[1]),
         Point::new(x0 + bl[0], y1 - bl[1]),
     ];
-    let square = [
-        Point::new(x0, y0),
-        Point::new(x1, y0),
-        Point::new(x1, y1),
-        Point::new(x0, y1),
-    ];
-    let angles = [PI, 3.0 * FRAC_PI_2, 0.0, FRAC_PI_2];
-    for (index, ([rx, ry], center)) in radii.into_iter().zip(centers).enumerate() {
-        let (point, arc) = if rx == 0.0 || ry == 0.0 {
-            (square[index], None)
-        } else {
-            let (lower, upper) = match index {
-                0 => ((center.y - y1) / ry, (center.x - x1) / rx),
-                1 => ((x0 - center.x) / rx, (center.y - y1) / ry),
-                2 => ((y0 - center.y) / ry, (x0 - center.x) / rx),
-                _ => ((center.x - x1) / rx, (y0 - center.y) / ry),
-            };
-            let start = lower.clamp(0.0, 1.0).asin();
-            let end = upper.clamp(0.0, 1.0).acos();
-            if start >= end {
-                // The whole rectangle lies outside this corner's ellipse.
-                return BezPath::new();
-            }
-            let point = if start == 0.0 {
-                match index {
-                    0 => Point::new(x0, center.y),
-                    1 => Point::new(center.x, y0),
-                    2 => Point::new(x1, center.y),
-                    _ => Point::new(center.x, y1),
-                }
-            } else {
-                match index {
-                    0 => Point::new(center.x - rx * start.cos(), y1),
-                    1 => Point::new(x0, center.y - ry * start.cos()),
-                    2 => Point::new(center.x + rx * start.cos(), y0),
-                    _ => Point::new(x1, center.y + ry * start.cos()),
-                }
-            };
-            let arc = Arc {
-                center,
-                radii: Vec2::new(rx, ry),
-                start_angle: angles[index] + start,
-                sweep_angle: end - start,
-                x_rotation: 0.0,
-            };
-            (point, Some(arc))
+    let bounds = Rect::new(x0, y0, x1, y1);
+    for (index, (corner, center)) in radii.into_iter().zip(centers).enumerate() {
+        let Some((point, arc)) = corner_start(index, corner, center, bounds, square[index]) else {
+            // The whole rectangle lies outside this corner's ellipse.
+            return BezPath::new();
         };
-        if let (Some(polygon), Some(arc)) = (common.as_mut(), arc) {
-            // Subdivide the actual ellipse so cubic approximation error cannot
-            // move an inner contour outside the existing outer arc.
-            let mut points = vec![point];
-            flatten_corner_arc(arc, arc.start_angle + arc.sweep_angle, 0, &mut points);
-            for edge in points.windows(2) {
-                *polygon = clip_corner_polygon(std::mem::take(polygon), edge[0], edge[1]);
-                if polygon.len() < 3 {
-                    return BezPath::new();
-                }
-            }
+        if let (Some(polygon), Some(arc)) = (common.as_mut(), arc)
+            && !clip_polygon_to_corner_arc(polygon, point, arc)
+        {
+            return BezPath::new();
         }
         if common.is_none() {
             if index == 0 {
@@ -3137,6 +3088,75 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -
     }
     path.close_path();
     path
+}
+
+/// The point where the outline of corner `index` (clockwise from the top
+/// left) starts on the rectangle `bounds`, and the quarter ellipse that follows
+/// it, if the corner is rounded. `square` is the rectangle's own corner, used
+/// when the corner is not rounded. `None` when the whole rectangle lies outside
+/// the corner's ellipse.
+fn corner_start(
+    index: usize,
+    [rx, ry]: [f64; 2],
+    center: Point,
+    bounds: Rect,
+    square: Point,
+) -> Option<(Point, Option<Arc>)> {
+    if rx == 0.0 || ry == 0.0 {
+        return Some((square, None));
+    }
+    let Rect { x0, y0, x1, y1 } = bounds;
+    let (lower, upper) = match index {
+        0 => ((center.y - y1) / ry, (center.x - x1) / rx),
+        1 => ((x0 - center.x) / rx, (center.y - y1) / ry),
+        2 => ((y0 - center.y) / ry, (x0 - center.x) / rx),
+        _ => ((center.x - x1) / rx, (y0 - center.y) / ry),
+    };
+    let start = lower.clamp(0.0, 1.0).asin();
+    let end = upper.clamp(0.0, 1.0).acos();
+    if start >= end {
+        return None;
+    }
+    let point = if start == 0.0 {
+        match index {
+            0 => Point::new(x0, center.y),
+            1 => Point::new(center.x, y0),
+            2 => Point::new(x1, center.y),
+            _ => Point::new(center.x, y1),
+        }
+    } else {
+        match index {
+            0 => Point::new(center.x - rx * start.cos(), y1),
+            1 => Point::new(x0, center.y - ry * start.cos()),
+            2 => Point::new(center.x + rx * start.cos(), y0),
+            _ => Point::new(x1, center.y + ry * start.cos()),
+        }
+    };
+    let angles = [PI, 3.0 * FRAC_PI_2, 0.0, FRAC_PI_2];
+    let arc = Arc {
+        center,
+        radii: Vec2::new(rx, ry),
+        start_angle: angles[index] + start,
+        sweep_angle: end - start,
+        x_rotation: 0.0,
+    };
+    Some((point, Some(arc)))
+}
+
+/// Clip the convex `polygon` to the interior of the corner curve that starts
+/// at `point` and follows `arc`. `false` when fewer than three vertices remain.
+fn clip_polygon_to_corner_arc(polygon: &mut Vec<Point>, point: Point, arc: Arc) -> bool {
+    // Subdivide the actual ellipse so cubic approximation error cannot
+    // move an inner contour outside the existing outer arc.
+    let mut points = vec![point];
+    flatten_corner_arc(arc, arc.start_angle + arc.sweep_angle, 0, &mut points);
+    for edge in points.windows(2) {
+        *polygon = clip_corner_polygon(std::mem::take(polygon), edge[0], edge[1]);
+        if polygon.len() < 3 {
+            return false;
+        }
+    }
+    true
 }
 
 /// Flatten an axis-aligned ellipse to a 0.05 layout-pixel chord-error target, bounded

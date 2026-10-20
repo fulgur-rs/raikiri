@@ -4995,6 +4995,11 @@ css/css-sizing/replaced-max-width-with-height-fit-content.html
 css/css-multicol/intrinsic-size-001.html
 css/css-multicol/change-intrinsic-width.html
 
+# --- min-content width of auto-width floats (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
+# Both pass once an auto-width float shrinks to fit its content instead of taking the width of its authored ancestor; KEEP in two audit-vacuous-passes runs.
+css/css-text/overflow-wrap/overflow-wrap-min-content-size-002.html
+css/css-text/word-break/word-break-min-content-006.html
+
 # --- spanner column groups leave inline overflow visible (WPT pin 97ea26e2, EXACT, Linux, 2026-10-19) ---
 # Both pass once content wider than a column is no longer cut at the column edge in a container with a `column-span: all` child; KEEP in audit-vacuous-passes.
 css/css-multicol/multicol-width-004.html

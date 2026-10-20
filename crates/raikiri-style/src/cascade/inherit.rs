@@ -1466,6 +1466,9 @@ pub(crate) fn apply_winners(
             let to_slot = |value: PropertyValue| to_slot_of(winner.idx, value);
             let mut literal_inherit = false;
             let mut inherited_border_width = false;
+            // The declaration that supplies the winner's value: the winner
+            // itself, or the one it rolled back to, if any.
+            let mut supplier = Some(winner);
             // Winners apply in key order and `writing-mode` comes before the
             // logical sizes, so its winner is already applied when one of them
             // is (`inherit_follows_the_childs_own_writing_mode` guards this).
@@ -1507,14 +1510,18 @@ pub(crate) fn apply_winners(
                             ) => {
                                 // The declaration that survives moves to its own
                                 // physical side, which is the winner's.
-                                match rollback_index(
+                                let survivor = rollback_index(
                                     candidates,
                                     candidates.decls()[winner.idx].slot(flow),
                                     winner.idx,
                                     keyword,
                                     &mut deferred_resolver,
                                     flow,
-                                ) {
+                                );
+                                supplier = survivor.map(|index| {
+                                    candidates.decls()[index].precedence().ranked(index)
+                                });
+                                match survivor {
                                     Some(index) => match candidates.value(index) {
                                         PropertyValue::Deferred(fallback) => deferred_resolver
                                             .resolve(fallback)
@@ -1572,21 +1579,18 @@ pub(crate) fn apply_winners(
                 _ => Some(to_slot(value.clone())),
             };
             // Record the precedence even for a value invalid at computed-value
-            // time: it still decides which of a physical and a logical size wins.
-            let rank = Some((
-                winner.rank,
-                winner.layer_priority,
-                winner.specificity,
-                winner.source_order,
-                winner.idx,
-            ));
-            let sizes = &mut specified.preferred_size_precedence;
-            match winner_key {
-                crate::property::PropertyKey::Width => sizes.width = rank,
-                crate::property::PropertyKey::Height => sizes.height = rank,
-                crate::property::PropertyKey::InlineSize => sizes.inline_size = rank,
-                crate::property::PropertyKey::BlockSize => sizes.block_size = rank,
-                _ => {}
+            // time: it still decides which of a physical and a logical size
+            // wins. A rollback takes the place of the declaration it rolled
+            // back to, and a size with nothing to roll back to is not declared.
+            if let Some(supplier) = supplier {
+                let rank = (
+                    supplier.rank,
+                    supplier.layer_priority,
+                    supplier.specificity,
+                    supplier.source_order,
+                    supplier.idx,
+                );
+                specified.size_precedence.record(winner_key, rank);
             }
             // A painting attribute that wins is already in the SVG source; only a
             // stylesheet declaration, a rollback to the attribute, or an
@@ -2854,6 +2858,13 @@ pub(crate) fn resolve_defaulting_value(
                     crate::property::ColumnSpanValue::None
                 });
             }
+            crate::property::PropertyKey::AspectRatio => {
+                return PropertyValue::AspectRatio(if keyword == CssWideKeyword::Inherit {
+                    inherited.aspect_ratio
+                } else {
+                    crate::property::AspectRatioValue::AUTO
+                });
+            }
             crate::property::PropertyKey::TextGroupAlign => {
                 return PropertyValue::TextGroupAlign(if keyword == CssWideKeyword::Inherit {
                     inherited.text_group_align
@@ -3670,6 +3681,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_)
         | PropertyValue::ColumnSpan(_)
+        | PropertyValue::AspectRatio(_)
         | PropertyValue::Columns(_)
         | PropertyValue::ColumnRule(_)
         | PropertyValue::ColumnRuleWidth(_)
@@ -4248,6 +4260,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::StrokeDasharray(_)
         | PropertyValue::StrokeDashoffset(_) => {}
         PropertyValue::ColumnSpan(value) => target.column_span = value,
+        PropertyValue::AspectRatio(value) => target.aspect_ratio = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
         PropertyValue::ColumnRuleWidth(value) => {
             target.column_rule.width = value;

@@ -13,29 +13,29 @@ use std::sync::{Arc, OnceLock};
 use smol_str::SmolStr;
 
 use crate::property::{
-    AbsoluteFontSize, AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
-    BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderImageOutsetSide,
-    BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxDecorationBreak,
-    BoxSizing, BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent,
-    ContentList, CounterResetValue, CssColor, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyKind, FontFamilyName,
-    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
-    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition,
-    ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
-    TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
-    TextEmphasisVEdge, TextGroupAlign, TextJustify, TextOrientation, TextOverflowValue,
-    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange,
-    WordBreak, WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list,
-    empty_counter_entries, empty_counter_reset_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    AbsoluteFontSize, AlignSelfValue, AspectRatioValue, BackgroundAttachment, BackgroundImage,
+    BackgroundRepeat, BackgroundRepeatKeyword, BorderCollapseValue, BorderColor,
+    BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle,
+    BoxDecorationBreak, BoxSizing, BreakBetween, BreakInside, CaptionSideValue, ClearValue,
+    ClipPath, ColumnCountValue, ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue,
+    ContentComponent, ContentList, CounterResetValue, CssColor, Direction, DisplayValue,
+    EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyKind,
+    FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
+    FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
+    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
+    FontVariationSettings, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak,
+    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
+    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, RubyPosition,
+    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace,
+    TextCombineUpright, TextDecorationColor, TextDecorationLine, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition,
+    TextEmphasisStyle, TextEmphasisVEdge, TextGroupAlign, TextJustify, TextOrientation,
+    TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode,
+    TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WhiteSpaceCollapse, WillChange, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
+    empty_content_list, empty_counter_entries, empty_counter_reset_entries, empty_filter_list,
+    empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -1069,9 +1069,11 @@ pub struct ComputedValues {
     /// `min-height` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_height: ComputedLengthPercentageOrAuto,
-    /// Authored logical `min-block-size`, retained so layout can distinguish
-    /// its fragmentation behavior from a physical `min-height` declaration.
-    /// The used value is already mapped into `min_width`/`min_height`.
+    /// Logical `min-block-size`, retained so layout can distinguish its
+    /// fragmentation behavior from a physical `min-height` declaration. It is
+    /// `Some` only while the logical declaration wins over the physical
+    /// minimum size on its axis in cascade order; the used value is already
+    /// mapped into `min_width`/`min_height`.
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
     /// Physical `(width, height)` of the authored `inline-size` /
     /// `block-size` mapped through a `vertical-rl` or `vertical-lr`
@@ -1988,6 +1990,9 @@ pub struct ComputedValues {
     pub text_group_align: TextGroupAlign,
     /// Non-inherited `column-span`, initially `none`.
     pub column_span: ColumnSpanValue,
+    /// `aspect-ratio` — non-inherited, initial `auto` (CSS Box Sizing 4
+    /// §5.1). Computed value = the keyword and the ratio's two numbers.
+    pub aspect_ratio: AspectRatioValue,
     /// Computed `column-width` — non-inherited multicol container setting.
     pub column_width: ComputedColumnWidth,
     /// Non-inherited column rule with an absolutized, style-gated width.
@@ -2417,6 +2422,7 @@ impl ComputedValues {
             column_fill: ColumnFillValue::Balance,
             text_group_align: TextGroupAlign::None,
             column_span: ColumnSpanValue::None,
+            aspect_ratio: AspectRatioValue::AUTO,
             column_rule: ComputedBorder {
                 width: ComputedLength::ZERO,
                 style: BorderStyle::None,

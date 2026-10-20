@@ -487,6 +487,15 @@ pub struct Node {
     /// Whether enabled before/after content must remain in one measured subtree.
     /// Recomputed by the style bridge before every layout pass.
     pub(crate) has_before_or_after_content: bool,
+    /// The preferred aspect ratio that the computed `aspect-ratio` and the
+    /// natural ratio of replaced content select. `None` when both the width
+    /// and the height are definite. Recomputed by the style bridge before
+    /// every layout pass.
+    pub(crate) preferred_aspect_ratio: Option<f32>,
+    /// Whether the `aspect-ratio` is an `auto <ratio>`, which relates the
+    /// content box sizes whatever the `box-sizing` is (CSS Box Sizing 4 §5.1).
+    /// Recomputed by the style bridge before every layout pass.
+    pub(crate) ratio_in_content_box: bool,
     /// Whether painting draws effects sized from the whole border box, such
     /// as background images, rounded corners or shadows. Recomputed by the
     /// style bridge before every layout pass.
@@ -735,6 +744,8 @@ impl Node {
             paragraph_widows: 2,
             multicol_auto_width: true,
             has_before_or_after_content: false,
+            preferred_aspect_ratio: None,
+            ratio_in_content_box: false,
             paints_whole_box_effects: false,
             paints_background_color: false,
             clones_box_decorations: false,
