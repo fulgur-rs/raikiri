@@ -2170,7 +2170,12 @@ fn computed_over(
             ComputedOverValue::Specified(
                 value @ PropertyValue::Deferred(DeferredValue {
                     key:
-                        PropertyKey::InlineSize | PropertyKey::BlockSize | PropertyKey::MinBlockSize,
+                        PropertyKey::InlineSize
+                        | PropertyKey::BlockSize
+                        | PropertyKey::MinBlockSize
+                        | PropertyKey::MinInlineSize
+                        | PropertyKey::MaxInlineSize
+                        | PropertyKey::MaxBlockSize,
                     ..
                 }),
             ) => {

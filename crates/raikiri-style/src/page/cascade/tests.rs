@@ -4447,6 +4447,9 @@ property_key_samples! {
     MinWidth => PropertyValue::MinWidth(LengthOrAuto::Length(Length::Em(7.0))),
     MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
     MinBlockSize => PropertyValue::MinBlockSize(LengthOrAuto::Length(Length::Em(9.0))),
+    MinInlineSize => PropertyValue::MinInlineSize(LengthOrAuto::Length(Length::Em(12.0))),
+    MaxInlineSize => PropertyValue::MaxInlineSize(LengthOrAuto::Length(Length::Em(13.0))),
+    MaxBlockSize => PropertyValue::MaxBlockSize(LengthOrAuto::Length(Length::Em(14.0))),
     InlineSize => PropertyValue::InlineSize(LengthOrAuto::Length(Length::Em(10.0))),
     BlockSize => PropertyValue::BlockSize(LengthOrAuto::Length(Length::Em(11.0))),
     TextUnderlineOffset => {
@@ -5351,6 +5354,9 @@ property_value_variant_registry! {
     MinWidth,
     MinHeight,
     MinBlockSize,
+    MinInlineSize,
+    MaxInlineSize,
+    MaxBlockSize,
     InlineSize,
     BlockSize,
     TextUnderlineOffset,
@@ -6004,6 +6010,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::MinWidth(l)
             | PropertyValue::MinHeight(l)
             | PropertyValue::MinBlockSize(l)
+            | PropertyValue::MinInlineSize(l)
+            | PropertyValue::MaxInlineSize(l)
+            | PropertyValue::MaxBlockSize(l)
             | PropertyValue::InlineSize(l)
             | PropertyValue::BlockSize(l) => length_or_auto(*l),
             PropertyValue::TextUnderlineOffset(value) => text_underline_offset(*value),
@@ -9653,4 +9662,169 @@ fn margin_box_min_block_size_rolls_back_and_substitutes() {
         )),
         Auto
     );
+}
+
+/// The limits of the top-left margin box of `css`, over a page context that
+/// `css` styles, as `(min-width, min-height, max-width, max-height)`.
+fn margin_box_limits(css: &str) -> [ComputedLengthPercentageOrAuto; 4] {
+    let result = page(css, &ComputedValues::initial());
+    let rule = result
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+        .unwrap();
+    let style = result.margin_box_style(&rule, None);
+    [
+        style.min_width,
+        style.min_height,
+        style.max_width,
+        style.max_height,
+    ]
+}
+
+/// A page context whose limits are away from `auto` and `none`; a margin box
+/// inherits them.
+const LIMITED_PAGE: &str =
+    "min-width: 30px; min-height: 20px; max-width: 300px; max-height: 200px;";
+
+#[test]
+fn margin_box_logical_limits_take_the_css_wide_keywords() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let limits = |margin_box: &str| {
+        margin_box_limits(&format!(
+            "@page {{ {LIMITED_PAGE} @top-left {{ content: 'X'; {margin_box} }} }}"
+        ))
+    };
+    let keywords = "min-inline-size: inherit; max-inline-size: inherit; max-block-size: inherit";
+    // `horizontal-tb`: the inline size is the width and the block size the
+    // height.
+    assert_eq!(limits(keywords), [Px(30.0), Auto, Px(300.0), Px(200.0)]);
+    // `vertical-rl`: the axes swap, whatever the order of the declarations.
+    assert_eq!(
+        limits(&format!("writing-mode: vertical-rl; {keywords}")),
+        [Auto, Px(20.0), Px(300.0), Px(200.0)]
+    );
+    assert_eq!(
+        limits(&format!("{keywords}; writing-mode: vertical-rl")),
+        [Auto, Px(20.0), Px(300.0), Px(200.0)]
+    );
+    for keyword in ["initial", "unset"] {
+        assert_eq!(
+            limits(&format!(
+                "min-width: 7px; max-width: 8px; max-height: 9px; \
+                 min-inline-size: {keyword}; max-inline-size: {keyword}; \
+                 max-block-size: {keyword}"
+            )),
+            [Auto; 4],
+            "{keyword}"
+        );
+    }
+}
+
+#[test]
+fn margin_box_logical_limits_compete_with_the_physical_limit_on_their_axis() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let limits = |margin_box: &str| {
+        margin_box_limits(&format!(
+            "@page {{ @top-left {{ content: 'X'; {margin_box} }} }}"
+        ))
+    };
+    assert_eq!(
+        limits("min-inline-size: 5px; min-width: 10px"),
+        [Px(10.0), Auto, Auto, Auto]
+    );
+    assert_eq!(
+        limits("min-width: 10px; min-inline-size: 5px"),
+        [Px(5.0), Auto, Auto, Auto]
+    );
+    assert_eq!(
+        limits("max-width: 10px; max-inline-size: 5px"),
+        [Auto, Auto, Px(5.0), Auto]
+    );
+    assert_eq!(
+        limits("max-height: 10px; max-block-size: 5px"),
+        [Auto, Auto, Auto, Px(5.0)]
+    );
+    assert_eq!(
+        limits("max-block-size: 5px; max-height: 10px"),
+        [Auto, Auto, Auto, Px(10.0)]
+    );
+    assert_eq!(
+        limits("writing-mode: vertical-rl; min-height: 10px; min-inline-size: 5px"),
+        [Auto, Px(5.0), Auto, Auto]
+    );
+    assert_eq!(
+        limits("writing-mode: vertical-rl; max-width: 10px; max-block-size: 5px"),
+        [Auto, Auto, Px(5.0), Auto]
+    );
+    // Importance decides before the order does.
+    assert_eq!(
+        limits("max-inline-size: 5px !important; max-width: 10px"),
+        [Auto, Auto, Px(5.0), Auto]
+    );
+    // A value that is invalid at computed-value time takes its place in the
+    // order and computes to the initial value.
+    assert_eq!(
+        limits("max-width: 10px; max-inline-size: var(--missing)"),
+        [Auto; 4]
+    );
+    assert_eq!(
+        limits("max-inline-size: 5px; max-width: var(--missing)"),
+        [Auto; 4]
+    );
+}
+
+/// The `key` declaration of the `@page` context of `css` over a root whose
+/// limits are `LIMITED_PAGE`.
+fn declared_limit(css: &str, key: PropertyKey) -> Option<PropertyValue> {
+    let root = ComputedValues {
+        min_width: ComputedLengthPercentageOrAuto::Px(30.0),
+        min_height: ComputedLengthPercentageOrAuto::Px(20.0),
+        max_width: ComputedLengthPercentageOrAuto::Px(300.0),
+        max_height: ComputedLengthPercentageOrAuto::Px(200.0),
+        ..ComputedValues::initial()
+    };
+    page(&format!("@page {{ {css} }}"), &root)
+        .declarations()
+        .get(&key)
+        .cloned()
+}
+
+#[test]
+fn page_context_logical_limits_take_the_css_wide_keywords() {
+    let length = |px| LengthOrAuto::Length(Length::Px(px));
+    let keywords = "min-inline-size: inherit; max-inline-size: inherit; max-block-size: inherit";
+    assert_eq!(
+        declared_limit(keywords, PropertyKey::MinInlineSize),
+        Some(PropertyValue::MinInlineSize(length(30.0)))
+    );
+    assert_eq!(
+        declared_limit(keywords, PropertyKey::MaxInlineSize),
+        Some(PropertyValue::MaxInlineSize(length(300.0)))
+    );
+    assert_eq!(
+        declared_limit(keywords, PropertyKey::MaxBlockSize),
+        Some(PropertyValue::MaxBlockSize(length(200.0)))
+    );
+    let vertical = format!("writing-mode: vertical-rl; {keywords}");
+    assert_eq!(
+        declared_limit(&vertical, PropertyKey::MinInlineSize),
+        Some(PropertyValue::MinInlineSize(length(20.0)))
+    );
+    assert_eq!(
+        declared_limit(&vertical, PropertyKey::MaxInlineSize),
+        Some(PropertyValue::MaxInlineSize(length(200.0)))
+    );
+    assert_eq!(
+        declared_limit(&vertical, PropertyKey::MaxBlockSize),
+        Some(PropertyValue::MaxBlockSize(length(300.0)))
+    );
+    for keyword in ["initial", "unset"] {
+        assert_eq!(
+            declared_limit(
+                &format!("max-inline-size: 5px; max-inline-size: {keyword}"),
+                PropertyKey::MaxInlineSize
+            ),
+            Some(PropertyValue::MaxInlineSize(LengthOrAuto::Auto)),
+            "{keyword}"
+        );
+    }
 }

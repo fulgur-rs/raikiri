@@ -514,6 +514,177 @@ fn a_size_that_rolled_back_competes_as_the_declaration_it_rolled_back_to() {
     );
 }
 
+/// The minimum and maximum sizes of the box as `(min-width, min-height,
+/// max-width, max-height)`.
+fn size_limits(css: &str, inline: Option<&str>) -> [ComputedLengthPercentageOrAuto; 4] {
+    let cv = cascade_doc(css, "div", inline);
+    [cv.min_width, cv.min_height, cv.max_width, cv.max_height]
+}
+
+#[test]
+fn logical_limits_map_onto_the_physical_limits_of_their_axes() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let limits = |inline: &str| size_limits("", Some(inline));
+    assert_eq!(
+        limits("min-inline-size: 10px"),
+        [Px(10.0), Auto, Auto, Auto]
+    );
+    assert_eq!(
+        limits("max-inline-size: 20px"),
+        [Auto, Auto, Px(20.0), Auto]
+    );
+    assert_eq!(limits("max-block-size: 30px"), [Auto, Auto, Auto, Px(30.0)]);
+    // The block axis is horizontal in a vertical writing mode.
+    assert_eq!(
+        limits("writing-mode: vertical-rl; min-inline-size: 10px"),
+        [Auto, Px(10.0), Auto, Auto]
+    );
+    assert_eq!(
+        limits("writing-mode: vertical-lr; max-inline-size: 20px"),
+        [Auto, Auto, Auto, Px(20.0)]
+    );
+    assert_eq!(
+        limits("writing-mode: vertical-rl; max-block-size: 30px"),
+        [Auto, Auto, Px(30.0), Auto]
+    );
+    // The writing mode counts wherever it is declared among the longhands.
+    assert_eq!(
+        limits("max-block-size: 30px; writing-mode: vertical-rl"),
+        [Auto, Auto, Px(30.0), Auto]
+    );
+    // Relative lengths and percentages are absolutized like the physical ones.
+    assert_eq!(
+        limits("font-size: 10px; max-inline-size: 2em"),
+        [Auto, Auto, Px(20.0), Auto]
+    );
+    assert_eq!(
+        limits("max-inline-size: 50%"),
+        [
+            Auto,
+            Auto,
+            ComputedLengthPercentageOrAuto::Percent(50.0),
+            Auto
+        ]
+    );
+}
+
+#[test]
+fn logical_limits_compete_with_the_physical_limit_on_their_axis_in_cascade_order() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let limits = |inline: &str| size_limits("", Some(inline));
+    // The later of the two wins.
+    assert_eq!(
+        limits("min-inline-size: 5px; min-width: 10px"),
+        [Px(10.0), Auto, Auto, Auto]
+    );
+    assert_eq!(
+        limits("min-width: 10px; min-inline-size: 5px"),
+        [Px(5.0), Auto, Auto, Auto]
+    );
+    assert_eq!(
+        limits("max-inline-size: 5px; max-width: 10px"),
+        [Auto, Auto, Px(10.0), Auto]
+    );
+    assert_eq!(
+        limits("max-width: 10px; max-inline-size: 5px"),
+        [Auto, Auto, Px(5.0), Auto]
+    );
+    assert_eq!(
+        limits("max-block-size: 5px; max-height: 10px"),
+        [Auto, Auto, Auto, Px(10.0)]
+    );
+    assert_eq!(
+        limits("max-height: 10px; max-block-size: 5px"),
+        [Auto, Auto, Auto, Px(5.0)]
+    );
+    // In a vertical writing mode the inline size is the vertical one.
+    assert_eq!(
+        limits("writing-mode: vertical-rl; min-height: 10px; min-inline-size: 5px"),
+        [Auto, Px(5.0), Auto, Auto]
+    );
+    assert_eq!(
+        limits("writing-mode: vertical-rl; min-inline-size: 5px; min-height: 10px"),
+        [Auto, Px(10.0), Auto, Auto]
+    );
+    assert_eq!(
+        limits("writing-mode: vertical-rl; max-width: 10px; max-block-size: 5px"),
+        [Auto, Auto, Px(5.0), Auto]
+    );
+    assert_eq!(
+        limits("writing-mode: vertical-rl; max-block-size: 5px; max-width: 10px"),
+        [Auto, Auto, Px(10.0), Auto]
+    );
+    // The limit on the other axis is not in the competition.
+    assert_eq!(
+        limits("min-inline-size: 5px; min-height: 10px"),
+        [Px(5.0), Px(10.0), Auto, Auto]
+    );
+    assert_eq!(
+        limits("max-inline-size: 5px; max-height: 10px"),
+        [Auto, Auto, Px(5.0), Px(10.0)]
+    );
+    // The two limits of one axis do not compete with each other.
+    assert_eq!(
+        limits("min-inline-size: 5px; max-inline-size: 15px"),
+        [Px(5.0), Auto, Px(15.0), Auto]
+    );
+    // Importance and specificity decide before the order does.
+    assert_eq!(
+        size_limits(
+            "div { max-inline-size: 5px !important }",
+            Some("max-width: 10px")
+        ),
+        [Auto, Auto, Px(5.0), Auto]
+    );
+    assert_eq!(
+        size_limits("div { max-width: 10px } * { max-inline-size: 5px }", None),
+        [Auto, Auto, Px(10.0), Auto]
+    );
+    // A value that is invalid at computed-value time still takes its place in
+    // the order and computes to the initial value.
+    assert_eq!(
+        limits("max-width: 10px; max-inline-size: var(--missing)"),
+        [Auto, Auto, Auto, Auto]
+    );
+    assert_eq!(
+        limits("min-inline-size: 5px; min-width: var(--missing)"),
+        [Auto, Auto, Auto, Auto]
+    );
+    assert_eq!(
+        limits("max-block-size: 5px; max-height: var(--missing)"),
+        [Auto, Auto, Auto, Auto]
+    );
+}
+
+/// A limit that rolls back stands in the order for the declaration it rolled
+/// back to, whichever of the logical and the physical limit rolls back.
+#[test]
+fn a_logical_limit_that_rolled_back_competes_as_the_declaration_it_rolled_back_to() {
+    use ComputedLengthPercentageOrAuto::{Auto, Px};
+    let limits = |css: &str| size_limits(css, None);
+    assert_eq!(
+        limits(
+            "@layer a, b; @layer a { div { max-width: 7px; max-inline-size: 8px } } \
+             @layer b { div { max-width: revert-layer } }"
+        ),
+        [Auto, Auto, Px(8.0), Auto]
+    );
+    assert_eq!(
+        limits(
+            "@layer a, b; @layer a { div { max-inline-size: 3px } } \
+             @layer b { div { max-width: 9px; max-inline-size: revert-layer } }"
+        ),
+        [Auto, Auto, Px(9.0), Auto]
+    );
+    assert_eq!(
+        limits(
+            "@layer a, b; @layer a { div { min-height: 7px; min-inline-size: 8px } } \
+             @layer b { div { writing-mode: vertical-rl; min-height: revert-layer } }"
+        ),
+        [Auto, Px(8.0), Auto, Auto]
+    );
+}
+
 #[test]
 fn block_size_keywords_compute_to_auto_for_an_element() {
     // An element sizes itself to its content along the block axis for

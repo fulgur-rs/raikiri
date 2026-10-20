@@ -2212,8 +2212,11 @@ fn min_and_max_sizes_keep_the_sizing_keywords() {
         ),
         ("min-height", PropertyValue::MinHeight),
         ("min-block-size", PropertyValue::MinBlockSize),
+        ("min-inline-size", PropertyValue::MinInlineSize),
         ("max-width", PropertyValue::MaxWidth),
         ("max-height", PropertyValue::MaxHeight),
+        ("max-block-size", PropertyValue::MaxBlockSize),
+        ("max-inline-size", PropertyValue::MaxInlineSize),
     ] {
         assert_eq!(
             parse("min-content", property),
@@ -2259,6 +2262,22 @@ fn min_and_max_sizes_keep_their_own_no_constraint_keyword() {
     assert_eq!(parse("auto", "max-width"), None);
     assert_eq!(parse("auto", "max-height"), None);
     assert_eq!(parse("none", "min-block-size"), None);
+    assert_eq!(parse("none", "min-inline-size"), None);
+    assert_eq!(
+        parse("auto", "min-inline-size"),
+        Some(PropertyValue::MinInlineSize(LengthOrAuto::Auto))
+    );
+    for property in ["max-block-size", "max-inline-size"] {
+        assert_eq!(parse("auto", property), None, "{property}");
+    }
+    assert_eq!(
+        parse("none", "max-block-size"),
+        Some(PropertyValue::MaxBlockSize(LengthOrAuto::Auto))
+    );
+    assert_eq!(
+        parse("none", "max-inline-size"),
+        Some(PropertyValue::MaxInlineSize(LengthOrAuto::Auto))
+    );
 }
 
 #[test]
@@ -2854,6 +2873,9 @@ fn box_properties_retain_css_wide_keywords_for_defaulting() {
         ("inline-size", PropertyKey::InlineSize),
         ("block-size", PropertyKey::BlockSize),
         ("min-block-size", PropertyKey::MinBlockSize),
+        ("min-inline-size", PropertyKey::MinInlineSize),
+        ("max-inline-size", PropertyKey::MaxInlineSize),
+        ("max-block-size", PropertyKey::MaxBlockSize),
     ] {
         for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
             let Some(PropertyValue::Deferred(value)) = parse(keyword, name) else {
@@ -2875,7 +2897,14 @@ fn box_properties_still_reject_other_keywords() {
     // `fill-available` is no CSS-wide keyword.
     assert_eq!(parse("fill-available", "height"), None);
     assert_eq!(parse("fill-available", "padding-top"), None);
-    for name in ["inline-size", "block-size", "min-block-size"] {
+    for name in [
+        "inline-size",
+        "block-size",
+        "min-block-size",
+        "min-inline-size",
+        "max-inline-size",
+        "max-block-size",
+    ] {
         assert_eq!(parse("fill-available", name), None, "{name}");
     }
 }
