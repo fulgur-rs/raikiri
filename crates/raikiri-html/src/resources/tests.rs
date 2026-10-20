@@ -2639,6 +2639,108 @@ fn malformed_inline_background_images_report_a_fallback() {
     );
 }
 
+/// Fetch the inline background image `raw` and return the warnings it
+/// raised; the image must not have been cached.
+fn fetch_inline_background(resources: &RenderResources<'_>, raw: &str) -> Vec<RenderWarning> {
+    let url = Url::parse(raw).unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    warnings_of(&warnings)
+}
+
+#[test]
+fn inline_background_images_whose_comma_is_in_the_fragment_report_an_invalid_url() {
+    let seen = fetch_inline_background(&RenderResources::new(), "data:image/png;base64#,AAAA");
+    assert_eq!(seen.len(), 1, "got {seen:?}");
+    assert_eq!(
+        seen[0].details,
+        "inline CSS background image data URL was invalid"
+    );
+}
+
+#[test]
+fn inline_background_images_with_a_bad_base64_payload_report_a_fallback() {
+    let seen = fetch_inline_background(&RenderResources::new(), "data:image/png;base64,*");
+    assert_eq!(seen.len(), 1, "got {seen:?}");
+    assert_eq!(
+        seen[0].details,
+        "inline CSS background image data URL payload was invalid"
+    );
+}
+
+#[test]
+fn inline_background_images_over_the_response_limit_are_skipped() {
+    let resources =
+        RenderResources::new().resource_limits(ResourceLimits::new().max_resource_bytes(Some(2)));
+    let seen = fetch_inline_background(&resources, "data:image/png;base64,AAAA");
+    assert_eq!(seen.len(), 1, "got {seen:?}");
+    assert!(matches!(
+        seen[0].kind,
+        WarningKind::ResourceLimitExceeded {
+            kind: ResourceKind::Image,
+            limit: 2,
+            actual: 3,
+        }
+    ));
+    assert_eq!(
+        seen[0].details,
+        "inline CSS background image exceeded its response byte limit"
+    );
+}
+
+#[test]
+fn inline_background_images_with_a_mime_type_the_policy_denies_are_skipped() {
+    let policy = ScopedPolicy {
+        denied_scheme: "none",
+        mime_types: vec!["image/svg+xml".to_owned()],
+        ..ScopedPolicy::new()
+    };
+    let resources = RenderResources::new().network_policy(&policy);
+    let seen = fetch_inline_background(&resources, "data:image/png;base64,AAAA");
+    assert_eq!(seen.len(), 1, "got {seen:?}");
+    assert!(matches!(
+        &seen[0].kind,
+        WarningKind::PolicyWarning { violation }
+            if matches!(
+                &violation.violation_type,
+                ViolationType::MimeNotAllowed { mime } if mime == "image/png"
+            )
+    ));
+    assert_eq!(
+        seen[0].details,
+        "CSS background image MIME type was denied by the resource policy"
+    );
+}
+
+#[test]
+fn inline_background_images_over_the_aggregate_budget_are_skipped() {
+    let resources = RenderResources::new()
+        .resource_limits(ResourceLimits::new().max_aggregate_resource_bytes(Some(5)));
+    // Each payload is three bytes; the first fits the budget (and then fails
+    // to decode), the second would bring the total to six.
+    let first = fetch_inline_background(&resources, "data:image/png;base64,AAAA");
+    assert_eq!(first.len(), 1, "got {first:?}");
+    assert_eq!(
+        first[0].details,
+        "CSS background image could not be decoded; the image was skipped"
+    );
+    let second = fetch_inline_background(&resources, "data:image/png;base64,AAAB");
+    assert_eq!(second.len(), 1, "got {second:?}");
+    assert!(matches!(
+        second[0].kind,
+        WarningKind::ResourceLimitExceeded {
+            kind: ResourceKind::Image,
+            limit: 5,
+            actual: 6,
+        }
+    ));
+    assert_eq!(
+        second[0].details,
+        "aggregate image responses exceeded their byte limit"
+    );
+}
+
 #[test]
 fn background_raster_decodes_a_png_whose_chunk_crc_is_wrong() {
     let mut corrupt = png_bytes(3, 2);

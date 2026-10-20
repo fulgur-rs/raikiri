@@ -1016,11 +1016,25 @@ impl<'a> RenderResources<'a> {
         }
     }
 
+    /// Decode the payload of one inline `data:` background image, pushing a
+    /// warning and returning `None` when a check refuses it.
     fn decode_data_background_image(
         &self,
         url: &Url,
         warnings: &SharedRenderWarnings,
     ) -> Option<(Vec<u8>, String)> {
+        self.check_inline_image_url(url, warnings)?;
+        let (bytes, mime) = decode_inline_image_payload(url, warnings)?;
+        let actual = bytes.len() as u64;
+        self.check_inline_image_size(actual, warnings)?;
+        self.check_inline_image_mime(url, &mime, warnings)?;
+        self.charge_inline_image_budget(actual, warnings)?;
+        Some((bytes, mime))
+    }
+
+    /// `None` after a warning when the resource policy denies the inline
+    /// image URL.
+    fn check_inline_image_url(&self, url: &Url, warnings: &SharedRenderWarnings) -> Option<()> {
         let violation_type = self
             .policy
             .and_then(|policy| url_policy_violation(policy, url, ResourceKind::Image));
@@ -1043,46 +1057,12 @@ impl<'a> RenderResources<'a> {
             );
             return None;
         }
+        Some(())
+    }
 
-        let raw = url.as_str();
-        let Some(metadata) = raw
-            .strip_prefix("data:")
-            .and_then(|raw| raw.split_once(',').map(|(metadata, _)| metadata))
-        else {
-            push_image_fallback_warning(
-                warnings,
-                url,
-                "inline CSS background image data URL was malformed",
-            );
-            return None;
-        };
-        let mime = Some(mime_essence(metadata))
-            .filter(|mime| !mime.is_empty())
-            .unwrap_or("text/plain")
-            .to_owned();
-        let data_url = match data_url::DataUrl::process(raw) {
-            Ok(data_url) => data_url,
-            Err(_) => {
-                push_image_fallback_warning(
-                    warnings,
-                    url,
-                    "inline CSS background image data URL was invalid",
-                );
-                return None;
-            }
-        };
-        let (bytes, _) = match data_url.decode_to_vec() {
-            Ok(decoded) => decoded,
-            Err(_) => {
-                push_image_fallback_warning(
-                    warnings,
-                    url,
-                    "inline CSS background image data URL payload was invalid",
-                );
-                return None;
-            }
-        };
-        let actual = bytes.len() as u64;
+    /// `None` after a warning when the decoded payload is over the per-response
+    /// byte limit.
+    fn check_inline_image_size(&self, actual: u64, warnings: &SharedRenderWarnings) -> Option<()> {
         let limit = min_limit(
             self.resource_limits.max_resource_bytes,
             self.policy
@@ -1099,18 +1079,31 @@ impl<'a> RenderResources<'a> {
             );
             return None;
         }
+        Some(())
+    }
+
+    /// `None` after a warning when the resource policy does not allow the
+    /// inline image's MIME type.
+    fn check_inline_image_mime(
+        &self,
+        url: &Url,
+        mime: &str,
+        warnings: &SharedRenderWarnings,
+    ) -> Option<()> {
         let mime_denied = self.policy.is_some_and(|policy| {
             let allowed_mimes = policy.allowed_mime_types(ResourceKind::Image);
             !allowed_mimes.is_empty()
                 && !allowed_mimes
                     .iter()
-                    .any(|allowed| allowed.eq_ignore_ascii_case(&mime))
+                    .any(|allowed| allowed.eq_ignore_ascii_case(mime))
         });
         if mime_denied {
             let violation = PolicyViolation {
                 kind: ResourceKind::Image,
                 url: url.clone(),
-                violation_type: ViolationType::MimeNotAllowed { mime: mime.clone() },
+                violation_type: ViolationType::MimeNotAllowed {
+                    mime: mime.to_owned(),
+                },
                 details: "inline image MIME type denied by resource policy".to_owned(),
             };
             push_resource_warning(
@@ -1126,7 +1119,16 @@ impl<'a> RenderResources<'a> {
             );
             return None;
         }
+        Some(())
+    }
 
+    /// Add the inline image to the aggregate image budget; `None` after a
+    /// warning when that would exceed the aggregate byte limit.
+    fn charge_inline_image_budget(
+        &self,
+        actual: u64,
+        warnings: &SharedRenderWarnings,
+    ) -> Option<()> {
         let mut budget = self
             .budget
             .lock()
@@ -1144,8 +1146,55 @@ impl<'a> RenderResources<'a> {
             return None;
         }
         *budget = total;
-        Some((bytes, mime))
+        Some(())
     }
+}
+
+/// Decode the payload of an inline `data:` URL into its bytes and MIME type,
+/// pushing a warning and returning `None` when the URL is malformed or invalid.
+fn decode_inline_image_payload(
+    url: &Url,
+    warnings: &SharedRenderWarnings,
+) -> Option<(Vec<u8>, String)> {
+    let raw = url.as_str();
+    let Some(metadata) = raw
+        .strip_prefix("data:")
+        .and_then(|raw| raw.split_once(',').map(|(metadata, _)| metadata))
+    else {
+        push_image_fallback_warning(
+            warnings,
+            url,
+            "inline CSS background image data URL was malformed",
+        );
+        return None;
+    };
+    let mime = Some(mime_essence(metadata))
+        .filter(|mime| !mime.is_empty())
+        .unwrap_or("text/plain")
+        .to_owned();
+    let data_url = match data_url::DataUrl::process(raw) {
+        Ok(data_url) => data_url,
+        Err(_) => {
+            push_image_fallback_warning(
+                warnings,
+                url,
+                "inline CSS background image data URL was invalid",
+            );
+            return None;
+        }
+    };
+    let (bytes, _) = match data_url.decode_to_vec() {
+        Ok(decoded) => decoded,
+        Err(_) => {
+            push_image_fallback_warning(
+                warnings,
+                url,
+                "inline CSS background image data URL payload was invalid",
+            );
+            return None;
+        }
+    };
+    Some((bytes, mime))
 }
 
 impl ImagePixelSource for RenderResources<'_> {
