@@ -50,16 +50,18 @@ pub fn inline_svg_element_declarations(
     let mut elements = Vec::new();
     let mut remaining_bytes = DECLARATION_BYTE_LIMIT;
     let use_targets = use_targets(document, root);
-    // Each entry carries the outermost element above it that a `use` element
-    // instantiates, which stands for the subtree a renderer clones under the
-    // `use` element. One list per element has to serve every instance, so an
-    // element inside two nested targets is judged by the outer one.
+    // Each entry carries the nearest element above it, or itself, that a `use`
+    // element instantiates, which stands for the subtree a renderer clones
+    // under the `use` element. One list per element has to serve every
+    // instance, so an element inside two nested targets is judged by the inner
+    // one: what lies between the targets is the ancestry of a copy of the outer
+    // target only, and a copy of the inner one inherits from its own `use`
+    // element there.
     let mut stack = vec![(root, root_node, None)];
     let mut element_index = 0;
     while let Some((node_id, node, mut instance_root)) = stack.pop() {
         if node.kind() == NodeKind::Element {
-            if instance_root.is_none()
-                && !use_targets.is_empty()
+            if !use_targets.is_empty()
                 && node
                     .attribute("id")
                     .is_some_and(|id| use_targets.contains(id))

@@ -377,6 +377,26 @@ fn a_stroke_length_inherited_in_a_used_definition_is_left_for_the_use_element() 
 }
 
 #[test]
+fn a_stroke_length_inherited_in_a_nested_use_target_is_left_for_the_nearest_use_element() {
+    // The path is a target of its own as well as part of the group that another
+    // `use` element instantiates. The copy under its own `use` element has no
+    // `g` above it, so it takes the length from there.
+    let elements = declarations(
+        "<style>.a{font-size:20px;stroke-width:2em}.p{font-size:10px;stroke-width:inherit}</style>\
+         <svg width=50 height=50><defs><g id=o><g class=a><path id=i class=p /></g></g></defs>\
+         <use href='#i' /><use href='#o' /></svg>",
+    );
+    assert_eq!(
+        declaration_of(&elements, 3),
+        Some("font-size:20px!important;stroke-width:2em!important;")
+    );
+    assert_eq!(
+        declaration_of(&elements, 4),
+        Some("font-size:10px!important;stroke-width:inherit!important;")
+    );
+}
+
+#[test]
 fn a_stroke_length_inherited_from_inside_a_used_definition_is_written_in_px() {
     let elements = declarations(
         "<style>g{font-size:20px;stroke-width:2em}path{font-size:10px;stroke-width:inherit}</style>\

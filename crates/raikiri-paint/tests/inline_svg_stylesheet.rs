@@ -597,6 +597,17 @@ fn an_inherited_stroke_width_inside_a_used_definition_comes_from_the_group_in_th
 }
 
 #[test]
+fn a_nested_use_target_inherits_from_the_use_element_that_instantiates_it() {
+    // The path is a target of its own and part of the group another `use`
+    // element instantiates: the first copy takes the width of the group around
+    // its `use`, the second one that of the group in the definition.
+    assert_paints_like(
+        "<style>.a{stroke:black;font-size:20px;stroke-width:2em}.p{font-size:10px;stroke-width:inherit}</style><svg width=100 height=50><defs><g id=o><g class=a><path id=i class=p d='M0 0V50' /></g></g></defs><g stroke=black stroke-width=2><use href='#i' x=10 /></g><use href='#o' x=70 /></svg>",
+        "<svg width=100 height=50><path d='M10 0V50' stroke=black stroke-width=2 /><path d='M70 0V50' stroke=black stroke-width=40 /></svg>",
+    );
+}
+
+#[test]
 fn an_inherited_stroke_width_comes_from_the_nearest_ancestor_that_sets_it_by_attribute() {
     assert_paints_like(
         "<style>svg{font-size:30px;stroke:black;stroke-width:1em}g{font-size:4px}path{font-size:10px;stroke-width:inherit}</style><svg width=50 height=20><g stroke-width='2em'><path d='M0 10h50' fill=none /></g></svg>",
