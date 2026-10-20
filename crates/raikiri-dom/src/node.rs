@@ -1076,6 +1076,19 @@ impl Node {
             .map_or(&[], |root| root.offsets.as_slice())
     }
 
+    /// Whether layout gives this element no box of its own, so that its
+    /// children take its place in the container: a `display: contents`
+    /// element, or a plain block that wraps a column spanner (CSS
+    /// Multi-column Layout 1, 6.1).
+    ///
+    /// This is the display that layout used, which the cascade does not
+    /// carry for the wrapper of a spanner: painters that read the cascade's
+    /// `display` to find where boxes are ask this as well.
+    #[doc(hidden)]
+    pub fn generates_no_box(&self) -> bool {
+        self.display() == DisplayValue::Contents
+    }
+
     /// Whether layout lays this box out as a multi-column container. The
     /// column properties apply only to block containers (CSS Multi-column
     /// Layout 1, 2), so a flex, grid or table box with them is not one.

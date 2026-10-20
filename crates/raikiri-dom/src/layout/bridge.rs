@@ -468,6 +468,7 @@ fn apply_computed_to_style_in_session_inner(
         let key = doc.nodes.box_key(idx).expect("source node has a box key");
         doc.document.retained_layout_styles.insert(key, style);
     }
+    super::spanner_wrappers::lift_spanner_wrappers(doc, cascade);
     // Whether a box is a non-atomic inline box depends on its parent's
     // display, which the loop above has now bridged for every node.
     for idx in 0..doc.nodes.len() {

@@ -2220,9 +2220,15 @@ fn wrappers_keep_empty_spanners_out_of_the_stream() {
         (doc, parent)
     };
 
-    // The margins of the two spanners collapse into the larger one.
+    // The margins of the two spanners collapse into the larger one. The
+    // plain wrapper makes no box, so the spanners are among the children
+    // that the container places.
     let (doc, parent) = spanners("display:block");
-    assert!(lineless::supported_with_wrappers(&doc, parent).is_none());
+    assert!(
+        doc.children_through_contents(parent)
+            .into_iter()
+            .all(|child| spanning::is_spanner(&doc, child))
+    );
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
 
     // Below a flow root they are ordinary blocks of the columns.

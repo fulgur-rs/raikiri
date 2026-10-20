@@ -2509,3 +2509,107 @@ fn a_block_after_a_spanner_keeps_its_first_row_of_ink_at_a_fractional_offset() {
         Some(1.0),
     );
 }
+
+#[test]
+fn a_spanner_in_a_plain_wrapper_spans_the_columns_of_the_container() {
+    // The wrapper has nothing to draw, so it makes no difference: the lines
+    // before the spanner fill the two columns, the spanner crosses both, and
+    // the lines after it fill them again.
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p><div style='column-span:all;height:20px;background:lime'></div><p>E<br>F<br>G<br>H</p></div></div>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px;width:100px;height:20px;background:lime'></div><div style='position:absolute;left:0;top:60px'>E<br>F</div><div style='position:absolute;left:60px;top:60px'>G<br>H</div>",
+    );
+}
+
+#[test]
+fn plain_wrappers_of_a_spanner_are_not_told_apart_from_no_wrapper() {
+    let blocks = "<p>A<br>B<br>C<br>D</p><div class=sp></div><p>E<br>F<br>G<br>H</p>";
+    let spanner = "<div class=sp></div>";
+    for css in [
+        ".sp{column-span:all;height:20px;background:lime}",
+        ".sp{column-span:all;height:20px;background:lime}.mc{height:100px;column-fill:auto}",
+    ] {
+        let plain = format!("<div class=mc>{blocks}</div>");
+        assert!(
+            raster(&plain, css)
+                .chunks_exact(4)
+                .any(|pixel| pixel[0] == 0 && pixel[1] > 200),
+            "{css}"
+        );
+        for (wrapper, content) in [
+            ("<div>{}</div>", blocks),
+            ("<div><section>{}</section></div>", blocks),
+            ("<div style='margin:0 auto'>{}</div>", blocks),
+            ("<div style='display:contents'><div>{}</div></div>", blocks),
+        ] {
+            compare_bodies(
+                &format!("<div class=mc>{}</div>", wrapper.replace("{}", content)),
+                &plain,
+                css,
+            );
+        }
+        // Around the spanner only, and around every block in turn.
+        compare_bodies(
+            &format!(
+                "<div class=mc><p>A<br>B<br>C<br>D</p><div>{spanner}</div><p>E<br>F<br>G<br>H</p></div>"
+            ),
+            &plain,
+            css,
+        );
+        compare_bodies(
+            &format!(
+                "<div class=mc><div><p>A<br>B<br>C<br>D</p></div><div>{spanner}</div><div><p>E<br>F<br>G<br>H</p></div></div>"
+            ),
+            &plain,
+            css,
+        );
+    }
+}
+
+#[test]
+fn the_lines_of_a_plain_wrapper_fill_the_columns_around_its_spanner() {
+    let css = ".sp{column-span:all;height:20px;background:lime}";
+    compare_bodies(
+        "<div class=mc><div>A<br>B<br>C<br>D<div class=sp></div>E<br>F<br>G</div></div>",
+        "<div class=mc>A<br>B<br>C<br>D<div class=sp></div>E<br>F<br>G</div>",
+        css,
+    );
+}
+
+#[test]
+fn a_spanner_in_a_wrapper_of_a_list_item_paints_in_the_order_of_one_in_the_item() {
+    // The marker inside the item and the outline of the spanner overlap by a
+    // row of pixels, so the order they are painted in shows.
+    let css = "ul{margin:0;padding:0 0 0 20px}li{column-count:1;width:100px;outline:1px solid black;list-style-position:inside}.sp{column-span:all;outline:1px solid blue}";
+    compare_bodies(
+        "<ul><li><div><div class=sp>X</div></div></li></ul>",
+        "<ul><li><div class=sp>X</div></li></ul>",
+        css,
+    );
+}
+
+#[test]
+fn a_plain_wrapper_of_a_spanner_keeps_the_column_clip_of_its_children() {
+    // The blocks that columns clip to their height are clipped the same way
+    // when a wrapper that makes no box holds them.
+    let css = ".mc{height:40px;column-fill:auto}.sp{column-span:all;height:0}";
+    for inner in [
+        "<div style='display:grid;height:80px;background:blue'></div>",
+        "<div style='display:table;background:blue'><div style='display:table-row'><div style='display:table-cell;width:20px;height:80px'></div></div></div>",
+        "<div style='height:0'><div style='height:80px;background:blue'></div></div>",
+    ] {
+        compare_bodies(
+            &format!("<div class=mc><div>{inner}<div class=sp></div></div></div><p>X</p>"),
+            &format!("<div class=mc>{inner}<div class=sp></div></div><p>X</p>"),
+            css,
+        );
+        compare_bodies(
+            &format!(
+                "<div class=mc><div><div>{inner}</div><div class=sp></div></div></div><p>X</p>"
+            ),
+            &format!("<div class=mc><div>{inner}</div><div class=sp></div></div><p>X</p>"),
+            css,
+        );
+    }
+}

@@ -67,6 +67,7 @@ mod page_pipeline;
 mod relative;
 mod root_box;
 pub(crate) mod sanitize;
+mod spanner_wrappers;
 #[cfg(test)]
 mod static_position;
 #[cfg(test)]
