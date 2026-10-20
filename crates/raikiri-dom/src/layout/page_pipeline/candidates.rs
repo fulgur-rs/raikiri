@@ -9,8 +9,9 @@ use super::{
     TextLineIndex, candidate_ancestor_constraints, clears_float_side, first_owned_text_line_top,
     in_inset_out_of_flow_subtree, is_block_level_flow_box, is_floating_box_for_pagination,
     is_monolithic_for_pagination_with_transposed_axes, page_applies_to_box, page_break_is_forced,
-    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
-    propagated_start_page_name_with_transposed_axes, selected_page_name,
+    page_name_to_owned, pagination_child_order, pagination_child_parent_y,
+    positioned_owned_text_line_bounds, propagated_start_page_name_with_transposed_axes,
+    selected_page_name,
 };
 use std::collections::HashMap;
 
@@ -174,6 +175,8 @@ fn named_page_subtree_has_name(
     pagination_on_transposed_axes: bool,
     cache: &mut HashMap<usize, bool>,
 ) -> bool {
+    #[cfg(test)]
+    super::super::page::record_page_name_work(4);
     let mut pending = vec![(node_id, false)];
     while let Some((current_id, visited)) = pending.pop() {
         if cache.contains_key(&current_id) {
@@ -302,14 +305,14 @@ pub(super) fn has_display_none_descendant(document: &Document, node_id: usize) -
 /// The state a node inherits from its ancestors while its page
 /// candidates are collected.
 #[derive(Clone)]
-struct CandidateFrame {
+struct CandidateFrame<'name> {
     /// The source-coordinate y the node's layout location is relative to:
     /// its layout parent's border-box y, or the paragraph root's for a node
     /// inside a paragraph laid out by the inline engine.
     parent_abs_y: f32,
     direct_body_child: bool,
     parent_height: f32,
-    inherited_page_name: Option<String>,
+    inherited_page_name: Option<&'name str>,
     inside_table: bool,
     flex_column_parent: bool,
     grid_single_column_parent: bool,
@@ -319,7 +322,7 @@ struct CandidateFrame {
     inside_out_of_flow: bool,
 }
 
-impl CandidateFrame {
+impl CandidateFrame<'_> {
     /// The frame of the body: the root of candidate collection.
     fn root(parent_abs_y: f32) -> Self {
         Self {
@@ -396,6 +399,7 @@ pub(super) struct CandidateCollector<'a, 'doc, 'c> {
     text_lines: &'a mut TextLineIndex,
     control: &'a PageLayoutControl<'c>,
     named_page_subtree_cache: HashMap<usize, bool>,
+    has_named_pages: bool,
 }
 
 impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
@@ -417,6 +421,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
             text_lines,
             control,
             named_page_subtree_cache: HashMap::new(),
+            has_named_pages: super::super::page::has_named_pages(cascade),
         }
     }
 
@@ -428,14 +433,18 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
     }
 
     #[inline(never)]
-    fn collect(&mut self, node_id: usize, frame: CandidateFrame) -> Result<(), LayoutError> {
+    fn collect(&mut self, node_id: usize, frame: CandidateFrame<'a>) -> Result<(), LayoutError> {
         stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
             self.collect_inner(node_id, frame)
         })
     }
 
     #[inline(never)]
-    fn collect_inner(&mut self, node_id: usize, frame: CandidateFrame) -> Result<(), LayoutError> {
+    fn collect_inner(
+        &mut self,
+        node_id: usize,
+        frame: CandidateFrame<'a>,
+    ) -> Result<(), LayoutError> {
         let Self {
             document,
             cascade,
@@ -525,7 +534,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             is_out_of_flow_descendant: inside_out_of_flow,
                             page_name_in_flow: !inside_float && !inside_out_of_flow,
                         }),
-                        page_name: frame.inherited_page_name,
+                        page_name: page_name_to_owned(frame.inherited_page_name),
                         named_flex_context,
                         ifc_root,
                     });
@@ -601,35 +610,39 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                         document.nodes[node_id].position(),
                         PositionValue::Absolute | PositionValue::Fixed
                     ) {
-                    explicit_page_name.clone()
+                    explicit_page_name
                 } else {
                     None
                 };
-                let (has_propagated_page_name, propagated_page_name) =
+                let (has_propagated_page_name, propagated_page_name) = if self.has_named_pages {
                     propagated_start_page_name_with_transposed_axes(
                         document,
                         cascade,
                         node_id,
-                        frame.inherited_page_name.as_deref(),
+                        frame.inherited_page_name,
                         document.context.pagination_on_transposed_axes,
-                    );
+                    )
+                } else {
+                    // Without Named values, both own and inherited names remain None.
+                    (false, None)
+                };
                 let is_flex = document.nodes[node_id].formatting_context == FormattingContext::Flex;
                 let column_flex = is_flex
                     && matches!(
                         computed.flex_direction,
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
-                let deferred_named_break_after =
-                    document.nodes[node_id].display().is_flex_container()
-                        && !column_flex
-                        && has_nested_named_page_descendant(
-                            document,
-                            cascade,
-                            node_id,
-                            0,
-                            document.context.pagination_on_transposed_axes,
-                            &mut self.named_page_subtree_cache,
-                        );
+                let deferred_named_break_after = self.has_named_pages
+                    && document.nodes[node_id].display().is_flex_container()
+                    && !column_flex
+                    && has_nested_named_page_descendant(
+                        document,
+                        cascade,
+                        node_id,
+                        0,
+                        document.context.pagination_on_transposed_axes,
+                        &mut self.named_page_subtree_cache,
+                    );
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
                 // container's start page value.
@@ -640,9 +653,9 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                 let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
                     propagated_page_name
                 } else {
-                    own_page_name.clone().or(frame.inherited_page_name.clone())
+                    own_page_name.or(frame.inherited_page_name)
                 };
-                let child_page_name = own_page_name.clone().or(frame.inherited_page_name);
+                let child_page_name = own_page_name.or(frame.inherited_page_name);
                 let is_body = node_id == body_id || node_id == roots.element;
                 let participates_in_flow = matches!(
                     document.nodes[node_id].position(),
@@ -791,7 +804,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                                 deferred_named_break_after,
                             },
                         ),
-                        page_name: page_name.clone(),
+                        page_name: page_name_to_owned(page_name),
                         named_flex_context,
                         ifc_root: None,
                     });
@@ -818,7 +831,7 @@ impl<'a, 'doc, 'c> CandidateCollector<'a, 'doc, 'c> {
                             direct_body_child: candidate_parent(document, child_id)
                                 == Some(roots.contents_box),
                             parent_height: node.unrounded_layout.size.height.max(0.0),
-                            inherited_page_name: child_page_name.clone(),
+                            inherited_page_name: child_page_name,
                             inside_table: inside_table
                                 || matches!(
                                     document.nodes[node_id].display(),

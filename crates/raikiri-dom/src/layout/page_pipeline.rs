@@ -2413,10 +2413,11 @@ fn finite_nonnegative(value: f32) -> f32 {
 /// (CSS Fragmentation 3, 3.1: content after a forced break goes to the next
 /// fragmentainer). A change of named page between siblings forces a break
 /// too (CSS Paged Media 3, 4.1).
-fn clear_floats_at_forced_breaks(
+fn clear_floats_at_forced_breaks<'name>(
     document: &mut super::context::LayoutSession<'_>,
-    cascade: &CascadeResult,
+    cascade: &'name CascadeResult,
 ) {
+    let has_named_pages = super::page::has_named_pages(cascade);
     let pagination_on_transposed_axes = document.context.pagination_on_transposed_axes;
     let in_flow = |document: &Document, id: usize| {
         let node = &document.layout_node_with_style(id).unwrap();
@@ -2511,14 +2512,17 @@ fn clear_floats_at_forced_breaks(
     // not pass up a descendant's. `trailing` keeps each box's own result, so
     // nested boxes are each looked at once.
     let end_page_name = |document: &Document,
-                         trailing: &mut HashMap<usize, Option<String>>,
+                         trailing: &mut HashMap<usize, Option<&'name str>>,
                          id: usize,
-                         inherited: Option<String>| {
+                         inherited: Option<&'name str>| {
+        if !has_named_pages {
+            return inherited;
+        }
         let mut chain = Vec::new();
         let mut id = id;
         let mut name = loop {
             if let Some(name) = trailing.get(&id) {
-                break name.clone();
+                break *name;
             }
             chain.push(id);
             if is_monolithic_for_pagination_with_transposed_axes(
@@ -2542,21 +2546,23 @@ fn clear_floats_at_forced_breaks(
             if page_applies_to_box(document, id) {
                 name = name.or_else(|| selected_page_name(cascade, id));
             }
-            trailing.insert(id, name.clone());
+            trailing.insert(id, name);
+            #[cfg(test)]
+            super::page::record_page_name_work(3);
         }
         name.or(inherited)
     };
     let mut trailing = HashMap::new();
     // Whether a box with the page value `name` after content that ended with
     // `previous` starts a new page.
-    let changes_page = |previous: &Option<Option<String>>, name: &Option<String>| {
+    let changes_page = |previous: &Option<Option<&str>>, name: &Option<&str>| {
         previous.as_ref().is_some_and(|previous| previous != name)
     };
     // Walk the boxes with the page value each inherits. Floats take their
     // parent's page, and their insides are not walked.
     let mut cleared = Vec::new();
     let mut cleared_lines = Vec::new();
-    let mut pending = vec![(0_usize, None::<String>)];
+    let mut pending = vec![(0_usize, None::<&str>)];
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
         let mut float_after_break = false;
@@ -2571,7 +2577,7 @@ fn clear_floats_at_forced_breaks(
             parent,
             raikiri_style::PseudoElem::Before,
         )
-        .then(|| inherited.clone());
+        .then_some(inherited);
         for item in child_boxes(document, parent, true) {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.
@@ -2585,10 +2591,13 @@ fn clear_floats_at_forced_breaks(
                 }
                 after_forced_break = false;
                 float_after_break = false;
-                previous_page_name = Some(inherited.clone());
+                previous_page_name = Some(inherited);
                 continue;
             };
             if is_static_position_absolute(document, child) {
+                if !has_named_pages {
+                    continue;
+                }
                 // An absolutely positioned box left at its static position
                 // keeps the named pages of its in-flow content in the page
                 // flow, as pagination does, while its own `page` value and
@@ -2611,7 +2620,7 @@ fn clear_floats_at_forced_breaks(
                 .flatten()
                 .flatten();
                 if let Some(last) = last {
-                    let name = end_page_name(document, &mut trailing, last, inherited.clone());
+                    let name = end_page_name(document, &mut trailing, last, inherited);
                     if name != inherited {
                         previous_page_name = Some(name);
                     }
@@ -2628,7 +2637,7 @@ fn clear_floats_at_forced_breaks(
                 // does a change of named page: pagination puts a float on its
                 // parent's page.
                 let named_break = changes_page(&previous_page_name, &inherited);
-                previous_page_name = Some(inherited.clone());
+                previous_page_name = Some(inherited);
                 let forced_after =
                     page_break_is_forced(document, child, cascade.computed[child].break_after);
                 if named_break
@@ -2663,15 +2672,19 @@ fn clear_floats_at_forced_breaks(
             }
             float_after_break = false;
             last_block = Some(child);
-            let start_page_name = match propagated_start_page_name_with_transposed_axes(
-                document,
-                cascade,
-                child,
-                inherited.as_deref(),
-                pagination_on_transposed_axes,
-            ) {
-                (true, name) => name,
-                (false, _) => inherited.clone(), // cov:ignore: child_boxes only yields visible boxes with propagated page names.
+            let start_page_name = if has_named_pages {
+                match propagated_start_page_name_with_transposed_axes(
+                    document,
+                    cascade,
+                    child,
+                    inherited,
+                    pagination_on_transposed_axes,
+                ) {
+                    (true, name) => name,
+                    (false, _) => inherited, // cov:ignore: child_boxes only yields visible boxes with propagated page names.
+                }
+            } else {
+                None
             };
             let named_break = changes_page(&previous_page_name, &start_page_name);
             let forced = after_forced_break
@@ -2680,16 +2693,11 @@ fn clear_floats_at_forced_breaks(
             // A break after the last box inside this one is carried out to
             // the next box, as the paginator does.
             after_forced_break = page_edge_constraint(document, cascade, child, false).0;
-            previous_page_name = Some(end_page_name(
-                document,
-                &mut trailing,
-                child,
-                inherited.clone(),
-            ));
+            previous_page_name = Some(end_page_name(document, &mut trailing, child, inherited));
             let own_page_name = if page_applies_to_box(document, child) {
-                selected_page_name(cascade, child).or_else(|| inherited.clone())
+                selected_page_name(cascade, child).or(inherited)
             } else {
-                inherited.clone()
+                inherited
             };
             // Pagination does not break inside a monolithic box.
             if !is_monolithic_for_pagination_with_transposed_axes(
@@ -2846,9 +2854,17 @@ fn page_edge_constraint(
     (forced, avoided)
 }
 
-pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<String> {
+pub(crate) fn page_name_to_owned(name: Option<&str>) -> Option<String> {
+    name.map(|name| {
+        #[cfg(test)]
+        super::page::record_page_name_work(2);
+        name.to_owned()
+    })
+}
+
+pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<&str> {
     match cascade.page_values.get(node_id) {
-        Some(raikiri_style::property::PageValue::Named(name)) => Some(name.to_string()),
+        Some(raikiri_style::property::PageValue::Named(name)) => Some(name.0.as_str()),
         _ => None,
     }
 }
@@ -3182,6 +3198,8 @@ struct PageFlowGeometry {
 
 /// The page type pagination assigns to each page the flow reaches.
 struct PageNames {
+    /// Whether this cascade can produce a named page during this pagination run.
+    records_names: bool,
     /// The page type of the flow at the candidate being placed.
     current: Option<String>,
     /// The page type the enclosing flow set last; an unnamed candidate
@@ -3192,10 +3210,22 @@ struct PageNames {
 
 impl PageNames {
     fn new(first: Option<String>) -> Self {
+        #[cfg(test)]
+        super::page::record_page_name_work(5);
         Self {
+            records_names: true,
             by_page: vec![first.clone()],
             outer: first.clone(),
             current: first,
+        }
+    }
+
+    fn unnamed() -> Self {
+        Self {
+            records_names: false,
+            current: None,
+            outer: None,
+            by_page: Vec::new(),
         }
     }
 
@@ -3254,6 +3284,10 @@ impl PageNames {
 
     /// Give `page` the current page type.
     fn name_page(&mut self, page: u32) {
+        if !self.records_names {
+            debug_assert!(self.current.is_none() && self.outer.is_none());
+            return;
+        }
         let index = page as usize;
         if self.by_page.len() <= index {
             self.by_page.resize(index + 1, None);
@@ -3265,6 +3299,10 @@ impl PageNames {
     /// `from` runs on. Pages no earlier content reached take the current
     /// page type; with `overwrite`, so do those that already have one.
     fn continue_onto(&mut self, from: u32, end: u32, overwrite: bool) {
+        if !self.records_names {
+            debug_assert!(self.current.is_none() && self.outer.is_none());
+            return;
+        }
         let end = end as usize;
         if self.by_page.len() <= end {
             self.by_page.resize(end + 1, self.current.clone());
@@ -3505,15 +3543,22 @@ fn paginate_flow(
         root_flow_offset,
     );
     let table_row_origins = table_row_origins(document, &candidates);
+    let page_names = if super::page::has_named_pages(cascade) {
+        PageNames::new(
+            page_name_to_owned(selected_page_name(cascade, body_id)).or_else(|| {
+                super::page::first_page_name_with_transposed_axes(
+                    document,
+                    cascade,
+                    document.context.pagination_on_transposed_axes,
+                )
+            }),
+        )
+    } else {
+        PageNames::unnamed()
+    };
     let mut state = PaginationState::new(
         table_headers,
-        PageNames::new(selected_page_name(cascade, body_id).or_else(|| {
-            super::page::first_page_name_with_transposed_axes(
-                document,
-                cascade,
-                document.context.pagination_on_transposed_axes,
-            )
-        })),
+        page_names,
         ColumnContexts::new(document.nodes.len()),
     );
     let env = FlowEnv {

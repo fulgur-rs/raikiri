@@ -9,6 +9,7 @@ mod column_projection_tests;
 mod fragment_sources_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
+mod page_name_storage_tests;
 mod paged_spanning_tests;
 mod source_walk_tests;
 mod table_follow_tests;
@@ -2795,7 +2796,7 @@ fn propagated_start_page_name_uses_resolved_grid_child_order() {
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
     assert_eq!(
         propagated_start_page_name(&doc, &cascade, body, None),
-        (true, Some("b".to_owned()))
+        (true, Some("b"))
     );
 }
 

@@ -1,6 +1,28 @@
 use super::box_tree::BoxTree;
 use super::*;
 use crate::node::FormattingContext;
+use std::borrow::Cow;
+
+#[cfg(test)]
+thread_local! {
+    static PAGE_NAME_WORK: std::cell::Cell<[usize; 6]> = const { std::cell::Cell::new([0; 6]) };
+}
+
+#[cfg(test)]
+pub(super) fn record_page_name_work(kind: usize) {
+    PAGE_NAME_WORK.with(|work| {
+        let mut counts = work.get();
+        counts[kind] += 1;
+        work.set(counts);
+    });
+}
+
+pub(crate) fn has_named_pages(cascade: &CascadeResult) -> bool {
+    cascade
+        .page_values
+        .iter()
+        .any(|value| matches!(value, raikiri_style::property::PageValue::Named(_)))
+}
 
 /// Whether `id` can be the body element. HTML defines the body element as
 /// the first `body` or `frameset` child of the root `html` element; a
@@ -440,22 +462,26 @@ pub fn page_margins_for_page(
 /// This runs before the first Taffy layout, so it can use table section order,
 /// order-modified source order for flex items, and grid items with auto row start/end and column
 /// placement at auto or line 1, but not Taffy's resolved grid row details.
-fn initial_page_child_order(
-    document: &Document,
+fn initial_page_child_order<'doc>(
+    document: &'doc Document,
     cascade: &CascadeResult,
     parent_id: usize,
-) -> Vec<usize> {
+) -> Cow<'doc, [usize]> {
     let boxes = BoxTree::for_cascade(document, cascade);
-    let children = document.nodes[parent_id].children.clone();
+    let children = &document.nodes[parent_id].children;
     let is_flex = boxes.identity(parent_id).display().is_flex_container();
     if is_flex {
-        return flex_pagination_child_order(document, cascade, parent_id, boxes);
+        return Cow::Owned(flex_pagination_child_order(
+            document, cascade, parent_id, boxes,
+        ));
     }
     if matches!(
         boxes.identity(parent_id).display(),
         DisplayValue::Table | DisplayValue::InlineTable
     ) {
-        return table_pagination_child_order(document, cascade, parent_id, boxes);
+        return Cow::Owned(table_pagination_child_order(
+            document, cascade, parent_id, boxes,
+        ));
     }
     let is_auto_row_grid = boxes.identity(parent_id).display().is_grid_container()
         && children
@@ -480,7 +506,7 @@ fn initial_page_child_order(
                 )
             });
     if !is_auto_row_grid {
-        return children;
+        return Cow::Borrowed(children);
     }
 
     let is_in_flow = |child_id: usize| {
@@ -497,7 +523,7 @@ fn initial_page_child_order(
         .collect();
     ordered_items.sort_by_key(|&child_id| cascade.computed[child_id].order);
     let mut ordered_items = ordered_items.into_iter();
-    let mut ordered_children = children;
+    let mut ordered_children = children.clone();
     for child_id in &mut ordered_children {
         if is_in_flow(*child_id) {
             *child_id = ordered_items
@@ -505,7 +531,7 @@ fn initial_page_child_order(
                 .expect("every in-flow child has one initial-page order entry");
         }
     }
-    ordered_children
+    Cow::Owned(ordered_children)
 }
 
 /// Cached child order and Grid rows are usable only for the exact cascade run
@@ -547,6 +573,9 @@ pub(crate) fn first_page_name_with_transposed_axes(
     cascade: &CascadeResult,
     pagination_on_transposed_axes: bool,
 ) -> Option<String> {
+    if !has_named_pages(cascade) {
+        return None;
+    }
     let body_id = find_body(document)?;
     let resolved_layout = document_has_resolved_pagination_order(document, cascade);
     let boxes = if resolved_layout {
@@ -556,14 +585,14 @@ pub(crate) fn first_page_name_with_transposed_axes(
     };
     if let Some(raikiri_style::property::PageValue::Named(name)) = cascade.page_values.get(body_id)
     {
-        return Some(name.to_string());
+        return page_name_to_owned(Some(name.0.as_str()));
     }
     let child_order = if resolved_layout {
-        pagination_child_order(document, cascade, body_id)
+        pagination_child_order_borrowed(document, cascade, body_id)
     } else {
         initial_page_child_order(document, cascade, body_id)
     };
-    for child_id in child_order {
+    for &child_id in child_order.iter() {
         let node = document.get_node(child_id)?;
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
@@ -587,11 +616,11 @@ pub(crate) fn first_page_name_with_transposed_axes(
                 // page pipeline. Its own `page` value is ignored.
                 if static_absolute_with_boxes(document, child_id, boxes) {
                     let child_order = if resolved_layout {
-                        pagination_child_order(document, cascade, child_id)
+                        pagination_child_order_borrowed(document, cascade, child_id)
                     } else {
                         initial_page_child_order(document, cascade, child_id)
                     };
-                    let first_child = child_order.into_iter().find(|&grandchild| {
+                    let first_child = child_order.iter().copied().find(|&grandchild| {
                         !matches!(
                             boxes.identity(grandchild).position(),
                             PositionValue::Absolute | PositionValue::Fixed
@@ -607,7 +636,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
                             pagination_on_transposed_axes,
                         )
                     {
-                        return Some(name);
+                        return page_name_to_owned(Some(name));
                     }
                     continue;
                 }
@@ -624,7 +653,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
                     && let Some(raikiri_style::property::PageValue::Named(name)) =
                         cascade.page_values.get(child_id)
                 {
-                    return Some(name.to_string());
+                    return page_name_to_owned(Some(name.0.as_str()));
                 }
                 // A first in-flow descendant can carry the page value through
                 // an anonymous block. Resolve that propagation before falling
@@ -638,7 +667,7 @@ pub(crate) fn first_page_name_with_transposed_axes(
                     resolved_layout,
                     pagination_on_transposed_axes,
                 );
-                return propagated;
+                return page_name_to_owned(propagated);
             }
             _ => {}
         }
@@ -1065,31 +1094,39 @@ pub(crate) fn pagination_child_order(
     cascade: &CascadeResult,
     parent_id: usize,
 ) -> Vec<usize> {
+    pagination_child_order_borrowed(document, cascade, parent_id).into_owned()
+}
+
+fn pagination_child_order_borrowed<'doc>(
+    document: &'doc Document,
+    cascade: &CascadeResult,
+    parent_id: usize,
+) -> Cow<'doc, [usize]> {
     match document.nodes[parent_id].formatting_context {
         FormattingContext::Flex => {
-            return flex_pagination_child_order(
+            return Cow::Owned(flex_pagination_child_order(
                 document,
                 cascade,
                 parent_id,
                 BoxTree::for_layout(document),
-            );
+            ));
         }
         FormattingContext::Table => {
-            return table_pagination_child_order(
+            return Cow::Owned(table_pagination_child_order(
                 document,
                 cascade,
                 parent_id,
                 BoxTree::for_layout(document),
-            );
+            ));
         }
         // Multi-column pagination is not implemented, but named-page
         // propagation and candidate traversal must retain Grid's
         // order-modified child sequence.
         FormattingContext::Grid if document.nodes[parent_id].grid_column_count != 1 => {
-            return grid_pagination_children(document, parent_id);
+            return Cow::Owned(grid_pagination_children(document, parent_id));
         }
         FormattingContext::Grid => {}
-        _ => return document.nodes[parent_id].children.clone(),
+        _ => return Cow::Borrowed(&document.nodes[parent_id].children),
     }
 
     let mut children = grid_pagination_children(document, parent_id);
@@ -1115,7 +1152,7 @@ pub(crate) fn pagination_child_order(
             }
         }
     }
-    children
+    Cow::Owned(children)
 }
 
 /// A table's children in the order the table lays them out: a caption above
@@ -1332,12 +1369,12 @@ fn orthogonal_flow_with_boxes(
 /// therefore do not each open a page; the deepest first in-flow box owns
 /// the value compared at the boundary.
 #[cfg(test)]
-pub(crate) fn propagated_start_page_name(
+pub(crate) fn propagated_start_page_name<'name>(
     document: &Document,
-    cascade: &CascadeResult,
+    cascade: &'name CascadeResult,
     node_id: usize,
-    inherited_page_name: Option<&str>,
-) -> (bool, Option<String>) {
+    inherited_page_name: Option<&'name str>,
+) -> (bool, Option<&'name str>) {
     propagated_start_page_name_with_transposed_axes(
         document,
         cascade,
@@ -1347,13 +1384,13 @@ pub(crate) fn propagated_start_page_name(
     )
 }
 
-pub(crate) fn propagated_start_page_name_with_transposed_axes(
+pub(crate) fn propagated_start_page_name_with_transposed_axes<'name>(
     document: &Document,
-    cascade: &CascadeResult,
+    cascade: &'name CascadeResult,
     node_id: usize,
-    inherited_page_name: Option<&str>,
+    inherited_page_name: Option<&'name str>,
     pagination_on_transposed_axes: bool,
-) -> (bool, Option<String>) {
+) -> (bool, Option<&'name str>) {
     propagated_start_page_name_with_order(
         document,
         cascade,
@@ -1364,39 +1401,42 @@ pub(crate) fn propagated_start_page_name_with_transposed_axes(
     )
 }
 
-fn propagated_start_page_name_with_order(
+fn propagated_start_page_name_with_order<'name>(
     document: &Document,
-    cascade: &CascadeResult,
+    cascade: &'name CascadeResult,
     node_id: usize,
-    inherited_page_name: Option<&str>,
+    inherited_page_name: Option<&'name str>,
     resolved_layout: bool,
     pagination_on_transposed_axes: bool,
-) -> (bool, Option<String>) {
+) -> (bool, Option<&'name str>) {
     let boxes = if resolved_layout {
         BoxTree::for_layout(document)
     } else {
         BoxTree::for_cascade(document, cascade)
     };
-    enum Task {
-        Visit(usize, Option<String>),
+    enum Task<'doc, 'name> {
+        Visit(usize, Option<&'name str>),
         ContinueChildren {
-            children: std::vec::IntoIter<usize>,
-            page_name: Option<String>,
+            children: Cow<'doc, [usize]>,
+            next: usize,
+            page_name: Option<&'name str>,
         },
     }
 
-    let mut pending = vec![Task::Visit(
-        node_id,
-        inherited_page_name.map(ToOwned::to_owned),
-    )];
+    let mut pending = vec![Task::Visit(node_id, inherited_page_name)];
     while let Some(task) = pending.pop() {
         let (node_id, inherited_page_name) = match task {
-            Task::Visit(node_id, inherited_page_name) => (node_id, inherited_page_name),
+            Task::Visit(node_id, inherited_page_name) => {
+                #[cfg(test)]
+                record_page_name_work(0);
+                (node_id, inherited_page_name)
+            }
             Task::ContinueChildren {
-                mut children,
+                children,
+                next,
                 page_name,
             } => {
-                let next = children.find(|&child_id| {
+                let found = children[next..].iter().position(|&child_id| {
                     cascade.computed.get(child_id).is_some_and(|_| {
                         !matches!(
                             boxes.identity(child_id).position(),
@@ -1404,10 +1444,13 @@ fn propagated_start_page_name_with_order(
                         ) && !floating_box_with_boxes(cascade, child_id, boxes)
                     })
                 });
-                if let Some(child_id) = next {
+                if let Some(offset) = found {
+                    let next_index = next + offset;
+                    let child_id = children[next_index];
                     pending.push(Task::ContinueChildren {
                         children,
-                        page_name: page_name.clone(),
+                        next: next_index + 1,
+                        page_name,
                     });
                     pending.push(Task::Visit(child_id, page_name));
                     continue;
@@ -1438,7 +1481,7 @@ fn propagated_start_page_name_with_order(
         } else {
             None
         };
-        let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
+        let used_page_name = explicit_page_name.or(inherited_page_name);
         // A monolithic box does not pass a descendant's page value up.
         if monolithic_with_boxes(
             document,
@@ -1450,12 +1493,15 @@ fn propagated_start_page_name_with_order(
             return (true, used_page_name);
         }
         let child_order = if resolved_layout {
-            pagination_child_order(document, cascade, node_id)
+            pagination_child_order_borrowed(document, cascade, node_id)
         } else {
             initial_page_child_order(document, cascade, node_id)
         };
-        let mut children = child_order.into_iter();
-        let next = children.find(|&child_id| {
+        #[cfg(test)]
+        if matches!(child_order, Cow::Owned(_)) {
+            record_page_name_work(1);
+        }
+        let next = child_order.iter().position(|&child_id| {
             cascade.computed.get(child_id).is_some_and(|_| {
                 !matches!(
                     boxes.identity(child_id).position(),
@@ -1463,10 +1509,12 @@ fn propagated_start_page_name_with_order(
                 ) && !floating_box_with_boxes(cascade, child_id, boxes)
             })
         });
-        if let Some(child_id) = next {
+        if let Some(index) = next {
+            let child_id = child_order[index];
             pending.push(Task::ContinueChildren {
-                children,
-                page_name: used_page_name.clone(),
+                children: child_order,
+                next: index + 1,
+                page_name: used_page_name,
             });
             pending.push(Task::Visit(child_id, used_page_name));
         } else {
