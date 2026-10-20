@@ -1189,3 +1189,258 @@ fn a_size_contained_image_with_a_keyword_width_is_not_stretched() {
         }
     }
 }
+
+/// The inline and block offsets and the size of the only `<img>` in a
+/// container, for an alignment along the block axis.
+fn image_box_in_container(container_css: &str, image_css: &str) -> ((f32, f32), (f32, f32)) {
+    let mut image = 0;
+    let doc = laid_out(|doc, body| {
+        let container =
+            doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+        image = doc.append_element(Some(container), "img", Style::default(), Some(image_css));
+    });
+    let location = doc.nodes[image].unrounded_layout.location;
+    ((location.x, location.y), size(&doc, image))
+}
+
+#[test]
+fn a_keyword_height_is_not_stretched_in_a_grid_or_a_row_flex_container() {
+    // Only an `auto` height is stretched; the keyword sizes the box as `auto`
+    // does, so the image keeps its natural size.
+    for height in ["min-content", "max-content", "fit-content"] {
+        for (name, container) in [
+            ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+            ("row flex", KEYWORD_WIDTH_CONTAINERS[2].1),
+        ] {
+            for align in ["", "align-self:stretch;", "align-self:normal;"] {
+                let css = format!("{align}height:{height}");
+                assert_eq!(
+                    image_in_container(container, &css),
+                    (25.0, 50.0),
+                    "{name} {css}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_auto_height_is_still_stretched_in_a_row_flex_container() {
+    assert_eq!(
+        image_in_container(KEYWORD_WIDTH_CONTAINERS[2].1, "height:auto"),
+        (50.0, 100.0)
+    );
+}
+
+#[test]
+fn a_keyword_height_takes_the_height_of_a_stretched_width_through_the_ratio() {
+    for height in ["min-content", "max-content", "fit-content"] {
+        for align in [
+            "justify-self:stretch",
+            "justify-self:stretch;align-self:stretch",
+        ] {
+            let css = format!("{align};height:{height}");
+            assert_eq!(
+                image_in_container(KEYWORD_WIDTH_CONTAINERS[1].1, &css),
+                (100.0, 200.0),
+                "{css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_height_follows_the_ratio_of_a_definite_width() {
+    for height in ["min-content", "max-content", "fit-content"] {
+        for (name, container) in [
+            ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+            ("row flex", KEYWORD_WIDTH_CONTAINERS[2].1),
+        ] {
+            let css = format!("width:20px;height:{height}");
+            assert_eq!(
+                image_in_container(container, &css),
+                (20.0, 40.0),
+                "{name} {height}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_height_keeps_the_alignment_it_is_given() {
+    for (name, container) in [
+        ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+        ("row flex", KEYWORD_WIDTH_CONTAINERS[2].1),
+    ] {
+        for (align, top) in [
+            ("align-self:end", 50.0),
+            ("align-self:center", 25.0),
+            ("align-self:start", 0.0),
+        ] {
+            let css = format!("{align};height:max-content");
+            assert_eq!(
+                image_box_in_container(container, &css),
+                ((0.0, top), (25.0, 50.0)),
+                "{name} {align}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_stretched_keyword_height_is_aligned_at_the_start_of_the_block_axis() {
+    // The stretch a keyword height gives up falls back to the start edge, which
+    // `wrap-reverse` moves to the bottom of a row flex container.
+    assert_eq!(
+        image_box_in_container(
+            "display:flex;flex-wrap:wrap-reverse;height:100px",
+            "height:max-content"
+        ),
+        ((0.0, 50.0), (25.0, 50.0))
+    );
+    assert_eq!(
+        image_box_in_container(
+            KEYWORD_WIDTH_CONTAINERS[1].1,
+            "margin-top:10px;align-self:stretch;height:max-content"
+        ),
+        ((0.0, 10.0), (25.0, 50.0))
+    );
+}
+
+#[test]
+fn a_keyword_height_function_limit_still_follows_an_auto_height() {
+    // `fit-content(<length>)` is not one of the keywords that stop a stretch.
+    assert_eq!(
+        image_in_container(
+            KEYWORD_WIDTH_CONTAINERS[1].1,
+            "align-self:stretch;height:fit-content(80px)"
+        ),
+        (50.0, 100.0)
+    );
+    assert_eq!(
+        image_in_container(KEYWORD_WIDTH_CONTAINERS[2].1, "height:fit-content(80px)"),
+        (50.0, 100.0)
+    );
+}
+
+#[test]
+fn an_svg_without_a_natural_size_is_not_stretched_by_a_keyword_height() {
+    // A viewBox-only SVG is stretched by `align-self` when its height is
+    // `auto`, so the keyword is what stops it.
+    for height in ["min-content", "max-content", "fit-content"] {
+        for (name, container) in [
+            ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+            ("row flex", KEYWORD_WIDTH_CONTAINERS[2].1),
+        ] {
+            let css = format!("align-self:stretch;height:{height}");
+            assert_eq!(
+                child_in_container(container, "svg", &css),
+                (0.0, (100.0, 50.0)),
+                "{name} {height}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_keyword_height_is_not_stretched_in_a_column_flex_container() {
+    // The height is the main size of the item there: it takes the width the
+    // container stretches through the ratio, as `auto` does.
+    for height in ["auto", "min-content", "max-content", "fit-content"] {
+        let css = format!("height:{height}");
+        assert_eq!(
+            image_in_container(KEYWORD_WIDTH_CONTAINERS[3].1, &css),
+            (100.0, 200.0),
+            "{height}"
+        );
+    }
+}
+
+#[test]
+fn a_keyword_height_is_aligned_at_the_start_of_a_reversed_row() {
+    assert_eq!(
+        image_box_in_container(
+            "display:flex;flex-direction:row-reverse;height:100px",
+            "height:max-content"
+        ),
+        ((75.0, 0.0), (25.0, 50.0))
+    );
+}
+
+#[test]
+fn an_absolutely_positioned_image_with_a_keyword_height_keeps_its_natural_size() {
+    for (name, container) in [
+        ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+        ("row flex", KEYWORD_WIDTH_CONTAINERS[2].1),
+    ] {
+        for css in [
+            "position:absolute;top:0;bottom:0;height:max-content",
+            "position:absolute;align-self:stretch;height:max-content",
+        ] {
+            assert_eq!(
+                image_box_in_container(&format!("{container};position:relative"), css),
+                ((0.0, 0.0), (25.0, 50.0)),
+                "{name} {css}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_vertical_image_with_a_keyword_height_is_not_stretched() {
+    // The physical height is the inline size of a box with a vertical writing
+    // mode; its block size is the physical width, which does not stop a stretch
+    // of the height.
+    for (name, container) in [
+        ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+        ("row flex", KEYWORD_WIDTH_CONTAINERS[2].1),
+    ] {
+        for (declaration, size) in [
+            ("height:max-content", (25.0, 50.0)),
+            ("inline-size:min-content", (25.0, 50.0)),
+            ("block-size:max-content", (50.0, 100.0)),
+            ("width:max-content", (50.0, 100.0)),
+        ] {
+            let css = format!("writing-mode:vertical-rl;align-self:stretch;{declaration}");
+            assert_eq!(image_in_container(container, &css), size, "{name} {css}");
+        }
+    }
+}
+
+#[test]
+fn a_block_with_a_keyword_height_is_not_stretched_either() {
+    // Only an `auto` height is stretched, whatever the box is: the block sizes
+    // itself by its 40px child.
+    for height in ["min-content", "max-content", "fit-content"] {
+        for (name, container) in [
+            ("grid", KEYWORD_WIDTH_CONTAINERS[1].1),
+            ("row flex", KEYWORD_WIDTH_CONTAINERS[2].1),
+        ] {
+            let mut block = 0;
+            let doc = laid_out(|doc, body| {
+                let container =
+                    doc.append_element(Some(body), "div", Style::default(), Some(container));
+                block = doc.append_element(
+                    Some(container),
+                    "div",
+                    Style::default(),
+                    Some(&format!("align-self:stretch;width:30px;height:{height}")),
+                );
+                doc.append_element(Some(block), "div", Style::default(), Some("height:40px"));
+            });
+            assert_eq!(size(&doc, block), (30.0, 40.0), "{name} {height}");
+        }
+    }
+    let mut block = 0;
+    let doc = laid_out(|doc, body| {
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(KEYWORD_WIDTH_CONTAINERS[2].1),
+        );
+        block = doc.append_element(Some(container), "div", Style::default(), Some("width:30px"));
+        doc.append_element(Some(block), "div", Style::default(), Some("height:40px"));
+    });
+    assert_eq!(size(&doc, block), (30.0, 100.0));
+}

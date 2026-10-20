@@ -841,6 +841,14 @@ pub struct ComputedValues {
     /// the flow-relative margins and padding of their children keep the
     /// `horizontal-tb` mapping. Not a CSS property.
     pub multicol_flow: bool,
+    /// Whether the `height` that wins, or the `block-size` that maps onto it, was
+    /// declared `min-content`, `max-content` or `fit-content`. [`Self::height`] is `auto`
+    /// then, as a box sizes itself to its content along the block axis whatever the keyword
+    /// says, so the keyword is the only trace of a height that is not `auto`. A box in a grid
+    /// or a flex container is told from an `auto` one by it: only an `auto` height is
+    /// stretched (CSS Box Alignment 3 §6.1). `fit-content(<length>)` is not marked, as
+    /// browsers treat it like `auto`. Not a CSS property.
+    pub height_keyword: bool,
     /// Whether the box this element's children are placed in lays them out
     /// on horizontal axes in every writing mode: a flex, grid or table box,
     /// or a multicol flow. A `display: contents` or `display: none` element
@@ -2105,6 +2113,7 @@ impl ComputedValues {
             writing_mode: WritingMode::HorizontalTb,
             cssom_writing_mode: WritingMode::HorizontalTb,
             multicol_flow: false,
+            height_keyword: false,
             horizontal_children: false,
             ruby_writing_mode: WritingMode::HorizontalTb,
             ruby_position: RubyPosition::Over,

@@ -194,3 +194,51 @@ fn substituted_keywords_apply() {
     );
     assert_eq!(horizontal(&values), (px(100.0), Size::Auto, px(20.0)));
 }
+
+#[test]
+fn inherit_takes_the_block_size_keyword_of_the_parent() {
+    // The parent's `height` computed to `auto`, and the mark of the keyword it
+    // was declared with is what `inherit` hands on.
+    for css in [
+        "#target { height: inherit }",
+        "#target { block-size: inherit }",
+    ] {
+        let (parent, child) = pair("height: max-content", &[], css);
+        assert!(parent.height_keyword, "{css}");
+        assert_eq!(child.height, Size::Auto, "{css}");
+        assert!(child.height_keyword, "{css}");
+    }
+    // The other keywords give the initial value, and the property is not
+    // inherited.
+    for css in [
+        "",
+        "#target { height: initial }",
+        "#target { height: unset }",
+        "#target { block-size: unset }",
+        "#target { height: inherit; height: auto }",
+    ] {
+        let (_, child) = pair("height: max-content", &[], css);
+        assert!(!child.height_keyword, "{css}");
+    }
+    // A parent that was declared no keyword hands on none.
+    let (_, child) = pair("height: 40px", &[], "#target { height: inherit }");
+    assert_eq!(child.height, px(40.0));
+    assert!(!child.height_keyword);
+}
+
+#[test]
+fn inherit_takes_the_inline_size_keyword_of_a_vertical_parent_as_its_height() {
+    let (parent, child) = pair(
+        "writing-mode: vertical-rl; inline-size: max-content",
+        &[],
+        "#target { height: inherit }",
+    );
+    assert!(parent.height_keyword);
+    assert!(child.height_keyword);
+    let (_, child) = pair(
+        "writing-mode: vertical-rl; block-size: max-content",
+        &[],
+        "#target { height: inherit }",
+    );
+    assert!(!child.height_keyword);
+}

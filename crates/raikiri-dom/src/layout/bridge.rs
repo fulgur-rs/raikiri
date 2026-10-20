@@ -519,6 +519,12 @@ fn apply_computed_to_style_in_session_inner(
                 .style
                 .align_self = Some(TaffyAlignItems::FLEX_START);
         }
+        if let Some(fallback) = unstretched_keyword_height_alignment(doc, cascade, idx) {
+            doc.layout_node_with_style_mut(idx)
+                .unwrap()
+                .style
+                .align_self = Some(fallback);
+        }
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
     // root stays one flex or grid item when `order` sorts the items.
@@ -1286,10 +1292,64 @@ fn is_stretched_by_replaced_keyword_width_in_grid(
         })
 }
 
+/// The alignment that replaces a stretch of item `idx` when its `height` is
+/// `min-content`, `max-content` or `fit-content` and it sits in a grid or in a
+/// row flex container.
+///
+/// Only an `auto` height is stretched (CSS Box Alignment 3 §6.1), but the cascade
+/// computes the keyword to `auto` ([`ComputedValues::height_keyword`] is what is
+/// left of it), so Taffy would stretch the box. It sizes itself by its content as
+/// it does for `auto`, and is aligned at the start of the block axis instead,
+/// which is where a stretch that does not apply falls back to: `start` in a grid
+/// and `flex-start` in a flex container, whose cross-start edge `wrap-reverse`
+/// moves. `fit-content(<length>)` stays out, as browsers treat it like `auto`.
+/// So do an absolutely positioned box, whose size comes from its insets, and an
+/// element without a box.
+fn unstretched_keyword_height_alignment(
+    doc: &LayoutSession<'_>,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> Option<TaffyAlignItems> {
+    use taffy::AlignItemsKeyword;
+    let values = &cascade.computed[idx];
+    if !values.height_keyword
+        || matches!(values.display, DisplayValue::Contents | DisplayValue::None)
+    {
+        return None;
+    }
+    let style = &doc.layout_node_with_style(idx).unwrap().style;
+    if style.position == taffy::Position::Absolute {
+        return None;
+    }
+    let container = &doc
+        .layout_node_with_style(doc.taffy_parent_of(idx)?)
+        .unwrap()
+        .style;
+    let fallback = match container.display {
+        taffy::Display::Grid => TaffyAlignItems::START,
+        taffy::Display::Flex
+            if matches!(
+                container.flex_direction,
+                taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+            ) =>
+        {
+            TaffyAlignItems::FLEX_START
+        }
+        _ => return None,
+    };
+    matches!(
+        style.align_self.unwrap_or(container.align_items).keyword,
+        AlignItemsKeyword::Stretch | AlignItemsKeyword::Normal
+    )
+    .then_some(fallback)
+}
+
 /// Whether in-flow replaced grid item `idx` with auto width and height is
 /// stretched along both axes, in which case its natural aspect ratio is
 /// ignored and it fills its grid area (CSS Grid 1 §6.2, csswg-drafts#5713).
-/// An auto margin in either axis turns that axis's stretch off.
+/// An auto margin in either axis turns that axis's stretch off, and so does a
+/// height that is a sizing keyword computed to `auto`
+/// ([`ComputedValues::height_keyword`]).
 ///
 /// The ratio is dropped from the item's style, which also removes it from
 /// track sizing, so this applies only when every row track has a fixed size
@@ -1302,6 +1362,7 @@ fn stretches_on_both_grid_axes(doc: &LayoutSession<'_>, idx: usize, cv: &Compute
         || style.position == taffy::Position::Absolute
         || !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
         || !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        || cv.height_keyword
         || [
             style.margin.left,
             style.margin.right,

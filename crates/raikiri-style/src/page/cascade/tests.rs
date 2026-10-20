@@ -1460,6 +1460,16 @@ fn a_margin_box_keeps_the_block_size_keywords() {
         height(PageMarginBoxSlot::BottomLeft),
         ComputedLengthPercentageOrAuto::Auto
     );
+    // The keyword is still in `height`, so nothing is left to mark, whether
+    // `height` or `block-size` declared it.
+    for slot in [
+        PageMarginBoxSlot::TopLeft,
+        PageMarginBoxSlot::TopCenter,
+        PageMarginBoxSlot::TopRight,
+    ] {
+        let rule = page.cascade_margin_box(slot).expect("margin box");
+        assert!(!page.margin_box_style(&rule, None).height_keyword);
+    }
 }
 
 #[test]

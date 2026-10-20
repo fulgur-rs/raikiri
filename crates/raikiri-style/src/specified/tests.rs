@@ -201,6 +201,7 @@ fn parent_fixture() -> ComputedValues {
         writing_mode: WritingMode::VerticalRl,
         cssom_writing_mode: WritingMode::VerticalRl,
         multicol_flow: true,
+        height_keyword: true,
         horizontal_children: true,
         ruby_writing_mode: WritingMode::VerticalLr,
         ruby_position: RubyPosition::Under,

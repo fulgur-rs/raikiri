@@ -2527,7 +2527,8 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
 /// `inherit`. Unlike a margin, it can compute to a sizing keyword.
 ///
 /// A parent's `height` has already lost a sizing keyword to `auto`
-/// (see `without_sizing_keyword`), so `height: inherit` cannot recover it.
+/// (see `without_sizing_keyword`), so `height: inherit` cannot recover which one
+/// it was, only that there was one ([`inherited_height`]).
 fn inherited_box_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
@@ -2593,7 +2594,9 @@ fn box_defaulting_value(
         PropertyKey::Bottom => PropertyValue::Bottom(size_or_offset(inherited.bottom)),
         PropertyKey::Left => PropertyValue::Left(size_or_offset(inherited.left)),
         PropertyKey::Width => PropertyValue::Width(size_or_offset(physical_width)),
-        PropertyKey::Height => PropertyValue::Height(size_or_offset(physical_height)),
+        PropertyKey::Height => {
+            PropertyValue::Height(size_or_offset(inherited_height(inherited, physical_height)))
+        }
         PropertyKey::MinWidth => PropertyValue::MinWidth(size_or_offset(inherited.min_width)),
         PropertyKey::MinHeight => PropertyValue::MinHeight(size_or_offset(inherited.min_height)),
         PropertyKey::MaxWidth => PropertyValue::MaxWidth(size_or_offset(inherited.max_width)),
@@ -2639,13 +2642,28 @@ pub(crate) fn resolve_logical_size_keyword(
         (PropertyKey::MinBlockSize, false) => inherited.min_height,
         (PropertyKey::MinBlockSize, true) => inherited.min_width,
         // `inline-size` of a vertical box and `block-size` of a horizontal one.
-        _ => physical_height,
+        _ => inherited_height(inherited, physical_height),
     };
     with_size(if keyword == CssWideKeyword::Inherit {
         inherited_box_length(parent)
     } else {
         LengthOrAuto::Auto
     })
+}
+
+/// The `height` a child inherits when `physical_height`, the physical height of
+/// `inherited`, is `auto`: the sizing keyword that `auto` stands for, if
+/// `inherited` was declared one (see [`ComputedValues::height_keyword`]), so
+/// that the child is marked in turn.
+fn inherited_height(
+    inherited: &ComputedValues,
+    physical_height: ComputedLengthPercentageOrAuto,
+) -> ComputedLengthPercentageOrAuto {
+    if inherited.height_keyword && physical_height == ComputedLengthPercentageOrAuto::Auto {
+        ComputedLengthPercentageOrAuto::MaxContent
+    } else {
+        physical_height
+    }
 }
 
 /// The physical `(width, height)` a child inherits from `inherited`.

@@ -449,6 +449,63 @@ fn block_size_keywords_compute_to_auto_for_an_element() {
 }
 
 #[test]
+fn a_block_size_keyword_leaves_a_mark_on_the_computed_values() {
+    // The keyword computes to `auto` for an element, but only `auto` is
+    // stretched by an alignment, so what was declared is kept apart.
+    for (declaration, keyword) in [
+        ("height: min-content", true),
+        ("height: max-content", true),
+        ("height: fit-content", true),
+        ("block-size: max-content", true),
+        // The function form, `auto` and lengths are not one of the keywords.
+        ("height: fit-content(10px)", false),
+        ("block-size: fit-content(10px)", false),
+        ("height: auto", false),
+        ("height: 10px", false),
+        ("width: max-content", false),
+        ("inline-size: max-content", false),
+        // The declaration that wins in cascade order decides.
+        ("block-size: max-content; height: auto", false),
+        ("height: max-content; block-size: auto", false),
+        ("height: max-content; block-size: 10px", false),
+        ("block-size: 10px; height: max-content", true),
+        ("height: auto; block-size: max-content", true),
+        // The physical height is the inline size in a vertical writing mode.
+        ("writing-mode: vertical-rl; inline-size: max-content", true),
+        ("writing-mode: vertical-rl; height: max-content", true),
+        ("writing-mode: vertical-lr; inline-size: min-content", true),
+        ("writing-mode: sideways-lr; inline-size: fit-content", true),
+        ("writing-mode: vertical-rl; block-size: max-content", false),
+        ("writing-mode: vertical-rl; width: max-content", false),
+        (
+            "writing-mode: vertical-rl; inline-size: fit-content(10px)",
+            false,
+        ),
+        (
+            "writing-mode: vertical-rl; height: max-content; inline-size: 10px",
+            false,
+        ),
+        (
+            "writing-mode: vertical-rl; inline-size: 10px; height: max-content",
+            true,
+        ),
+    ] {
+        let values = cascade_doc("", "div", Some(declaration));
+        assert_eq!(values.height_keyword, keyword, "{declaration}");
+    }
+    // The keyword computes to `auto` for a horizontal element, and a length
+    // stays a length.
+    assert_eq!(
+        cascade_doc("", "div", Some("height: max-content")).height,
+        ComputedLengthPercentageOrAuto::Auto
+    );
+    assert_eq!(
+        cascade_doc("", "div", Some("height: max-content; block-size: 10px")).height,
+        ComputedLengthPercentageOrAuto::Px(10.0)
+    );
+}
+
+#[test]
 fn logical_preferred_sizes_map_to_the_authored_axes() {
     let horizontal = cascade_doc(
         "",
