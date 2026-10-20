@@ -354,6 +354,23 @@ fn vertical_clearance_keeps_an_unresolved_parent_margin() {
     assert_eq!(child.next_y, 26.0);
     assert_eq!(child.top_margin, None);
     assert!(!child.collapses_through);
+
+    ctx.set_origin_resolved(true);
+    let resolved_child = super::super::layout_vertical_block_child(
+        &mut session,
+        &mut ctx,
+        clear,
+        0.0,
+        CollapsibleMarginSet::from_margin(4.0),
+        geometry,
+        false,
+        true,
+    );
+
+    assert_eq!(resolved_child.top, 10.0);
+    assert_eq!(resolved_child.next_y, 30.0);
+    assert_eq!(resolved_child.top_margin, None);
+    assert!(!resolved_child.collapses_through);
 }
 
 #[test]
