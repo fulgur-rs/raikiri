@@ -155,7 +155,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
             if layout.size.height <= height
                 && y > origin + 0.001
                 && y + layout.size.height > origin + height + 0.001
-                && !breaks_at_every_page_end(tree, id, y, origin + height, page_for)
+                && !breaks_at_every_page_end(tree, id, y, origin + height, page_for, work)?
             {
                 let shift = origin + height - y;
                 shift_child(tree, &mut shifts, id, shift);
@@ -174,82 +174,132 @@ pub(in crate::layout) fn paginate_spanning_columns(
     Ok(delta)
 }
 
-/// Whether the spanner `id`, whose border box starts at `y`, may be cut at
-/// each page end it crosses, the first of them at `page_end`. Pages differ in
+/// Whether the spanner `id`, whose border box starts at `y` on a page that
+/// ends at `page_end`, may be cut at each page end it crosses. Pages differ in
 /// height when a page rule or a named page sizes them, so a spanner that fits
-/// the page it starts on may cross more than one page end.
+/// the page it starts on may cross more than one page end. Each one visited
+/// is charged to `work`, which bounds their number and checks for an abort.
 fn breaks_at_every_page_end(
     tree: &Document,
     id: usize,
     y: f32,
     mut page_end: f32,
     page_for: &impl Fn(f32) -> (u32, f32, f32),
-) -> bool {
+    work: &mut ProjectionWork<'_, '_>,
+) -> Result<bool, LayoutError> {
+    let Some(limits) = CutLimits::of(tree, id, work)? else {
+        return Ok(false);
+    };
     let bottom = y + tree.nodes[id].unrounded_layout.size.height;
     while page_end < bottom - EPSILON {
-        if !breaks_at(tree, id, page_end - y) {
-            return false;
+        if !limits.allows(page_end - y) {
+            return Ok(false);
         }
+        work.charge(1)?;
         let (_, origin, height) = page_for(page_end + EPSILON);
         page_end = origin + height;
     }
-    true
+    Ok(true)
 }
 
-/// Whether a page may end `cut` below the top of the border box of `id`, as it
-/// may inside a plain block of the flow: the box and every box inside it are
+/// What keeps a page from ending inside a spanner, found once for all the page
+/// ends the spanner crosses. A page may end inside a plain block of the flow
+/// where only empty space is cut: the spanner and every box inside it are
 /// plain blocks that allow a break inside them, no box holds anything but
 /// lines of text, every line ends above the cut, and the cut lies in the
-/// content of each box it crosses. Only empty space is cut then, and the part
-/// of the box past the end of the page continues on the next one.
+/// content of each box it crosses. The part of the spanner past the end of the
+/// page continues on the next one then.
 ///
 /// A box whose last line meets the cut would leave nothing but empty space
 /// for the next page, so it does not break there.
-fn breaks_at(tree: &Document, id: usize, cut: f32) -> bool {
-    let mut pending = vec![(id, 0.0_f32)];
-    while let Some((current, top)) = pending.pop() {
-        let node = tree.layout_node_with_style(current).unwrap();
-        if !lineless::is_plain_block_holding_lines(tree, current)
-            || node.break_inside != raikiri_style::property::BreakInside::Auto
-        {
-            return false;
-        }
-        let layout = node.unrounded_layout;
-        let content_top = top + layout.border.top + layout.padding.top;
-        let bottom = top + layout.size.height;
-        let content_bottom = bottom - layout.border.bottom - layout.padding.bottom;
-        // A border or padding is not split by the page, so the cut may not
-        // fall in one.
-        if top < cut - EPSILON
-            && bottom > cut + EPSILON
-            && (cut < content_top - EPSILON || cut > content_bottom + EPSILON)
-        {
-            return false;
-        }
-        // The lines hold all that a paragraph has, up to the boxes among them.
-        if let Some(root) = &node.ifc {
-            if !root.boxes.is_empty()
-                || root.multicol_fragments.is_some()
-                || root.lines.as_ref().is_some_and(|lines| {
-                    lines.lines.last().is_some_and(|last| {
-                        content_top
-                            + lines.line_top(lines.lines.len() - 1)
-                            + last.block_size()
-                            + EPSILON
-                            > cut
-                    })
-                })
+struct CutLimits {
+    /// The lowest cut, below the top of the spanner, that leaves every line
+    /// above it.
+    text_bottom: f32,
+    /// The ranges, ascending and apart from each other, in which a cut would
+    /// split a border or a padding. A cut at either end is outside the range.
+    bands: Vec<(f32, f32)>,
+}
+
+impl CutLimits {
+    /// The limits of the spanner `id`, or `None` when it holds something a page
+    /// may not end inside. Each box visited is charged to `work`.
+    fn of(
+        tree: &Document,
+        id: usize,
+        work: &mut ProjectionWork<'_, '_>,
+    ) -> Result<Option<Self>, LayoutError> {
+        let mut text_bottom = f32::NEG_INFINITY;
+        let mut bands = Vec::new();
+        let mut pending = vec![(id, 0.0_f32)];
+        while let Some((current, top)) = pending.pop() {
+            work.charge(1)?;
+            let node = tree.layout_node_with_style(current).unwrap();
+            if !lineless::is_plain_block_holding_lines(tree, current)
+                || node.break_inside != raikiri_style::property::BreakInside::Auto
             {
-                return false;
+                return Ok(None);
             }
-            continue;
+            let layout = node.unrounded_layout;
+            let bottom = top + layout.size.height;
+            let content_top = top + layout.border.top + layout.padding.top;
+            let content_bottom = bottom - layout.border.bottom - layout.padding.bottom;
+            // A border or padding is not split by the page, so no cut may fall
+            // in one of the box.
+            bands.extend(
+                [
+                    (top + EPSILON, (content_top - EPSILON).min(bottom - EPSILON)),
+                    (
+                        (content_bottom + EPSILON).max(top + EPSILON),
+                        bottom - EPSILON,
+                    ),
+                ]
+                .into_iter()
+                .filter(|(low, high)| low < high),
+            );
+            // The lines hold all that a paragraph has, up to the boxes among
+            // them.
+            if let Some(root) = &node.ifc {
+                if !root.boxes.is_empty() || root.multicol_fragments.is_some() {
+                    return Ok(None);
+                }
+                if let Some(lines) = &root.lines
+                    && let Some(last) = lines.lines.last()
+                {
+                    let last_end =
+                        content_top + lines.line_top(lines.lines.len() - 1) + last.block_size();
+                    text_bottom = text_bottom.max(last_end);
+                }
+                continue;
+            }
+            pending.extend(
+                lineless::rendered_elements(tree, current)
+                    .map(|child| (child, top + tree.nodes[child].unrounded_layout.location.y)),
+            );
         }
-        pending.extend(
-            lineless::rendered_elements(tree, current)
-                .map(|child| (child, top + tree.nodes[child].unrounded_layout.location.y)),
-        );
+        bands.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut apart = Vec::<(f32, f32)>::with_capacity(bands.len());
+        for (low, high) in bands {
+            match apart.last_mut() {
+                Some(last) if low < last.1 => last.1 = last.1.max(high),
+                _ => apart.push((low, high)),
+            }
+        }
+        Ok(Some(Self {
+            text_bottom,
+            bands: apart,
+        }))
     }
-    true
+
+    /// Whether a page may end `cut` below the top of the spanner.
+    fn allows(&self, cut: f32) -> bool {
+        // Only the last range that starts before the cut can hold it.
+        let before = self.bands.partition_point(|&(low, _)| low < cut);
+        self.text_bottom + EPSILON <= cut
+            && before
+                .checked_sub(1)
+                .is_none_or(|last| cut >= self.bands[last].1)
+    }
 }
 
 /// Move a child now and record the same move for its container fragments.

@@ -636,6 +636,26 @@ fn a_spanner_is_cut_only_where_every_page_end_it_crosses_allows() {
     }
 }
 
+#[test]
+fn a_cut_in_a_border_is_found_among_ranges_that_overlap() {
+    // The pages are 120px tall and the spanner starts at 40px, so the page ends
+    // 80px into it. The box inside it is 50px tall and has a 40px border below
+    // that, which lies from 51px to 91px. A box in it that overflows its 50px
+    // has a border from 61px to 66px, which ends before the page does. The cut
+    // still lies in the first border, so the spanner moves whole to the top of
+    // the next page and the paragraph after the container starts below it.
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p>\
+         <div class=span style='height:100px'>\
+         <div style='padding-top:1px;height:50px;border-bottom:40px solid'>\
+         <div style='margin-top:55px;height:5px;border-bottom:5px solid'></div>\
+         </div></div></div><p>K</p>",
+        "@page{size:180px 120px}",
+    );
+    assert_eq!(document.page_count(), 2);
+    assert_page_runs(&document, 1, &[("K", (0.0, 116.0))]);
+}
+
 fn assert_page_runs(document: &DocumentLayout, number: u32, expected: &[(&str, (f32, f32))]) {
     let runs = document.page(number).unwrap().text_runs();
     assert_eq!(
