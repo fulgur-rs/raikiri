@@ -163,7 +163,8 @@ fn a_wrapper_below_one_that_keeps_its_box_is_not_reached() {
 
 /// Whether a plain wrapper that holds `content` and a spanner, in a container
 /// styled with `container_css`, makes no box. `content` is `text`, `inline`
-/// (an inline-level box), `space` (white space only) or `comment`.
+/// (an inline-level box), `space` (white space only), `nbsp` (a no-break
+/// space) or `comment`.
 fn lifts_with_lines(container_css: &str, wrapper_css: &str, content: &str) -> bool {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -182,6 +183,9 @@ fn lifts_with_lines(container_css: &str, wrapper_css: &str, content: &str) -> bo
         }
         "comment" => {
             doc.append_comment(Some(wrapper), "note");
+        }
+        "nbsp" => {
+            doc.append_text(wrapper, "\u{a0}");
         }
         _ => unreachable!(),
     }
@@ -241,6 +245,13 @@ fn the_lines_a_wrapper_holds_keep_their_layout() {
         assert!(!lifts_with_lines(COLUMNS, &css, "text"), "{css}");
         assert!(!lifts_with_lines(COLUMNS, &css, "inline"), "{css}");
     }
+    // A no-break space renders, so it is a line whatever collapses.
+    assert!(lifts_with_lines(COLUMNS, BLOCK, "nbsp"));
+    assert!(!lifts_with_lines(
+        COLUMNS,
+        "display:block;font-size:30px",
+        "nbsp"
+    ));
     // Only white space or a comment between the blocks makes no line, when
     // the white space collapses.
     for css in [
@@ -371,5 +382,38 @@ fn lines_are_compared_with_the_container_not_with_the_parent() {
             outer_css.starts_with("display:contents"),
             "{outer_css}"
         );
+    }
+}
+
+#[test]
+fn a_wrapper_with_a_first_line_or_first_letter_style_keeps_its_box() {
+    for (rule, lifted) in [
+        ("div div::first-line{color:red}", false),
+        ("div div::first-letter{color:red}", false),
+        (
+            "div div::first-line{font-size:2em}div div::first-letter{font-size:3em}",
+            false,
+        ),
+        // The control: the same wrapper without such a style is lifted.
+        ("div div::before{color:red}", true),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some(BLOCK));
+        let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
+        let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+        doc.append_text(style, rule);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
+        let wrapper = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
+        doc.append_text(wrapper, "before");
+        doc.append_element(
+            Some(wrapper),
+            "h2",
+            Style::default(),
+            Some("display:block;column-span:all;height:10px"),
+        );
+        doc.mark_in_document_flags();
+        lay_out(&mut doc);
+        assert_eq!(doc.nodes[wrapper].generates_no_box(), lifted, "{rule}");
     }
 }

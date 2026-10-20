@@ -111,6 +111,16 @@ fn is_plain_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool 
             && !node.claims_absolute_oof
             && !node.claims_fixed_oof
             && !node.has_before_or_after_content
+            && [
+                raikiri_style::PseudoElem::FirstLine,
+                raikiri_style::PseudoElem::FirstLetter,
+            ]
+            .into_iter()
+            .all(|pseudo| {
+                !cascade
+                    .pseudo
+                    .contains_key(&(raikiri_style::StyleNodeId::new(id as u64), pseudo))
+            })
             && node.multicol.is_none()
             && !node.column_span_all
             && node.break_before == BreakBetween::Auto
@@ -152,9 +162,11 @@ fn keeps_line_layout(doc: &Document, cascade: &CascadeResult, id: usize, contain
 }
 
 /// Whether the box of `id` has text that renders, or an inline-level box,
-/// among its children, or among those of a `display: contents` child. White
-/// space makes no line between blocks when it collapses both in the wrapper
-/// and in `container`, whose anonymous block would take it.
+/// among its children, or among those of a `display: contents` child. Document
+/// white space (space, tab and line breaks, CSS Text 3, 4.1.1) makes no line
+/// between blocks when it collapses both in the wrapper and in `container`,
+/// whose anonymous block would take it; any other white space, such as
+/// U+00A0, always renders.
 fn holds_lines(
     doc: &Document,
     cascade: &CascadeResult,
@@ -171,7 +183,7 @@ fn holds_lines(
         let node = &doc.nodes[child];
         match node.kind() {
             NodeKind::Text => node.text_content().is_some_and(|text| {
-                let dropped = text.chars().all(char::is_whitespace)
+                let dropped = text.chars().all(|c| c.is_ascii_whitespace())
                     && drops_white_space(container)
                     && drops_white_space(&cascade.computed[id]);
                 !text.is_empty() && !dropped
