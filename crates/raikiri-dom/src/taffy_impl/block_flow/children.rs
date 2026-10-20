@@ -696,7 +696,12 @@ pub(super) fn layout(
         }
     }
     flow.trailing = pending;
-    if !collapse_end {
+    // Margins that collapsed through every child have joined the top margin of
+    // this box, so they lie outside of it and leave no room below the content.
+    // That matters only where the content may raise the height the aspect
+    // ratio gave the box.
+    let collapsed_into_start = metrics.ratio_height && leading && collapse_start;
+    if !(collapse_end || collapsed_into_start) {
         flow.end += pending.resolve();
     }
     flow

@@ -4833,3 +4833,52 @@ fn authored_auto_block_width_constraints_follow_border_box_sizing() {
         assert_eq!(doc.nodes[inner].unrounded_layout.size.width, inner_width);
     }
 }
+
+#[test]
+fn a_block_whose_height_follows_from_its_ratio_is_sliced_into_definite_height_columns() {
+    let (doc, _, children) = lineless_fixture(
+        "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
+        &["display:block;width:25px;aspect-ratio:1/16"],
+    );
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![
+            (0, 0.0, 0.0, 100.0),
+            (1, 25.0, 0.0, 100.0),
+            (2, 50.0, 0.0, 100.0),
+            (3, 75.0, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn a_block_whose_height_follows_from_its_ratio_is_balanced_across_the_columns() {
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:100px;columns:4;column-gap:0",
+        &["display:block;width:25px;aspect-ratio:1/16"],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![
+            (0, 0.0, 0.0, 100.0),
+            (1, 25.0, 0.0, 100.0),
+            (2, 50.0, 0.0, 100.0),
+            (3, 75.0, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn a_block_that_fills_the_column_takes_its_ratio_height_from_the_column_width() {
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:200px;columns:2;column-gap:0",
+        &["display:block;aspect-ratio:2/1"],
+    );
+    // 50px tall at the 100px width of a column, balanced into two columns.
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 25.0);
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![(0, 0.0, 0.0, 25.0), (1, 100.0, 0.0, 25.0)]
+    );
+}
