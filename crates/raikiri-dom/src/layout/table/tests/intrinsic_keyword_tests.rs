@@ -47,6 +47,16 @@ fn resolve_cell_width(doc: &mut Document, cell: usize, available_space: Availabl
 }
 
 fn compute_table_intrinsic_width(limits: &str, available_space: AvailableSpace) -> f32 {
+    compute_table_width_with_cells(limits, available_space, 1, 1, "")
+}
+
+fn compute_table_width_with_cells(
+    limits: &str,
+    available_space: AvailableSpace,
+    rows: usize,
+    columns: usize,
+    cell_limits: &str,
+) -> f32 {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -62,19 +72,21 @@ fn compute_table_intrinsic_width(limits: &str, available_space: AvailableSpace) 
         Style::default(),
         Some(&format!("display:table;border-spacing:0;{limits}")),
     );
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let cell = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px"),
-    );
-    doc.append_text(cell, "AAAA BBBB");
+    for _ in 0..rows {
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        for _ in 0..columns {
+            let cell = doc.append_element(
+                Some(row), "td", Style::default(),
+                Some(&format!("display:table-cell;padding:0;font-family:Ahem;font-size:10px;line-height:10px;{cell_limits}")),
+            );
+            doc.append_text(cell, "AAAA BBBB");
+        }
+    }
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
@@ -411,4 +423,71 @@ fn vertical_caption_min_height_max_content_contributes_to_table_inline_size() {
         "vertical caption min-height:max-content and its margins should contribute at least 97px, got {}",
         doc.nodes[table].unrounded_layout.size.height
     );
+}
+
+#[test]
+fn ordinary_table_skips_wrapper_column_probes() {
+    for limits in [
+        "",
+        "min-height:max-content",
+        "min-width:20px;max-width:180px",
+    ] {
+        super::COLUMN_RESOLUTIONS.with(|count| count.set(0));
+        assert_eq!(
+            compute_table_intrinsic_width(limits, AvailableSpace::MaxContent),
+            90.0
+        );
+        assert_eq!(
+            super::COLUMN_RESOLUTIONS.with(|count| count.get()),
+            1,
+            "{limits}"
+        );
+    }
+}
+
+#[test]
+fn fixed_table_skips_wrapper_column_probes() {
+    super::COLUMN_RESOLUTIONS.with(|count| count.set(0));
+    assert_eq!(
+        compute_table_intrinsic_width(
+            "table-layout:fixed;width:160px",
+            AvailableSpace::Definite(200.0)
+        ),
+        160.0
+    );
+    assert_eq!(super::COLUMN_RESOLUTIONS.with(|count| count.get()), 0);
+}
+
+#[test]
+fn large_table_skips_wrapper_column_probes_with_cell_keywords() {
+    for (rows, columns) in [(1, 1), (64, 8)] {
+        super::COLUMN_RESOLUTIONS.with(|count| count.set(0));
+        let width = compute_table_width_with_cells(
+            "",
+            AvailableSpace::MaxContent,
+            rows,
+            columns,
+            "min-width:max-content",
+        );
+        assert_eq!(width, 90.0 * columns as f32);
+        assert_eq!(super::COLUMN_RESOLUTIONS.with(|count| count.get()), 1);
+    }
+}
+
+#[test]
+fn width_keyword_keeps_wrapper_column_probes() {
+    for limits in [
+        "min-width:min-content",
+        "min-width:max-content",
+        "max-width:fit-content",
+        "max-width:fit-content(60px)",
+    ] {
+        super::COLUMN_RESOLUTIONS.with(|count| count.set(0));
+        compute_table_intrinsic_width(limits, AvailableSpace::MaxContent);
+        assert_eq!(
+            super::COLUMN_RESOLUTIONS.with(|count| count.get()),
+            3,
+            "{limits}"
+        );
+    }
 }
