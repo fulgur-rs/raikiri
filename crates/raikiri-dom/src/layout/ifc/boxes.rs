@@ -2104,6 +2104,13 @@ fn layout_vertical_block_child(
         (false, false) => {}
     }
     let shares_context = in_the_roots_formatting_context(tree, node)
+        && tree
+            .layout_node_with_style(node)
+            .unwrap()
+            .style
+            .align_content
+            .keyword
+            == taffy::AlignContentKeyword::Normal
         && crate::layout::ifc::style::shodo_writing_mode(tree.nodes[node].used_writing_mode, node)
             .is_ok_and(|mode| mode == geometry.axes.writing_mode());
     let clear = tree.layout_node_with_style(node).unwrap().style.clear;

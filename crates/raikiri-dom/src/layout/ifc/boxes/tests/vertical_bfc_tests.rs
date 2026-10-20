@@ -145,6 +145,78 @@ fn vertical_mixed_ifc_block_children_use_their_bfc_context() {
     }
 }
 
+fn layout_vertical_aligned_block_ifc(
+    writing_mode: &str,
+    align_content: &str,
+    with_ancestor_float: bool,
+) -> (BoxRect, BoxRect, bool) {
+    let mut wrapper = 0;
+    let mut cleared = 0;
+    let (mut doc, cascade, _root) = ahem_paragraph_with(
+        &format!("writing-mode:{writing_mode};width:100px;height:40px"),
+        |doc, root| {
+            if with_ancestor_float {
+                doc.append_element(
+                    Some(root),
+                    "div",
+                    Style::default(),
+                    Some("display:block;float:left;width:10px;height:20px"),
+                );
+            }
+            wrapper = doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some(&format!(
+                    "display:block;align-content:{align_content};width:100px;height:40px"
+                )),
+            );
+            doc.append_text(wrapper, "a");
+            cleared = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;clear:both;width:20px;height:20px"),
+            );
+            doc.append_text(wrapper, "b");
+        },
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+
+    let beside_floats = doc.nodes[wrapper]
+        .ifc
+        .as_ref()
+        .and_then(|ifc| ifc.lines.as_ref())
+        .expect("aligned paragraph lines")
+        .beside_floats;
+    (
+        absolute_rect(&doc, wrapper),
+        absolute_rect(&doc, cleared),
+        beside_floats,
+    )
+}
+
+#[test]
+fn vertical_aligned_block_ifc_does_not_share_ancestor_floats() {
+    for (writing_mode, align_content) in [("vertical-rl", "center"), ("vertical-lr", "end")] {
+        let (wrapper_without_float, cleared_without_float, _) =
+            layout_vertical_aligned_block_ifc(writing_mode, align_content, false);
+        let (wrapper_with_float, cleared_with_float, beside_floats) =
+            layout_vertical_aligned_block_ifc(writing_mode, align_content, true);
+
+        assert!(
+            !beside_floats,
+            "{writing_mode} align-content:{align_content} paragraph inherited an ancestor float"
+        );
+        assert_eq!(
+            cleared_with_float.0 - wrapper_with_float.0,
+            cleared_without_float.0 - wrapper_without_float.0,
+            "{writing_mode} align-content:{align_content} clear inherited an ancestor float"
+        );
+    }
+}
+
 #[test]
 fn vertical_inline_boxes_use_the_physical_top_inset() {
     for (writing_mode, block_start_inset) in [
