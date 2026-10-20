@@ -14,8 +14,10 @@ use super::{
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Rect};
 use raikiri_style::property::{
-    BackgroundImage, BorderColor, BorderStyle, DisplayValue, PositionValue,
+    BackgroundImage, BorderCollapseValue, BorderColor, BorderStyle, DisplayValue, PositionValue,
+    VisualBox,
 };
+use raikiri_style::{ComputedBorder, ComputedValues, Sides};
 use raikiri_traits::{PaintInsets, PaintRect};
 
 /// The geometry that the decorations of a box paint in: its own box, which
@@ -54,6 +56,49 @@ fn replaced_content_clip(element: &ElementBox<'_>) -> Option<raikiri_traits::Pai
             layout.padding.left,
         ),
     )
+}
+
+/// Whether an opaque background in the same solid color as every border side
+/// already paints the complete visible union of the border in
+/// `paint_element_background`.
+fn border_covered_by_solid_background(
+    cv: &ComputedValues,
+    painted_border: &Sides<ComputedBorder>,
+) -> bool {
+    !cv.has_background_image()
+        && cv.background_color.a == 255
+        && matches!(
+            cv.final_background_clip(),
+            VisualBox::PaddingBox | VisualBox::ContentBox
+        )
+        && [
+            &painted_border.top,
+            &painted_border.right,
+            &painted_border.bottom,
+            &painted_border.left,
+        ]
+        .iter()
+        .all(|side| {
+            side.style() == BorderStyle::Solid
+                && side.width().px() > 0.0
+                && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
+        })
+}
+
+/// Whether `cv` is an internal table box in the collapsing border model,
+/// where border images do not apply (CSS Backgrounds 3 §6.1).
+fn collapsed_internal_table_box(cv: &ComputedValues) -> bool {
+    matches!(cv.border_collapse, BorderCollapseValue::Collapse)
+        && matches!(
+            cv.display,
+            DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableColumnGroup
+                | DisplayValue::TableColumn
+                | DisplayValue::TableCell
+        )
 }
 
 impl<'w, S: PaintScene> PaintWalk<'w, S> {
@@ -322,7 +367,6 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             paint_border_radius,
             painted_border,
             paints_as_absolute_continuation,
-            unfragmented_top,
             ..
         } = *element;
         let OwnBox {
@@ -332,93 +376,14 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
             height: own_paint_height,
             ..
         } = *own;
-        let (image_cache, pixel_source) = (self.image_cache, self.pixel_source);
-        let scene = &mut *self.scene;
-        let warnings = &mut *self.warnings;
-        // An opaque background that uses the same solid color as
-        // every border side already paints the complete visible
-        // union in `paint_element_background`; avoid compositing
-        // the same anti-aliased rounded edge a second time.
-        let border_covered_by_background = !cv.has_background_image()
-            && cv.background_color.a == 255
-            && matches!(
-                cv.final_background_clip(),
-                raikiri_style::property::VisualBox::PaddingBox
-                    | raikiri_style::property::VisualBox::ContentBox
-            )
-            && [
-                &painted_border.top,
-                &painted_border.right,
-                &painted_border.bottom,
-                &painted_border.left,
-            ]
-            .iter()
-            .all(|side| {
-                side.style() == BorderStyle::Solid
-                    && side.width().px() > 0.0
-                    && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
-            });
         // A border image replaces the border styles (CSS
         // Backgrounds 3 §6).
-        // In the collapsing border model, border images do not
-        // apply to internal table boxes (CSS Backgrounds 3 §6.1).
-        let collapsed_internal_table_box = matches!(
-            cv.border_collapse,
-            raikiri_style::property::BorderCollapseValue::Collapse
-        ) && matches!(
-            cv.display,
-            DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-                | DisplayValue::TableRow
-                | DisplayValue::TableColumnGroup
-                | DisplayValue::TableColumn
-                | DisplayValue::TableCell
-        );
         let border_image_drawn = paints_own_box
-            && !collapsed_internal_table_box
-            && if paints_as_absolute_continuation && unfragmented_top < own_paint_y {
-                // A continuation fragment slices the image laid
-                // out over the whole box, so it shows no top edge
-                // at the break (CSS Fragmentation 3 §5.4).
-                const UNBOUNDED: f64 = 1.0e7;
-                scene.push_clip_layer(
-                    Affine::IDENTITY,
-                    &Rect::new(-UNBOUNDED, f64::from(own_paint_y), UNBOUNDED, UNBOUNDED),
-                );
-                let drawn = paint_element_border_image(
-                    image_cache,
-                    scene,
-                    own_paint_width,
-                    own_paint_y + own_paint_height - unfragmented_top,
-                    own_paint_x,
-                    unfragmented_top,
-                    cv,
-                    &cv.border_image,
-                    painted_border,
-                    pixel_source,
-                    warnings,
-                    scene.transform,
-                );
-                scene.pop_layer();
-                drawn
-            } else {
-                paint_element_border_image(
-                    image_cache,
-                    scene,
-                    own_paint_width,
-                    own_paint_height,
-                    own_paint_x,
-                    own_paint_y,
-                    cv,
-                    &cv.border_image,
-                    painted_border,
-                    pixel_source,
-                    warnings,
-                    scene.transform,
-                )
-            };
-        let border_covered_by_background = border_covered_by_background || border_image_drawn;
+            && !collapsed_internal_table_box(cv)
+            && self.paint_border_image(element, own);
+        let border_covered_by_background =
+            border_covered_by_solid_background(cv, painted_border) || border_image_drawn;
+        let scene = &mut *self.scene;
         // Paint border on top of background (CSS Backgrounds 3 §5).
         let paints_continuation_border = paints_own_box && paints_as_absolute_continuation;
         if !border_covered_by_background && paints_continuation_border {
@@ -443,6 +408,69 @@ impl<'w, S: PaintScene> PaintWalk<'w, S> {
                 cv.color,
                 &paint_border_radius,
             );
+        }
+    }
+
+    /// Paint the border image of the box `own` of `element`, and return
+    /// whether one was drawn.
+    fn paint_border_image(&mut self, element: &ElementBox<'w>, own: &OwnBox) -> bool {
+        let ElementBox {
+            cv,
+            painted_border,
+            paints_as_absolute_continuation,
+            unfragmented_top,
+            ..
+        } = *element;
+        let OwnBox {
+            x: own_paint_x,
+            y: own_paint_y,
+            width: own_paint_width,
+            height: own_paint_height,
+            ..
+        } = *own;
+        let (image_cache, pixel_source) = (self.image_cache, self.pixel_source);
+        let scene = &mut *self.scene;
+        let warnings = &mut *self.warnings;
+        if paints_as_absolute_continuation && unfragmented_top < own_paint_y {
+            // A continuation fragment slices the image laid
+            // out over the whole box, so it shows no top edge
+            // at the break (CSS Fragmentation 3 §5.4).
+            const UNBOUNDED: f64 = 1.0e7;
+            scene.push_clip_layer(
+                Affine::IDENTITY,
+                &Rect::new(-UNBOUNDED, f64::from(own_paint_y), UNBOUNDED, UNBOUNDED),
+            );
+            let drawn = paint_element_border_image(
+                image_cache,
+                scene,
+                own_paint_width,
+                own_paint_y + own_paint_height - unfragmented_top,
+                own_paint_x,
+                unfragmented_top,
+                cv,
+                &cv.border_image,
+                painted_border,
+                pixel_source,
+                warnings,
+                scene.transform,
+            );
+            scene.pop_layer();
+            drawn
+        } else {
+            paint_element_border_image(
+                image_cache,
+                scene,
+                own_paint_width,
+                own_paint_height,
+                own_paint_x,
+                own_paint_y,
+                cv,
+                &cv.border_image,
+                painted_border,
+                pixel_source,
+                warnings,
+                scene.transform,
+            )
         }
     }
 
