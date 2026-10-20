@@ -57,6 +57,24 @@ pub(super) fn metadata(html: &str, pair: &ReftestPair) -> Result<Option<Fuzzy>, 
     if contents.is_empty() {
         return Ok(None);
     }
+    let (base, reference) = pair_urls(pair)?;
+    let relations = reference_relations(&base, references)?;
+    let entries = fuzzy_entries(&base, &relations, contents)?;
+    // spec: https://web-platform-tests.org/writing-tests/reftests.html#fuzzy-matching
+    let selected = reference
+        .join(&pair.reference_suffix)
+        .map_err(|_| invalid())?;
+    let keyed = if relations.get(&selected) == Some(&pair.kind) {
+        entries.get(&Some(selected))
+    } else {
+        None
+    };
+    Ok(keyed.or_else(|| entries.get(&None)).copied())
+}
+
+/// The URLs of the test and of the reference, which the links and the keys of
+/// the metadata resolve against.
+fn pair_urls(pair: &ReftestPair) -> Result<(raikiri::Url, raikiri::Url), ReftestError> {
     let canonical_test = std::fs::canonicalize(&pair.test).unwrap_or_else(|_| pair.test.clone());
     let root = canonical_test
         .ancestors()
@@ -75,6 +93,15 @@ pub(super) fn metadata(html: &str, pair: &ReftestPair) -> Result<Option<Fuzzy>, 
     };
     let base = url(&pair.test)?;
     let reference = url(&pair.reference)?;
+    Ok((base, reference))
+}
+
+/// Whether each URL that the test links to is a match or a mismatch
+/// reference. The first link to a URL decides.
+fn reference_relations(
+    base: &raikiri::Url,
+    mut references: Vec<(&str, bool)>,
+) -> Result<std::collections::HashMap<raikiri::Url, ReftestKind>, ReftestError> {
     // The WPT manifest enumerates match links before mismatch links.
     references.sort_by_key(|(_, is_match)| !is_match);
     let mut relations = std::collections::HashMap::new();
@@ -86,6 +113,16 @@ pub(super) fn metadata(html: &str, pair: &ReftestPair) -> Result<Option<Fuzzy>, 
             ReftestKind::Mismatch
         });
     }
+    Ok(relations)
+}
+
+/// The fuzzy ranges of each `content` of a fuzzy `meta`, by the reference
+/// they are keyed to; `None` is the entry that applies to every reference.
+fn fuzzy_entries(
+    base: &raikiri::Url,
+    relations: &std::collections::HashMap<raikiri::Url, ReftestKind>,
+    contents: Vec<&str>,
+) -> Result<std::collections::HashMap<Option<raikiri::Url>, Fuzzy>, ReftestError> {
     let mut entries = std::collections::HashMap::new();
     for content in contents {
         let (key, value) = content
@@ -97,48 +134,45 @@ pub(super) fn metadata(html: &str, pair: &ReftestPair) -> Result<Option<Fuzzy>, 
         if key.as_ref().is_some_and(|k| !relations.contains_key(k)) {
             return Err(invalid());
         }
-        let fields: Vec<_> = value.split(';').collect();
-        if fields.len() != 2 {
-            return Err(invalid());
-        }
-        let mut named = std::collections::HashMap::new();
-        let mut positional = std::collections::VecDeque::new();
-        for field in fields {
-            if let Some((name, value)) = field.split_once('=') {
-                let name = name.trim();
-                if !matches!(name, "maxDifference" | "totalPixels")
-                    || named.insert(name, range(value)?).is_some()
-                {
-                    return Err(invalid());
-                }
-            } else {
-                positional.push_back(range(field)?);
-            }
-        }
-        let mut take = |name| {
-            named
-                .remove(name)
-                .or_else(|| positional.pop_front())
-                .ok_or_else(invalid)
-        };
-        let fuzzy = Fuzzy {
-            difference: take("maxDifference")?,
-            pixels: take("totalPixels")?,
-        };
+        let fuzzy = fuzzy_fields(value)?;
         if entries.insert(key, fuzzy).is_some() {
             return Err(invalid());
         }
     }
-    // spec: https://web-platform-tests.org/writing-tests/reftests.html#fuzzy-matching
-    let selected = reference
-        .join(&pair.reference_suffix)
-        .map_err(|_| invalid())?;
-    let keyed = if relations.get(&selected) == Some(&pair.kind) {
-        entries.get(&Some(selected))
-    } else {
-        None
+    Ok(entries)
+}
+
+/// The `maxDifference` and `totalPixels` ranges of the two `;`-separated
+/// fields of a fuzzy value, each named or positional.
+fn fuzzy_fields(value: &str) -> Result<Fuzzy, ReftestError> {
+    let fields: Vec<_> = value.split(';').collect();
+    if fields.len() != 2 {
+        return Err(invalid());
+    }
+    let mut named = std::collections::HashMap::new();
+    let mut positional = std::collections::VecDeque::new();
+    for field in fields {
+        if let Some((name, value)) = field.split_once('=') {
+            let name = name.trim();
+            if !matches!(name, "maxDifference" | "totalPixels")
+                || named.insert(name, range(value)?).is_some()
+            {
+                return Err(invalid());
+            }
+        } else {
+            positional.push_back(range(field)?);
+        }
+    }
+    let mut take = |name| {
+        named
+            .remove(name)
+            .or_else(|| positional.pop_front())
+            .ok_or_else(invalid)
     };
-    Ok(keyed.or_else(|| entries.get(&None)).copied())
+    Ok(Fuzzy {
+        difference: take("maxDifference")?,
+        pixels: take("totalPixels")?,
+    })
 }
 
 pub(super) fn compare(left: &RenderedImage, right: &RenderedImage, fuzzy: Fuzzy) -> ImageDiff {
