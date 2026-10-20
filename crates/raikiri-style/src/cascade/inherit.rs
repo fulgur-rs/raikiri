@@ -2606,8 +2606,9 @@ fn box_defaulting_value(
     })
 }
 
-/// Resolve a CSS-wide keyword on `inline-size`, `block-size` or
-/// `min-block-size` into a value of the same property.
+/// Resolve a CSS-wide keyword on `inline-size`, `block-size`,
+/// `min-block-size`, `min-inline-size`, `max-inline-size` or `max-block-size`
+/// into a value of the same property.
 ///
 /// A logical size shares its computed value with the physical size it maps to
 /// (CSS Logical Properties 1 §4.1), so `inherit` takes the parent's value of
@@ -2632,6 +2633,9 @@ pub(crate) fn resolve_logical_size_keyword(
         PropertyKey::InlineSize => Some(PropertyValue::InlineSize),
         PropertyKey::BlockSize => Some(PropertyValue::BlockSize),
         PropertyKey::MinBlockSize => Some(PropertyValue::MinBlockSize),
+        PropertyKey::MinInlineSize => Some(PropertyValue::MinInlineSize),
+        PropertyKey::MaxInlineSize => Some(PropertyValue::MaxInlineSize),
+        PropertyKey::MaxBlockSize => Some(PropertyValue::MaxBlockSize),
         _ => None,
     };
     let (Some(keyword), Some(with_size)) = (marker.css_wide_keyword(), with_size) else {
@@ -2640,8 +2644,18 @@ pub(crate) fn resolve_logical_size_keyword(
     let (physical_width, physical_height) = inherited_physical_sizes(inherited);
     let parent = match (marker.key, vertical) {
         (PropertyKey::InlineSize, false) | (PropertyKey::BlockSize, true) => physical_width,
-        (PropertyKey::MinBlockSize, false) => inherited.min_height,
-        (PropertyKey::MinBlockSize, true) => inherited.min_width,
+        (PropertyKey::MinBlockSize, false) | (PropertyKey::MinInlineSize, true) => {
+            inherited.min_height
+        }
+        (PropertyKey::MinBlockSize, true) | (PropertyKey::MinInlineSize, false) => {
+            inherited.min_width
+        }
+        (PropertyKey::MaxBlockSize, false) | (PropertyKey::MaxInlineSize, true) => {
+            inherited.max_height
+        }
+        (PropertyKey::MaxBlockSize, true) | (PropertyKey::MaxInlineSize, false) => {
+            inherited.max_width
+        }
         // `inline-size` of a vertical box and `block-size` of a horizontal one.
         _ => physical_height,
     };
@@ -3271,6 +3285,9 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::MinWidth(_)
         | PropertyValue::MinHeight(_)
         | PropertyValue::MinBlockSize(_)
+        | PropertyValue::MinInlineSize(_)
+        | PropertyValue::MaxInlineSize(_)
+        | PropertyValue::MaxBlockSize(_)
         | PropertyValue::InlineSize(_)
         | PropertyValue::BlockSize(_)
         | PropertyValue::Top(_)
@@ -4017,6 +4034,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MinWidth(v) => target.min_width = v,
         PropertyValue::MinHeight(v) => target.min_height = v,
         PropertyValue::MinBlockSize(v) => target.min_block_size = Some(v),
+        PropertyValue::MinInlineSize(v) => target.min_inline_size = Some(v),
+        PropertyValue::MaxInlineSize(v) => target.max_inline_size = Some(v),
+        PropertyValue::MaxBlockSize(v) => target.max_block_size = Some(v),
         PropertyValue::InlineSize(v) => target.inline_size = Some(v),
         PropertyValue::BlockSize(v) => target.block_size = Some(v),
         PropertyValue::Top(v) => target.top = v,

@@ -330,6 +330,15 @@ pub struct SpecifiedValues {
     /// **Specified** `min-block-size`; phase 3 absolutizes it and maps it onto physical
     /// min-width/min-height according to `writing-mode`.
     pub min_block_size: Option<LengthOrAuto>,
+    /// **Specified** `min-inline-size`; phase 3 maps it onto physical min-width/min-height
+    /// according to `writing-mode`, then absolutizes it.
+    pub min_inline_size: Option<LengthOrAuto>,
+    /// **Specified** `max-inline-size`; phase 3 maps it onto physical max-width/max-height
+    /// according to `writing-mode`, then absolutizes it.
+    pub max_inline_size: Option<LengthOrAuto>,
+    /// **Specified** `max-block-size`; phase 3 maps it onto physical max-height/max-width
+    /// according to `writing-mode`, then absolutizes it.
+    pub max_block_size: Option<LengthOrAuto>,
     /// **Specified** `inline-size`; phase 3 maps it onto physical `width` or
     /// `height` according to `writing-mode`, then absolutizes it.
     pub inline_size: Option<LengthOrAuto>,
@@ -342,9 +351,9 @@ pub struct SpecifiedValues {
     /// that fills the space it is given for `auto`, as a page-margin box does.
     pub(crate) keeps_block_size_keywords: bool,
     /// Cascade precedence of the winning size declarations (`width`,
-    /// `height`, `inline-size`, `block-size` and the minimum sizes). Phase 3
-    /// lets the logical and physical declaration that map onto the same axis
-    /// compete in cascade order.
+    /// `height`, `inline-size`, `block-size` and the minimum and maximum
+    /// sizes). Phase 3 lets the logical and physical declaration that map onto
+    /// the same axis compete in cascade order.
     pub(crate) size_precedence: SizePrecedence,
     /// **Specified** `top`; absolutized in phase 3.
     pub top: LengthOrAuto,
@@ -770,7 +779,12 @@ pub(crate) struct SizePrecedence {
     pub(crate) block_size: Option<CascadePrecedence>,
     pub(crate) min_width: Option<CascadePrecedence>,
     pub(crate) min_height: Option<CascadePrecedence>,
+    pub(crate) max_width: Option<CascadePrecedence>,
+    pub(crate) max_height: Option<CascadePrecedence>,
     pub(crate) min_block_size: Option<CascadePrecedence>,
+    pub(crate) min_inline_size: Option<CascadePrecedence>,
+    pub(crate) max_inline_size: Option<CascadePrecedence>,
+    pub(crate) max_block_size: Option<CascadePrecedence>,
 }
 
 impl SizePrecedence {
@@ -785,7 +799,12 @@ impl SizePrecedence {
             K::BlockSize => &mut self.block_size,
             K::MinWidth => &mut self.min_width,
             K::MinHeight => &mut self.min_height,
+            K::MaxWidth => &mut self.max_width,
+            K::MaxHeight => &mut self.max_height,
             K::MinBlockSize => &mut self.min_block_size,
+            K::MinInlineSize => &mut self.min_inline_size,
+            K::MaxInlineSize => &mut self.max_inline_size,
+            K::MaxBlockSize => &mut self.max_block_size,
             _ => return,
         };
         *slot = Some(rank);
@@ -951,6 +970,9 @@ impl SpecifiedValues {
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
+            min_inline_size: None,
+            max_inline_size: None,
+            max_block_size: None,
             inline_size: None,
             size_precedence: SizePrecedence::default(),
             block_size: None,
@@ -1408,6 +1430,9 @@ impl SpecifiedValues {
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
             min_block_size: None,
+            min_inline_size: None,
+            max_inline_size: None,
+            max_block_size: None,
             inline_size: None,
             size_precedence: SizePrecedence::default(),
             block_size: None,
@@ -2034,6 +2059,48 @@ impl SpecifiedValues {
         vertical
     }
 
+    /// Map `min-inline-size`, `max-inline-size` and `max-block-size` onto the
+    /// physical minimum and maximum sizes on their axes.
+    ///
+    /// A logical limit and the physical limit it maps to share one computed
+    /// value (CSS Logical Properties 1 §4), so the one declared later in
+    /// cascade order wins; see [`logical_size_wins`]. The axes are the
+    /// physical ones of the box's own `writing-mode`.
+    fn map_logical_limits(&mut self) {
+        let min_inline_size = self.min_inline_size.take();
+        let max_inline_size = self.max_inline_size.take();
+        let max_block_size = self.max_block_size.take();
+        let precedence = self.size_precedence;
+        // The physical limit on each logical limit's axis, with its precedence:
+        // the inline axis is the width in horizontal writing and the height in
+        // vertical writing.
+        let (min_inline, max_inline, max_block) = if self.writing_mode.is_vertical() {
+            (
+                (&mut self.min_height, precedence.min_height),
+                (&mut self.max_height, precedence.max_height),
+                (&mut self.max_width, precedence.max_width),
+            )
+        } else {
+            (
+                (&mut self.min_width, precedence.min_width),
+                (&mut self.max_width, precedence.max_width),
+                (&mut self.max_height, precedence.max_height),
+            )
+        };
+        let share = |(physical, physical_rank): (&mut LengthOrAuto, _), logical, logical_rank| {
+            *physical = pick_by_precedence(
+                *physical,
+                physical_rank,
+                logical,
+                logical_rank,
+                LengthOrAuto::Auto,
+            );
+        };
+        share(min_inline, min_inline_size, precedence.min_inline_size);
+        share(max_inline, max_inline_size, precedence.max_inline_size);
+        share(max_block, max_block_size, precedence.max_block_size);
+    }
+
     /// Record (`Some`) or clear (`None`) the symbolic color of the `key`
     /// longhand, replacing any earlier one.
     pub(crate) fn set_contextual_color(
@@ -2067,6 +2134,7 @@ impl SpecifiedValues {
         ctx: &ResolveContext,
     ) -> ComputedValues {
         let vertical_logical_size = self.map_logical_preferred_sizes();
+        self.map_logical_limits();
         self.resolve_contextual_colors();
         // Reference for `1lh` on padding, margin, border, width and height. `rlh` uses the
         // tree-global `ctx.root_line_height`, so this local reference is only needed here.

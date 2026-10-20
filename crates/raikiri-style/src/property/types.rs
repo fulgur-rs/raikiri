@@ -7898,6 +7898,9 @@ impl PropertyKey {
                 | PropertyKey::InlineSize
                 | PropertyKey::BlockSize
                 | PropertyKey::MinBlockSize
+                | PropertyKey::MinInlineSize
+                | PropertyKey::MaxInlineSize
+                | PropertyKey::MaxBlockSize
                 | PropertyKey::TextAlign
                 | PropertyKey::TextAlignLast
                 | PropertyKey::WritingMode
@@ -11693,6 +11696,17 @@ pub enum PropertyValue {
     /// is a number, percentage or length an SVG renderer resolves; same shape
     /// as [`PropertyValue::Fill`].
     StrokeDashoffset(Box<str>),
+    /// `min-inline-size: auto | <length-percentage [0,∞]>` — logical minimum
+    /// inline size. Like [`PropertyValue::MinBlockSize`], the cascade maps it
+    /// to the physical minimum size on its axis, in cascade order against the
+    /// declarations of that physical property.
+    MinInlineSize(LengthOrAuto),
+    /// `max-inline-size: none | <length-percentage [0,∞]>` — logical maximum
+    /// inline size; `auto` stands for `none`, as it does for `max-width`.
+    MaxInlineSize(LengthOrAuto),
+    /// `max-block-size: none | <length-percentage [0,∞]>` — logical maximum
+    /// block size; `auto` stands for `none`, as it does for `max-height`.
+    MaxBlockSize(LengthOrAuto),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -12326,6 +12340,11 @@ pub enum PropertyKey {
     StrokeMiterlimit,
     StrokeDasharray,
     StrokeDashoffset,
+    // Logical minimum and maximum sizes; appended to preserve existing key
+    // slots.
+    MinInlineSize,
+    MaxInlineSize,
+    MaxBlockSize,
 }
 
 impl PropertyValue {
@@ -12478,6 +12497,9 @@ impl PropertyValue {
             PropertyValue::MinWidth(_) => PropertyKey::MinWidth,
             PropertyValue::MinHeight(_) => PropertyKey::MinHeight,
             PropertyValue::MinBlockSize(_) => PropertyKey::MinBlockSize,
+            PropertyValue::MinInlineSize(_) => PropertyKey::MinInlineSize,
+            PropertyValue::MaxInlineSize(_) => PropertyKey::MaxInlineSize,
+            PropertyValue::MaxBlockSize(_) => PropertyKey::MaxBlockSize,
             PropertyValue::TextUnderlineOffset(_) => PropertyKey::TextUnderlineOffset,
             PropertyValue::TextAutospace(_) => PropertyKey::TextAutospace,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
@@ -13608,6 +13630,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "min-width" => PropertyKey::MinWidth,
         "min-height" => PropertyKey::MinHeight,
         "min-block-size" => PropertyKey::MinBlockSize,
+        "min-inline-size" => PropertyKey::MinInlineSize,
+        "max-inline-size" => PropertyKey::MaxInlineSize,
+        "max-block-size" => PropertyKey::MaxBlockSize,
         "text-underline-offset" => PropertyKey::TextUnderlineOffset,
         "box-sizing" => PropertyKey::BoxSizing,
         "direction" => PropertyKey::Direction,

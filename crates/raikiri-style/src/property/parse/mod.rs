@@ -739,6 +739,9 @@ pub(crate) fn parse_property_grammar(
         "min-width" => parse_min_size(input).map(PropertyValue::MinWidth),
         "min-height" => parse_min_size(input).map(PropertyValue::MinHeight),
         "min-block-size" => parse_min_size(input).map(PropertyValue::MinBlockSize),
+        "min-inline-size" => parse_min_size(input).map(PropertyValue::MinInlineSize),
+        "max-inline-size" => parse_max_size(input).map(PropertyValue::MaxInlineSize),
+        "max-block-size" => parse_max_size(input).map(PropertyValue::MaxBlockSize),
         // CSS Sizing 3 §3.3 box-sizing.
         // Value grammar `content-box | border-box`, initial `content-box`,
         // not inherited, computed value = specified keyword.

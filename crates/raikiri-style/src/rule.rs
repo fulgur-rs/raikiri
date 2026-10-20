@@ -513,6 +513,9 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | ColumnCount
         | ColumnWidth
         | MinBlockSize
+        | MinInlineSize
+        | MaxInlineSize
+        | MaxBlockSize
         | TextUnderlineOffset
         | HangingPunctuation
         | TextAutospace
@@ -891,6 +894,9 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::MinWidth(_)
         | PropertyValue::MinHeight(_)
         | PropertyValue::MinBlockSize(_)
+        | PropertyValue::MinInlineSize(_)
+        | PropertyValue::MaxInlineSize(_)
+        | PropertyValue::MaxBlockSize(_)
         | PropertyValue::InlineSize(_)
         | PropertyValue::BlockSize(_)
         | PropertyValue::Top(_)
