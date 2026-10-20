@@ -9,6 +9,7 @@ use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 mod anonymous_table_tests;
+mod authored_length_tests;
 mod cell_index_tests;
 mod intrinsic_keyword_tests;
 mod part_containing_block_tests;
@@ -4353,5 +4354,6 @@ fn negative_absolute_insets_do_not_expand_the_available_table_width() {
 }
 
 thread_local! {
+    pub(super) static AUTHORED_LENGTH_CELL_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static COLUMN_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
