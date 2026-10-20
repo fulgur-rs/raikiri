@@ -3092,10 +3092,19 @@ pub(crate) fn commit_float(
         let (x, y) = if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
             (position.x, position.y)
         } else {
+            // FloatContext reports physical coordinates from the top of the
+            // inline axis; the converter expects an offset from inline-start.
+            let inline_start = if geometry.axes.direction() == Direction::Rtl {
+                geometry.axes.inline_extent(geometry.border_box_size())
+                    - position.x
+                    - float.margin_box.width
+            } else {
+                position.x
+            };
             let physical = geometry.axes.rect(
                 geometry.border_box_size(),
                 shodo::geometry::LogicalRect {
-                    inline_start: position.x,
+                    inline_start,
                     block_start: position.y,
                     inline_size: float.margin_box.width,
                     block_size: float.margin_box.height,

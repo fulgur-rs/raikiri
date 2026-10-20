@@ -250,11 +250,11 @@ fn vertical_aligned_block_ifc_does_not_share_ancestor_floats() {
     }
 }
 
-fn layout_vertical_auto_width_ifc_with_float() -> (BoxRect, BoxRect) {
+fn layout_vertical_auto_width_ifc_with_float(direction: &str) -> (BoxRect, BoxRect) {
     let mut float = 0;
     let mut cleared = 0;
     let (mut doc, cascade, _root) = ahem_paragraph_with(
-        "writing-mode:vertical-rl;width:100px;height:100px",
+        &format!("writing-mode:vertical-rl;direction:{direction};width:100px;height:100px"),
         |doc, root| {
             let wrapper = doc.append_element(
                 Some(root),
@@ -284,10 +284,17 @@ fn layout_vertical_auto_width_ifc_with_float() -> (BoxRect, BoxRect) {
 
 #[test]
 fn vertical_auto_width_ifc_probe_does_not_duplicate_its_float() {
-    let (float, cleared) = layout_vertical_auto_width_ifc_with_float();
+    let (float, cleared) = layout_vertical_auto_width_ifc_with_float("ltr");
 
     assert_eq!(float, (90.0, 0.0, 10.0, 10.0));
     assert_eq!(cleared, (80.0, 0.0, 10.0, 10.0));
+}
+
+#[test]
+fn vertical_rtl_float_stays_on_the_recorded_inline_side() {
+    let (float, _) = layout_vertical_auto_width_ifc_with_float("rtl");
+
+    assert_eq!(float.1, 0.0, "float={float:?}");
 }
 
 #[test]
