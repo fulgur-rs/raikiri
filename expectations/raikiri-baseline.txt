@@ -2889,7 +2889,6 @@ css/css-grid/placement/grid-placement-items-spanning-multiple-rows-001.html
 css/css-grid/placement/grid-placement-items-spanning-multiple-rows-002.html
 css/css-grid/placement/grid-placement-using-named-grid-lines-004.html
 css/css-grid/placement/grid-placement-using-named-grid-lines-005.html
-css/css-grid/placement/grid-placement-using-named-grid-lines-008.html
 css/css-grid/placement/grid-template-areas-must-keep-named-columns-order-001.html
 css/css-grid/subgrid/auto-track-sizing-003.html
 css/css-grid/subgrid/dynamic-min-content-001.html

@@ -639,6 +639,7 @@ pub use first_line::{
 };
 mod inherit;
 pub(crate) use inherit::*;
+pub(crate) mod keyword_defaults;
 mod limits;
 mod value_heap;
 pub(crate) use limits::Counter;

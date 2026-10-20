@@ -993,8 +993,8 @@ pub(super) fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto>
 ///
 /// # Scope carving (details in [`BoxSizing`] doc-comment)
 ///
-/// - **(b) Unsupported**: CSS-wide keywords are not yet implemented and are silently dropped. The
-///   "CSS-wide keyword" section of the [`PropertyValue`] doc lists the five keywords and explains why.
+/// - **CSS-wide keywords**: kept as deferred markers for the cascade (see the "CSS-wide keyword"
+///   section of the [`PropertyValue`] doc).
 /// - **(a) Spec-invalid**: Other keywords such as `padding-box` (from a CSS-UI 3 draft, removed from
 ///   css-sizing-3) and `margin-box` silently return `None`.
 pub(super) fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {

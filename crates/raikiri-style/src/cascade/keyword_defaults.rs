@@ -1,0 +1,176 @@
+//! CSS-wide keywords on the properties whose specified value is a plain copy
+//! of the computed one.
+//!
+//! `inherit` takes the parent's computed value, `initial` the initial value,
+//! and `unset` one of the two by whether the property is inherited (CSS
+//! Cascading 4 section 7.3). `revert` and `revert-layer` reach the cascade as
+//! markers like the keywords above and are rolled back before this runs; one
+//! that finds nothing to roll back behaves as `unset`.
+//!
+//! A property joins by adding one row to the table below: its key, whether it
+//! is inherited, and the specified value its computed field converts back to.
+//! A row also lets the parser keep the keyword for that property instead of
+//! dropping the declaration.
+
+use std::sync::LazyLock;
+
+use crate::computed::ComputedValues;
+use crate::property::{CssWideKeyword, FloatValue, PositionValue, PropertyKey, PropertyValue};
+use crate::resolve::{
+    lift_border_spacing, lift_letter_spacing, lift_line_height, lift_tab_size, lift_word_spacing,
+};
+
+static INITIAL: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
+
+/// A copy of `value`, written so a computed field converts to its specified
+/// value the same way whether or not the type is `Copy`.
+fn dup<T: Clone>(value: &T) -> T {
+    value.clone()
+}
+
+/// The computed `float` of `source`: CSS 2.1 section 9.7 computes it to `none`
+/// on an absolutely positioned box, which the stored field keeps as authored.
+fn computed_float(source: &ComputedValues) -> FloatValue {
+    match source.position {
+        PositionValue::Absolute | PositionValue::Fixed => FloatValue::None,
+        _ => source.float,
+    }
+}
+
+macro_rules! keyword_defaults {
+    ($source:ident; $($key:ident, $inherited:literal => $value:expr;)*) => {
+        /// Whether a CSS-wide keyword on `key` is resolved by this table.
+        pub(crate) const fn covers(key: PropertyKey) -> bool {
+            matches!(key, $(PropertyKey::$key)|*)
+        }
+
+        /// Whether `key` is an inherited property, which decides `unset`.
+        const fn is_inherited(key: PropertyKey) -> bool {
+            match key {
+                $(PropertyKey::$key => $inherited,)*
+                _ => false,
+            }
+        }
+
+        /// The specified value that `$source`'s computed value of `key`
+        /// converts back to; `None` for a key outside the table.
+        fn specified_from(key: PropertyKey, $source: &ComputedValues) -> Option<PropertyValue> {
+            Some(match key {
+                $(PropertyKey::$key => $value,)*
+                _ => return None,
+            })
+        }
+
+        /// Every key of the table.
+        #[cfg(test)]
+        pub(crate) const KEYS: &[PropertyKey] = &[$(PropertyKey::$key),*];
+    };
+}
+
+keyword_defaults! {
+    source;
+    Position, false => PropertyValue::Position(dup(&source.position));
+    HangingPunctuation, true => PropertyValue::HangingPunctuation(dup(&source.hanging_punctuation));
+    BoxSizing, false => PropertyValue::BoxSizing(dup(&source.box_sizing));
+    TextDecorationLine, false => PropertyValue::TextDecorationLine(dup(&source.text_decoration_line));
+    TextDecorationStyle, false => PropertyValue::TextDecorationStyle(dup(&source.text_decoration_style));
+    TextTransform, true => PropertyValue::TextTransform(dup(&source.text_transform));
+    ZIndex, false => PropertyValue::ZIndex(dup(&source.z_index));
+    WordBreak, true => PropertyValue::WordBreak(dup(&source.word_break));
+    OverflowWrap, true => PropertyValue::OverflowWrap(dup(&source.overflow_wrap));
+    BreakBefore, false => PropertyValue::BreakBefore(dup(&source.break_before));
+    BreakAfter, false => PropertyValue::BreakAfter(dup(&source.break_after));
+    BreakInside, false => PropertyValue::BreakInside(dup(&source.break_inside));
+    Float, false => PropertyValue::Float(computed_float(source));
+    Clear, false => PropertyValue::Clear(dup(&source.clear));
+    TextWrapStyle, true => PropertyValue::TextWrapStyle(dup(&source.text_wrap_style));
+    FlexDirection, false => PropertyValue::FlexDirection(dup(&source.flex_direction));
+    FlexWrap, false => PropertyValue::FlexWrap(dup(&source.flex_wrap));
+    FlexGrow, false => PropertyValue::FlexGrow(dup(&source.flex_grow));
+    FlexShrink, false => PropertyValue::FlexShrink(dup(&source.flex_shrink));
+    Order, false => PropertyValue::Order(dup(&source.order));
+    JustifyContent, false => PropertyValue::JustifyContent(dup(&source.justify_content));
+    AlignContent, false => PropertyValue::AlignContent(dup(&source.align_content));
+    AlignItems, false => PropertyValue::AlignItems(dup(&source.align_items));
+    AlignSelf, false => PropertyValue::AlignSelf(dup(&source.align_self));
+    Hyphens, true => PropertyValue::Hyphens(dup(&source.hyphens));
+    LineBreak, true => PropertyValue::LineBreak(dup(&source.line_break));
+    TextJustify, true => PropertyValue::TextJustify(dup(&source.text_justify));
+    TextCombineUpright, true => PropertyValue::TextCombineUpright(dup(&source.text_combine_upright));
+    UnicodeBidi, false => PropertyValue::UnicodeBidi(dup(&source.unicode_bidi));
+    FontVariantCaps, true => PropertyValue::FontVariantCaps(dup(&source.font_variant_caps));
+    GridTemplateAreas, false => PropertyValue::GridTemplateAreas(dup(&source.grid_template_areas));
+    GridAutoFlow, false => PropertyValue::GridAutoFlow(dup(&source.grid_auto_flow));
+    GridRowStart, false => PropertyValue::GridRowStart(dup(&source.grid_row_start));
+    GridRowEnd, false => PropertyValue::GridRowEnd(dup(&source.grid_row_end));
+    GridColumnStart, false => PropertyValue::GridColumnStart(dup(&source.grid_column_start));
+    GridColumnEnd, false => PropertyValue::GridColumnEnd(dup(&source.grid_column_end));
+    JustifyItems, false => PropertyValue::JustifyItems(dup(&source.justify_items));
+    JustifySelf, false => PropertyValue::JustifySelf(dup(&source.justify_self));
+    Orphans, true => PropertyValue::Orphans(dup(&source.orphans));
+    Widows, true => PropertyValue::Widows(dup(&source.widows));
+    RubyPosition, true => PropertyValue::RubyPosition(dup(&source.ruby_position));
+    ObjectFit, false => PropertyValue::ObjectFit(dup(&source.object_fit));
+    Isolation, false => PropertyValue::Isolation(dup(&source.isolation));
+    Contain, false => PropertyValue::Contain(dup(&source.contain));
+    WillChange, false => PropertyValue::WillChange(dup(&source.will_change));
+    MixBlendMode, false => PropertyValue::MixBlendMode(dup(&source.mix_blend_mode));
+    MaskImage, false => PropertyValue::MaskImage(dup(&source.mask_image));
+    ClipPath, false => PropertyValue::ClipPath(dup(&source.clip_path));
+    Filter, false => PropertyValue::Filter(dup(&source.filter));
+    TableLayout, false => PropertyValue::TableLayout(dup(&source.table_layout));
+    BorderCollapse, true => PropertyValue::BorderCollapse(dup(&source.border_collapse));
+    CaptionSide, true => PropertyValue::CaptionSide(dup(&source.caption_side));
+    EmptyCells, true => PropertyValue::EmptyCells(dup(&source.empty_cells));
+    TextDecorationSkipInk, true => PropertyValue::TextDecorationSkipInk(dup(&source.text_decoration_skip_ink));
+    TextDecorationSkipSpaces, true => PropertyValue::TextDecorationSkipSpaces(dup(&source.text_decoration_skip_spaces));
+    TextEmphasisPosition, true => PropertyValue::TextEmphasisPosition(dup(&source.text_emphasis_position));
+    TextUnderlinePosition, true => PropertyValue::TextUnderlinePosition(dup(&source.text_underline_position));
+    ColumnCount, false => PropertyValue::ColumnCount(dup(&source.column_count));
+    TextAutospace, true => PropertyValue::TextAutospace(dup(&source.text_autospace));
+    HyphenateCharacter, true => PropertyValue::HyphenateCharacter(dup(&source.hyphenate_character));
+    HyphenateLimitChars, true => PropertyValue::HyphenateLimitChars(dup(&source.hyphenate_limit_chars));
+    TextSpacingTrim, true => PropertyValue::TextSpacingTrim(dup(&source.text_spacing_trim));
+    WordSpaceTransform, true => PropertyValue::WordSpaceTransform(dup(&source.word_space_transform));
+    TextEmphasisStyle, true => PropertyValue::TextEmphasisStyle(dup(&source.text_emphasis_style));
+    FontKerning, true => PropertyValue::FontKerning(dup(&source.font_kerning));
+    FontOpticalSizing, true => PropertyValue::FontOpticalSizing(dup(&source.font_optical_sizing));
+    FontVariantEmoji, true => PropertyValue::FontVariantEmoji(dup(&source.font_variant_emoji));
+    FontLanguageOverride, true => PropertyValue::FontLanguageOverride(dup(&source.font_language_override));
+    FontVariantLigatures, true => PropertyValue::FontVariantLigatures(dup(&source.font_variant_ligatures));
+    FontSynthesis, true => PropertyValue::FontSynthesis(dup(&source.font_synthesis));
+    FontVariantPosition, true => PropertyValue::FontVariantPosition(dup(&source.font_variant_position));
+    FontPalette, true => PropertyValue::FontPalette(dup(&source.font_palette));
+    FontVariantNumeric, true => PropertyValue::FontVariantNumeric(dup(&source.font_variant_numeric));
+    FontVariantEastAsian, true => PropertyValue::FontVariantEastAsian(dup(&source.font_variant_east_asian));
+    FontVariationSettings, true => PropertyValue::FontVariationSettings(dup(&source.font_variation_settings));
+    ColumnFill, false => PropertyValue::ColumnFill(dup(&source.column_fill));
+    FontFeatureSettings, true => PropertyValue::FontFeatureSettings(dup(&source.font_feature_settings));
+    TextOverflow, false => PropertyValue::TextOverflow(dup(&source.text_overflow));
+    LineHeight, true => PropertyValue::LineHeight(lift_line_height(source.line_height));
+    LetterSpacing, true => {
+        PropertyValue::LetterSpacing(lift_letter_spacing(source.letter_spacing_computed))
+    };
+    WordSpacing, true => {
+        PropertyValue::WordSpacing(lift_word_spacing(source.word_spacing_computed))
+    };
+    TabSize, true => PropertyValue::TabSize(lift_tab_size(source.tab_size));
+    BorderSpacing, true => PropertyValue::BorderSpacing(lift_border_spacing(source.border_spacing));
+}
+
+/// The value the CSS-wide `keyword` gives the property `key` under the parent
+/// style `inherited`, or `None` when the table does not cover `key`.
+pub(crate) fn defaulting_value(
+    key: PropertyKey,
+    keyword: CssWideKeyword,
+    inherited: &ComputedValues,
+) -> Option<PropertyValue> {
+    let from_parent = match keyword {
+        CssWideKeyword::Inherit => true,
+        CssWideKeyword::Initial => false,
+        CssWideKeyword::Unset | CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
+            is_inherited(key)
+        }
+    };
+    specified_from(key, if from_parent { inherited } else { &INITIAL })
+}

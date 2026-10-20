@@ -1358,9 +1358,10 @@ pub(crate) fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<P
 /// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float>; see the
 /// [`FloatValue`] docs).
 ///
-/// Value grammar: `left | right | none`. This parser does not support
-/// `inherit` because of the "CSS-wide keyword (canonical)" policy described
-/// above. ASCII case-insensitive matching follows sibling `parse_word_break`.
+/// Value grammar: `left | right | none`. A CSS-wide keyword is kept as a
+/// deferred marker before this parser runs (see the "CSS-wide keyword
+/// (canonical)" section of the [`PropertyValue`] docs). ASCII
+/// case-insensitive matching follows sibling `parse_word_break`.
 pub(super) fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
     FloatValue::from_css_ident(input.expect_ident().ok()?)
 }
@@ -1369,9 +1370,10 @@ pub(super) fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
 /// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>; see the
 /// [`ClearValue`] docs).
 ///
-/// Value grammar: `none | left | right | both`. This parser does not support
-/// `inherit` because of the "CSS-wide keyword (canonical)" policy described
-/// above. ASCII case-insensitive matching follows sibling `parse_float`.
+/// Value grammar: `none | left | right | both`. A CSS-wide keyword is kept as
+/// a deferred marker before this parser runs (see the "CSS-wide keyword
+/// (canonical)" section of the [`PropertyValue`] docs). ASCII
+/// case-insensitive matching follows sibling `parse_float`.
 pub(super) fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
     ClearValue::from_css_ident(input.expect_ident().ok()?)
 }
