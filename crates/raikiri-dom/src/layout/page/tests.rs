@@ -1,6 +1,8 @@
 use super::*;
 use taffy::Style;
 
+mod page_name_performance_tests;
+
 // ── layout_single_page driver (Task 7) ──────────────────────
 
 fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
@@ -101,7 +103,7 @@ fn propagated_start_page_name_handles_dom_edge_cases() {
     );
     assert_eq!(
         propagated_start_page_name(&doc, &cr, inline, Some("inherited")),
-        (true, Some("inherited".to_owned()))
+        (true, Some("inherited"))
     );
     assert!(matches!(
         cr.computed[absolute].position,
@@ -109,11 +111,11 @@ fn propagated_start_page_name_handles_dom_edge_cases() {
     ));
     assert_eq!(
         propagated_start_page_name(&doc, &cr, absolute, Some("inherited")),
-        (true, Some("inherited".to_owned()))
+        (true, Some("inherited"))
     );
     assert_eq!(
         propagated_start_page_name(&doc, &cr, inline_text, Some("inherited")),
-        (true, Some("inherited".to_owned()))
+        (true, Some("inherited"))
     );
 
     // An arena child can be stale while a cascade is still in use. The
@@ -122,14 +124,14 @@ fn propagated_start_page_name_handles_dom_edge_cases() {
     doc.nodes[empty].children.push(cr.computed.len());
     assert_eq!(
         propagated_start_page_name(&doc, &cr, empty, Some("inherited")),
-        (true, Some("inherited".to_owned()))
+        (true, Some("inherited"))
     );
 
     // The normal descendant is reached after whitespace, hidden, and
     // out-of-flow children have been skipped.
     assert_eq!(
         propagated_start_page_name(&doc, &cr, named, Some("outer")),
-        (true, Some("outer".to_owned()))
+        (true, Some("outer"))
     );
 }
 
