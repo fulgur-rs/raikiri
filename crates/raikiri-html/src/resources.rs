@@ -903,42 +903,63 @@ impl<'a> RenderResources<'a> {
         let start = Instant::now();
         let _permit = self.acquire_decode_permit();
         if is_svg {
-            if bytes.len() > MAX_SVG_IMAGE_BYTES {
-                return Some(RenderWarning {
-                    kind: WarningKind::ResourceLimitExceeded {
-                        kind: ResourceKind::Image,
-                        limit: MAX_SVG_IMAGE_BYTES as u64,
-                        actual: bytes.len() as u64,
-                    },
-                    node_id: None,
-                    details: "SVG background image exceeded its input byte limit".into(),
-                });
-            }
-            match SvgDocument::parse(&bytes) {
-                Ok(document) => {
-                    if self.decode_timed_out(start.elapsed()) {
-                        return Some(self.timeout_warning(&url));
-                    }
-                    self.cache_image_source(url, CachedBackgroundSource::Svg(Arc::new(document)));
-                    return None;
-                }
-                Err(_) => {
-                    return Some(RenderWarning {
-                        kind: WarningKind::ResourceFallback {
-                            kind: ResourceKind::Image,
-                            url: Some(redacted_url(&url)),
-                        },
-                        node_id: None,
-                        details: "CSS background SVG could not be parsed; the image was skipped"
-                            .into(),
-                    });
-                }
-            }
+            self.decode_svg_background(url, &bytes, start)
+        } else {
+            self.decode_raster_background(url, &bytes, start)
         }
+    }
 
+    /// Parse and cache one SVG background image, returning the warning that
+    /// explains a skipped image. `start` is when its decode began, for the
+    /// decode timeout.
+    fn decode_svg_background(
+        &self,
+        url: Url,
+        bytes: &[u8],
+        start: Instant,
+    ) -> Option<RenderWarning> {
+        if bytes.len() > MAX_SVG_IMAGE_BYTES {
+            return Some(RenderWarning {
+                kind: WarningKind::ResourceLimitExceeded {
+                    kind: ResourceKind::Image,
+                    limit: MAX_SVG_IMAGE_BYTES as u64,
+                    actual: bytes.len() as u64,
+                },
+                node_id: None,
+                details: "SVG background image exceeded its input byte limit".into(),
+            });
+        }
+        match SvgDocument::parse(bytes) {
+            Ok(document) => {
+                if self.decode_timed_out(start.elapsed()) {
+                    return Some(self.timeout_warning(&url));
+                }
+                self.cache_image_source(url, CachedBackgroundSource::Svg(Arc::new(document)));
+                None
+            }
+            Err(_) => Some(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: ResourceKind::Image,
+                    url: Some(redacted_url(&url)),
+                },
+                node_id: None,
+                details: "CSS background SVG could not be parsed; the image was skipped".into(),
+            }),
+        }
+    }
+
+    /// Decode and cache one raster background image, returning the warning
+    /// that explains a skipped image. `start` is when its decode began, for the
+    /// decode timeout.
+    fn decode_raster_background(
+        &self,
+        url: Url,
+        bytes: &[u8],
+        start: Instant,
+    ) -> Option<RenderWarning> {
         let effective = self.image_cache_effective_remaining(&url);
         let output_limit = self.image_policy_limit().unwrap_or(u64::MAX).min(effective);
-        match decode_background_raster(&bytes, output_limit) {
+        match decode_background_raster(bytes, output_limit) {
             Ok(image) => {
                 if self.decode_timed_out(start.elapsed()) {
                     return Some(self.timeout_warning(&url));
