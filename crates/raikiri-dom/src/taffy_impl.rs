@@ -379,6 +379,7 @@ pub struct TaffyChildIter<'a> {
     /// Whether the children are those of a source box, among which an
     /// anonymous table stands in for the rows it wraps.
     wrap_tables: bool,
+    current: core::slice::Iter<'a, usize>,
     stack: Vec<core::slice::Iter<'a, usize>>,
 }
 
@@ -399,11 +400,12 @@ impl<'a> TaffyChildIter<'a> {
             doc,
             flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
             wrap_tables: !doc.is_anonymous_table(parent),
-            stack: if hidden {
-                Vec::new()
+            current: if hidden {
+                [].iter()
             } else {
-                vec![layout_node.layout_children().iter()]
+                layout_node.layout_children().iter()
             },
+            stack: Vec::new(),
         }
     }
 
@@ -519,16 +521,19 @@ impl Iterator for TaffyChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
         let doc = self.doc;
-        while let Some(children) = self.stack.last_mut() {
-            let Some(&child) = children.next() else {
-                self.stack.pop();
+        loop {
+            let Some(&child) = self.current.next() else {
+                self.current = self.stack.pop()?;
                 continue;
             };
             if !Self::includes(doc, child) {
                 continue;
             }
             if self.flatten && Self::is_flattened(doc, child) {
-                self.stack.push(doc.nodes[child].layout_children().iter());
+                self.stack.push(std::mem::replace(
+                    &mut self.current,
+                    doc.nodes[child].layout_children().iter(),
+                ));
                 continue;
             }
             // An anonymous table takes the place of the run of rows it wraps
@@ -543,7 +548,6 @@ impl Iterator for TaffyChildIter<'_> {
             }
             return Some(NodeId::from(child));
         }
-        None
     }
 }
 

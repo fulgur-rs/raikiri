@@ -1,4 +1,4 @@
-//! Allocation checks for the unnamed first-page fast path.
+//! Allocation checks for layout traversal and the unnamed first-page fast path.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -71,5 +71,27 @@ fn unnamed_first_page_selection_allocates_nothing() {
         let allocations = ALLOCATIONS.with(|count| count.replace(None).unwrap());
         assert_eq!(selected, None);
         assert_eq!(allocations, 0, "width={width} depth={depth}");
+    }
+}
+
+#[test]
+fn flat_taffy_child_walk_allocates_nothing() {
+    use taffy::TraversePartialTree;
+    for width in [0, 1, 128] {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let expected: Vec<_> = (0..width)
+            .map(|_| doc.append_element(Some(parent), "div", Style::default(), None::<&str>))
+            .collect();
+        doc.mark_in_document_flags();
+        ALLOCATIONS.with(|count| count.set(Some(0)));
+        let mut children = doc.child_ids(taffy::NodeId::from(parent));
+        for &child in &expected {
+            assert_eq!(children.next(), Some(taffy::NodeId::from(child)));
+        }
+        assert_eq!(children.next(), None);
+        assert_eq!(children.next(), None);
+        let allocations = ALLOCATIONS.with(|count| count.replace(None).unwrap());
+        assert_eq!(allocations, 0, "width={width}");
     }
 }

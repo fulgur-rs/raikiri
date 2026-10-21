@@ -1,4 +1,5 @@
 use super::*;
+mod child_walk_tests;
 mod style_view_tests;
 use crate::layout::context::LayoutSession;
 
