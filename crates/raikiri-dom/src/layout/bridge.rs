@@ -215,7 +215,9 @@ pub(super) fn view_sizing_flags(
     if min_content_width_is_auto(doc, cascade, idx) {
         flags = flags.union(F::MIN_CONTENT_WIDTH_AUTO);
     }
-    if !sized_by_content_keyword(doc, cascade, idx, cv) {
+    if (content_keyword(width) || (logical.is_some() && content_keyword(height)))
+        && !sized_by_content_keyword(doc, cascade, idx, cv)
+    {
         if content_keyword(width) {
             flags = flags.union(F::IGNORE_WIDTH_KEYWORD);
         }
