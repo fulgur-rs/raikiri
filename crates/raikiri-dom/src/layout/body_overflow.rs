@@ -37,18 +37,4 @@ pub(crate) fn body_overflow_propagates_to_viewport(
 }
 
 #[cfg(test)]
-pub(crate) fn propagate_body_overflow_to_viewport(
-    doc: &mut Document,
-    cascade: &CascadeResult,
-    body_id: usize,
-) -> bool {
-    let propagated = body_overflow_propagates_to_viewport(doc, cascade, body_id);
-    if propagated {
-        let mut session = super::context::LayoutSession::new(doc);
-        session.propagate_viewport_overflow(cascade, body_id);
-    }
-    propagated
-}
-
-#[cfg(test)]
 mod tests;

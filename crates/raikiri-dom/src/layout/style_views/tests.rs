@@ -635,3 +635,14 @@ fn neutral_text_paragraph_publishes_its_final_ifc_classification() {
             .contains(raikiri_layout_style::StyleFlags::IFC)
     );
 }
+
+#[test]
+fn non_element_has_no_css_sizing_keyword_policy() {
+    let (doc, mut cascade, _, text) = fixture();
+    cascade.computed[text].width = L::MaxContent;
+    cascade.computed[text].min_height = L::FitContent;
+    assert_eq!(
+        super::metadata::sizing_flags(&doc, &cascade, text),
+        raikiri_layout_style::StyleFlags::EMPTY,
+    );
+}
