@@ -262,3 +262,99 @@ fn pass_and_recorded_scope_calcs_get_document_owners() {
         assert!(owner.upgrade().is_none());
     }
 }
+
+#[test]
+fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
+    use raikiri_style::{
+        ComputedGridTemplateTracks as G, ComputedGridTrackBreadth as B, ComputedGridTrackList,
+        ComputedGridTrackListComponent as C, ComputedGridTrackRepeat, ComputedGridTrackSize as S,
+        property::GridRepeatCount,
+    };
+    use taffy::{GenericRepetition, GridContainerStyle};
+    for (a, b) in [
+        (0.0, -0.0),
+        (f32::from_bits(0x7fc0_0001), f32::from_bits(0x7fc0_0002)),
+    ] {
+        let a = CalcLengthPercentage {
+            px: a,
+            percent: 25.0,
+        };
+        let b = CalcLengthPercentage {
+            px: b,
+            percent: 25.0,
+        };
+        let (mut doc, mut cascade, child, _) = fixture_with_styles("display:flex", "display:grid");
+        let cv = &mut cascade.computed[child];
+        cv.width = L::Calc(a);
+        cv.height = L::Calc(b);
+        cv.margin.left = L::Calc(a);
+        cv.grid_template_columns = G::List(Arc::new(ComputedGridTrackList {
+            components: vec![
+                C::Size(S::Breadth(B::Calc(a))),
+                C::Size(S::Breadth(B::Calc(b))),
+                C::Repeat(ComputedGridTrackRepeat {
+                    count: GridRepeatCount::Count(2),
+                    tracks: vec![S::Breadth(B::Calc(a)), S::Breadth(B::Calc(b))],
+                    line_names: vec![vec![]; 3],
+                }),
+            ],
+            line_names: vec![vec![]; 4],
+        }));
+        cv.grid_template_rows = cv.grid_template_columns.clone();
+        cv.grid_auto_columns = Arc::new(vec![S::Breadth(B::Calc(b))]);
+        cv.grid_auto_rows = Arc::new(vec![S::Breadth(B::Calc(a))]);
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        let pool = &session.style_views.as_ref().unwrap().legacy_calcs
+            [&crate::node::arena::BoxKey::Source(child)];
+        let check = |handle: *const (), expression: CalcLengthPercentage, range| {
+            let first = pool
+                .iter()
+                .find(|owner| {
+                    let value = owner.expression();
+                    value.px.to_bits() == expression.px.to_bits()
+                        && value.percent.to_bits() == expression.percent.to_bits()
+                        && owner.non_negative() == range
+                })
+                .unwrap();
+            assert_eq!(handle, Arc::as_ptr(first).cast::<()>());
+            assert!(
+                session
+                    .retained_layout_styles
+                    .calc_values
+                    .iter()
+                    .any(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+            );
+        };
+        let view = session.style_view(child);
+        check(view.size().width.into_raw().calc_value(), a, true);
+        check(view.size().height.into_raw().calc_value(), b, true);
+        check(view.margin().left.into_raw().calc_value(), a, false);
+        for template in [view.grid_template_columns(), view.grid_template_rows()] {
+            let mut single = 0;
+            for component in template.unwrap() {
+                match component {
+                    taffy::GenericGridTemplateComponent::Single(track) => {
+                        let expected = [a, b][single];
+                        check(track.min.into_raw().calc_value(), expected, true);
+                        check(track.max.into_raw().calc_value(), expected, true);
+                        single += 1;
+                    }
+                    taffy::GenericGridTemplateComponent::Repeat(repeat) => {
+                        for (track, expected) in repeat.tracks().zip([a, b]) {
+                            check(track.min.into_raw().calc_value(), expected, true);
+                            check(track.max.into_raw().calc_value(), expected, true);
+                        }
+                    }
+                }
+            }
+            assert_eq!(single, 2);
+        }
+        for (tracks, expected) in [(view.grid_auto_columns(), b), (view.grid_auto_rows(), a)] {
+            for track in tracks {
+                check(track.min.into_raw().calc_value(), expected, true);
+                check(track.max.into_raw().calc_value(), expected, true);
+            }
+        }
+    }
+}

@@ -167,6 +167,7 @@ impl<'a> PreparedStyle<'a> {
             calcs.push((slot, payload));
             Ok(())
         })?;
+        calcs.sort_unstable_by_key(|(slot, _)| slot.search_key());
         prepared.calcs = CalcBindings::Owned(calcs.into_boxed_slice());
         Ok(prepared)
     }
@@ -217,11 +218,12 @@ impl<'a> PreparedStyle<'a> {
                     .payload
             }
             CalcBindings::Owned(bindings) => {
-                &bindings
-                    .iter()
-                    .find(|(binding_slot, _)| *binding_slot == slot)
-                    .expect("constructed immutable calc bindings")
-                    .1
+                let index = bindings
+                    .binary_search_by_key(&slot.search_key(), |(binding_slot, _)| {
+                        binding_slot.search_key()
+                    })
+                    .expect("constructed immutable calc bindings");
+                &bindings[index].1
             }
         }
     }

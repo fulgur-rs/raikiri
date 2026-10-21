@@ -31,6 +31,8 @@ pub(crate) struct StyleViews<'a> {
     legacy_calcs: HashMap<BoxKey, Vec<Arc<raikiri_layout_style::AlignedCalc>>>,
     size_scopes: Vec<overrides::SizeScope>,
     prepared_publication: Option<super::cache_context::CacheEpoch>,
+    preparation_batch: bool,
+    deferred_calc_prefix: Option<usize>,
 }
 
 impl<'a> StyleViews<'a> {
@@ -42,6 +44,8 @@ impl<'a> StyleViews<'a> {
             legacy_calcs: HashMap::default(),
             size_scopes: Vec::new(),
             prepared_publication: None,
+            preparation_batch: false,
+            deferred_calc_prefix: None,
         }
     }
 
@@ -152,6 +156,21 @@ impl<'a> StyleViews<'a> {
             || node.kind() != NodeKind::Element
             || node.display() == DisplayValue::Contents;
         let mut pool = self.legacy_calcs.remove(&key).unwrap_or_default();
+        // Expressions come from CSS; keep randomized hashing for their exact bit keys.
+        let mut owner_index = (!pool.is_empty()).then(|| {
+            let mut index = std::collections::HashMap::with_capacity(pool.len());
+            for (position, payload) in pool.iter().enumerate() {
+                let value = payload.expression();
+                index
+                    .entry((
+                        value.px.to_bits(),
+                        value.percent.to_bits(),
+                        payload.non_negative(),
+                    ))
+                    .or_insert(position);
+            }
+            index
+        });
         let shared = if neutral {
             let owner = if key == BoxKey::InitialContainingBlock {
                 doc.synthetic_style_values
@@ -169,17 +188,16 @@ impl<'a> StyleViews<'a> {
             None
         };
         let mut owner = |_, expression: raikiri_style::property::CalcLengthPercentage, range| {
-            if let Some(payload) = pool.iter().find(|payload| {
-                let value = payload.expression();
-                value.px.to_bits() == expression.px.to_bits()
-                    && value.percent.to_bits() == expression.percent.to_bits()
-                    && payload.non_negative() == range
-            }) {
-                return payload.clone();
+            let key = (expression.px.to_bits(), expression.percent.to_bits(), range);
+            if let Some(position) = owner_index.as_ref().and_then(|index| index.get(&key)) {
+                return pool[*position].clone();
             }
             let payload = Arc::new(raikiri_layout_style::AlignedCalc::new(expression, range));
             // Retain owners before the prepared binding can publish a raw handle.
             doc.retained_layout_styles.calc_values.push(payload.clone());
+            owner_index
+                .get_or_insert_with(std::collections::HashMap::new)
+                .insert(key, pool.len());
             pool.push(payload.clone());
             payload
         };
@@ -197,12 +215,69 @@ impl<'a> StyleViews<'a> {
 }
 
 impl LayoutSession<'_> {
+    #[inline]
+    pub(crate) fn assert_style_queries_allowed(&self) {
+        assert!(
+            !self
+                .style_views
+                .as_ref()
+                .is_some_and(|views| views.preparation_batch),
+            "style queries run after the preparation batch"
+        );
+    }
+
+    pub(crate) fn with_style_preparation_batch<R, E>(
+        &mut self,
+        run: impl FnOnce(&mut Self) -> Result<R, E>,
+    ) -> Result<R, E> {
+        self.assert_style_queries_allowed();
+        self.assert_preparation_outside_legacy_scopes();
+        if let Some(views) = &mut self.style_views {
+            views.assert_outside_scopes();
+            views.preparation_batch = true;
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self)));
+        let old_prefix = self.style_views.as_mut().and_then(|views| {
+            views.preparation_batch = false;
+            views.deferred_calc_prefix.take()
+        });
+        match result {
+            Ok(Ok(value)) => {
+                self.sync_layout_cache_mutations();
+                if let Some(length) = old_prefix {
+                    self.document
+                        .retained_layout_styles
+                        .calc_values
+                        .drain(..length);
+                }
+                Ok(value)
+            }
+            Ok(Err(error)) => Err(error),
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    pub(crate) fn finish_style_bridge(&mut self, old_calc_len: usize) {
+        if let Some(views) = &mut self.style_views
+            && views.preparation_batch
+        {
+            views.deferred_calc_prefix = Some(old_calc_len);
+            return;
+        }
+        self.prepare_style_views();
+        self.document
+            .retained_layout_styles
+            .calc_values
+            .drain(..old_calc_len);
+    }
+
     #[cfg(test)]
     pub(crate) fn checked_style(
         &self,
         idx: usize,
         role: checked::ReadRole,
     ) -> checked::CheckedStyle<'_> {
+        self.assert_style_queries_allowed();
         let key = self.nodes.box_key(idx).expect("style query has a box key");
         let mut context = checked::ReadContext::new(key, role);
         let view = self.style_views.as_ref().map(|views| {
@@ -282,6 +357,7 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn prepare_style_views(&mut self) {
+        self.assert_style_queries_allowed();
         self.assert_preparation_outside_legacy_scopes();
         if let Some(views) = &mut self.style_views {
             views.prepare(self.document);
@@ -289,6 +365,7 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn refresh_style_views(&mut self) {
+        self.assert_style_queries_allowed();
         let publication = self.document.layout_cache_context.publication_epoch();
         if let Some(views) = &mut self.style_views
             && views.prepared_publication != Some(publication)
@@ -312,6 +389,7 @@ impl LayoutSession<'_> {
 
     #[inline]
     pub(crate) fn style_view(&self, idx: usize) -> LayoutStyleView<'_> {
+        self.assert_style_queries_allowed();
         let key = self.nodes.box_key(idx).expect("style query has a box key");
         let views = self
             .style_views

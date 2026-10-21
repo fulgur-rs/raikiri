@@ -121,6 +121,7 @@ impl<'doc> LayoutSession<'doc> {
 
     /// Publish pending document mutations before any parent cache lookup.
     pub(crate) fn sync_layout_cache_mutations(&mut self) {
+        self.assert_style_queries_allowed();
         if self.document.layout_dirty {
             self.document.layout_cache_context.publish_metadata();
             self.context.grid_layout_info.clear();

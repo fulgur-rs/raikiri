@@ -338,3 +338,108 @@ fn metadata_publication_inside_edge_scope_is_rejected_and_restored() {
         taffy::LengthPercentage::percent(0.1)
     );
 }
+
+#[test]
+fn batch_defers_queries_until_pending_values_and_icb_are_ready() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session
+        .with_style_preparation_batch(|session| {
+            apply_computed_to_style_in_session(session, &cascade).unwrap();
+            session.record_pass_override(
+                child,
+                OwnedPropertyOverride::length(LengthProperty::Width, L::Px(47.0), false).unwrap(),
+            );
+            let before = session.layout_cache_context.epoch();
+            for operation in 0..3 {
+                let result =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match operation {
+                        0 => {
+                            let _ = session.style_view(child);
+                        }
+                        1 => {
+                            session.with_cache_frame(
+                                child,
+                                raikiri_layout_style::ViewContext::default(),
+                                |_| {},
+                            );
+                        }
+                        _ => {
+                            session.with_resolved_edges(child, 200.0, false, |_| {});
+                        }
+                    }));
+                assert!(result.is_err());
+                assert_eq!(session.layout_cache_context.epoch(), before);
+            }
+            super::super::super::initial_containing_block::prepare(session, &cascade, 123.0, 456.0);
+            session.begin_oof_layout();
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+    assert!(!session.document.layout_dirty);
+    assert_eq!(
+        session.style_view(child).size().width,
+        taffy::Dimension::length(47.0)
+    );
+}
+
+#[test]
+fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
+    use std::sync::Arc;
+    for unwind in [false, true] {
+        let (mut doc, cascade, child, _) =
+            fixture_with_styles("display:flex", "width:calc(50% + 10px)");
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        let handle = session
+            .style_view(child)
+            .size()
+            .width
+            .into_raw()
+            .calc_value();
+        let owner = Arc::downgrade(
+            session
+                .retained_layout_styles
+                .calc_values
+                .iter()
+                .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
+                .unwrap(),
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            session.with_style_preparation_batch(|session| {
+                apply_computed_to_style_in_session(session, &cascade).unwrap();
+                if unwind {
+                    panic!("batch interruption");
+                }
+                Err::<(), _>(())
+            })
+        }));
+        if unwind {
+            assert!(result.is_err());
+        } else {
+            assert!(result.unwrap().is_err());
+        }
+        assert!(owner.upgrade().is_some());
+        session
+            .with_style_preparation_batch(|session| {
+                apply_computed_to_style_in_session(session, &cascade).unwrap();
+                assert!(owner.upgrade().is_some());
+                session.begin_oof_layout();
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        assert!(owner.upgrade().is_none());
+        assert_eq!(
+            crate::taffy_impl::resolve_calc(
+                session
+                    .style_view(child)
+                    .size()
+                    .width
+                    .into_raw()
+                    .calc_value(),
+                100.0
+            ),
+            60.0
+        );
+    }
+}

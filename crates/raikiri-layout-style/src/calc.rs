@@ -84,6 +84,28 @@ pub enum CalcSlot {
     },
 }
 
+impl CalcSlot {
+    pub(crate) fn search_key(self) -> (u8, u8, u8, usize, Option<usize>, u8) {
+        match self {
+            Self::Property(property) => (0, 0, 0, property as usize, None, 0),
+            Self::Grid {
+                axis,
+                list,
+                component,
+                repeat_track,
+                part,
+            } => (
+                1,
+                axis as u8,
+                list as u8,
+                component,
+                repeat_track,
+                part as u8,
+            ),
+        }
+    }
+}
+
 /// A payload borrowed from an owner that outlives all uses of the view.
 #[derive(Clone, Copy, Debug)]
 pub struct PreparedCalc<'a> {

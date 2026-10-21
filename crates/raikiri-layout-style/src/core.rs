@@ -39,9 +39,9 @@ impl CoreStyle for LayoutStyleView<'_> {
             && matches!(c.padding.top, P::Px(0.0) | P::Percent(0.0))
             && matches!(c.padding.bottom, P::Px(0.0) | P::Percent(0.0));
         if matches!(c.box_sizing, BoxSizing::BorderBox)
-            || (matches!(self.base_length(LengthProperty::Width).value, L::Auto)
-                && side_borders
-                && vertical_clean)
+            || (side_borders
+                && vertical_clean
+                && matches!(self.base_length(LengthProperty::Width).value, L::Auto))
         {
             taffy::BoxSizing::BorderBox
         } else {
@@ -134,23 +134,25 @@ impl CoreStyle for LayoutStyleView<'_> {
     #[inline]
     fn aspect_ratio(&self) -> Option<f32> {
         let c = &*self.prepared.values;
-        let width = self.base_length(LengthProperty::Width).value;
-        let height = self.base_length(LengthProperty::Height).value;
-        let base = if matches!(width, L::Auto)
-            || (!self.flags().contains(StyleFlags::CONTAIN_WIDTH) && width.is_content_keyword())
-            || matches!(height, L::Auto)
-        {
-            c.aspect_ratio.preferred(None)
+        let ratio = if let Some(value) = self.overrides().find_map(|entry| match entry {
+            OverrideKind::AspectRatio(value) => Some(value),
+            _ => None,
+        }) {
+            value
+        } else if let Some(preferred) = c.aspect_ratio.preferred(None) {
+            let width = self.base_length(LengthProperty::Width).value;
+            let height = self.base_length(LengthProperty::Height).value;
+            if matches!(width, L::Auto)
+                || (!self.flags().contains(StyleFlags::CONTAIN_WIDTH) && width.is_content_keyword())
+                || matches!(height, L::Auto)
+            {
+                Some(preferred)
+            } else {
+                None
+            }
         } else {
             None
         };
-        let ratio = self
-            .overrides()
-            .find_map(|o| match o {
-                OverrideKind::AspectRatio(r) => Some(r),
-                _ => None,
-            })
-            .unwrap_or(base);
         if self.vertical() {
             ratio.map(|r| 1.0 / r)
         } else {

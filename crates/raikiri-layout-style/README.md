@@ -2,8 +2,8 @@
 
 Borrowed `ComputedValues` queries implementing Taffy 0.15 `CoreStyle`,
 `FlexboxContainerStyle`, `FlexboxItemStyle`, `GridContainerStyle` and
-`GridItemStyle`. This crate does not depend on the DOM and is not yet wired
-into `LayoutSession` (RAIKIRI-709; integration follows in RAIKIRI-713).
+`GridItemStyle`. This crate does not depend on the DOM. `LayoutSession` uses
+these views for production Flex/Grid queries (RAIKIRI-713).
 
 `PreparedStyle::new` validates scalar and Grid calc bindings once. The adapter
 supplies immutable `AlignedCalc` payloads, identified by `CalcSlot`, and retains
@@ -96,3 +96,16 @@ getters neither prepare nor validate. The document retains every shared calc
 payload before publishing its raw handle, including payloads from popped
 scopes. A successful source bridge releases only the previous bridge's payload
 prefix; error and unwind paths preserve it.
+
+Root layout batches source bridging, body corrections and ICB creation until
+out-of-flow initialization has consumed document dirtiness. It then synchronizes
+and prepares once before the first layout query. The batch rejects scope, cache
+and style queries and restores its state on error or unwind; the old calc-owner
+prefix is released only after final preparation succeeds. Low-level bridge
+callers still prepare eagerly.
+
+The DOM indexes calc owners by exact expression bits and range policy, keeping
+the first matching legacy owner. Owned bindings are sorted during preparation
+and use binary search during queries. Borrowed binding tables retain their
+existing interface. Preparation and getter measurements are separate from
+whole-document runtime measurements.

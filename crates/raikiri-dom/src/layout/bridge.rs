@@ -182,11 +182,7 @@ pub(crate) fn apply_computed_to_style_in_session(
             .count()
             + 8;
         doc.document.layout_cache_context.configure_nodes(expected);
-        doc.prepare_style_views();
-        doc.document
-            .retained_layout_styles
-            .calc_values
-            .drain(..old_calc_len);
+        doc.finish_style_bridge(old_calc_len);
     }
     result
 }

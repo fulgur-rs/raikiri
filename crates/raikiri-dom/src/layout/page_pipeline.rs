@@ -1131,50 +1131,58 @@ fn layout_single_page_with_table_projection(
         node.multicol_rows.clear();
     }
 
-    // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
-    super::bridge::apply_computed_to_style_in_session(document, cascade)?;
-    if paged {
-        if let Some(breaks) = &document.clearance_breaks {
-            let breaks = breaks.applied_to(cascade);
-            clear_floats_at_forced_breaks(document, &breaks);
-        } else {
-            clear_floats_at_forced_breaks(document, cascade);
-        }
-    } else if !document.forced_break_clearance.is_empty()
-        || !document.forced_break_line_clearance.is_empty()
-    {
-        document.forced_break_clearance.clear();
-        document.forced_break_line_clearance.clear();
-        document.layout_dirty = true;
-    }
-    document.table_objects.project_explicit_parts = project_explicit_table_parts;
+    let (icb, available_space, content_width, content_height, body_id) = document
+        .with_style_preparation_batch(|document| {
+            // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
+            super::bridge::apply_computed_to_style_in_session(document, cascade)?;
+            if paged {
+                if let Some(breaks) = &document.clearance_breaks {
+                    let breaks = breaks.applied_to(cascade);
+                    clear_floats_at_forced_breaks(document, &breaks);
+                } else {
+                    clear_floats_at_forced_breaks(document, cascade);
+                }
+            } else if !document.forced_break_clearance.is_empty()
+                || !document.forced_break_line_clearance.is_empty()
+            {
+                document.forced_break_clearance.clear();
+                document.forced_break_line_clearance.clear();
+                document.layout_dirty = true;
+            }
+            document.table_objects.project_explicit_parts = project_explicit_table_parts;
 
-    // Step 2: resolve the paper/content split before shaping.  Text wrapping
-    // uses the content width, not the outer paper width.
-    let margins = page_margins(cascade, page_box);
-    let insets = page_content_insets(cascade, page_box);
-    // The page border and padding inset the page area, the initial
-    // containing block, on every side.
-    let content_width = insets.page_area_width(margins, page_box);
-    let content_height = insets.page_area_height(margins, page_box);
+            // Step 2: resolve the paper/content split before shaping.  Text wrapping
+            // uses the content width, not the outer paper width.
+            let margins = page_margins(cascade, page_box);
+            let insets = page_content_insets(cascade, page_box);
+            // The page border and padding inset the page area, the initial
+            // containing block, on every side.
+            let content_width = insets.page_area_width(margins, page_box);
+            let content_height = insets.page_area_height(margins, page_box);
 
-    // Step 3: <body> lookup
-    let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
-        message: "no <body> element found (fragment parse not supported yet)".to_string(),
-    })?;
-    document.propagate_viewport_overflow(cascade, body_id);
-    prepare_authored_block_widths(document, cascade, content_width);
-    if let Some(state) = document.ifc.as_mut() {
-        state.page_width = Some(content_width);
-    }
-    document.fixed_page_area = Some((content_width, content_height));
-    let icb =
-        super::initial_containing_block::prepare(document, cascade, content_width, content_height);
-    let available_space = taffy::Size {
-        width: AvailableSpace::Definite(content_width),
-        height: AvailableSpace::Definite(content_height),
-    };
-    document.begin_oof_layout();
+            // Step 3: <body> lookup
+            let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
+                message: "no <body> element found (fragment parse not supported yet)".to_string(),
+            })?;
+            document.propagate_viewport_overflow(cascade, body_id);
+            prepare_authored_block_widths(document, cascade, content_width);
+            if let Some(state) = document.ifc.as_mut() {
+                state.page_width = Some(content_width);
+            }
+            document.fixed_page_area = Some((content_width, content_height));
+            let icb = super::initial_containing_block::prepare(
+                document,
+                cascade,
+                content_width,
+                content_height,
+            );
+            let available_space = taffy::Size {
+                width: AvailableSpace::Definite(content_width),
+                height: AvailableSpace::Definite(content_height),
+            };
+            document.begin_oof_layout();
+            Ok::<_, LayoutError>((icb, available_space, content_width, content_height, body_id))
+        })?;
     crate::taffy_impl::compute_root_layout_with_content_limits(
         document,
         TaffyNodeId::from(icb),
