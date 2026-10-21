@@ -1,4 +1,5 @@
 use super::box_tree::BoxTree;
+use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
@@ -44,10 +45,8 @@ type ProjectedSlices = (
 // items; preserve their stored offsets relative to the visited parent.
 fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, raw_y: f32) -> f32 {
     let mut child_parent_y = raw_y;
-    let mut skipped_parent = document.parent_of(child);
-    while let Some(id) = skipped_parent.filter(|&id| id != parent) {
+    for id in document.ancestors(child).take_while(|&id| id != parent) {
         child_parent_y += document.nodes[id].unrounded_layout.location.y;
-        skipped_parent = document.parent_of(id);
     }
     child_parent_y
 }
@@ -327,15 +326,17 @@ fn accumulated_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    std::iter::successors(Some(node_id), |&id| {
-        if id == body_id {
-            None
-        } else {
-            document.parent_of(id)
-        }
-    })
-    .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
-    .sum()
+    document
+        .inclusive_ancestors(node_id)
+        .scan(false, |finished, id| {
+            if *finished {
+                return None;
+            }
+            *finished = id == body_id;
+            Some(id)
+        })
+        .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
+        .sum()
 }
 
 /// The block offset of a relatively positioned box that layout leaves to
@@ -782,15 +783,18 @@ impl ColumnContexts {
         document: &Document,
         cascade: &CascadeResult,
     ) -> Option<usize> {
-        let mut current = node_id;
+        let mut walk = AncestorCursor::new(Some(node_id), ParentRelation::Source);
         let mut visited = Vec::new();
-        let context = loop {
+        let mut context = None;
+        while let Some(current) = walk.current() {
             if let Some(cached) = self.cache[current] {
-                break cached;
+                context = cached;
+                break;
             }
             visited.push(current);
-            let Some(parent) = document.parent_of(current) else {
-                break None;
+            walk.advance(document);
+            let Some(parent) = walk.current() else {
+                break;
             };
             let computed = &cascade.computed[parent];
             if document.nodes[parent].formatting_context == FormattingContext::Flex
@@ -799,10 +803,10 @@ impl ColumnContexts {
                     FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                 )
             {
-                break Some(parent);
+                context = Some(parent);
+                break;
             }
-            current = parent;
-        };
+        }
         for node in visited {
             self.cache[node] = Some(context);
         }
@@ -2793,14 +2797,9 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
     if !matches!(value, BreakBetween::Always) {
         return false;
     }
-    let mut ancestor = document.layout_parent_of(node_id);
-    while let Some(id) = ancestor {
-        if document.nodes[id].multicol.is_some() {
-            return false;
-        }
-        ancestor = document.layout_parent_of(id);
-    }
-    true
+    !document
+        .layout_ancestors(node_id)
+        .any(|id| document.nodes[id].multicol.is_some())
 }
 
 // Find the first/last generated child box, eliding Contents without cloning
@@ -3312,6 +3311,56 @@ fn fixed_page_step(content_height: f32, paper_height: f32) -> f32 {
     }
 }
 
+/// Propagate a spanning owner's growth only while its ancestors can absorb it.
+fn grow_spanning_column_ancestors(
+    document: &mut super::context::LayoutSession<'_>,
+    owner: usize,
+    delta: f32,
+    body_id: usize,
+    sibling_shifts: &mut sibling_shifts::SiblingShifts,
+    fragment_edits: &mut FragmentEdits,
+    column_work: &mut ProjectionWork<'_, '_>,
+) -> Result<(), LayoutError> {
+    let mut child = owner;
+    let mut walk = AncestorCursor::new(document.layout_parent_of(owner), ParentRelation::Layout);
+    while let Some(parent) = walk.current() {
+        if document.nodes[child].taffy_position() == TaffyPosition::Absolute
+            || document
+                .layout_node_with_style(child)
+                .unwrap()
+                .style
+                .float
+                .is_floated()
+        {
+            break;
+        }
+        // A paragraph's line shifts follow its boxes' current positions.
+        if document.nodes[parent].ifc.is_some() {
+            sibling_shifts.apply(document, fragment_edits, parent);
+        }
+        let _ = follow_moved_ifc_block(document, child, delta);
+        sibling_shifts.record(document, parent, child, delta, column_work)?;
+        if !document
+            .layout_node_with_style(parent)
+            .unwrap()
+            .style
+            .size
+            .height
+            .is_auto()
+        {
+            break;
+        }
+        document.nodes[parent].unrounded_layout.size.height += delta;
+        fragment_edits.grow(parent, delta);
+        if parent == body_id {
+            break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
+        }
+        child = parent;
+        walk.advance(document);
+    }
+    Ok(())
+}
+
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
 /// page area, as for [`layout_pages_with_options`].
@@ -3391,41 +3440,15 @@ fn paginate_flow(
         if delta == 0.0 {
             continue;
         }
-        let mut child = owner;
-        while let Some(parent) = document.layout_parent_of(child) {
-            if document.nodes[child].taffy_position() == TaffyPosition::Absolute
-                || document
-                    .layout_node_with_style(child)
-                    .unwrap()
-                    .style
-                    .float
-                    .is_floated()
-            {
-                break;
-            }
-            // A paragraph's line shifts follow its boxes' current positions.
-            if document.nodes[parent].ifc.is_some() {
-                sibling_shifts.apply(document, &mut fragment_edits, parent);
-            }
-            let _ = follow_moved_ifc_block(document, child, delta);
-            sibling_shifts.record(document, parent, child, delta, &mut column_work)?;
-            if !document
-                .layout_node_with_style(parent)
-                .unwrap()
-                .style
-                .size
-                .height
-                .is_auto()
-            {
-                break;
-            }
-            document.nodes[parent].unrounded_layout.size.height += delta;
-            fragment_edits.grow(parent, delta);
-            if parent == body_id {
-                break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
-            }
-            child = parent;
-        }
+        grow_spanning_column_ancestors(
+            document,
+            owner,
+            delta,
+            body_id,
+            &mut sibling_shifts,
+            &mut fragment_edits,
+            &mut column_work,
+        )?;
     }
     sibling_shifts.apply_all(document, &mut fragment_edits);
     fragment_edits.finish(document, &mut column_work)?;
@@ -3596,16 +3619,12 @@ fn table_row_leads(
             .map(|candidate| (candidate.node_id, candidate.raw_y))
             .collect();
         let table_of = |row: usize| {
-            let mut table = document.parent_of(row);
-            while let Some(id) = table
-                && !matches!(
+            document.ancestors(row).find(|&id| {
+                matches!(
                     document.nodes[id].display(),
                     DisplayValue::Table | DisplayValue::InlineTable
                 )
-            {
-                table = document.parent_of(id);
-            }
-            table
+            })
         };
         // Each table's first row in visual order: the table layout places a
         // footer group after the body groups wherever it is in the source.
@@ -4004,6 +4023,11 @@ fn current_abs_y(document: &Document, node_id: usize) -> f32 {
     if let Some(origin) = document.layout_origin_of(node_id) {
         return origin.y;
     } // cov:ignore: callers supply existing layout keys; missing keys would panic in the fallback's arena indexing.
+    current_abs_y_fallback(document, node_id) // cov:ignore: valid keys return above; the defensive walk is tested directly.
+}
+
+// Keep the defensive walk testable without bypassing the coordinate-owner fast path.
+fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
     let mut id = document.ifc_source_owner(node_id);
     let mut y = if id != node_id {
         document
@@ -4016,14 +4040,15 @@ fn current_abs_y(document: &Document, node_id: usize) -> f32 {
         0.0
     };
     let mut guard = 0_usize;
+    let mut walk = AncestorCursor::new(Some(id), ParentRelation::Layout);
     while guard <= document.nodes.len() {
         y += document.nodes[id].unrounded_layout.location.y;
         // A box of an inline engine paragraph is located from the root,
         // not from the inline elements around it.
-        let Some(parent_id) = document
-            .parent_of(id)
-            .and_then(|_| document.layout_parent_of(id))
-        else {
+        let Some(parent_id) = document.parent_of(id).and_then(|_| {
+            walk.advance(document);
+            walk.current()
+        }) else {
             break;
         };
         id = parent_id;
@@ -4049,8 +4074,9 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
             .contains(NodeFlags::IN_IFC_SUBTREE);
     let mut moved = block;
     let mut child = block;
-    while let Some(parent) = document.layout_parent_of(child)
-        && parent != body_id
+    for parent in document
+        .layout_ancestors(block)
+        .take_while(|&id| id != body_id)
     {
         // Content before `child`, such as a float beside the paragraph,
         // already sits on this page, and so may a later absolutely
@@ -4495,7 +4521,7 @@ fn generated_box_separates(
             .or_else(|| separates(id, PseudoElem::Before).then_some(true))
     }
     let mut current = node_id;
-    while let Some(parent) = document.parent_of(current) {
+    for parent in document.ancestors(node_id) {
         let siblings = &document.nodes[parent].children;
         let index = siblings
             .iter()
@@ -5047,10 +5073,7 @@ fn adjoins_previous_sibling(
     previous: usize,
 ) -> bool {
     let mut current = node_id;
-    loop {
-        let Some(parent) = document.parent_of(current) else {
-            return false;
-        };
+    for parent in document.ancestors(node_id) {
         let siblings = &document.nodes[parent].children;
         let Some(index) = siblings.iter().position(|&id| id == current) else {
             return false;
@@ -5072,6 +5095,7 @@ fn adjoins_previous_sibling(
         }
         current = parent;
     }
+    false
 }
 
 /// Whether `node_id` is a block box that takes no block space, so that only
@@ -5572,14 +5596,12 @@ impl EnteredParagraphs {
         let mut first = ifc_root
             .filter(|&(root, _)| document.is_anonymous_cell(root))
             .is_none_or(|(root, _)| self.roots.insert(root));
-        let mut current = document.parent_of(node_id);
-        while let Some(id) = current {
+        for id in document.ancestors(node_id) {
             if document.nodes[id].is_ifc_root() && !self.roots.insert(id) {
                 first = false;
                 // Higher IFC roots were registered when this root was first entered.
                 break;
             }
-            current = document.parent_of(id);
         }
         first
     }
@@ -6505,12 +6527,12 @@ fn grow_ancestors_for_shift(
     let mut flow_delta = delta;
     let mut size_delta = delta;
     let mut float_delta = delta;
-    let mut next = document.parent_of(child);
-    while let Some(parent) = next {
+    let mut walk = AncestorCursor::new(document.parent_of(child), ParentRelation::Source);
+    while let Some(parent) = walk.current() {
         if document.nodes[parent].kind() != NodeKind::Element {
             break;
         }
-        next = document.parent_of(parent);
+        walk.advance(document);
         // A `display: contents` element has no box to grow; its parent lays
         // the moved box out.
         if document.nodes[parent].display() == DisplayValue::Contents {
@@ -6618,9 +6640,9 @@ fn shrink_ancestors_after_margin_truncation(
     let mut flow_delta = delta;
     let mut size_delta = delta;
     let mut float_delta = delta;
-    let mut next = document.layout_parent_of(child);
-    while let Some(parent) = next {
-        next = document.layout_parent_of(parent);
+    let mut walk = AncestorCursor::new(document.layout_parent_of(child), ParentRelation::Layout);
+    while let Some(parent) = walk.current() {
+        walk.advance(document);
         if document.nodes[parent].kind() != NodeKind::Element
             || document.nodes[parent].size_containment.height
         {
@@ -6702,13 +6724,15 @@ fn placed_in_block_flow(
     body_id: usize,
 ) -> bool {
     let mut child = block;
+    let mut walk = AncestorCursor::new(Some(block), ParentRelation::Layout);
     loop {
         let placed_apart = is_floating_box_for_pagination(document, cascade, child)
             || matches!(
                 document.nodes[child].position(),
                 PositionValue::Absolute | PositionValue::Fixed
             );
-        match document.layout_parent_of(child) {
+        walk.advance(document);
+        match walk.current() {
             Some(parent) if !placed_apart && parent == body_id => return true,
             // A `display: contents` element has no box; its parent lays the
             // child out.
@@ -7422,7 +7446,8 @@ fn float_context_root(
 /// Whether `node_id` is the root of an inline formatting context or an
 /// inline inside one, whose boxes sit in the root's coordinates.
 fn in_inline_context(document: &Document, node_id: usize) -> bool {
-    std::iter::successors(Some(node_id), |&id| document.parent_of(id))
+    document
+        .inclusive_ancestors(node_id)
         .find(|&id| {
             let display = document.nodes[id].display();
             document.nodes[id].is_ifc_root()
@@ -7680,11 +7705,9 @@ fn shift_block_flow_after(
     flow_delta: f32,
 ) {
     let mut child = node_id;
-    let mut next = document.parent_of(node_id);
-    while let Some(parent) = next
-        && parent != body_id
-    {
-        next = document.parent_of(parent);
+    let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
+    while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
+        walk.advance(document);
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }

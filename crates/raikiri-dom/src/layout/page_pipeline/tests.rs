@@ -2,6 +2,7 @@ use super::*;
 use crate::LayoutStyle as Style;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 
+mod ancestor_walk_tests;
 mod avoid_followup_tests;
 mod candidate_context_tests;
 mod candidate_text_tests;
@@ -8762,12 +8763,10 @@ fn paragraph_with_span_child(css: &str) -> (Document, CascadeResult, usize) {
 /// its layout parents.
 fn layout_position(doc: &Document, node: usize) -> (f32, f32) {
     let (mut x, mut y) = (0.0, 0.0);
-    let mut current = Some(node);
-    while let Some(id) = current {
+    for id in doc.inclusive_layout_ancestors(node) {
         let layout = doc.nodes[id].unrounded_layout;
         x += layout.location.x;
         y += layout.location.y;
-        current = doc.layout_parent_of(id);
     }
     (x, y)
 }

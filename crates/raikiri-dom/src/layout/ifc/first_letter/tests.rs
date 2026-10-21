@@ -3,6 +3,8 @@ use crate::layout::ifc::test_support::{Fixture, ahem_fonts, sheet_fixture};
 use shodo::limits::{LimitExceeded, LimitKind, Limits};
 use shodo::{AtomicSizes, LayoutContext};
 
+mod ancestor_walk_tests;
+
 fn paragraph_builder(
     fixture: &Fixture,
     fonts: &FontCollection,

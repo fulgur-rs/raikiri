@@ -491,10 +491,9 @@ impl Document {
             return Some(table);
         }
         let parent = self.parent_of(node)?;
-        let mut top = parent;
-        while TaffyChildIter::is_flattened(self, top) {
-            top = self.parent_of(top)?;
-        }
+        let top = self
+            .inclusive_ancestors(parent)
+            .find(|&id| !TaffyChildIter::is_flattened(self, id))?;
         let container = &self.layout_node_with_style(top).unwrap();
         let lifted = top != parent
             && !container.is_display_none()

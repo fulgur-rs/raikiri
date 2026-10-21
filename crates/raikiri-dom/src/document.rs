@@ -42,6 +42,7 @@ pub(crate) struct OofCoordinate {
     pub(crate) initial_static_origin: Option<taffy::Point<f32>>,
 }
 
+pub(crate) mod ancestors;
 mod mutation;
 pub use mutation::DomMutationError;
 

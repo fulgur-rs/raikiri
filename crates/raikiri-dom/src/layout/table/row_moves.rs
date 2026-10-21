@@ -140,11 +140,9 @@ fn move_top(document: &mut Document, id: usize, delta: f32) {
 }
 
 fn absolute_y(document: &Document, node: usize) -> f32 {
-    let mut y = 0.0;
-    let mut current = Some(node);
-    while let Some(id) = current {
-        y += document.nodes[id].unrounded_layout.location.y;
-        current = document.layout_parent_of(id);
-    }
-    y
+    document
+        .inclusive_layout_ancestors(node)
+        .fold(0.0, |y, id| {
+            y + document.nodes[id].unrounded_layout.location.y
+        })
 }

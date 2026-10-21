@@ -1,6 +1,10 @@
 use super::*;
 
 fn long_spanning_document() -> (Document, CascadeResult) {
+    spanning_document("display:block;column-span:all")
+}
+
+fn spanning_document(heading_css: &str) -> (Document, CascadeResult) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
     document.append_element(Some(html), "head", Style::default(), None::<&str>);
@@ -28,17 +32,102 @@ fn long_spanning_document() -> (Document, CascadeResult) {
             .collect::<Vec<_>>()
             .join("\n"),
     );
-    let heading = document.append_element(
-        Some(owner),
-        "div",
-        Style::default(),
-        Some("display:block;column-span:all"),
-    );
+    let heading = document.append_element(Some(owner), "div", Style::default(), Some(heading_css));
     document.append_text(heading, "B");
     let rules = raikiri_style::build_rule_tree(&document);
     let cascade = raikiri_style::cascade(&document, &rules).unwrap();
     with_ahem(&mut document);
     (document, cascade)
+}
+
+#[test]
+fn spanning_pagination_completes_with_the_heading_after_the_column_tail() {
+    let (mut document, cascade) = long_spanning_document();
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 60.0;
+    let slices = layout_pages(&mut document, &cascade, page).unwrap();
+    assert!(slices.len() > 1);
+    document
+        .project_pages(&cascade, page, &slices, &[])
+        .unwrap();
+    let tail = document.page_text_runs(&cascade, slices.last().unwrap().page_index);
+    assert!(tail.iter().any(|run| run.text == "B"));
+}
+
+#[test]
+fn spanning_pagination_propagates_an_exhausted_ancestor_growth_budget() {
+    let (mut document, cascade) =
+        spanning_document("display:block;column-span:all;height:40px;break-inside:avoid");
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 60.0;
+    layout_single_page_with_table_projection(
+        &mut crate::layout::context::LayoutSession::with_cascade(&mut document, &cascade),
+        &cascade,
+        page,
+        true,
+        true,
+    )
+    .unwrap();
+    let owner = document
+        .nodes
+        .iter()
+        .position(|n| !n.multicol_groups.is_empty())
+        .unwrap();
+    let parent = document.layout_parent_of(owner).unwrap();
+    let root = crate::layout::initial_containing_block::root_element(&document).unwrap();
+    let margins = page_margins(&cascade, page);
+    let insets = page_content_insets(&cascade, page);
+    let step = fixed_page_step(insets.page_area_height(margins, page), page.height);
+    let origins = PageOrigins::new(&[], step);
+    let control = PageLayoutControl::default();
+    let limit = document.fragment_tree.work_limit(document.nodes.len());
+    // Measure the preceding phase so only ancestor propagation runs out of work.
+    let mut probe = document.clone();
+    let mut edits = FragmentEdits::new(&probe.fragment_tree);
+    let mut work = ProjectionWork::new(&control, limit);
+    let owner_y = current_abs_y(&probe, owner);
+    let delta = paginate_spanning_columns(
+        &mut probe,
+        &mut edits,
+        owner,
+        owner_y,
+        &|y| {
+            let index = origins.page_index_for_y(y);
+            (index, origins.origin(index), origins.step_at(index))
+        },
+        &mut work,
+    )
+    .unwrap();
+    assert_eq!(delta, 20.0);
+    let planning_cost = limit - work.remaining();
+    document.fragment_tree.break_flow_work_used = limit - planning_cost;
+    let parent_height = document.nodes[parent].unrounded_layout.size.height;
+    let result = paginate_flow(
+        &mut crate::layout::context::LayoutSession::new(&mut document),
+        &cascade,
+        root,
+        PageFlowGeometry {
+            page_box: page,
+            margins,
+            insets,
+        },
+        &[],
+        &[],
+        &control,
+    );
+    assert!(
+        matches!(result, Err(LayoutError::FragmentLimitExceeded { limit: actual }) if actual == limit)
+    );
+    assert_eq!(
+        document.nodes[parent].unrounded_layout.size.height,
+        parent_height
+    );
+    assert_eq!(
+        document.nodes[owner].unrounded_layout.size.height,
+        probe.nodes[owner].unrounded_layout.size.height
+    );
 }
 
 #[test]
