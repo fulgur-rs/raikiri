@@ -193,3 +193,49 @@ fn scoped_snapshot_restores_an_applied_setup_prefix() {
         LengthPercentage::length(73.0)
     );
 }
+
+#[test]
+#[should_panic(expected = "snapshot registrations restore in reverse order")]
+fn snapshot_index_rejects_out_of_order_deregistration() {
+    let (mut doc, cascade, child, _) = fixture();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    let outer = frame(&mut tree, parent, child);
+    let inner = frame(&mut tree, child, child);
+    let mut index = TransposedStyleIndex::default();
+    index.register(&outer, 0);
+    index.register(&inner, 1);
+    index.unregister(&outer, 0);
+}
+
+#[test]
+fn snapshot_apply_rejects_a_different_frame_before_changing_fields() {
+    let (mut doc, cascade, child, _) = fixture();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    let mut block = frame(&mut tree, child, child);
+    let original = block.container_style.size;
+    let mut undo = TransposedSizingUndo {
+        frame: 0,
+        id: block.id + 1,
+        child: None,
+        previous: None,
+    };
+    let entry = OwnedPropertyOverride::length(LengthProperty::Width, L::Px(11.0), true).unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        undo.apply(std::slice::from_mut(&mut block), &entry)
+    }));
+    let payload = result.expect_err("a different frame must be rejected");
+    let message = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied());
+    assert!(
+        message
+            .unwrap()
+            .contains("scope restores the same transposed frame")
+    );
+    assert_eq!(block.container_style.size, original);
+    assert!(undo.previous.is_none());
+}

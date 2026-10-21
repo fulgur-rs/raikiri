@@ -121,7 +121,9 @@ impl LayoutSession<'_> {
                 .filter_map(|(_, _, entry)| entry.calc_owner())
                 .cloned(),
         );
-        for (applied, (key, index, entry)) in indexed.into_iter().enumerate() {
+        #[cfg(test)]
+        let mut applied = 0;
+        for (key, index, entry) in indexed {
             let transposed = crate::taffy_impl::TransposedSizingUndo::prepare(
                 &self.context.transposed_blocks,
                 &self.context.transposed_style_index,
@@ -174,9 +176,10 @@ impl LayoutSession<'_> {
                 );
             }
             #[cfg(test)]
-            super::tests::scoped_override_tests::after_setup_entry(self, index, applied + 1);
-            #[cfg(not(test))]
-            let _ = applied;
+            {
+                applied += 1;
+                super::tests::scoped_override_tests::after_setup_entry(self, index, applied);
+            }
         }
     }
 

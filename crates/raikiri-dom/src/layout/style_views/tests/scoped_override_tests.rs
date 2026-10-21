@@ -416,3 +416,35 @@ fn scoped_override_production_updates_view_and_legacy_then_unwinds_multiple_keys
     );
     assert_eq!(session.style_view(text).size().width, text_before);
 }
+
+#[test]
+fn scoped_override_checkpoint_rejects_future_markers_without_losing_state() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let key = tree.nodes.box_key(child).unwrap();
+    tree.with_overrides(vec![entry(key, 11.0)], |tree| {
+        let checkpoint = tree.override_checkpoint();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tree.restore_overrides_to(checkpoint + 1)
+        }));
+        let payload = result.expect_err("a future checkpoint must be rejected");
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+        assert_eq!(message, Some("scope checkpoint is active"));
+        assert_eq!(tree.override_checkpoint(), checkpoint);
+        assert_eq!(tree.style_override_depth(child), 1);
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
+        assert_eq!(
+            tree.layout_style_for_key(child).unwrap().size.width,
+            Dimension::length(11.0)
+        );
+    });
+    assert_eq!(tree.override_checkpoint(), 0);
+    assert_eq!(
+        tree.layout_style_for_key(child).unwrap().size.width,
+        Dimension::length(31.0)
+    );
+}

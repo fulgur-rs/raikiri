@@ -226,3 +226,116 @@ fn earlier_item_bounds_are_visible_while_the_next_item_is_measured() {
             .is_auto()
     );
 }
+
+#[test]
+fn oof_child_scope_restores_after_dispatch_unwinds() {
+    let (mut doc, mut cascade, child, _) = fixture();
+    cascade.computed[child].position = raikiri_style::property::PositionValue::Absolute;
+    cascade.computed[child].min_width = L::MaxContent;
+    crate::layout::test_support::with_ahem(&mut doc);
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let original = tree.layout_style_for_key(child).unwrap().min_size;
+    let mut observed = false;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::super::with_oof_child_content_limits(
+            &mut tree,
+            NodeId::from(child),
+            super::style_view_tests::content_limit_inputs(),
+            |tree, _, _| {
+                assert!(
+                    !tree
+                        .layout_style_for_key(child)
+                        .unwrap()
+                        .min_size
+                        .width
+                        .is_auto()
+                );
+                observed = true;
+                panic!("OOF child dispatch unwind");
+            },
+        );
+    }));
+    assert!(result.is_err());
+    assert!(observed);
+    assert_eq!(tree.layout_style_for_key(child).unwrap().min_size, original);
+    assert_eq!(tree.style_view(child).min_size(), original);
+    assert_eq!(tree.override_checkpoint(), 0);
+    assert!(tree.context.content_limit_probes.is_empty());
+    assert_eq!(tree.context.content_limit_depth, 0);
+    assert!(tree.layout_dirty);
+}
+
+#[test]
+fn intrinsic_probe_restores_after_a_descendant_unwinds() {
+    use std::cell::Cell;
+    thread_local! {
+        static ROOT: Cell<usize> = const { Cell::new(usize::MAX) };
+        static OBSERVED: Cell<bool> = const { Cell::new(false) };
+    }
+    fn fail_in_descendant(tree: &LayoutSession<'_>, index: usize, _: usize) {
+        let root = ROOT.get();
+        if index != root && tree.context.content_limit_probes.contains(&root) {
+            assert!(
+                tree.layout_style_for_key(root)
+                    .unwrap()
+                    .size
+                    .width
+                    .is_auto()
+            );
+            OBSERVED.set(true);
+            panic!("descendant while the intrinsic probe computes");
+        }
+    }
+    let (mut doc, _, root, _) = crate::layout::style_views::tests::fixture_with_styles(
+        "display:block",
+        "display:flex;width:31px;height:7px",
+    );
+    let child = doc.append_element(
+        Some(root),
+        "div",
+        crate::LayoutStyle::default(),
+        Some("width:23px;height:11px;min-width:max-content"),
+    );
+    doc.mark_in_document_flags();
+    let mut cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    cascade.computed[root].min_width = L::MaxContent;
+    crate::layout::test_support::with_ahem(&mut doc);
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    ROOT.set(root);
+    OBSERVED.set(false);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::layout::style_views::tests::with_setup_inspector(fail_in_descendant, || {
+            super::super::with_content_limits(
+                &mut tree,
+                NodeId::from(root),
+                super::style_view_tests::content_limit_inputs(),
+                |_, _, _| panic!("dispatch must not run"),
+            );
+        });
+    }));
+    assert!(result.is_err());
+    assert!(OBSERVED.get());
+    assert_eq!(tree.override_checkpoint(), 0);
+    assert_eq!(tree.style_override_depth(root), 0);
+    assert_eq!(tree.style_override_depth(child), 0);
+    assert_eq!(
+        tree.layout_style_for_key(root).unwrap().size.width,
+        taffy::Dimension::length(31.0)
+    );
+    assert_eq!(
+        tree.layout_style_for_key(child).unwrap().size.width,
+        taffy::Dimension::length(23.0)
+    );
+    assert!(tree.context.content_limit_probes.is_empty());
+    assert!(
+        tree.context
+            .content_limit_percentage_height_bases
+            .is_empty()
+    );
+    assert_eq!(tree.context.content_limit_depth, 0);
+    assert!(tree.layout_dirty);
+}

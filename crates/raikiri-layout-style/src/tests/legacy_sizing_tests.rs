@@ -148,3 +148,25 @@ fn transposed_legacy_sizing_swaps_physical_targets_and_undoes_only_the_target() 
         assert_eq!(style.aspect_ratio, None);
     }
 }
+
+#[test]
+fn transposed_legacy_sizing_rejects_unrelated_entries_without_mutation() {
+    let mut style = Style::<raikiri_style::SmolStr> {
+        aspect_ratio: Some(3.0),
+        ..Style::default()
+    };
+    for entry in [
+        OwnedPropertyOverride::length(LengthProperty::MarginLeft, L::Px(7.0), true).unwrap(),
+        OwnedPropertyOverride::flex_shrink(0.5),
+    ] {
+        assert!(matches!(
+            entry.apply_transposed_legacy_sizing(&mut style),
+            Err(OverrideError::UnsupportedLegacySizing)
+        ));
+        assert_eq!(style.aspect_ratio, Some(3.0));
+        assert!(style.size.width.is_auto());
+        assert!(style.size.height.is_auto());
+        assert_eq!(style.flex_shrink, 1.0);
+        assert_eq!(style.margin.left, Lpa::length(0.0));
+    }
+}
