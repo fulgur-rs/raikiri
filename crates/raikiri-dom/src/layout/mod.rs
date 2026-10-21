@@ -131,7 +131,8 @@ pub use page::{
     page_margins_for_page, resolve_initial_page_context,
 };
 pub use page_pipeline::{
-    PageLayoutControl, PageSlice, layout_pages, layout_pages_with_page_geometry,
+    PageImageOptions, PageLayoutControl, PageLayoutOptions, PageSlice, layout_pages,
+    layout_pages_with_options, layout_pages_with_page_geometry,
     layout_pages_with_page_geometry_and_control, layout_pages_with_page_geometry_and_resolver,
     layout_pages_with_page_geometry_and_resolver_and_base_url,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,

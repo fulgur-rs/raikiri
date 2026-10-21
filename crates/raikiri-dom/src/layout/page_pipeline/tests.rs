@@ -9,6 +9,7 @@ mod column_projection_tests;
 mod fragment_sources_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
+mod options_tests;
 mod page_name_storage_tests;
 mod paged_spanning_tests;
 mod source_walk_tests;

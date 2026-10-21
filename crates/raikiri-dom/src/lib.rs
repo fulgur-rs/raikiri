@@ -103,7 +103,8 @@ pub use layout::{
 pub use column_rules::ColumnRule;
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, MAX_LAYOUT_DEPTH,
-    PageContentInsets, PageLayoutControl, PageMargins, PageSlice, first_page_name, layout_pages,
+    PageContentInsets, PageImageOptions, PageLayoutControl, PageLayoutOptions, PageMargins,
+    PageSlice, first_page_name, layout_pages, layout_pages_with_options,
     layout_pages_with_page_geometry, layout_pages_with_page_geometry_and_control,
     layout_pages_with_page_geometry_and_resolver,
     layout_pages_with_page_geometry_and_resolver_and_base_url,

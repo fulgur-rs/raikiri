@@ -1247,6 +1247,27 @@ pub struct PageSlice {
     pub page_name: Option<String>,
 }
 
+/// Optional image resolution before paginating a document.
+pub struct PageImageOptions<'a> {
+    /// Resolves the intrinsic sizes of rendered images.
+    pub resolver: &'a dyn ReplacedResolver,
+    /// Base URL for relative image sources.
+    pub base_url: Option<&'a url::Url>,
+}
+
+/// Borrowed settings for [`layout_pages_with_options`].
+#[derive(Default)]
+pub struct PageLayoutOptions<'a> {
+    /// Per-page content heights; empty keeps the fixed page height.
+    pub page_steps: &'a [f32],
+    /// Per-page content widths; empty keeps the fixed page width.
+    pub page_widths: &'a [f32],
+    /// Image resolution performed before layout, when supplied.
+    pub images: Option<PageImageOptions<'a>>,
+    /// Caller-owned limits and cancellation state; absent uses the default.
+    pub control: Option<&'a PageLayoutControl<'a>>,
+}
+
 /// Controls page production and cancellation in the paginator.
 ///
 /// The default matches [`raikiri_traits::RenderLimits::default`]. Pass `None`
@@ -2919,7 +2940,42 @@ pub fn layout_pages(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_steps(document, cascade, page_box, &[])
+    layout_pages_with_options(document, cascade, page_box, PageLayoutOptions::default())
+}
+
+/// Layout a document into pages with borrowed geometry, image, and control settings.
+///
+/// Image resolution preserves the document's decoded image state for later
+/// layout and painting. A hidden root does not ask the resolver for images.
+pub fn layout_pages_with_options(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    options: PageLayoutOptions<'_>,
+) -> Result<Vec<PageSlice>, LayoutError> {
+    let default_control;
+    let control = match options.control {
+        Some(control) => control,
+        None => {
+            default_control = PageLayoutControl::default();
+            &default_control
+        }
+    };
+    if let Some(images) = options.images {
+        control.check_page_index(0)?;
+        super::validate_layout_depth(document)?;
+        document.page_projection.clear();
+        document.mark_in_document_flags();
+        resolve_document_images(document, cascade, images.resolver, images.base_url)?;
+    }
+    layout_pages_core(
+        document,
+        cascade,
+        page_box,
+        options.page_steps,
+        options.page_widths,
+        control,
+    )
 }
 
 /// Like [`layout_pages`], but first use `resolver` to resolve the intrinsic
@@ -3108,6 +3164,17 @@ pub fn layout_pages_with_page_geometry(
 /// [`layout_pages_with_page_geometry`] with an explicit page limit and
 /// cancellation check.
 pub fn layout_pages_with_page_geometry_and_control(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    page_steps: &[f32],
+    page_widths: &[f32],
+    control: &PageLayoutControl<'_>,
+) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_pages_core(document, cascade, page_box, page_steps, page_widths, control)
+}
+
+fn layout_pages_core(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
