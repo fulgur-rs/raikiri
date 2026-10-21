@@ -166,7 +166,6 @@ pub(crate) fn apply_computed_to_style_in_session(
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
     doc.document.layout_cache_context.publish_source();
-    #[cfg(test)]
     doc.begin_style_bridge();
     doc.context.table_cache.clear();
     // Keep the previous payloads alive while styles are rebuilt in place.
@@ -183,17 +182,11 @@ pub(crate) fn apply_computed_to_style_in_session(
             .count()
             + 8;
         doc.document.layout_cache_context.configure_nodes(expected);
-        #[cfg(test)]
-        doc.prepare_style_views();
-        doc.document
-            .retained_layout_styles
-            .calc_values
-            .drain(..old_calc_len);
+        doc.finish_style_bridge(old_calc_len);
     }
     result
 }
 
-#[cfg(test)]
 pub(super) fn view_sizing_flags(
     doc: &Document,
     cascade: &CascadeResult,
@@ -222,7 +215,9 @@ pub(super) fn view_sizing_flags(
     if min_content_width_is_auto(doc, cascade, idx) {
         flags = flags.union(F::MIN_CONTENT_WIDTH_AUTO);
     }
-    if !sized_by_content_keyword(doc, cascade, idx, cv) {
+    if (content_keyword(width) || (logical.is_some() && content_keyword(height)))
+        && !sized_by_content_keyword(doc, cascade, idx, cv)
+    {
         if content_keyword(width) {
             flags = flags.union(F::IGNORE_WIDTH_KEYWORD);
         }
@@ -361,7 +356,6 @@ fn apply_computed_to_style_in_session_inner(
             .unwrap()
             .style
             .aspect_ratio = preferred_ratio;
-        #[cfg(test)]
         if natural_ratio.is_some() {
             doc.record_pass_override(
                 idx,
@@ -391,7 +385,6 @@ fn apply_computed_to_style_in_session_inner(
                     .style
                     .size
                     .width = Dimension::percent(1.0);
-                #[cfg(test)]
                 doc.record_pass_override(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::length(
@@ -409,7 +402,6 @@ fn apply_computed_to_style_in_session_inner(
                     .unwrap()
                     .style
                     .aspect_ratio = None;
-                #[cfg(test)]
                 doc.record_pass_override(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
@@ -428,7 +420,6 @@ fn apply_computed_to_style_in_session_inner(
             if matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.height = Dimension::length(intrinsic_height);
             }
-            #[cfg(test)]
             {
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 for (property, value, original) in [
@@ -528,7 +519,6 @@ fn apply_computed_to_style_in_session_inner(
         if let Some(container) = container {
             let _overrides =
                 bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[container]);
-            #[cfg(test)]
             {
                 if let Some(value) = _overrides.0 {
                     doc.record_pass_override(
@@ -578,11 +568,8 @@ fn apply_computed_to_style_in_session_inner(
         // Keep the owners before publishing any raw calc pointers through the
         // retained style map. A panic while inserting owners can only leave
         // extra owners behind; it cannot leave a dangling style handle.
-        doc.document
-            .retained_layout_styles
-            .calc_values
-            .extend(calc_values);
         let key = doc.nodes.box_key(idx).expect("source node has a box key");
+        doc.retain_bridge_calcs(key, calc_values);
         doc.document.retained_layout_styles.insert(key, style);
     }
     super::spanner_wrappers::lift_spanner_wrappers(doc, cascade);
@@ -614,7 +601,6 @@ fn apply_computed_to_style_in_session_inner(
             if containment.height && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.height = Dimension::auto();
             }
-            #[cfg(test)]
             {
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 doc.record_pass_override(idx, O::aspect_ratio(contained_ratio));
@@ -639,7 +625,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .aspect_ratio = None;
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
@@ -650,7 +635,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .justify_self = Some(TaffyAlignItems::START);
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(
@@ -663,7 +647,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .align_self = Some(TaffyAlignItems::FLEX_START);
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(
@@ -676,7 +659,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .align_self = Some(fallback);
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),
@@ -1174,7 +1156,7 @@ fn bridge_float(style: &mut crate::LayoutStyle, cv: &ComputedValues) {
 fn bridge_margin(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     let m = cv.margin;
@@ -1210,7 +1192,7 @@ fn bridge_margin(
 fn bridge_padding(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     let p = cv.padding;
@@ -1320,7 +1302,7 @@ fn bridge_overflow(style: &mut crate::LayoutStyle, cv: &ComputedValues) {
 fn bridge_inset(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     // Insets keep a mixed `calc()` in the document arena, like min/max sizes,
@@ -1662,7 +1644,7 @@ fn bridge_min_max_size(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
     vertical_axes: bool,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     // Use two struct literals to write each pair of min/max fields together
@@ -1818,7 +1800,7 @@ fn bridge_box_sizing(style: &mut crate::LayoutStyle, cv: &ComputedValues) {
 fn bridge_flex(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     style.flex_direction = match cv.flex_direction {
@@ -2063,7 +2045,7 @@ fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
 fn bridge_gap(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     style.gap = Size {
@@ -2077,7 +2059,7 @@ fn bridge_gap(
 /// to the block axis (`row-gap`). This follows taffy `Size` conventions and
 /// the axis mapping of `width`/`height` in [`bridge_size`].
 fn computed_gap_component_to_taffy(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     gap: ComputedLengthPercentageOrNormal,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -2113,7 +2095,7 @@ fn computed_gap_component_to_taffy(
 fn bridge_grid(
     style: &mut crate::LayoutStyle,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     let (columns, column_names) = grid_template_tracks_to_taffy(
@@ -2208,7 +2190,7 @@ fn bridge_grid(
 /// `none` maps to a pair of empty `Vec`s — taffy's own default for a
 /// container with no explicit track list.
 fn grid_template_tracks_to_taffy(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     tracks: &ComputedGridTemplateTracks,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -2275,7 +2257,7 @@ fn grid_repeat_count_to_taffy(count: GridRepeatCount) -> TaffyRepetitionCount {
 /// min side as `auto`, which is what `MinTrackSizingFunction::auto()`
 /// supplies here.
 fn grid_track_size_to_taffy(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     size: ComputedGridTrackSize,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -2319,7 +2301,7 @@ fn grid_track_size_to_taffy(
 /// `Flex` variant to produce it from); the arm below is a defensive
 /// fallback to keep the match exhaustive, not a reachable case.
 fn grid_track_breadth_to_taffy_min(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     b: ComputedGridTrackBreadth,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -2346,7 +2328,7 @@ fn grid_track_breadth_to_taffy_min(
 /// case here — the `fr` unit is only valid on the max side of `minmax()`
 /// or as a bare `<track-breadth>` (CSS Grid Layout Module Level 1 §7.2.4).
 fn grid_track_breadth_to_taffy_max(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     b: ComputedGridTrackBreadth,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -2464,7 +2446,7 @@ pub(crate) fn computed_length_percentage_to_taffy_length_percentage(
 /// max size cannot hold ([`bridge_min_max_size`] leaves them `auto`).
 fn bridge_content_limits(
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) -> ContentLimits {
     let mut keyword = |size, site| {
@@ -2499,7 +2481,7 @@ fn bridge_content_limits(
 /// `site` distinguishes the two [`bridge_size`] callers (`"width"` /
 /// `"height"`) in [`LayoutWarn::NonFiniteClamped`] events.
 fn computed_length_percentage_or_auto_to_taffy_dimension(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     loa: ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -2544,7 +2526,7 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
 /// consumers such as table `<col>` sizing do not observe a false zero
 /// constraint.
 fn computed_length_percentage_or_auto_to_taffy_min_max(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     loa: ComputedLengthPercentageOrAuto,
     non_negative: bool,
     site: &'static str,
@@ -2580,7 +2562,7 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
 /// `LengthPercentageAuto::auto()` (delegating CSS Box 3 §3.1's "margin auto = distribute
 /// available space" to taffy; no `f32` means no guard is needed).
 fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
-    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     loa: ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,

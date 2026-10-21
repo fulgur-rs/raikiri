@@ -53,26 +53,13 @@ pub(crate) fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
         })
 }
 
-/// A `calc()` payload retained with the document's layout styles.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct ArenaCalc {
-    pub(crate) value: raikiri_style::property::CalcLengthPercentage,
-    /// The property's range is `[0,∞]`: a sum that resolves below zero once
-    /// its percentage basis is known clamps to zero (CSS Values 4 "Range
-    /// Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
-    pub(crate) non_negative: bool,
-}
-
 /// Keep `value` in the document arena and return its Taffy handle.
 pub(crate) fn push_calc(
-    arena: &mut Vec<std::sync::Arc<ArenaCalc>>,
+    arena: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     value: raikiri_style::property::CalcLengthPercentage,
     non_negative: bool,
 ) -> *const () {
-    let payload = std::sync::Arc::new(ArenaCalc {
-        value,
-        non_negative,
-    });
+    let payload = std::sync::Arc::new(raikiri_layout_style::AlignedCalc::new(value, non_negative));
     let pointer = std::sync::Arc::as_ptr(&payload).cast();
     arena.push(payload);
     pointer
@@ -84,26 +71,17 @@ pub(crate) fn push_calc(
 /// cannot borrow the tree call this directly.
 #[allow(unsafe_code)]
 pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
-    // `Document::retained_layout_styles` owns the payload for as long as a
-    // retained Taffy style can reference this handle.
-    let calc = unsafe { &*(val as *const ArenaCalc) };
-    let resolved = basis * calc.value.percent / 100.0 + calc.value.px;
-    if !resolved.is_finite() {
-        0.0
-    } else if calc.non_negative {
-        resolved.max(0.0)
-    } else {
-        resolved
-    }
+    // SAFETY: The document retains the common payload before publishing any raw handle.
+    unsafe { raikiri_layout_style::resolve_calc(val, basis) }
 }
 
 /// Whether a `calc()` payload handle has a percentage term, which needs a
 /// basis to resolve.
 #[allow(unsafe_code)]
 pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
-    // The retained style owner keeps this handle valid, as in `resolve_calc`.
-    let calc = unsafe { &*(val as *const ArenaCalc) };
-    calc.value.percent != 0.0
+    // SAFETY: The retained style owner keeps this common payload alive during inspection.
+    let calc = unsafe { &*val.cast::<raikiri_layout_style::AlignedCalc>() };
+    calc.expression().percent != 0.0
 }
 
 /// The limit of a `fit-content(<length-percentage>)` size, resolved against
@@ -401,6 +379,7 @@ pub struct TaffyChildIter<'a> {
     /// Whether the children are those of a source box, among which an
     /// anonymous table stands in for the rows it wraps.
     wrap_tables: bool,
+    current: core::slice::Iter<'a, usize>,
     stack: Vec<core::slice::Iter<'a, usize>>,
 }
 
@@ -421,11 +400,12 @@ impl<'a> TaffyChildIter<'a> {
             doc,
             flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
             wrap_tables: !doc.is_anonymous_table(parent),
-            stack: if hidden {
-                Vec::new()
+            current: if hidden {
+                [].iter()
             } else {
-                vec![layout_node.layout_children().iter()]
+                layout_node.layout_children().iter()
             },
+            stack: Vec::new(),
         }
     }
 
@@ -541,16 +521,19 @@ impl Iterator for TaffyChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
         let doc = self.doc;
-        while let Some(children) = self.stack.last_mut() {
-            let Some(&child) = children.next() else {
-                self.stack.pop();
+        loop {
+            let Some(&child) = self.current.next() else {
+                self.current = self.stack.pop()?;
                 continue;
             };
             if !Self::includes(doc, child) {
                 continue;
             }
             if self.flatten && Self::is_flattened(doc, child) {
-                self.stack.push(doc.nodes[child].layout_children().iter());
+                self.stack.push(std::mem::replace(
+                    &mut self.current,
+                    doc.nodes[child].layout_children().iter(),
+                ));
                 continue;
             }
             // An anonymous table takes the place of the run of rows it wraps
@@ -565,7 +548,6 @@ impl Iterator for TaffyChildIter<'_> {
             }
             return Some(NodeId::from(child));
         }
-        None
     }
 }
 
@@ -2256,7 +2238,6 @@ struct FlexItemBounds {
     min: taffy::LengthPercentageAuto,
     max: taffy::LengthPercentageAuto,
     cache: crate::layout::cache_context::SavedLayoutCache,
-    #[cfg(test)]
     view_token: Option<crate::layout::style_views::OverrideToken>,
 }
 
@@ -2276,13 +2257,13 @@ fn with_flex_intrinsic_probe<R>(
     node_id: NodeId,
     probe: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
+    tree.sync_layout_cache_mutations();
     let idx = usize::from(node_id);
     tree.cache_override_changed(idx);
     let style = tree.layout_style_for_key_mut(idx).unwrap();
     let container_max = style.max_size.width;
     style.max_size.width = taffy::LengthPercentageAuto::auto();
     let outer = tree.context.flex_intrinsic_probe.replace(idx);
-    #[cfg(test)]
     let token = tree.record_style_overrides(
         idx,
         vec![
@@ -2298,7 +2279,6 @@ fn with_flex_intrinsic_probe<R>(
     tree.cache_override_changed(idx);
     tree.context.flex_intrinsic_probe = outer;
     tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
-    #[cfg(test)]
     tree.restore_recorded_style_overrides(token);
     match result {
         Ok(value) => value,
@@ -2329,6 +2309,7 @@ fn with_flex_item_basis_bounds<R>(
     node_id: NodeId,
     layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
+    tree.sync_layout_cache_mutations();
     let is_row = matches!(
         tree.layout_node_with_style(usize::from(node_id))
             .unwrap()
@@ -2396,8 +2377,7 @@ fn with_flex_item_basis_bounds<R>(
         if new_min.is_none() && new_max.is_none() && new_width.is_none() {
             continue;
         }
-        #[cfg(test)]
-        let view_token = if tree.style_views.is_some() {
+        let view_token = if tree.has_style_view(child_idx) {
             use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
             let mut entries = Vec::new();
             if cannot_shrink {
@@ -2451,7 +2431,6 @@ fn with_flex_item_basis_bounds<R>(
             min,
             max,
             cache,
-            #[cfg(test)]
             view_token,
         });
     }
@@ -2464,7 +2443,6 @@ fn with_flex_item_basis_bounds<R>(
         style.min_size.width = item.min;
         style.max_size.width = item.max;
         tree.restore_layout_cache(item.idx, item.cache);
-        #[cfg(test)]
         tree.restore_recorded_style_overrides(item.view_token);
     }
     match result {
@@ -3786,7 +3764,7 @@ impl LayoutBlockContainer for LayoutSession<'_> {
 impl LayoutFlexboxContainer for LayoutSession<'_> {
     #[cfg(not(test))]
     type FlexboxContainerStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3796,7 +3774,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(not(test))]
     type FlexboxItemStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3815,9 +3793,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(node_id))
         }
     }
 
@@ -3831,9 +3807,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(child_node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(child_node_id))
         }
     }
 }
@@ -3841,7 +3815,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
 impl LayoutGridContainer for LayoutSession<'_> {
     #[cfg(not(test))]
     type GridContainerStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3851,7 +3825,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(not(test))]
     type GridItemStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3870,9 +3844,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(node_id))
         }
     }
 
@@ -3886,9 +3858,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(child_node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(child_node_id))
         }
     }
 

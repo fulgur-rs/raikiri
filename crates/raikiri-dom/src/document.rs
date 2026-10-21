@@ -379,7 +379,6 @@ pub struct Document {
     pub(crate) nodes: crate::node::arena::NodeArena,
     pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
     pub(crate) layout_cache_context: crate::layout::cache_context::LayoutCacheContext,
-    #[cfg(test)]
     pub(crate) synthetic_style_values: std::collections::HashMap<
         crate::node::arena::BoxKey,
         std::sync::Arc<raikiri_style::ComputedValues>,
@@ -673,7 +672,6 @@ impl Document {
             nodes: nodes.into(),
             retained_layout_styles,
             layout_cache_context: Default::default(),
-            #[cfg(test)]
             synthetic_style_values: Default::default(),
             #[cfg(test)]
             style_view_comparisons: Default::default(),
@@ -2070,8 +2068,7 @@ impl Document {
             stylesheets,
             retained_layout_styles: _,
             layout_cache_context: _,
-            #[cfg(test)]
-                synthetic_style_values: _,
+            synthetic_style_values: _,
             #[cfg(test)]
                 style_view_comparisons: _,
             fragment_tree: _,

@@ -1,35 +1,52 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
 use crate::node::arena::BoxKey;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RetainedLayoutStyles {
+    // Source keys are arena indices; holes stay absent during out-of-order insertion.
+    source_styles: Vec<Option<crate::LayoutStyle>>,
     styles: HashMap<BoxKey, crate::LayoutStyle>,
-    pub(crate) calc_values: Vec<Arc<crate::taffy_impl::ArenaCalc>>,
+    pub(crate) calc_values: Vec<Arc<raikiri_layout_style::AlignedCalc>>,
 }
+
+#[cfg(test)]
+mod tests;
 
 impl RetainedLayoutStyles {
     pub(crate) fn insert(&mut self, key: BoxKey, style: crate::LayoutStyle) {
-        self.styles.insert(key, style);
+        if let BoxKey::Source(index) = key {
+            if index >= self.source_styles.len() {
+                self.source_styles.resize_with(index + 1, || None);
+            }
+            self.source_styles[index] = Some(style);
+        } else {
+            self.styles.insert(key, style);
+        }
     }
 
     pub(crate) fn get(&self, key: BoxKey) -> Option<&crate::LayoutStyle> {
-        self.styles.get(&key)
+        match key {
+            BoxKey::Source(index) => self.source_styles.get(index)?.as_ref(),
+            _ => self.styles.get(&key),
+        }
     }
 
     pub(crate) fn get_mut(&mut self, key: BoxKey) -> Option<&mut crate::LayoutStyle> {
-        self.styles.get_mut(&key)
+        match key {
+            BoxKey::Source(index) => self.source_styles.get_mut(index)?.as_mut(),
+            _ => self.styles.get_mut(&key),
+        }
     }
 
     pub(crate) fn retain_source_styles(&mut self) {
-        self.styles
-            .retain(|key, _| matches!(key, BoxKey::Source(_)));
+        self.styles.clear();
     }
 
     pub(crate) fn retain_source_and_initial_containing_block(&mut self) {
         self.styles
-            .retain(|key, _| matches!(key, BoxKey::Source(_) | BoxKey::InitialContainingBlock));
+            .retain(|key, _| matches!(key, BoxKey::InitialContainingBlock));
     }
 
     pub(crate) fn retain_without_cells(&mut self) {

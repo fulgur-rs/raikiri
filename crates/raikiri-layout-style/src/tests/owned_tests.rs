@@ -220,3 +220,121 @@ fn resolved_overrides_require_pixel_values() {
     }
     assert!(OwnedPropertyOverride::length(LengthProperty::PaddingLeft, L::Px(7.0), true).is_ok());
 }
+
+#[test]
+fn owner_factory_retains_the_supplied_payload_without_replacing_it() {
+    let expression = CalcLengthPercentage {
+        px: -10.0,
+        percent: 50.0,
+    };
+    let mut cv = ComputedValues::initial();
+    cv.width = L::Calc(expression);
+    let owner = Arc::new(AlignedCalc::new(expression, true));
+    let weak = Arc::downgrade(&owner);
+    let prepared =
+        PreparedStyle::prepare_with(&cv, StyleMetadata::default(), |_, _, _| owner.clone())
+            .unwrap();
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(
+        view.size().width.into_raw().calc_value(),
+        Arc::as_ptr(&owner).cast()
+    );
+    drop(owner);
+    assert!(weak.upgrade().is_some());
+    drop(prepared);
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn shared_owner_factory_outlives_the_external_computed_values_owner() {
+    let expression = CalcLengthPercentage {
+        px: 3.0,
+        percent: 25.0,
+    };
+    let mut cv = ComputedValues::initial();
+    cv.width = L::Calc(expression);
+    let cv = Arc::new(cv);
+    let prepared = PreparedStyle::prepare_shared_with(
+        cv.clone(),
+        StyleMetadata::default(),
+        |_, expression, range| Arc::new(AlignedCalc::new(expression, range)),
+    )
+    .unwrap();
+    drop(cv);
+    assert_eq!(
+        prepared
+            .payload(CalcSlot::Property(LengthProperty::Width))
+            .resolve(100.0),
+        28.0
+    );
+}
+
+#[test]
+fn owner_factory_rejects_mismatched_expression_and_range_before_getters() {
+    let expression = CalcLengthPercentage {
+        px: 3.0,
+        percent: 25.0,
+    };
+    let mut cv = ComputedValues::initial();
+    cv.width = L::Calc(expression);
+    for owner in [
+        Arc::new(AlignedCalc::new(expression, false)),
+        Arc::new(AlignedCalc::new(
+            CalcLengthPercentage {
+                px: 4.0,
+                percent: 25.0,
+            },
+            true,
+        )),
+    ] {
+        let result =
+            PreparedStyle::prepare_with(&cv, StyleMetadata::default(), |_, _, _| owner.clone());
+        assert!(matches!(
+            result,
+            Err(PrepareError::Mismatch(CalcSlot::Property(
+                LengthProperty::Width
+            )))
+        ));
+    }
+}
+
+#[test]
+fn owned_override_exposes_its_payload_for_adapter_retention() {
+    let expression = CalcLengthPercentage {
+        px: 2.0,
+        percent: 20.0,
+    };
+    let entry =
+        OwnedPropertyOverride::length(LengthProperty::Width, L::Calc(expression), false).unwrap();
+    let owner = entry.calc_owner().unwrap();
+    assert_eq!(owner.resolve(100.0), 22.0);
+    let weak = Arc::downgrade(owner);
+    drop(entry);
+    assert!(weak.upgrade().is_none());
+    assert!(
+        OwnedPropertyOverride::aspect_ratio(None)
+            .calc_owner()
+            .is_none()
+    );
+}
+
+#[test]
+fn metadata_refresh_keeps_existing_calc_bindings() {
+    let mut cv = ComputedValues::initial();
+    cv.width = L::Calc(CalcLengthPercentage {
+        px: 3.0,
+        percent: 25.0,
+    });
+    let mut prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let pointer = std::ptr::from_ref(prepared.payload(CalcSlot::Property(LengthProperty::Width)));
+    prepared.set_metadata(StyleMetadata {
+        flags: StyleFlags::HIDDEN,
+        ..StyleMetadata::default()
+    });
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(view.box_generation_mode(), taffy::BoxGenerationMode::None);
+    assert_eq!(
+        std::ptr::from_ref(prepared.payload(CalcSlot::Property(LengthProperty::Width))),
+        pointer
+    );
+}

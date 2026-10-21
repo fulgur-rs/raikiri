@@ -13,6 +13,7 @@ impl LengthValue<'_> {
     fn pointer(self) -> *const () {
         self.payload.expect("calc has a prepared payload").pointer()
     }
+    #[inline]
     pub(crate) fn dimension(self) -> Dimension {
         match self.value {
             L::Auto => Dimension::auto(),
@@ -27,6 +28,7 @@ impl LengthValue<'_> {
             L::FitContentOf(P::Calc(_)) => Dimension::fit_content_calc(self.pointer()),
         }
     }
+    #[inline]
     pub(crate) fn auto(self, margin: bool) -> LPA {
         match self.value {
             L::Px(v) => LPA::length(sanitize(v)),
@@ -37,6 +39,7 @@ impl LengthValue<'_> {
             _ => LPA::auto(),
         }
     }
+    #[inline]
     pub(crate) fn lp(self, basis: PercentBasis) -> LP {
         if !self.resolved && basis != PercentBasis::Taffy {
             let basis = match basis {

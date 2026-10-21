@@ -8,6 +8,7 @@ impl LayoutSession<'_> {
         resolve_border: bool,
         compute: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        self.sync_layout_cache_mutations();
         self.cache_override_changed(idx);
         if resolve_border && crate::taffy_impl::is_table_box(self.nodes[idx].display()) {
             self.context.table_cache.clear();
@@ -22,7 +23,6 @@ impl LayoutSession<'_> {
         self.context
             .resolved_edge_bases
             .push((idx, effective_basis));
-        #[cfg(test)]
         let previous_basis = self.begin_edge_recording(idx, basis);
         let style = self
             .layout_style_for_key_mut(idx)
@@ -47,7 +47,6 @@ impl LayoutSession<'_> {
             .expect("edge scope has a retained style");
         (style.padding, style.border) = previous_edges;
         self.context.resolved_edge_bases.pop();
-        #[cfg(test)]
         self.end_edge_recording(idx, previous_basis);
         match result {
             Ok(value) => value,

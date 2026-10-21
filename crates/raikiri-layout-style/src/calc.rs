@@ -10,10 +10,12 @@ pub struct AlignedCalc {
 }
 const _: () = assert!(std::mem::align_of::<AlignedCalc>() >= 8);
 impl AlignedCalc {
-    pub(crate) fn expression(&self) -> CalcLengthPercentage {
+    /// Return the immutable length/percentage expression.
+    pub const fn expression(&self) -> CalcLengthPercentage {
         self.value
     }
-    pub(crate) fn non_negative(&self) -> bool {
+    /// Whether resolution clamps the result to the non-negative range.
+    pub const fn non_negative(&self) -> bool {
         self.non_negative
     }
     /// Construct a payload with the property's range policy.
@@ -80,6 +82,28 @@ pub enum CalcSlot {
         /// Minimum or maximum breadth.
         part: TrackPart,
     },
+}
+
+impl CalcSlot {
+    pub(crate) fn search_key(self) -> (u8, u8, u8, usize, Option<usize>, u8) {
+        match self {
+            Self::Property(property) => (0, 0, 0, property as usize, None, 0),
+            Self::Grid {
+                axis,
+                list,
+                component,
+                repeat_track,
+                part,
+            } => (
+                1,
+                axis as u8,
+                list as u8,
+                component,
+                repeat_track,
+                part as u8,
+            ),
+        }
+    }
 }
 
 /// A payload borrowed from an owner that outlives all uses of the view.

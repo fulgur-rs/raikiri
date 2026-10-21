@@ -188,6 +188,8 @@ fn resolved_edge_scopes_publish_exactly_once_per_change() {
             LayoutSession::new(&mut doc)
         };
         crate::layout::bridge::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        // Count scope changes separately from the pending document publication.
+        tree.sync_layout_cache_mutations();
         let before = tree.layout_cache_context.epoch();
         tree.with_resolved_edges(child, 100.0, true, |tree| {
             assert_eq!(tree.layout_cache_context.epoch().value, before.value + 1);

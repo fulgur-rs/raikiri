@@ -44,7 +44,6 @@ pub(crate) struct NodeArena {
 
 impl NodeArena {
     /// Every current source and generated layout key, without allocating.
-    #[cfg(test)]
     pub(crate) fn layout_keys(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.source.len())
             .chain((0..self.anonymous_tables.len()).map(|index| self.anonymous_table_key(index)))

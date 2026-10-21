@@ -98,6 +98,11 @@ enum CalcBindings<'a> {
     Owned(Box<[(CalcSlot, Arc<AlignedCalc>)]>),
 }
 impl<'a> PreparedStyle<'a> {
+    /// Refresh document facts without rebuilding computed values or calc bindings.
+    pub fn set_metadata(&mut self, metadata: StyleMetadata) {
+        self.metadata = metadata;
+    }
+
     /// Borrow computed values and allocate owners for their calc slots once.
     pub fn prepare(values: &'a ComputedValues, metadata: StyleMetadata) -> Self {
         Self::prepare_source(ComputedSource::Borrowed(values), metadata)
@@ -111,21 +116,60 @@ impl<'a> PreparedStyle<'a> {
         PreparedStyle::prepare_source(ComputedSource::Shared(values), metadata)
     }
 
+    /// Borrow computed values and retain payloads supplied by an adapter.
+    /// The factory runs only during preparation, never from a layout getter.
+    ///
+    /// # Errors
+    /// Rejects a payload whose expression or range differs from its calc slot.
+    pub fn prepare_with(
+        values: &'a ComputedValues,
+        metadata: StyleMetadata,
+        owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+    ) -> Result<Self, PrepareError> {
+        Self::prepare_source_with(ComputedSource::Borrowed(values), metadata, owner)
+    }
+
+    /// Retain shared computed values and adapter-supplied calc payloads.
+    ///
+    /// # Errors
+    /// Rejects a payload whose expression or range differs from its calc slot.
+    pub fn prepare_shared_with(
+        values: Arc<ComputedValues>,
+        metadata: StyleMetadata,
+        owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+    ) -> Result<PreparedStyle<'static>, PrepareError> {
+        PreparedStyle::prepare_source_with(ComputedSource::Shared(values), metadata, owner)
+    }
+
     fn prepare_source(values: ComputedSource<'a>, metadata: StyleMetadata) -> Self {
+        Self::prepare_source_with(values, metadata, |_, expression, range| {
+            Arc::new(AlignedCalc::new(expression, range))
+        })
+        .expect("fresh calc payloads match their source expressions")
+    }
+
+    fn prepare_source_with(
+        values: ComputedSource<'a>,
+        metadata: StyleMetadata,
+        mut owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+    ) -> Result<Self, PrepareError> {
         let mut prepared = Self {
             values,
             metadata,
             calcs: CalcBindings::Owned(Box::default()),
         };
         let mut calcs = Vec::new();
-        prepared
-            .visit_calcs(|slot, expression, range| {
-                calcs.push((slot, Arc::new(AlignedCalc::new(expression, range))));
-                Ok(())
-            })
-            .expect("constructing owners cannot reject a calc slot");
+        prepared.visit_calcs(|slot, expression, range| {
+            let payload = owner(slot, expression, range);
+            if !payload.matches(expression, range) {
+                return Err(PrepareError::Mismatch(slot));
+            }
+            calcs.push((slot, payload));
+            Ok(())
+        })?;
+        calcs.sort_unstable_by_key(|(slot, _)| slot.search_key());
         prepared.calcs = CalcBindings::Owned(calcs.into_boxed_slice());
-        prepared
+        Ok(prepared)
     }
     /// Validate the complete property/component table once, outside layout getters.
     ///
@@ -174,11 +218,12 @@ impl<'a> PreparedStyle<'a> {
                     .payload
             }
             CalcBindings::Owned(bindings) => {
-                &bindings
-                    .iter()
-                    .find(|(binding_slot, _)| *binding_slot == slot)
-                    .expect("constructed immutable calc bindings")
-                    .1
+                let index = bindings
+                    .binary_search_by_key(&slot.search_key(), |(binding_slot, _)| {
+                        binding_slot.search_key()
+                    })
+                    .expect("constructed immutable calc bindings");
+                &bindings[index].1
             }
         }
     }
