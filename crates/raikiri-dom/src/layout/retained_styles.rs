@@ -6,7 +6,7 @@ use crate::node::arena::BoxKey;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RetainedLayoutStyles {
     styles: HashMap<BoxKey, crate::LayoutStyle>,
-    pub(crate) calc_values: Vec<Arc<crate::taffy_impl::ArenaCalc>>,
+    pub(crate) calc_values: Vec<Arc<raikiri_layout_style::AlignedCalc>>,
 }
 
 impl RetainedLayoutStyles {

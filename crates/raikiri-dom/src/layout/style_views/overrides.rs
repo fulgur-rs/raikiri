@@ -123,10 +123,15 @@ impl LayoutSession<'_> {
             !prepared.scopes.is_empty(),
             "temporary values require an active scope"
         );
-        prepared.scoped.push(
-            OwnedPropertyOverride::length(property, value, resolved)
-                .expect("typed physical property override"),
-        );
+        let entry = OwnedPropertyOverride::length(property, value, resolved)
+            .expect("typed physical property override");
+        if let Some(payload) = entry.calc_owner() {
+            self.document
+                .retained_layout_styles
+                .calc_values
+                .push(payload.clone());
+        }
+        prepared.scoped.push(entry);
     }
 
     pub(crate) fn record_style_overrides(
@@ -147,6 +152,12 @@ impl LayoutSession<'_> {
         };
         prepared.scopes.push(token.length);
         prepared.was_scoped = true;
+        self.document.retained_layout_styles.calc_values.extend(
+            entries
+                .iter()
+                .filter_map(OwnedPropertyOverride::calc_owner)
+                .cloned(),
+        );
         prepared.scoped.extend(entries);
         Some(token)
     }

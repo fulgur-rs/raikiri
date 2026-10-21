@@ -10,10 +10,12 @@ pub struct AlignedCalc {
 }
 const _: () = assert!(std::mem::align_of::<AlignedCalc>() >= 8);
 impl AlignedCalc {
-    pub(crate) fn expression(&self) -> CalcLengthPercentage {
+    /// Return the immutable length/percentage expression.
+    pub const fn expression(&self) -> CalcLengthPercentage {
         self.value
     }
-    pub(crate) fn non_negative(&self) -> bool {
+    /// Whether resolution clamps the result to the non-negative range.
+    pub const fn non_negative(&self) -> bool {
         self.non_negative
     }
     /// Construct a payload with the property's range policy.

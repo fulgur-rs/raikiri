@@ -68,8 +68,9 @@ impl<'a> Diagnostic<'a> {
     }
     #[allow(unsafe_code)]
     fn calc(self, legacy: *const (), view: *const ()) {
-        // SAFETY: CheckedStyle receives retained legacy handles; the document or test owns ArenaCalc.
-        let expression = unsafe { &*legacy.cast::<crate::taffy_impl::ArenaCalc>() }.value;
+        // SAFETY: CheckedStyle receives retained legacy handles; the document or test retains the common aligned payload.
+        let expression =
+            unsafe { &*legacy.cast::<raikiri_layout_style::AlignedCalc>() }.expression();
         // Include either side of a positive zero crossing, beyond the fixed sample bases.
         let crossing = (-f64::from(expression.px) * 100.0 / f64::from(expression.percent))
             .abs()

@@ -26,6 +26,7 @@ pub(crate) struct StyleViews<'a> {
     cascade: &'a CascadeResult,
     boxes: HashMap<BoxKey, PreparedBox<'a>>,
     pending: HashMap<BoxKey, Vec<OwnedPropertyOverride>>,
+    legacy_calcs: HashMap<BoxKey, Vec<Arc<raikiri_layout_style::AlignedCalc>>>,
     size_scopes: Vec<overrides::SizeScope>,
 }
 
@@ -35,6 +36,7 @@ impl<'a> StyleViews<'a> {
             cascade,
             boxes: HashMap::new(),
             pending: HashMap::new(),
+            legacy_calcs: HashMap::new(),
             size_scopes: Vec::new(),
         }
     }
@@ -53,7 +55,8 @@ impl<'a> StyleViews<'a> {
             let neutral = !matches!(key, BoxKey::Source(_))
                 || node.kind() != NodeKind::Element
                 || node.display() == DisplayValue::Contents;
-            let prepared = if neutral {
+            let mut pool = self.legacy_calcs.remove(&key).unwrap_or_default();
+            let shared = if neutral {
                 let owner = if key == BoxKey::InitialContainingBlock {
                     doc.synthetic_style_values
                         .get(&key)
@@ -65,10 +68,36 @@ impl<'a> StyleViews<'a> {
                     Arc::new(metadata::neutral_values(doc, self.cascade, idx))
                 };
                 doc.synthetic_style_values.insert(key, owner.clone());
-                PreparedStyle::prepare_shared(owner, metadata)
+                Some(owner)
             } else {
-                PreparedStyle::prepare(&self.cascade.computed[idx], metadata)
+                None
             };
+            let mut owner = |_,
+                             expression: raikiri_style::property::CalcLengthPercentage,
+                             range| {
+                if let Some(payload) = pool.iter().find(|payload| {
+                    let value = payload.expression();
+                    value.px.to_bits() == expression.px.to_bits()
+                        && value.percent.to_bits() == expression.percent.to_bits()
+                        && payload.non_negative() == range
+                }) {
+                    return payload.clone();
+                }
+                let payload = Arc::new(raikiri_layout_style::AlignedCalc::new(expression, range));
+                // Retain owners before the prepared binding can publish a raw handle.
+                doc.retained_layout_styles.calc_values.push(payload.clone());
+                pool.push(payload.clone());
+                payload
+            };
+            let prepared = if let Some(values) = shared {
+                PreparedStyle::prepare_shared_with(values, metadata, &mut owner)
+            } else {
+                PreparedStyle::prepare_with(&self.cascade.computed[idx], metadata, &mut owner)
+            }
+            .expect("adapter calc owners match the prepared computed values");
+            if !pool.is_empty() {
+                self.legacy_calcs.insert(key, pool);
+            }
             self.boxes.insert(
                 key,
                 PreparedBox {
@@ -134,6 +163,27 @@ impl LayoutSession<'_> {
         }
     }
 
+    pub(crate) fn retain_bridge_calcs(
+        &mut self,
+        key: BoxKey,
+        values: Vec<Arc<raikiri_layout_style::AlignedCalc>>,
+    ) {
+        if let Some(views) = &mut self.style_views {
+            self.document
+                .retained_layout_styles
+                .calc_values
+                .extend(values.iter().cloned());
+            if !values.is_empty() {
+                views.legacy_calcs.insert(key, values);
+            }
+        } else {
+            self.document
+                .retained_layout_styles
+                .calc_values
+                .extend(values);
+        }
+    }
+
     pub(crate) fn begin_style_bridge(&mut self) {
         if let Some(views) = &mut self.style_views {
             assert!(
@@ -142,6 +192,7 @@ impl LayoutSession<'_> {
             );
             views.boxes.clear();
             views.pending.clear();
+            views.legacy_calcs.clear();
         }
     }
     pub(crate) fn prepare_style_views(&mut self) {
@@ -171,6 +222,12 @@ impl LayoutSession<'_> {
     pub(crate) fn record_pass_override(&mut self, idx: usize, value: OwnedPropertyOverride) {
         let key = self.nodes.box_key(idx).expect("override has a box key");
         if let Some(views) = &mut self.style_views {
+            if let Some(payload) = value.calc_owner() {
+                self.document
+                    .retained_layout_styles
+                    .calc_values
+                    .push(payload.clone());
+            }
             if let Some(prepared) = views.boxes.get_mut(&key) {
                 prepared.pass.push(value);
             } else {

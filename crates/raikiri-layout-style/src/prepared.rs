@@ -111,21 +111,59 @@ impl<'a> PreparedStyle<'a> {
         PreparedStyle::prepare_source(ComputedSource::Shared(values), metadata)
     }
 
+    /// Borrow computed values and retain payloads supplied by an adapter.
+    /// The factory runs only during preparation, never from a layout getter.
+    ///
+    /// # Errors
+    /// Rejects a payload whose expression or range differs from its calc slot.
+    pub fn prepare_with(
+        values: &'a ComputedValues,
+        metadata: StyleMetadata,
+        owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+    ) -> Result<Self, PrepareError> {
+        Self::prepare_source_with(ComputedSource::Borrowed(values), metadata, owner)
+    }
+
+    /// Retain shared computed values and adapter-supplied calc payloads.
+    ///
+    /// # Errors
+    /// Rejects a payload whose expression or range differs from its calc slot.
+    pub fn prepare_shared_with(
+        values: Arc<ComputedValues>,
+        metadata: StyleMetadata,
+        owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+    ) -> Result<PreparedStyle<'static>, PrepareError> {
+        PreparedStyle::prepare_source_with(ComputedSource::Shared(values), metadata, owner)
+    }
+
     fn prepare_source(values: ComputedSource<'a>, metadata: StyleMetadata) -> Self {
+        Self::prepare_source_with(values, metadata, |_, expression, range| {
+            Arc::new(AlignedCalc::new(expression, range))
+        })
+        .expect("fresh calc payloads match their source expressions")
+    }
+
+    fn prepare_source_with(
+        values: ComputedSource<'a>,
+        metadata: StyleMetadata,
+        mut owner: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Arc<AlignedCalc>,
+    ) -> Result<Self, PrepareError> {
         let mut prepared = Self {
             values,
             metadata,
             calcs: CalcBindings::Owned(Box::default()),
         };
         let mut calcs = Vec::new();
-        prepared
-            .visit_calcs(|slot, expression, range| {
-                calcs.push((slot, Arc::new(AlignedCalc::new(expression, range))));
-                Ok(())
-            })
-            .expect("constructing owners cannot reject a calc slot");
+        prepared.visit_calcs(|slot, expression, range| {
+            let payload = owner(slot, expression, range);
+            if !payload.matches(expression, range) {
+                return Err(PrepareError::Mismatch(slot));
+            }
+            calcs.push((slot, payload));
+            Ok(())
+        })?;
         prepared.calcs = CalcBindings::Owned(calcs.into_boxed_slice());
-        prepared
+        Ok(prepared)
     }
     /// Validate the complete property/component table once, outside layout getters.
     ///

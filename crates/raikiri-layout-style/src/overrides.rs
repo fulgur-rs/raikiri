@@ -170,6 +170,14 @@ impl OwnedPropertyOverride {
         }))
     }
 
+    /// Borrow a payload owner for retention before an adapter publishes raw handles.
+    pub fn calc_owner(&self) -> Option<&Arc<AlignedCalc>> {
+        match &self.0 {
+            OwnedOverrideKind::Length { payload, .. } => payload.as_ref(),
+            OwnedOverrideKind::Inline(_) => None,
+        }
+    }
+
     /// Borrow the entry without cloning its payload owner.
     pub fn as_borrowed(&self) -> PropertyOverride<'_> {
         match &self.0 {

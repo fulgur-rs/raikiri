@@ -53,26 +53,13 @@ pub(crate) fn leaf_intrinsic_ratio(node: &crate::node::Node) -> Option<f32> {
         })
 }
 
-/// A `calc()` payload retained with the document's layout styles.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct ArenaCalc {
-    pub(crate) value: raikiri_style::property::CalcLengthPercentage,
-    /// The property's range is `[0,∞]`: a sum that resolves below zero once
-    /// its percentage basis is known clamps to zero (CSS Values 4 "Range
-    /// Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
-    pub(crate) non_negative: bool,
-}
-
 /// Keep `value` in the document arena and return its Taffy handle.
 pub(crate) fn push_calc(
-    arena: &mut Vec<std::sync::Arc<ArenaCalc>>,
+    arena: &mut Vec<std::sync::Arc<raikiri_layout_style::AlignedCalc>>,
     value: raikiri_style::property::CalcLengthPercentage,
     non_negative: bool,
 ) -> *const () {
-    let payload = std::sync::Arc::new(ArenaCalc {
-        value,
-        non_negative,
-    });
+    let payload = std::sync::Arc::new(raikiri_layout_style::AlignedCalc::new(value, non_negative));
     let pointer = std::sync::Arc::as_ptr(&payload).cast();
     arena.push(payload);
     pointer
@@ -84,26 +71,17 @@ pub(crate) fn push_calc(
 /// cannot borrow the tree call this directly.
 #[allow(unsafe_code)]
 pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
-    // `Document::retained_layout_styles` owns the payload for as long as a
-    // retained Taffy style can reference this handle.
-    let calc = unsafe { &*(val as *const ArenaCalc) };
-    let resolved = basis * calc.value.percent / 100.0 + calc.value.px;
-    if !resolved.is_finite() {
-        0.0
-    } else if calc.non_negative {
-        resolved.max(0.0)
-    } else {
-        resolved
-    }
+    // SAFETY: The document retains the common payload before publishing any raw handle.
+    unsafe { raikiri_layout_style::resolve_calc(val, basis) }
 }
 
 /// Whether a `calc()` payload handle has a percentage term, which needs a
 /// basis to resolve.
 #[allow(unsafe_code)]
 pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
-    // The retained style owner keeps this handle valid, as in `resolve_calc`.
-    let calc = unsafe { &*(val as *const ArenaCalc) };
-    calc.value.percent != 0.0
+    // SAFETY: The retained style owner keeps this common payload alive during inspection.
+    let calc = unsafe { &*val.cast::<raikiri_layout_style::AlignedCalc>() };
+    calc.expression().percent != 0.0
 }
 
 /// The limit of a `fit-content(<length-percentage>)` size, resolved against
