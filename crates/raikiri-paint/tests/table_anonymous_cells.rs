@@ -2431,13 +2431,16 @@ fn review_contents_generated_cells_survive_cancelled_pagination() {
     let abort = || true;
     let control = raikiri_dom::PageLayoutControl::new(Some(10)).with_abort_check(&abort);
     assert!(matches!(
-        raikiri_dom::layout_pages_with_page_geometry_and_control(
+        raikiri_dom::layout_pages_with_options(
             &mut doc,
             &computed,
             page(),
-            &[],
-            &[],
-            &control
+            raikiri_dom::PageLayoutOptions {
+                page_steps: &[],
+                page_widths: &[],
+                control: Some(&control),
+                ..Default::default()
+            }
         ),
         Err(raikiri_traits::LayoutError::Aborted)
     ));

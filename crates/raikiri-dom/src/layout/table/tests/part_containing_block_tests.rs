@@ -4,9 +4,7 @@
 
 use crate::LayoutStyle as Style;
 use crate::document::Document;
-use crate::layout::page_pipeline::{
-    PageLayoutControl, layout_pages_with_page_geometry_and_control,
-};
+use crate::layout::page_pipeline::{PageLayoutControl, layout_pages_with_options};
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
 
@@ -41,13 +39,16 @@ fn lay_out(doc: &mut Document, paged: bool) {
     let cascade = cascade(doc, &rules).expect("cascade");
     with_ahem(doc);
     if paged {
-        layout_pages_with_page_geometry_and_control(
+        layout_pages_with_options(
             doc,
             &cascade,
             page_box_800x600(),
-            &[],
-            &[],
-            &PageLayoutControl::default(),
+            crate::PageLayoutOptions {
+                page_steps: &[],
+                page_widths: &[],
+                control: Some(&PageLayoutControl::default()),
+                ..Default::default()
+            },
         )
         .expect("paged layout");
     } else {

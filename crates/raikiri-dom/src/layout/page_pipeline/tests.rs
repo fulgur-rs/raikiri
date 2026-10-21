@@ -9,6 +9,7 @@ mod column_projection_tests;
 mod fragment_sources_tests;
 pub(super) mod link_ancestor_tests;
 mod oof_coordinate_tests;
+mod options_tests;
 mod page_name_storage_tests;
 mod paged_spanning_tests;
 mod source_walk_tests;
@@ -607,13 +608,16 @@ fn page_layout_control_cancels_candidate_collection() {
         next >= 4
     };
     let control = PageLayoutControl::new(Some(10)).with_abort_check(&abort_check);
-    let result = layout_pages_with_page_geometry_and_control(
+    let result = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box_800x600(),
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     );
 
     assert!(matches!(result, Err(LayoutError::Aborted)));
@@ -646,13 +650,16 @@ fn percent_width_scaling_skips_an_unusable_base_width_and_stops_on_abort() {
 fn page_layout_control_allows_an_explicit_unbounded_page_count() {
     let (mut document, cascade) = hello_world_doc();
     let control = PageLayoutControl::new(None);
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box_800x600(),
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     )
     .expect("unbounded pagination");
 
@@ -898,13 +905,16 @@ fn page_layout_control_accepts_a_box_ending_on_a_fractional_page_boundary() {
     page_box.height = 0.1;
     let control = PageLayoutControl::new(Some(3));
 
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box,
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     )
     .expect("three-page boundary layout");
 
@@ -929,13 +939,16 @@ fn page_layout_control_accepts_a_box_ending_on_a_repeated_fractional_boundary() 
     page_box.height = 0.1;
     let control = PageLayoutControl::new(Some(21));
 
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box,
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     )
     .expect("twenty-one-page boundary layout");
 
@@ -970,13 +983,16 @@ fn page_layout_control_accepts_a_page_height_box_after_fractional_forced_breaks(
     page_box.height = 0.1;
     let control = PageLayoutControl::new(Some(7));
 
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box,
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     )
     .expect("seven-page fractional forced-break layout");
 
@@ -1003,13 +1019,16 @@ fn page_layout_discovery_returns_a_bounded_prefix() {
     let cascade = cascade(&document, &rules).expect("cascade");
     let control = PageLayoutControl::for_geometry_discovery(Some(2));
 
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box_800x600(),
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     )
     .expect("bounded page discovery");
 
@@ -1051,13 +1070,16 @@ fn page_layout_control_rejects_natural_overflow_beyond_4096_pages() {
     let cascade = cascade(&document, &rules).expect("cascade");
     let control = PageLayoutControl::new(Some(4_500));
 
-    let result = layout_pages_with_page_geometry_and_control(
+    let result = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box_800x600(),
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     );
 
     assert!(matches!(
@@ -1088,13 +1110,16 @@ fn page_layout_control_checks_percent_width_nodes() {
     let cascade = cascade(&document, &rules).expect("cascade");
     let control = PageLayoutControl::new(None);
 
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box_800x600(),
-        &[600.0, 300.0],
-        &[800.0, 400.0],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[600.0, 300.0],
+            page_widths: &[800.0, 400.0],
+            control: Some(&control),
+            ..Default::default()
+        },
     )
     .expect("percentage-width pagination");
 
@@ -1121,13 +1146,16 @@ fn candidate_collection_recurses_through_inline_subtrees() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade");
 
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box_800x600(),
-        &[],
-        &[],
-        &PageLayoutControl::new(None),
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&PageLayoutControl::new(None)),
+            ..Default::default()
+        },
     )
     .expect("inline-subtree pagination");
 
@@ -10286,7 +10314,16 @@ fn review_avoided_sibling_runs_use_the_destination_page_height() {
         let mut page = PageBox::new();
         page.width = 100.0;
         page.height = 100.0;
-        layout_pages_with_page_steps(&mut doc, &cascade, page, &steps).unwrap();
+        layout_pages_with_options(
+            &mut doc,
+            &cascade,
+            page,
+            crate::PageLayoutOptions {
+                page_steps: &steps,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let actual: Vec<_> = ids
             .into_iter()
             .map(|id| doc.nodes[id].unrounded_layout.location.y)
@@ -12580,7 +12617,16 @@ fn a_root_margin_crossing_a_scheduled_page_uses_that_page_origin() {
     page.width = 100.0;
     page.height = 100.0;
 
-    layout_pages_with_page_steps(&mut doc, &cascade, page, &[150.0, 80.0]).unwrap();
+    layout_pages_with_options(
+        &mut doc,
+        &cascade,
+        page,
+        crate::PageLayoutOptions {
+            page_steps: &[150.0, 80.0],
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     assert_eq!(
         crate::layout::test_support::absolute_rect(&doc, child).1,
@@ -12694,7 +12740,16 @@ fn paginated_ys(
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    layout_pages_with_page_steps(with_ahem(&mut doc), &cascade, page, page_steps).unwrap();
+    layout_pages_with_options(
+        with_ahem(&mut doc),
+        &cascade,
+        page,
+        crate::PageLayoutOptions {
+            page_steps,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     ids.into_iter()
         .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
         .collect()
@@ -12813,7 +12868,16 @@ fn a_root_margin_within_a_taller_first_page_is_kept() {
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
-    layout_pages_with_page_steps(&mut doc, &cascade, page, &[150.0]).unwrap();
+    layout_pages_with_options(
+        &mut doc,
+        &cascade,
+        page,
+        crate::PageLayoutOptions {
+            page_steps: &[150.0],
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
     let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
     assert_eq!(
@@ -14652,13 +14716,18 @@ fn a_hidden_root_does_not_resolve_its_images() {
     page.width = 100.0;
     page.height = 100.0;
 
-    let slices = layout_pages_with_resolver_and_base_url_and_control(
+    let slices = layout_pages_with_options(
         &mut doc,
         &cascade,
         page,
-        &Fails,
-        None,
-        &PageLayoutControl::default(),
+        crate::PageLayoutOptions {
+            images: Some(crate::PageImageOptions {
+                resolver: &Fails,
+                base_url: None,
+            }),
+            control: Some(&PageLayoutControl::default()),
+            ..Default::default()
+        },
     )
     .expect("a hidden root resolves no images");
     assert_eq!(slices.len(), 1);

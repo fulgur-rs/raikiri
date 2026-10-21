@@ -31,13 +31,16 @@ fn percentage_width_under_page_positioned_box_uses_its_owner_page() {
     let mut page_box = page_box_800x600();
     page_box.height = 100.0;
 
-    let pages = layout_pages_with_page_geometry_and_control(
+    let pages = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box,
-        &[],
-        &[800.0, 400.0],
-        &PageLayoutControl::default(),
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[800.0, 400.0],
+            control: Some(&PageLayoutControl::default()),
+            ..Default::default()
+        },
     )
     .expect("paged layout");
 
@@ -100,13 +103,16 @@ fn vertical_pagination_keeps_an_absolute_box_at_the_page_origin() {
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade");
 
-        let pages = layout_pages_with_page_geometry_and_control(
+        let pages = layout_pages_with_options(
             &mut document,
             &cascade,
             page_box_800x600(),
-            &[],
-            &[],
-            &PageLayoutControl::default(),
+            crate::PageLayoutOptions {
+                page_steps: &[],
+                page_widths: &[],
+                control: Some(&PageLayoutControl::default()),
+                ..Default::default()
+            },
         )
         .expect("paged layout");
 
@@ -171,13 +177,16 @@ fn a_box_in_a_filtered_inline_on_a_later_page_is_placed_like_one_in_a_relative_i
         let mut page_box = page_box_800x600();
         page_box.height = 100.0;
 
-        let pages = layout_pages_with_page_geometry_and_control(
+        let pages = layout_pages_with_options(
             &mut document,
             &cascade,
             page_box,
-            &[],
-            &[],
-            &PageLayoutControl::default(),
+            crate::PageLayoutOptions {
+                page_steps: &[],
+                page_widths: &[],
+                control: Some(&PageLayoutControl::default()),
+                ..Default::default()
+            },
         )
         .expect("paged layout");
 

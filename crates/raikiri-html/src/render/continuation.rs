@@ -14,7 +14,7 @@
 
 use raikiri_dom::{
     CrossingBox, Document, PageLayoutControl, PageSlice, PageStart, PageStartToken,
-    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
+    layout_pages_with_options,
 };
 use raikiri_style::CascadeResult;
 use raikiri_style::property::PageValue;
@@ -542,15 +542,19 @@ impl<'a> Relayout<'a> {
             .layout_schedule(std::slice::from_ref(&height), &[]);
         // Only a cancellation landing in this pass fails it; the first
         // layout and projection already met the same work limits.
-        let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+        let measured = layout_pages_with_options(
             &mut self.document,
             &self.cascade,
             self.geometry.page_box,
-            steps,
-            widths,
-            self.inputs.resolver,
-            self.inputs.base_url,
-            control,
+            raikiri_dom::PageLayoutOptions {
+                page_steps: steps,
+                page_widths: widths,
+                images: Some(raikiri_dom::PageImageOptions {
+                    resolver: self.inputs.resolver,
+                    base_url: self.inputs.base_url,
+                }),
+                control: Some(control),
+            },
         )?;
         let (measure_box, projected) =
             self.axis
@@ -636,15 +640,19 @@ impl<'a> Relayout<'a> {
     ) -> Result<Vec<PageSlice>, LayoutError> {
         let widths = vec![self.axis.inline_size(self.geometry); steps.len()];
         let (page_steps, page_widths) = self.axis.layout_schedule(steps, &widths);
-        layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+        layout_pages_with_options(
             &mut self.document,
             &self.cascade,
             self.geometry.page_box,
-            page_steps,
-            page_widths,
-            self.inputs.resolver,
-            self.inputs.base_url,
-            control,
+            raikiri_dom::PageLayoutOptions {
+                page_steps,
+                page_widths,
+                images: Some(raikiri_dom::PageImageOptions {
+                    resolver: self.inputs.resolver,
+                    base_url: self.inputs.base_url,
+                }),
+                control: Some(control),
+            },
         )
         .map_err(|error| self.in_document_pages(error, skipped))
     }

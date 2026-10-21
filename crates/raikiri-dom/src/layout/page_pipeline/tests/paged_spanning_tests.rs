@@ -48,13 +48,16 @@ fn spanning_page_limit_is_checked_before_planning_the_unbounded_tail() {
     page.width = 180.0;
     page.height = 60.0;
     let control = PageLayoutControl::new(Some(1));
-    let result = layout_pages_with_page_geometry_and_control(
+    let result = layout_pages_with_options(
         &mut document,
         &cascade,
         page,
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     );
     assert!(
         matches!(
@@ -75,13 +78,16 @@ fn spanning_geometry_discovery_retains_a_page_prefix_without_planning_the_tail()
     page.width = 180.0;
     page.height = 60.0;
     let control = PageLayoutControl::for_geometry_discovery(Some(1));
-    let result = layout_pages_with_page_geometry_and_control(
+    let result = layout_pages_with_options(
         &mut document,
         &cascade,
         page,
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     );
     let slices = result.expect("bounded spanning page discovery");
     assert_eq!(slices.len(), 1);

@@ -28,9 +28,8 @@ use smol_str::SmolStr;
 
 use crate::document::Document;
 use crate::layout::{
-    PageContentInsets, PageLayoutControl, PageMargins, PageSlice,
-    layout_pages_with_page_geometry_and_control, page_content_insets_for_page,
-    page_margins_for_page,
+    PageContentInsets, PageLayoutControl, PageMargins, PageSlice, layout_pages_with_options,
+    page_content_insets_for_page, page_margins_for_page,
 };
 use crate::node::NodeData;
 
@@ -371,13 +370,16 @@ pub fn layout_running_element(
     page_box.width = width;
     page_box.height = MEASURE_HEIGHT;
     let control = PageLayoutControl::new(Some(1));
-    let slices = layout_pages_with_page_geometry_and_control(
+    let slices = layout_pages_with_options(
         &mut document,
         &cascade,
         page_box,
-        &[],
-        &[],
-        &control,
+        crate::PageLayoutOptions {
+            page_steps: &[],
+            page_widths: &[],
+            control: Some(&control),
+            ..Default::default()
+        },
     )?;
     let Some(slice) = slices.into_iter().next() else {
         return Ok(None); // cov:ignore: a document with a body always emits a page slice.

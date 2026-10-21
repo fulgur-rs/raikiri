@@ -9,8 +9,7 @@ use super::{
 };
 use raikiri_dom::{
     Document, PageContentInsets, PageMargins, PageSlice, ResolvedPageGeometry,
-    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
-    layout_pages_with_resolver_and_base_url_and_control,
+    layout_pages_with_options,
 };
 use raikiri_style::{CascadeOptions, CascadeResult, PageCascadeResult, cascade_with_options};
 use raikiri_traits::{LayoutError, PageBox, RenderError};
@@ -151,13 +150,18 @@ impl PageLayout<'_, '_> {
         // cascade at other page sizes: they break the lines of the first
         // pass's paragraphs again instead of shaping them anew.
         document.set_ifc_retain_paragraphs(true);
-        let mut slices = layout_pages_with_resolver_and_base_url_and_control(
+        let mut slices = layout_pages_with_options(
             &mut document,
             self.first_cascade,
             self.page_box,
-            run.resolver,
-            run.base_url,
-            run.discovery_control,
+            raikiri_dom::PageLayoutOptions {
+                images: Some(raikiri_dom::PageImageOptions {
+                    resolver: run.resolver,
+                    base_url: run.base_url,
+                }),
+                control: Some(run.discovery_control),
+                ..Default::default()
+            },
         )?;
         let pagination_truncated = run.discovery_control.page_limit_reached();
         run.check_aborted()?;
@@ -258,15 +262,19 @@ impl PageLayout<'_, '_> {
             } else {
                 run.page_control
             };
-            *slices = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+            *slices = layout_pages_with_options(
                 document,
                 self.first_cascade,
                 self.page_box,
-                &schedule.page_steps,
-                &schedule.page_widths,
-                run.resolver,
-                run.base_url,
-                scheduled_control,
+                raikiri_dom::PageLayoutOptions {
+                    page_steps: &schedule.page_steps,
+                    page_widths: &schedule.page_widths,
+                    images: Some(raikiri_dom::PageImageOptions {
+                        resolver: run.resolver,
+                        base_url: run.base_url,
+                    }),
+                    control: Some(scheduled_control),
+                },
             )?;
             run.check_aborted()?;
             pagination_truncated = geometry_varies && run.discovery_control.page_limit_reached();
@@ -279,15 +287,19 @@ impl PageLayout<'_, '_> {
                 // The soft pass confirmed the geometry schedule only for the
                 // configured prefix. Re-run it strictly before treating that
                 // prefix as a complete document.
-                *slices = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+                *slices = layout_pages_with_options(
                     document,
                     self.first_cascade,
                     self.page_box,
-                    &schedule.page_steps,
-                    &schedule.page_widths,
-                    run.resolver,
-                    run.base_url,
-                    run.page_control,
+                    raikiri_dom::PageLayoutOptions {
+                        page_steps: &schedule.page_steps,
+                        page_widths: &schedule.page_widths,
+                        images: Some(raikiri_dom::PageImageOptions {
+                            resolver: run.resolver,
+                            base_url: run.base_url,
+                        }),
+                        control: Some(run.page_control),
+                    },
                 )?;
                 run.check_aborted()?;
                 pagination_truncated = false;

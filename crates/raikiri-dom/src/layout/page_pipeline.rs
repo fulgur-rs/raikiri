@@ -1247,6 +1247,34 @@ pub struct PageSlice {
     pub page_name: Option<String>,
 }
 
+/// Optional image resolution before paginating a document.
+pub struct PageImageOptions<'a> {
+    /// Resolves the intrinsic sizes of rendered images.
+    pub resolver: &'a dyn ReplacedResolver,
+    /// Base URL for relative image sources.
+    pub base_url: Option<&'a url::Url>,
+}
+
+/// Borrowed settings for [`layout_pages_with_options`].
+#[derive(Default)]
+pub struct PageLayoutOptions<'a> {
+    /// Per-page content heights for horizontal pagination.
+    /// Empty keeps the fixed page height. Vertical pagination instead uses
+    /// [`Self::page_widths`] for its block-axis page advances.
+    pub page_steps: &'a [f32],
+    /// Per-page content widths; empty keeps the fixed page width.
+    /// Horizontal pagination scales percentage widths relative to the first
+    /// scheduled width, leaving missing entries unchanged. For a vertical
+    /// root, these widths provide the successive block-axis page advances.
+    pub page_widths: &'a [f32],
+    /// Image resolution performed before layout, when supplied.
+    pub images: Option<PageImageOptions<'a>>,
+    /// Caller-owned limits and cancellation state; absent uses
+    /// [`PageLayoutControl::default`]. The caller can observe truncation
+    /// through the same control's [`PageLayoutControl::page_limit_reached`].
+    pub control: Option<&'a PageLayoutControl<'a>>,
+}
+
 /// Controls page production and cancellation in the paginator.
 ///
 /// The default matches [`raikiri_traits::RenderLimits::default`]. Pass `None`
@@ -2919,127 +2947,40 @@ pub fn layout_pages(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_steps(document, cascade, page_box, &[])
+    layout_pages_with_options(document, cascade, page_box, PageLayoutOptions::default())
 }
 
-/// Like [`layout_pages`], but first use `resolver` to resolve the intrinsic
-/// size of `<img>` elements. The result is stored in the same `Document`,
-/// so normal layout after pagination and the paint pixel source can refer
-/// to the same image.
-pub fn layout_pages_with_resolver(
+/// Layout a document into pages with borrowed geometry, image, and control settings.
+///
+/// Image resolution preserves the document's decoded image state for later
+/// layout and painting. A hidden root does not ask the resolver for images.
+pub fn layout_pages_with_options(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    resolver: &dyn ReplacedResolver,
+    options: PageLayoutOptions<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_resolver_and_base_url(document, cascade, page_box, resolver, None)
-}
-
-/// [`layout_pages_with_resolver`] with relative image URLs resolved against a
-/// document base URL.
-pub fn layout_pages_with_resolver_and_base_url(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    resolver: &dyn ReplacedResolver,
-    base_url: Option<&url::Url>,
-) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_resolver_and_base_url_and_control(
+    let default_control;
+    let control = match options.control {
+        Some(control) => control,
+        None => {
+            default_control = PageLayoutControl::default();
+            &default_control
+        }
+    };
+    if let Some(images) = options.images {
+        control.check_page_index(0)?;
+        super::validate_layout_depth(document)?;
+        document.page_projection.clear();
+        document.mark_in_document_flags();
+        resolve_document_images(document, cascade, images.resolver, images.base_url)?;
+    }
+    layout_pages_core(
         document,
         cascade,
         page_box,
-        resolver,
-        base_url,
-        &PageLayoutControl::default(),
-    )
-}
-
-/// [`layout_pages_with_resolver_and_base_url`] with an explicit page limit
-/// and cancellation check.
-pub fn layout_pages_with_resolver_and_base_url_and_control(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    resolver: &dyn ReplacedResolver,
-    base_url: Option<&url::Url>,
-    control: &PageLayoutControl<'_>,
-) -> Result<Vec<PageSlice>, LayoutError> {
-    control.check_page_index(0)?;
-    super::validate_layout_depth(document)?;
-    document.page_projection.clear();
-    document.mark_in_document_flags();
-    resolve_document_images(document, cascade, resolver, base_url)?;
-    layout_pages_with_page_geometry_and_control(document, cascade, page_box, &[], &[], control)
-}
-
-/// Like [`layout_pages_with_page_geometry`], but first use `resolver` to
-/// resolve the intrinsic sizes of `<img>` elements.
-pub fn layout_pages_with_page_geometry_and_resolver(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    page_steps: &[f32],
-    page_widths: &[f32],
-    resolver: &dyn ReplacedResolver,
-) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_geometry_and_resolver_and_base_url(
-        document,
-        cascade,
-        page_box,
-        page_steps,
-        page_widths,
-        resolver,
-        None,
-    )
-}
-
-/// [`layout_pages_with_page_geometry_and_resolver`] with document-relative image URLs.
-#[allow(clippy::too_many_arguments)]
-pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    page_steps: &[f32],
-    page_widths: &[f32],
-    resolver: &dyn ReplacedResolver,
-    base_url: Option<&url::Url>,
-) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
-        document,
-        cascade,
-        page_box,
-        page_steps,
-        page_widths,
-        resolver,
-        base_url,
-        &PageLayoutControl::default(),
-    )
-}
-
-/// [`layout_pages_with_page_geometry_and_resolver_and_base_url`] with an
-/// explicit page limit and cancellation check.
-#[allow(clippy::too_many_arguments)]
-pub fn layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    page_steps: &[f32],
-    page_widths: &[f32],
-    resolver: &dyn ReplacedResolver,
-    base_url: Option<&url::Url>,
-    control: &PageLayoutControl<'_>,
-) -> Result<Vec<PageSlice>, LayoutError> {
-    control.check_page_index(0)?;
-    super::validate_layout_depth(document)?;
-    document.page_projection.clear();
-    document.mark_in_document_flags();
-    resolve_document_images(document, cascade, resolver, base_url)?;
-    layout_pages_with_page_geometry_and_control(
-        document,
-        cascade,
-        page_box,
-        page_steps,
-        page_widths,
+        options.page_steps,
+        options.page_widths,
         control,
     )
 }
@@ -3067,47 +3008,7 @@ fn resolve_document_images(
     .map_err(LayoutError::Resolver)
 }
 
-/// Layout ordinary block flow with an optional per-page content-height schedule.
-///
-/// An empty schedule preserves the historical fixed fragmentainer height.  The
-/// paged WPT adapter supplies a schedule when `@page` changes the page size or
-/// margins after the first page; the normal API remains fixed-size by default.
-pub fn layout_pages_with_page_steps(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    page_steps: &[f32],
-) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_geometry(document, cascade, page_box, page_steps, &[])
-}
-
-/// Layout ordinary block flow with per-page content heights and widths.
-///
-/// `page_widths` contains content-box widths corresponding to `page_steps`.
-/// When present, percentage-sized boxes are rescaled after pagination so a
-/// later page with a different containing-block width does not retain the
-/// first page's used percentage width.  An empty width schedule keeps the
-/// existing fixed-page behavior.
-pub fn layout_pages_with_page_geometry(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    page_steps: &[f32],
-    page_widths: &[f32],
-) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_with_page_geometry_and_control(
-        document,
-        cascade,
-        page_box,
-        page_steps,
-        page_widths,
-        &PageLayoutControl::default(),
-    )
-}
-
-/// [`layout_pages_with_page_geometry`] with an explicit page limit and
-/// cancellation check.
-pub fn layout_pages_with_page_geometry_and_control(
+fn layout_pages_core(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
@@ -3413,7 +3314,7 @@ fn fixed_page_step(content_height: f32, paper_height: f32) -> f32 {
 
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
-/// page area, as for [`layout_pages_with_page_geometry_and_control`].
+/// page area, as for [`layout_pages_with_options`].
 #[allow(clippy::too_many_arguments)]
 fn paginate_flow(
     document: &mut super::context::LayoutSession<'_>,
