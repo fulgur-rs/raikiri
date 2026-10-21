@@ -4065,7 +4065,7 @@ fn row_sizing_functions(
 //
 // Invariant, self-contained arena approach:
 // Every calc pointer in a retained style points to an immutable payload held
-// by the same Document's `RetainedLayoutStyles`. Its Arc owners keep pointees
+// by the same Document's `BoxStyleStore`. Its Arc owners keep pointees
 // stable across vector growth and `Document::clone()`, so moving the Document
 // to another thread preserves pointer validity.
 // The bridge retains new payloads before publishing their pointers in the

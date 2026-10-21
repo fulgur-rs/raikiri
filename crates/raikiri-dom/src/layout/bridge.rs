@@ -165,14 +165,15 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
-    doc.document.layout_cache_context.publish_source();
     doc.begin_style_bridge();
+    doc.document.box_style_data.invalidate_source();
+    doc.document.layout_cache_context.publish_source();
     doc.context.table_cache.clear();
     // Keep the previous payloads alive while styles are rebuilt in place.
     // A later error or unwind may leave some styles with old handles and
     // others with newly appended handles, so only a complete successful
     // bridge can release the old prefix.
-    let old_calc_len = doc.document.retained_layout_styles.calc_values.len();
+    let old_calc_len = doc.document.box_style_data.calc_values.len();
     let result = apply_computed_to_style_in_session_inner(doc, cascade);
     if result.is_ok() {
         let expected = doc
@@ -568,6 +569,36 @@ fn apply_computed_to_style_in_session_inner(
         let key = doc.nodes.box_key(idx).expect("source node has a box key");
         doc.retain_bridge_calcs(key, calc_values);
         doc.document.retained_layout_styles.insert(key, style);
+        if is_contents {
+            let recipe = super::box_style_data::recipes::contents(
+                super::box_style_data::recipes::BoxFacts {
+                    direction: direction_for_axes(cv, vertical_axes),
+                    metadata: raikiri_layout_style::StyleMetadata {
+                        flags: raikiri_layout_style::StyleFlags::EMPTY,
+                        used_writing_mode: doc.nodes[idx].used_writing_mode,
+                        claims: None,
+                    },
+                },
+            );
+            doc.document.box_style_data.publish_recipe(key, recipe);
+        }
+    }
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            let recipe = super::box_style_data::recipes::neutral_source(
+                super::box_style_data::recipes::BoxFacts {
+                    direction: taffy::Direction::Ltr,
+                    metadata: raikiri_layout_style::StyleMetadata {
+                        flags: raikiri_layout_style::StyleFlags::EMPTY,
+                        used_writing_mode: doc.nodes[idx].used_writing_mode,
+                        claims: None,
+                    },
+                },
+            );
+            doc.document
+                .box_style_data
+                .publish_recipe(crate::node::arena::BoxKey::Source(idx), recipe);
+        }
     }
     super::spanner_wrappers::lift_spanner_wrappers(doc, cascade);
     // Whether a box is a non-atomic inline box depends on its parent's
@@ -1332,13 +1363,13 @@ fn bridge_inset(
 fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues) {
     // width and height are written together, so use a struct literal.
     let width = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.document.retained_layout_styles.calc_values,
+        &mut doc.document.box_style_data.calc_values,
         cv.width,
         "width",
         &mut doc.context.layout_warnings,
     );
     let height = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.document.retained_layout_styles.calc_values,
+        &mut doc.document.box_style_data.calc_values,
         cv.height,
         "height",
         &mut doc.context.layout_warnings,

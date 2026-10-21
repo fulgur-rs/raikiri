@@ -36,6 +36,15 @@ pub(super) fn lift_spanner_wrappers(doc: &mut LayoutSession<'_>, cascade: &Casca
     wrappers.dedup();
     for idx in wrappers {
         lift_into_container(doc, idx);
+        let direction = super::bridge::direction_for_axes(
+            &cascade.computed[idx],
+            super::bridge::uses_vertical_axes(cascade, idx),
+        );
+        let facts = super::box_style_data::recipes::BoxFacts::for_node(&doc.nodes[idx], direction);
+        let recipe = super::box_style_data::recipes::spanner(facts);
+        doc.document
+            .box_style_data
+            .publish_recipe(crate::node::arena::BoxKey::Source(idx), recipe);
     }
 }
 

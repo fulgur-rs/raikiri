@@ -66,7 +66,7 @@ fn cyclic_chains_are_rejected_without_returning_an_incomplete_path() {
 fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
     let (mut doc, mc, chain) = fixture(1);
     let pointer = crate::taffy_impl::push_calc(
-        &mut doc.retained_layout_styles.calc_values,
+        &mut doc.box_style_data.calc_values,
         raikiri_style::property::CalcLengthPercentage {
             px: 1.0,
             percent: 10.0,

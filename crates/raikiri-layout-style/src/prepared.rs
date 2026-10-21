@@ -7,6 +7,98 @@ use raikiri_style::{
 };
 use std::{ops::Deref, sync::Arc};
 
+mod data;
+pub use data::PreparedData;
+
+#[cfg(test)]
+mod tests;
+
+// One exhaustive field mapping generates both queries and ordered calc visits.
+macro_rules! scalar_properties {
+    ($c:ident; $($property:ident => $value:expr),+ $(,)?) => {
+        impl LengthProperty {
+            #[cfg(test)]
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$property),+];
+        }
+        impl PreparedStyle<'_> {
+            fn scalar_value($c: &ComputedValues, property: LengthProperty) -> L {
+                match property { $(LengthProperty::$property => $value),+ }
+            }
+
+            fn visit_scalar_calcs(
+                $c: &ComputedValues,
+                mut visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+            ) -> Result<(), PrepareError> {
+                $(Self::visit_scalar_calc($c, LengthProperty::$property, $value, &mut visit)?;)+
+                Ok(())
+            }
+        }
+    };
+}
+
+fn scalar_padding(value: P) -> L {
+    match value {
+        P::Px(v) => L::Px(v),
+        P::Percent(v) => L::Percent(v),
+        P::Calc(v) => L::Calc(v),
+    }
+}
+
+fn scalar_gap(value: N) -> L {
+    match value {
+        N::Px(v) => L::Px(v),
+        N::Percent(v) => L::Percent(v),
+        N::Calc(v) => L::Calc(v),
+        N::Normal => L::Px(0.0),
+    }
+}
+
+scalar_properties! {
+    c;
+    Width => c.width,
+    Height => c.height,
+    MinWidth => c.min_width,
+    MinHeight => c.min_height,
+    MaxWidth => c.max_width,
+    MaxHeight => c.max_height,
+    MarginTop => c.margin.top,
+    MarginRight => c.margin.right,
+    MarginBottom => c.margin.bottom,
+    MarginLeft => c.margin.left,
+    PaddingTop => scalar_padding(c.padding.top),
+    PaddingRight => scalar_padding(c.padding.right),
+    PaddingBottom => scalar_padding(c.padding.bottom),
+    PaddingLeft => scalar_padding(c.padding.left),
+    BorderTop => L::Px(c.border.top.width().px()),
+    BorderRight => L::Px(c.border.right.width().px()),
+    BorderBottom => L::Px(c.border.bottom.width().px()),
+    BorderLeft => L::Px(c.border.left.width().px()),
+    Top => c.top,
+    Right => c.right,
+    Bottom => c.bottom,
+    Left => c.left,
+    FlexBasis => match c.flex_basis {
+        F::Auto | F::Content => L::Auto,
+        F::MinContent => L::MinContent,
+        F::MaxContent => L::MaxContent,
+        F::FitContent => L::FitContent,
+        F::Px(v) => L::Px(v),
+        F::Percent(v) => L::Percent(v),
+        F::Calc(v) => L::Calc(v),
+    },
+    ColumnGap => scalar_gap(c.column_gap),
+    RowGap => scalar_gap(c.row_gap),
+    LogicalWidth => c
+        .vertical_logical_size
+        .as_ref()
+        .map_or(c.width, |s| s.width),
+    LogicalHeight => c
+        .vertical_logical_size
+        .as_ref()
+        .map_or(c.height, |s| s.height),
+    MinBlock => c.min_block_size.unwrap_or(L::Auto),
+}
+
 /// A preparation error, detected before any getter runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrepareError {
@@ -96,8 +188,84 @@ impl Deref for ComputedSource<'_> {
 enum CalcBindings<'a> {
     Borrowed(&'a [PreparedCalc<'a>]),
     Owned(Box<[(CalcSlot, Arc<AlignedCalc>)]>),
+    Shared(Arc<PreparedData>),
 }
 impl<'a> PreparedStyle<'a> {
+    fn visit_scalar_calc(
+        values: &ComputedValues,
+        property: LengthProperty,
+        value: L,
+        visit: &mut impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+    ) -> Result<(), PrepareError> {
+        // Logical aliases are distinct slots only when explicitly present.
+        if matches!(
+            property,
+            LengthProperty::LogicalWidth | LengthProperty::LogicalHeight
+        ) && values.vertical_logical_size.is_none()
+        {
+            return Ok(());
+        }
+        match value {
+            L::Calc(expression) | L::FitContentOf(P::Calc(expression)) => visit(
+                CalcSlot::Property(property),
+                expression,
+                property.non_negative(),
+            ),
+            _ => Ok(()),
+        }
+    }
+
+    /// Bind borrowed computed values to shared calc owners after checking every slot.
+    ///
+    /// Sharing the payload data does not extend the computed values' lifetime.
+    ///
+    /// ```compile_fail
+    /// use raikiri_layout_style::{AlignedCalc, PreparedData, PreparedStyle, StyleMetadata};
+    /// use raikiri_style::ComputedValues;
+    /// use std::sync::Arc;
+    /// let values = ComputedValues::initial();
+    /// let data = Arc::new(PreparedData::prepare_with(&values, |_, expression, range| {
+    ///     Arc::new(AlignedCalc::new(expression, range))
+    /// }).unwrap());
+    /// let prepared = {
+    ///     let temporary = ComputedValues::initial();
+    ///     PreparedStyle::from_data(&temporary, StyleMetadata::default(), data).unwrap()
+    /// };
+    /// drop(prepared);
+    /// ```
+    ///
+    /// # Errors
+    /// Rejects missing, unexpected or mismatched expressions and ranges.
+    pub fn from_data(
+        values: &'a ComputedValues,
+        metadata: StyleMetadata,
+        data: Arc<PreparedData>,
+    ) -> Result<Self, PrepareError> {
+        data.validate(values)?;
+        Ok(Self {
+            values: ComputedSource::Borrowed(values),
+            metadata,
+            calcs: CalcBindings::Shared(data),
+        })
+    }
+
+    /// Retain computed values and shared calc owners after checking every slot.
+    ///
+    /// # Errors
+    /// Rejects missing, unexpected or mismatched expressions and ranges.
+    pub fn from_shared_data(
+        values: Arc<ComputedValues>,
+        metadata: StyleMetadata,
+        data: Arc<PreparedData>,
+    ) -> Result<PreparedStyle<'static>, PrepareError> {
+        data.validate(&values)?;
+        Ok(PreparedStyle {
+            values: ComputedSource::Shared(values),
+            metadata,
+            calcs: CalcBindings::Shared(data),
+        })
+    }
+
     /// Refresh document facts without rebuilding computed values or calc bindings.
     pub fn set_metadata(&mut self, metadata: StyleMetadata) {
         self.metadata = metadata;
@@ -225,88 +393,27 @@ impl<'a> PreparedStyle<'a> {
                     .expect("constructed immutable calc bindings");
                 &bindings[index].1
             }
+            CalcBindings::Shared(data) => data
+                .payload(slot)
+                .expect("validated immutable shared calc bindings"),
         }
     }
     pub(crate) fn scalar(&self, property: LengthProperty) -> L {
-        use LengthProperty::*;
-        let c = &*self.values;
-        let padding = |v| match v {
-            P::Px(v) => L::Px(v),
-            P::Percent(v) => L::Percent(v),
-            P::Calc(v) => L::Calc(v),
-        };
-        let gap = |v| match v {
-            N::Px(v) => L::Px(v),
-            N::Percent(v) => L::Percent(v),
-            N::Calc(v) => L::Calc(v),
-            N::Normal => L::Px(0.0),
-        };
-        match property {
-            Width => c.width,
-            Height => c.height,
-            MinWidth => c.min_width,
-            MinHeight => c.min_height,
-            MaxWidth => c.max_width,
-            MaxHeight => c.max_height,
-            MarginTop => c.margin.top,
-            MarginRight => c.margin.right,
-            MarginBottom => c.margin.bottom,
-            MarginLeft => c.margin.left,
-            PaddingTop => padding(c.padding.top),
-            PaddingRight => padding(c.padding.right),
-            PaddingBottom => padding(c.padding.bottom),
-            PaddingLeft => padding(c.padding.left),
-            BorderTop => L::Px(c.border.top.width().px()),
-            BorderRight => L::Px(c.border.right.width().px()),
-            BorderBottom => L::Px(c.border.bottom.width().px()),
-            BorderLeft => L::Px(c.border.left.width().px()),
-            Top => c.top,
-            Right => c.right,
-            Bottom => c.bottom,
-            Left => c.left,
-            ColumnGap => gap(c.column_gap),
-            RowGap => gap(c.row_gap),
-            FlexBasis => match c.flex_basis {
-                F::Auto | F::Content => L::Auto,
-                F::MinContent => L::MinContent,
-                F::MaxContent => L::MaxContent,
-                F::FitContent => L::FitContent,
-                F::Px(v) => L::Px(v),
-                F::Percent(v) => L::Percent(v),
-                F::Calc(v) => L::Calc(v),
-            },
-            LogicalWidth => c
-                .vertical_logical_size
-                .as_ref()
-                .map_or(c.width, |s| s.width),
-            LogicalHeight => c
-                .vertical_logical_size
-                .as_ref()
-                .map_or(c.height, |s| s.height),
-            MinBlock => c.min_block_size.unwrap_or(L::Auto),
-        }
+        Self::scalar_value(&self.values, property)
     }
+
     fn visit_calcs(
         &self,
+        visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+    ) -> Result<(), PrepareError> {
+        Self::visit_values_calcs(&self.values, visit)
+    }
+
+    fn visit_values_calcs(
+        values: &ComputedValues,
         mut visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
     ) -> Result<(), PrepareError> {
-        for &property in LengthProperty::ALL {
-            // Logical aliases only need their own bindings when they are present.
-            if matches!(
-                property,
-                LengthProperty::LogicalWidth | LengthProperty::LogicalHeight
-            ) && self.values.vertical_logical_size.is_none()
-            {
-                continue;
-            }
-            let expression = match self.scalar(property) {
-                L::Calc(c) | L::FitContentOf(P::Calc(c)) => Some(c),
-                _ => None,
-            };
-            if let Some(c) = expression {
-                visit(CalcSlot::Property(property), c, property.non_negative())?;
-            }
-        }
+        Self::visit_scalar_calcs(values, &mut visit)?;
         let mut track = |axis, list, component, repeat_track, size| {
             let (min, max) = match size {
                 S::Breadth(v) => (Some(v), Some(v)),
@@ -330,7 +437,7 @@ impl<'a> PreparedStyle<'a> {
             }
             Ok::<_, PrepareError>(())
         };
-        let c = &*self.values;
+        let c = values;
         for (axis, template, auto) in [
             (Axis::X, &c.grid_template_columns, &c.grid_auto_columns),
             (Axis::Y, &c.grid_template_rows, &c.grid_auto_rows),

@@ -1,9 +1,10 @@
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
+use super::box_style_data::{BoxStyleData, LayoutBase, PreparedStamp, recipes};
 use crate::{Document, layout::context::LayoutSession, node::arena::BoxKey};
 use raikiri_layout_style::{
-    LayoutStyleView, OwnedPropertyOverride, PreparedStyle, StyleMetadata, ViewContext,
+    LayoutStyleView, OwnedPropertyOverride, PreparedData, PreparedStyle, StyleMetadata, ViewContext,
 };
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::NodeKind;
@@ -11,13 +12,11 @@ use raikiri_traits::NodeKind;
 #[cfg(test)]
 pub(crate) mod checked;
 mod metadata;
-pub(crate) use metadata::neutral_initial_values;
 mod overrides;
 pub(crate) use overrides::OverrideToken;
 
 pub(crate) struct PreparedBox<'a> {
     prepared: PreparedStyle<'a>,
-    pass: Vec<OwnedPropertyOverride>,
     scoped: Vec<OwnedPropertyOverride>,
     scopes: Vec<usize>,
     context: ViewContext,
@@ -27,10 +26,10 @@ pub(crate) struct PreparedBox<'a> {
 pub(crate) struct StyleViews<'a> {
     cascade: &'a CascadeResult,
     boxes: HashMap<BoxKey, PreparedBox<'a>>,
-    pending: HashMap<BoxKey, Vec<OwnedPropertyOverride>>,
     legacy_calcs: HashMap<BoxKey, Vec<Arc<raikiri_layout_style::AlignedCalc>>>,
     size_scopes: Vec<overrides::SizeScope>,
     prepared_publication: Option<super::cache_context::CacheEpoch>,
+    prepared_stamp: Option<PreparedStamp>,
     preparation_batch: bool,
     deferred_calc_prefix: Option<usize>,
 }
@@ -40,10 +39,10 @@ impl<'a> StyleViews<'a> {
         Self {
             cascade,
             boxes: HashMap::default(),
-            pending: HashMap::default(),
             legacy_calcs: HashMap::default(),
             size_scopes: Vec::new(),
             prepared_publication: None,
+            prepared_stamp: None,
             preparation_batch: false,
             deferred_calc_prefix: None,
         }
@@ -81,48 +80,33 @@ impl<'a> StyleViews<'a> {
 
     fn prepare_keys(&mut self, doc: &mut Document, keys: Vec<usize>) {
         self.assert_outside_scopes();
-        if keys.len() == self.boxes.len()
-            && keys.iter().all(|&idx| {
-                matches!(doc.nodes.box_key(idx), Some(key @ BoxKey::Source(_)) if self.boxes.contains_key(&key))
-            })
-        {
-            // Source computed values stay borrowed from the same cascade between bridges.
-            // A metadata-only publication does not need another registry or calc binding table.
-            for idx in keys {
-                let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
-                let item = self.boxes.get_mut(&BoxKey::Source(idx)).unwrap();
-                item.prepared.set_metadata(metadata);
-                item.context = ViewContext::default();
-                item.was_scoped = false;
-            }
-            self.prepared_publication = Some(doc.layout_cache_context.publication_epoch());
-            return;
-        }
-        let mut previous = std::mem::replace(
-            &mut self.boxes,
-            HashMap::with_capacity_and_hasher(keys.len(), Default::default()),
-        );
+        doc.box_style_data.invalidate_metadata();
+        self.prepared_stamp = None;
+        self.prepare_foundations(doc);
+        let mut boxes = HashMap::with_capacity_and_hasher(keys.len(), Default::default());
         for idx in keys {
             let key = doc.nodes.box_key(idx).expect("prepared layout key exists");
-            let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
-            let (old, mut pass) = previous
-                .remove(&key)
-                .map(|item| (Some(item.prepared), item.pass))
-                .unwrap_or_default();
-            if let Some(pending) = self.pending.remove(&key) {
-                pass.extend(pending);
+            let record = doc
+                .box_style_data
+                .get(key)
+                .expect("box foundation is prepared");
+            let prepared = match &record.base {
+                LayoutBase::Source(source) => PreparedStyle::from_data(
+                    &self.cascade.computed[*source],
+                    record.metadata,
+                    record.prepared.clone(),
+                ),
+                LayoutBase::Synthetic(values) => PreparedStyle::from_shared_data(
+                    values.clone(),
+                    record.metadata,
+                    record.prepared.clone(),
+                ),
             }
-            let prepared = if let Some(mut old) = old.filter(|_| matches!(key, BoxKey::Source(_))) {
-                old.set_metadata(metadata);
-                old
-            } else {
-                self.prepare_one(doc, idx, metadata)
-            };
-            self.boxes.insert(
+            .expect("foundation data is checked against the current computed values");
+            boxes.insert(
                 key,
                 PreparedBox {
                     prepared,
-                    pass,
                     scoped: Vec::new(),
                     scopes: Vec::new(),
                     context: ViewContext::default(),
@@ -130,28 +114,129 @@ impl<'a> StyleViews<'a> {
                 },
             );
         }
-        // A source box may become a Flex/Grid item after a later topology change.
-        for (key, old) in previous {
-            if matches!(key, BoxKey::Source(_)) && !old.pass.is_empty() {
-                // Overrides enter either a prepared box or pending, so these keys are disjoint.
-                self.pending.insert(key, old.pass);
-            }
-        }
+        self.boxes = boxes;
+        let stamp = doc.box_style_data.stamp();
+        assert!(
+            doc.box_style_data.finish_publication(stamp),
+            "box preparation epochs are valid"
+        );
+        self.prepared_stamp = Some(stamp);
         self.prepared_publication = Some(doc.layout_cache_context.publication_epoch());
     }
 
-    fn prepare_one(
+    fn prepare_foundations(&mut self, doc: &mut Document) {
+        // Every live box needs a foundation even when Taffy never queries its view.
+        // The range iterator owns indices; source values stay externally borrowed.
+        for idx in doc.nodes.layout_keys() {
+            let key = doc.nodes.box_key(idx).expect("foundation key is live");
+            if doc.box_style_data.get(key).is_none()
+                && matches!(key, BoxKey::Source(_))
+                && doc.nodes[idx].kind() != NodeKind::Element
+            {
+                doc.box_style_data.publish_recipe(
+                    key,
+                    recipes::neutral_source(recipes::BoxFacts {
+                        direction: taffy::Direction::Ltr,
+                        metadata: StyleMetadata {
+                            flags: raikiri_layout_style::StyleFlags::EMPTY,
+                            used_writing_mode: doc.nodes[idx].used_writing_mode,
+                            ..StyleMetadata::default()
+                        },
+                    }),
+                );
+            }
+            if let Some(record) = doc.box_style_data.get(key)
+                && record.recipe.is_some()
+                && let Some(recipe) = recipes::refresh(doc, self.cascade, key, idx, record)
+            {
+                doc.box_style_data.refresh_recipe(key, recipe);
+            }
+            match doc.box_style_data.get(key) {
+                Some(record) => {
+                    assert_eq!(
+                        matches!(record.base, LayoutBase::Synthetic(_)),
+                        record.recipe.is_some(),
+                        "synthetic bases carry an explicit recipe origin"
+                    );
+                    if let LayoutBase::Source(source) = &record.base {
+                        let source = *source;
+                        let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
+                        let valid = PreparedStyle::from_data(
+                            &self.cascade.computed[source],
+                            metadata,
+                            record.prepared.clone(),
+                        )
+                        .is_ok();
+                        if valid {
+                            doc.box_style_data.get_mut(key).unwrap().metadata = metadata;
+                        } else {
+                            let prepared =
+                                self.prepare_data(doc, key, &self.cascade.computed[source]);
+                            let pass =
+                                std::mem::take(&mut doc.box_style_data.get_mut(key).unwrap().pass);
+                            // Replacing through the store retires the previous binding data.
+                            doc.box_style_data.insert(
+                                key,
+                                BoxStyleData {
+                                    base: LayoutBase::Source(source),
+                                    recipe: None,
+                                    metadata,
+                                    pass,
+                                    prepared,
+                                    stamp: doc.box_style_data.stamp(),
+                                },
+                            );
+                        }
+                    }
+                }
+                None => {
+                    let BoxKey::Source(source) = key else {
+                        panic!(
+                            "generated box must publish its explicit recipe before binding: {key:?}"
+                        );
+                    };
+                    assert_ne!(
+                        doc.nodes[idx].display(),
+                        raikiri_style::property::DisplayValue::Contents,
+                        "neutralized source must publish its explicit recipe before binding"
+                    );
+                    let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
+                    let prepared = self.prepare_data(doc, key, &self.cascade.computed[source]);
+                    doc.box_style_data.insert(
+                        key,
+                        BoxStyleData {
+                            base: LayoutBase::Source(source),
+                            recipe: None,
+                            metadata,
+                            pass: Vec::new(),
+                            prepared,
+                            stamp: doc.box_style_data.stamp(),
+                        },
+                    );
+                }
+            }
+            if let Some(pending) = doc.box_style_data.pending.remove(&key) {
+                doc.box_style_data
+                    .get_mut(key)
+                    .unwrap()
+                    .pass
+                    .extend(pending);
+            }
+        }
+        // Recipe creation may advance epochs while filling neutral source holes.
+        let stamp = doc.box_style_data.stamp();
+        for idx in doc.nodes.layout_keys() {
+            let key = doc.nodes.box_key(idx).unwrap();
+            doc.box_style_data.get_mut(key).unwrap().stamp = stamp;
+        }
+    }
+
+    fn prepare_data(
         &mut self,
         doc: &mut Document,
-        idx: usize,
-        metadata: StyleMetadata,
-    ) -> PreparedStyle<'a> {
-        use raikiri_style::property::DisplayValue;
-        let key = doc.nodes.box_key(idx).expect("prepared layout key exists");
-        let node = &doc.nodes[idx];
-        let neutral = !matches!(key, BoxKey::Source(_))
-            || node.kind() != NodeKind::Element
-            || node.display() == DisplayValue::Contents;
+        key: BoxKey,
+        values: &ComputedValues,
+    ) -> Arc<PreparedData> {
         let mut pool = self.legacy_calcs.remove(&key).unwrap_or_default();
         // Expressions come from CSS; keep randomized hashing for their exact bit keys.
         let mut owner_index = (!pool.is_empty()).then(|| {
@@ -168,46 +253,31 @@ impl<'a> StyleViews<'a> {
             }
             index
         });
-        let shared = if neutral {
-            let owner = if key == BoxKey::InitialContainingBlock {
-                doc.synthetic_style_values
-                    .get(&key)
-                    .expect("ICB recipe is published with the page dimensions")
-                    .clone()
-            } else if matches!(key, BoxKey::Source(_)) && node.kind() != NodeKind::Element {
-                metadata::neutral_source_owner()
-            } else {
-                Arc::new(metadata::neutral_values(doc, self.cascade, idx))
-            };
-            doc.synthetic_style_values.insert(key, owner.clone());
-            Some(owner)
-        } else {
-            None
-        };
-        let mut owner = |_, expression: raikiri_style::property::CalcLengthPercentage, range| {
+        let mut has_calcs = false;
+        let data = PreparedData::prepare_with(values, |_, expression, range| {
+            has_calcs = true;
             let key = (expression.px.to_bits(), expression.percent.to_bits(), range);
             if let Some(position) = owner_index.as_ref().and_then(|index| index.get(&key)) {
                 return pool[*position].clone();
             }
             let payload = Arc::new(raikiri_layout_style::AlignedCalc::new(expression, range));
-            // Retain owners before the prepared binding can publish a raw handle.
-            doc.retained_layout_styles.calc_values.push(payload.clone());
+            // Retain before a checked wrapper can publish the raw handle.
+            doc.box_style_data.calc_values.push(payload.clone());
             owner_index
                 .get_or_insert_with(std::collections::HashMap::new)
                 .insert(key, pool.len());
             pool.push(payload.clone());
             payload
-        };
-        let prepared = if let Some(values) = shared {
-            PreparedStyle::prepare_shared_with(values, metadata, &mut owner)
-        } else {
-            PreparedStyle::prepare_with(&self.cascade.computed[idx], metadata, &mut owner)
-        }
-        .expect("adapter calc owners match the prepared computed values");
+        })
+        .expect("calc owners match source expressions and ranges");
         if !pool.is_empty() {
             self.legacy_calcs.insert(key, pool);
         }
-        prepared
+        if has_calcs {
+            Arc::new(data)
+        } else {
+            recipes::empty_prepared_data()
+        }
     }
 }
 
@@ -232,6 +302,8 @@ impl LayoutSession<'_> {
         if let Some(views) = &mut self.style_views {
             views.assert_outside_scopes();
             views.preparation_batch = true;
+            views.prepared_stamp = None;
+            self.document.box_style_data.begin_publication();
         }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self)));
         let old_prefix = self.style_views.as_mut().and_then(|views| {
@@ -240,12 +312,10 @@ impl LayoutSession<'_> {
         });
         match result {
             Ok(Ok(value)) => {
-                self.sync_layout_cache_mutations();
+                self.publish_layout_cache_mutations();
+                self.prepare_style_views();
                 if let Some(length) = old_prefix {
-                    self.document
-                        .retained_layout_styles
-                        .calc_values
-                        .drain(..length);
+                    self.document.box_style_data.calc_values.drain(..length);
                 }
                 Ok(value)
             }
@@ -263,7 +333,7 @@ impl LayoutSession<'_> {
         }
         self.prepare_style_views();
         self.document
-            .retained_layout_styles
+            .box_style_data
             .calc_values
             .drain(..old_calc_len);
     }
@@ -283,7 +353,7 @@ impl LayoutSession<'_> {
                 .get(&key)
                 .unwrap_or_else(|| panic!("missing prepared style for {key:?}"));
             context.context = prepared.context;
-            context.pass_entries = prepared.pass.len();
+            context.pass_entries = self.document.box_style_data.get(key).unwrap().pass.len();
             context.scope_depth = prepared.scopes.len();
             context.was_scoped = prepared.was_scoped;
             self.style_view(idx)
@@ -322,27 +392,29 @@ impl LayoutSession<'_> {
     ) {
         if let Some(views) = &mut self.style_views {
             self.document
-                .retained_layout_styles
+                .box_style_data
                 .calc_values
                 .extend(values.iter().cloned());
             if !values.is_empty() {
                 views.legacy_calcs.insert(key, values);
             }
         } else {
-            self.document
-                .retained_layout_styles
-                .calc_values
-                .extend(values);
+            self.document.box_style_data.calc_values.extend(values);
         }
     }
 
     pub(crate) fn begin_style_bridge(&mut self) {
+        self.assert_preparation_outside_legacy_scopes();
         if let Some(views) = &mut self.style_views {
             views.assert_outside_scopes();
             views.boxes.clear();
-            views.pending.clear();
+            self.document.box_style_data.begin_bridge();
+            self.document
+                .box_style_data
+                .reserve_sources(self.document.nodes.len());
             views.legacy_calcs.clear();
             views.prepared_publication = None;
+            views.prepared_stamp = None;
         }
     }
     fn assert_preparation_outside_legacy_scopes(&self) {
@@ -365,13 +437,23 @@ impl LayoutSession<'_> {
         self.assert_style_queries_allowed();
         let publication = self.document.layout_cache_context.publication_epoch();
         if let Some(views) = &mut self.style_views
-            && views.prepared_publication != Some(publication)
+            && (views.prepared_publication != Some(publication)
+                || !self.document.box_style_data.is_ready())
         {
             assert!(
                 self.context.resolved_edge_bases.is_empty()
                     && self.context.saved_size_scopes.is_empty(),
                 "preparation runs outside legacy style scopes"
             );
+            assert!(
+                views.prepared_publication.is_some(),
+                "new session requires explicit style binding before cache queries"
+            );
+            if views.prepared_publication == Some(publication) {
+                // Box identity can invalidate its foundation without a source bridge.
+                // Publish before the parent's cache lookup can hide that change.
+                self.document.layout_cache_context.publish_metadata();
+            }
             views.prepare(self.document);
         }
     }
@@ -392,6 +474,10 @@ impl LayoutSession<'_> {
             .style_views
             .as_ref()
             .expect("checked session borrows its cascade");
+        assert!(
+            views.prepared_stamp.is_some() && self.document.box_style_data.is_ready(),
+            "style queries require completed document and session preparation"
+        );
         let prepared = views
             .boxes
             .get(&key)
@@ -399,24 +485,34 @@ impl LayoutSession<'_> {
         LayoutStyleView::with_owned_overrides(
             &prepared.prepared,
             prepared.context,
-            &prepared.pass,
+            &self
+                .document
+                .box_style_data
+                .get(key)
+                .expect("prepared foundation exists")
+                .pass,
             &prepared.scoped,
         )
     }
 
     pub(crate) fn record_pass_override(&mut self, idx: usize, value: OwnedPropertyOverride) {
         let key = self.nodes.box_key(idx).expect("override has a box key");
-        if let Some(views) = &mut self.style_views {
+        if self.style_views.is_some() {
             if let Some(payload) = value.calc_owner() {
                 self.document
-                    .retained_layout_styles
+                    .box_style_data
                     .calc_values
                     .push(payload.clone());
             }
-            if let Some(prepared) = views.boxes.get_mut(&key) {
-                prepared.pass.push(value);
+            if let Some(record) = self.document.box_style_data.get_mut(key) {
+                record.pass.push(value);
             } else {
-                views.pending.entry(key).or_default().push(value);
+                self.document
+                    .box_style_data
+                    .pending
+                    .entry(key)
+                    .or_default()
+                    .push(value);
             }
         }
     }

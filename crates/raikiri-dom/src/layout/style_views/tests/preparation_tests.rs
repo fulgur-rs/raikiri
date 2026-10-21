@@ -399,7 +399,7 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
             .calc_value();
         let owner = Arc::downgrade(
             session
-                .retained_layout_styles
+                .box_style_data
                 .calc_values
                 .iter()
                 .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
@@ -420,6 +420,19 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
             assert!(result.unwrap().is_err());
         }
         assert!(owner.upgrade().is_some());
+        assert!(!session.box_style_data.is_ready());
+        assert!(
+            session
+                .style_views
+                .as_ref()
+                .unwrap()
+                .prepared_stamp
+                .is_none()
+        );
+        let query = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = session.style_view(child);
+        }));
+        assert!(query.is_err());
         session
             .with_style_preparation_batch(|session| {
                 apply_computed_to_style_in_session(session, &cascade).unwrap();

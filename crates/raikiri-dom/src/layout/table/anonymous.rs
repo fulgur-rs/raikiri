@@ -597,6 +597,26 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     objects.tables = tables;
     doc.set_anonymous_cells(std::mem::take(&mut objects.cell_nodes));
     doc.table_objects = objects;
+    for index in 0..doc.table_objects.tables.len() {
+        let key = doc.nodes.anonymous_table_key(index);
+        let owner = doc.table_objects.tables[index].parent;
+        let facts = crate::layout::box_style_data::recipes::TableFacts::from_owner(
+            doc, cascade, key, owner,
+        );
+        let recipe = crate::layout::box_style_data::recipes::anonymous_table(facts);
+        doc.box_style_data
+            .publish_recipe(BoxKey::AnonymousTable(index), recipe);
+    }
+    for index in 0..doc.table_objects.cells.len() {
+        let key = doc.nodes.anonymous_cell_key(index);
+        let owner = doc.table_objects.cells[index].owner;
+        let facts = crate::layout::box_style_data::recipes::TableFacts::from_owner(
+            doc, cascade, key, owner,
+        );
+        let recipe = crate::layout::box_style_data::recipes::anonymous_cell(facts);
+        doc.box_style_data
+            .publish_recipe(BoxKey::AnonymousCell(index), recipe);
+    }
     Ok(())
 }
 

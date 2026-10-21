@@ -126,7 +126,7 @@ impl LayoutSession<'_> {
             .expect("typed physical property override");
         if let Some(payload) = entry.calc_owner() {
             self.document
-                .retained_layout_styles
+                .box_style_data
                 .calc_values
                 .push(payload.clone());
         }
@@ -149,7 +149,7 @@ impl LayoutSession<'_> {
         };
         prepared.scopes.push(token.length);
         prepared.was_scoped = true;
-        self.document.retained_layout_styles.calc_values.extend(
+        self.document.box_style_data.calc_values.extend(
             entries
                 .iter()
                 .filter_map(OwnedPropertyOverride::calc_owner)
