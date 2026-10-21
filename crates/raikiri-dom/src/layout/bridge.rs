@@ -757,6 +757,23 @@ fn layout_values<'a>(
     vertical_sized: Option<&'a ComputedValues>,
 ) -> std::borrow::Cow<'a, ComputedValues> {
     let cv = vertical_sized.unwrap_or(&cascade.computed[idx]);
+    // Only intrinsic keywords need contextual normalization. Keep the ordinary
+    // scalar path free of repeated ancestor and formatting-context queries.
+    if ![
+        cv.width,
+        cv.height,
+        cv.min_width,
+        cv.max_width,
+        cv.min_height,
+        cv.max_height,
+        cv.min_block_size
+            .unwrap_or(ComputedLengthPercentageOrAuto::Auto),
+    ]
+    .into_iter()
+    .any(is_sizing_keyword)
+    {
+        return std::borrow::Cow::Borrowed(cv);
+    }
     use raikiri_layout_style::StyleFlags as F;
     let flags = view_sizing_flags(doc, cascade, idx);
     let width = flags.contains(F::IGNORE_WIDTH_KEYWORD)

@@ -77,3 +77,23 @@ fn flex_shrink_projection_preserves_the_getter_override_value() {
         assert_eq!(view.flex_shrink().to_bits(), style.flex_shrink.to_bits());
     }
 }
+
+#[test]
+fn clearance_projection_covers_each_authored_side() {
+    for (value, expected) in [
+        (ClearValue::None, taffy::Clear::None),
+        (ClearValue::Left, taffy::Clear::Left),
+        (ClearValue::Right, taffy::Clear::Right),
+        (ClearValue::Both, taffy::Clear::Both),
+    ] {
+        let mut values = ComputedValues::initial();
+        values.clear = value;
+        let prepared = PreparedStyle::prepare(&values, StyleMetadata::default());
+        let view =
+            LayoutStyleView::with_owned_overrides(&prepared, ViewContext::default(), &[], &[]);
+        assert_eq!(view.clear(), expected);
+        let mut style = taffy::Style::default();
+        OwnedPropertyOverride::clear(value).apply_to_style(&mut style);
+        assert_eq!(style.clear, expected);
+    }
+}
