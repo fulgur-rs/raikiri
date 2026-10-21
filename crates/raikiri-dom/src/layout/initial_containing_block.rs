@@ -64,6 +64,7 @@ pub(crate) fn prepare(
         ..Style::default()
     };
     let mut node = Node::new_element("".into(), style.clone(), None);
+    let mut recipe_direction = taffy::Direction::Ltr;
     if let Some(root) = root_element(document) {
         node.children.push(root);
         let principal = principal_element(document, cascade, root);
@@ -72,22 +73,34 @@ pub(crate) fn prepare(
             .layout_style_for_key(principal)
             .expect("principal element has a style")
             .direction;
-    }
-    {
-        use raikiri_style::{ComputedLengthPercentageOrAuto as L, property::Direction};
-        let mut values = super::style_views::neutral_initial_values();
-        values.width = L::Px(width);
-        values.height = L::Px(height);
-        values.direction = match style.direction {
-            taffy::Direction::Ltr => Direction::Ltr,
-            taffy::Direction::Rtl => Direction::Rtl,
-        };
-        document.synthetic_style_values.insert(
-            crate::node::arena::BoxKey::InitialContainingBlock,
-            std::sync::Arc::new(values),
+        recipe_direction = super::bridge::direction_for_axes(
+            &cascade.computed[principal],
+            super::bridge::uses_vertical_axes(cascade, principal),
         );
     }
-    document.set_initial_containing_block(node, style)
+    let used_writing_mode = node.used_writing_mode;
+    let key = document.set_initial_containing_block(node, style);
+    let recipe = super::box_style_data::recipes::initial_containing_block(
+        width,
+        height,
+        super::box_style_data::recipes::BoxFacts {
+            direction: recipe_direction,
+            metadata: raikiri_layout_style::StyleMetadata {
+                flags: raikiri_layout_style::StyleFlags::BLOCK,
+                used_writing_mode,
+                claims: None,
+            },
+        },
+    );
+    // The sparse adapter keeps the same immutable owner until session binding moves.
+    document.synthetic_style_values.insert(
+        crate::node::arena::BoxKey::InitialContainingBlock,
+        recipe.values.clone(),
+    );
+    document
+        .box_style_data
+        .publish_recipe(crate::node::arena::BoxKey::InitialContainingBlock, recipe);
+    key
 }
 
 #[cfg(test)]

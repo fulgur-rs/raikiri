@@ -45,16 +45,7 @@ pub(super) fn prepare_metadata(
     }
 }
 
-pub(crate) fn neutral_initial_values() -> ComputedValues {
-    use std::sync::OnceLock;
-    static EMPTY_TRACKS: OnceLock<Arc<Vec<raikiri_style::ComputedGridTrackSize>>> = OnceLock::new();
-    let mut values = ComputedValues::initial();
-    values.box_sizing = raikiri_style::property::BoxSizing::BorderBox;
-    let empty = EMPTY_TRACKS.get_or_init(|| Arc::new(Vec::new()));
-    values.grid_auto_columns = empty.clone();
-    values.grid_auto_rows = empty.clone();
-    values
-}
+pub(crate) use crate::layout::box_style_data::recipes::neutral_initial_values;
 
 pub(super) fn neutral_source_owner() -> Arc<ComputedValues> {
     use std::sync::OnceLock;

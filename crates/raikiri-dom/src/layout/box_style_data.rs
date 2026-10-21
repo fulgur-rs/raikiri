@@ -5,6 +5,8 @@ use raikiri_style::ComputedValues;
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
+pub(crate) mod recipes;
+
 #[derive(Clone, Debug)]
 pub(crate) enum LayoutBase {
     Source(usize),
@@ -22,6 +24,7 @@ pub(crate) struct PreparedStamp {
 #[derive(Debug)]
 pub(crate) struct BoxStyleData {
     pub(crate) base: LayoutBase,
+    pub(crate) recipe: Option<recipes::RecipeKind>,
     pub(crate) metadata: StyleMetadata,
     pub(crate) pass: Vec<OwnedPropertyOverride>,
     pub(crate) prepared: Arc<PreparedData>,
@@ -90,6 +93,13 @@ impl BoxStyleStore {
         }
     }
 
+    pub(crate) fn get_mut(&mut self, key: BoxKey) -> Option<&mut BoxStyleData> {
+        match key {
+            BoxKey::Source(index) => self.source.get_mut(index)?.as_mut(),
+            _ => self.generated.get_mut(&key),
+        }
+    }
+
     pub(crate) fn insert(&mut self, key: BoxKey, data: BoxStyleData) {
         self.begin_publication();
         match key {
@@ -103,6 +113,21 @@ impl BoxStyleStore {
                 self.generated.insert(key, data);
             }
         }
+    }
+
+    pub(crate) fn publish_recipe(&mut self, key: BoxKey, recipe: recipes::Recipe) {
+        self.invalidate_recipe();
+        self.insert(
+            key,
+            BoxStyleData {
+                base: LayoutBase::Synthetic(recipe.values),
+                recipe: Some(recipe.kind),
+                metadata: recipe.metadata,
+                pass: Vec::new(),
+                prepared: recipes::empty_prepared_data(),
+                stamp: self.stamp,
+            },
+        );
     }
 
     pub(crate) fn invalidate_source(&mut self) {

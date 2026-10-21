@@ -569,6 +569,36 @@ fn apply_computed_to_style_in_session_inner(
         let key = doc.nodes.box_key(idx).expect("source node has a box key");
         doc.retain_bridge_calcs(key, calc_values);
         doc.document.retained_layout_styles.insert(key, style);
+        if is_contents {
+            let recipe = super::box_style_data::recipes::contents(
+                super::box_style_data::recipes::BoxFacts {
+                    direction: direction_for_axes(cv, vertical_axes),
+                    metadata: raikiri_layout_style::StyleMetadata {
+                        flags: raikiri_layout_style::StyleFlags::EMPTY,
+                        used_writing_mode: doc.nodes[idx].used_writing_mode,
+                        claims: None,
+                    },
+                },
+            );
+            doc.document.box_style_data.publish_recipe(key, recipe);
+        }
+    }
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            let recipe = super::box_style_data::recipes::neutral_source(
+                super::box_style_data::recipes::BoxFacts {
+                    direction: taffy::Direction::Ltr,
+                    metadata: raikiri_layout_style::StyleMetadata {
+                        flags: raikiri_layout_style::StyleFlags::EMPTY,
+                        used_writing_mode: doc.nodes[idx].used_writing_mode,
+                        claims: None,
+                    },
+                },
+            );
+            doc.document
+                .box_style_data
+                .publish_recipe(crate::node::arena::BoxKey::Source(idx), recipe);
+        }
     }
     super::spanner_wrappers::lift_spanner_wrappers(doc, cascade);
     // Whether a box is a non-atomic inline box depends on its parent's

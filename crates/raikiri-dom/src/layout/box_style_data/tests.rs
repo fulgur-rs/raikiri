@@ -6,8 +6,11 @@ use std::sync::Arc;
 
 fn record(base: LayoutBase, stamp: PreparedStamp) -> BoxStyleData {
     let values = ComputedValues::initial();
+    let recipe =
+        matches!(&base, LayoutBase::Synthetic(_)).then_some(recipes::RecipeKind::NeutralSource);
     BoxStyleData {
         base,
+        recipe,
         metadata: StyleMetadata::default(),
         pass: Vec::new(),
         prepared: Arc::new(

@@ -11,7 +11,6 @@ use raikiri_traits::NodeKind;
 #[cfg(test)]
 pub(crate) mod checked;
 mod metadata;
-pub(crate) use metadata::neutral_initial_values;
 mod overrides;
 pub(crate) use overrides::OverrideToken;
 
@@ -169,7 +168,16 @@ impl<'a> StyleViews<'a> {
             index
         });
         let shared = if neutral {
-            let owner = if key == BoxKey::InitialContainingBlock {
+            let published = doc
+                .box_style_data
+                .get(key)
+                .and_then(|record| match &record.base {
+                    super::box_style_data::LayoutBase::Synthetic(values) => Some(values.clone()),
+                    super::box_style_data::LayoutBase::Source(_) => None,
+                });
+            let owner = if let Some(owner) = published {
+                owner
+            } else if key == BoxKey::InitialContainingBlock {
                 doc.synthetic_style_values
                     .get(&key)
                     .expect("ICB recipe is published with the page dimensions")
