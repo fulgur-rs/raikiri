@@ -9,6 +9,7 @@ mod owned_tests;
 mod policy_tests;
 mod pr_review_tests;
 mod prepared_data_tests;
+mod resolved_length_tests;
 mod review_tests;
 
 #[test]

@@ -10,6 +10,13 @@ pub(crate) fn sanitize(value: f32) -> f32 {
     }
 }
 impl LengthValue<'_> {
+    fn pixel(self, value: f32) -> f32 {
+        if self.resolved && value.is_finite() {
+            value
+        } else {
+            sanitize(value)
+        }
+    }
     fn pointer(self) -> *const () {
         self.payload.expect("calc has a prepared payload").pointer()
     }
@@ -17,7 +24,7 @@ impl LengthValue<'_> {
     pub(crate) fn dimension(self) -> Dimension {
         match self.value {
             L::Auto => Dimension::auto(),
-            L::Px(v) => Dimension::length(sanitize(v)),
+            L::Px(v) => Dimension::length(self.pixel(v)),
             L::Percent(v) => Dimension::percent(sanitize(v / 100.0)),
             L::MinContent => Dimension::min_content(),
             L::MaxContent => Dimension::max_content(),
@@ -31,7 +38,7 @@ impl LengthValue<'_> {
     #[inline]
     pub(crate) fn auto(self, margin: bool) -> LPA {
         match self.value {
-            L::Px(v) => LPA::length(sanitize(v)),
+            L::Px(v) => LPA::length(self.pixel(v)),
             L::Percent(v) => LPA::percent(sanitize(v / 100.0)),
             L::Calc(_) => LPA::calc(self.pointer()),
             L::Auto => LPA::auto(),
@@ -55,7 +62,7 @@ impl LengthValue<'_> {
             return LP::length(value);
         }
         match self.value {
-            L::Px(v) => LP::length(sanitize(v)),
+            L::Px(v) => LP::length(self.pixel(v)),
             L::Percent(v) => LP::percent(sanitize(v / 100.0)),
             L::Calc(_) => LP::calc(self.pointer()),
             _ => LP::length(0.0),

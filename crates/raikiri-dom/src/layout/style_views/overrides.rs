@@ -68,10 +68,6 @@ impl ScopedOverrides {
 }
 
 impl LayoutSession<'_> {
-    #[cfg_attr(
-        not(any(test, doc)),
-        expect(dead_code, reason = "Content-limit callers migrate in the next task.")
-    )]
     pub(crate) fn with_overrides<R>(
         &mut self,
         entries: Vec<(BoxKey, OwnedPropertyOverride)>,

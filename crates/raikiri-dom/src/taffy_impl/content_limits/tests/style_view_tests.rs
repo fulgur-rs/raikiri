@@ -3,15 +3,103 @@ use crate::layout::{apply_computed_to_style, context::LayoutSession};
 use raikiri_style::ComputedLengthPercentageOrAuto as L;
 use taffy::CoreStyle;
 
-#[test]
-fn intrinsic_limit_install_and_restore_are_visible_to_the_view() {
+fn assert_unrelated_pass_height_survives(panic_body: bool) {
+    use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+
     let (mut doc, mut cascade, child, _) = fixture();
     cascade.computed[child].min_width = L::MaxContent;
     apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
-    session.prepare_style_views();
-    let original = session.style_view(child).min_size();
-    let inputs = taffy::LayoutInput {
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::super::with_content_limits(
+            &mut tree,
+            taffy::NodeId::from(child),
+            content_limit_inputs(),
+            |tree, _, _| {
+                assert!(!tree.style_view(child).min_size().width.is_auto());
+                tree.cache_override_changed(child);
+                tree.record_pass_override(
+                    child,
+                    OwnedPropertyOverride::length(LengthProperty::Height, L::Px(91.0), true)
+                        .unwrap(),
+                );
+                tree.layout_style_for_key_mut(child).unwrap().size.height =
+                    taffy::Dimension::length(91.0);
+                if panic_body {
+                    panic!("unwind after an unrelated pass update");
+                }
+                taffy::LayoutOutput::HIDDEN
+            },
+        );
+    }));
+    assert_eq!(failure.is_err(), panic_body);
+    assert_eq!(tree.style_override_depth(child), 0);
+    assert_eq!(
+        tree.style_view(child).min_size().width,
+        taffy::LengthPercentageAuto::auto()
+    );
+    assert_eq!(
+        tree.style_view(child).size().height,
+        taffy::Dimension::length(91.0)
+    );
+    assert_eq!(
+        tree.layout_style_for_key(child).unwrap().size.height,
+        taffy::Dimension::length(91.0)
+    );
+}
+
+#[test]
+fn content_limit_scope_keeps_an_unrelated_pass_update() {
+    assert_unrelated_pass_height_survives(false);
+}
+
+#[test]
+fn content_limit_scope_keeps_an_unrelated_pass_update_on_unwind() {
+    assert_unrelated_pass_height_survives(true);
+}
+
+#[test]
+fn content_limit_resolved_scope_keeps_large_finite_used_values() {
+    use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+
+    let mut legacy = crate::LayoutStyle::default();
+    super::super::Bounds {
+        min: Some(20_000_000.0),
+        max: None,
+    }
+    .install_width(&mut legacy, 0.0);
+    assert_eq!(
+        legacy.min_size.width,
+        taffy::LengthPercentageAuto::length(20_000_000.0)
+    );
+
+    let (mut doc, cascade, child, _) = fixture();
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let key = tree.nodes.box_key(child).unwrap();
+    tree.with_overrides(
+        vec![(
+            key,
+            OwnedPropertyOverride::length(LengthProperty::MinWidth, L::Px(20_000_000.0), true)
+                .unwrap(),
+        )],
+        |tree| {
+            assert_eq!(
+                tree.layout_style_for_key(child).unwrap().min_size.width,
+                taffy::LengthPercentageAuto::length(20_000_000.0)
+            );
+            assert_eq!(
+                tree.style_view(child).min_size().width,
+                taffy::LengthPercentageAuto::length(20_000_000.0)
+            );
+        },
+    );
+}
+
+fn content_limit_inputs() -> taffy::LayoutInput {
+    taffy::LayoutInput {
         run_mode: taffy::RunMode::ComputeSize,
         sizing_mode: taffy::SizingMode::InherentSize,
         axis: taffy::RequestedAxis::Both,
@@ -29,7 +117,18 @@ fn intrinsic_limit_install_and_restore_are_visible_to_the_view() {
             height: taffy::AvailableSpace::MaxContent,
         },
         vertical_margins_are_collapsible: taffy::Line::FALSE,
-    };
+    }
+}
+
+#[test]
+fn intrinsic_limit_install_and_restore_are_visible_to_the_view() {
+    let (mut doc, mut cascade, child, _) = fixture();
+    cascade.computed[child].min_width = L::MaxContent;
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    let original = session.style_view(child).min_size();
+    let inputs = content_limit_inputs();
     super::super::with_content_limits(
         &mut session,
         taffy::NodeId::from(child),
@@ -134,4 +233,29 @@ fn oof_raw_prepass_temporarily_clears_numeric_limits_in_both_readers() {
     assert_eq!(tree.layout_style_for_key(child).unwrap().min_size, original);
     assert_eq!(tree.style_view(child).min_size(), original);
     assert_eq!(tree.style_override_depth(child), 0);
+}
+
+#[test]
+fn height_only_content_limit_keeps_the_callers_available_width() {
+    let (mut doc, mut cascade, child, _) = fixture();
+    cascade.computed[child].min_height = L::MaxContent;
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let mut inputs = content_limit_inputs();
+    inputs.known_dimensions.width = Some(20.0);
+    inputs.available_space.width = taffy::AvailableSpace::Definite(77.0);
+    super::super::with_content_limits(
+        &mut tree,
+        taffy::NodeId::from(child),
+        inputs,
+        |_, _, inputs| {
+            assert_eq!(inputs.known_dimensions.width, Some(20.0));
+            assert_eq!(
+                inputs.available_space.width,
+                taffy::AvailableSpace::Definite(77.0)
+            );
+            taffy::LayoutOutput::HIDDEN
+        },
+    );
 }

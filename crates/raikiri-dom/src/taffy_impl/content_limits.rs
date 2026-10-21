@@ -15,6 +15,7 @@ use crate::layout::context::LayoutSession;
 use crate::layout::ifc::boxes::{box_sizing_adjustment, box_sizing_height_adjustment};
 use crate::node::FormattingContext;
 use crate::taffy_impl::{fit_content_room, resolve_calc};
+use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
 use taffy::{
     AvailableSpace, BoxSizing, Cache, Dimension, ExpandedDimension, LayoutInput, LayoutOutput,
@@ -159,10 +160,28 @@ fn is_flex_grid_item(tree: &LayoutSession<'_>, idx: usize) -> bool {
     })
 }
 
-fn neutralize_all_sizes(style: &mut Style) {
-    style.size = Size::auto();
-    style.min_size = Size::auto();
-    style.max_size = Size::auto();
+fn neutral_size_overrides(properties: &[LengthProperty]) -> Vec<OwnedPropertyOverride> {
+    properties
+        .iter()
+        .map(|&property| {
+            OwnedPropertyOverride::length(
+                property,
+                raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+                false,
+            )
+            .expect("neutral sizing property")
+        })
+        .collect()
+}
+
+fn with_size_overrides<R>(
+    tree: &mut LayoutSession<'_>,
+    idx: usize,
+    entries: Vec<OwnedPropertyOverride>,
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> R {
+    let key = tree.nodes.box_key(idx).expect("live content-limit box");
+    tree.with_overrides(entries.into_iter().map(|entry| (key, entry)).collect(), f)
 }
 
 fn record_neutral_sizes(
@@ -247,38 +266,37 @@ pub(super) fn with_content_limits(
         return dispatch(tree, node_id, inputs);
     }
     scoped(tree, |tree| {
-        let saved = SavedSizes::capture(tree, idx);
-        // A parent hands its child a size already within the child's limits;
-        // the keywords are the limits it could not read.
+        // Resolve height only after the width bounds have been published.
         let mut inputs = inputs;
-        let mut width = Bounds::default();
-        if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
-            width = resolved_width_bounds(tree, node_id, &limits, &inputs);
-            let adjustment =
-                box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
-            width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            width.record(tree, idx, true, adjustment);
-            if let Some(known) = inputs.known_dimensions.width {
+        let has_width =
+            limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height());
+        let width = if has_width {
+            resolved_width_bounds(tree, node_id, &limits, &inputs)
+        } else {
+            Bounds::default()
+        };
+        let adjustment = box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
+        with_size_overrides(tree, idx, width.overrides(true, adjustment), |tree| {
+            if has_width && let Some(known) = inputs.known_dimensions.width {
                 let known = width.apply(known);
                 inputs.known_dimensions.width = Some(known);
-                // The room a parent offers a box it sizes is that size.
                 inputs.available_space.width = AvailableSpace::Definite(known);
             }
-        }
-        if limits.has_height() {
-            let height = resolved_height_bounds(tree, node_id, &limits, &inputs, width);
+            let height = if limits.has_height() {
+                resolved_height_bounds(tree, node_id, &limits, &inputs, width)
+            } else {
+                Bounds::default()
+            };
             let adjustment =
                 box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
-            height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            height.record(tree, idx, false, adjustment);
-            inputs.known_dimensions.height = inputs
-                .known_dimensions
-                .height
-                .map(|known| height.apply(known));
-        }
-        let output = dispatch(tree, node_id, inputs);
-        saved.restore(tree, idx);
-        output
+            with_size_overrides(tree, idx, height.overrides(false, adjustment), |tree| {
+                inputs.known_dimensions.height = inputs
+                    .known_dimensions
+                    .height
+                    .map(|known| height.apply(known));
+                dispatch(tree, node_id, inputs)
+            })
+        })
     })
 }
 
@@ -321,41 +339,58 @@ pub(crate) fn with_oof_child_content_limits(
 
     scoped(tree, |tree| {
         let cache = tree.take_layout_cache(idx);
-        let saved = SavedSizes::capture(tree, idx);
-        let mut width = Bounds::default();
-        if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
-            width = resolved_width_bounds(tree, node_id, &limits, &inputs);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let width =
+                if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
+                    resolved_width_bounds(tree, node_id, &limits, &inputs)
+                } else {
+                    Bounds::default()
+                };
             let adjustment =
                 box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
-            width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            width.record(tree, idx, true, adjustment);
-        }
-        if let Some(known) = inputs.known_dimensions.width {
-            let known =
-                clamp_known_width_to_style(tree, idx, inputs.parent_size.width, width.apply(known));
-            inputs.known_dimensions.width = Some(known);
-            inputs.available_space.width = AvailableSpace::Definite(known);
-        }
-        if limits.has_height() {
-            let height = resolved_height_bounds(tree, node_id, &limits, &inputs, width);
-            let adjustment =
-                box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
-            height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            height.record(tree, idx, false, adjustment);
-            inputs.known_dimensions.height = inputs.known_dimensions.height.map(|known| {
-                clamp_known_height_to_style(
+            with_size_overrides(tree, idx, width.overrides(true, adjustment), |tree| {
+                if let Some(known) = inputs.known_dimensions.width {
+                    let known = clamp_known_width_to_style(
+                        tree,
+                        idx,
+                        inputs.parent_size.width,
+                        width.apply(known),
+                    );
+                    inputs.known_dimensions.width = Some(known);
+                    inputs.available_space.width = AvailableSpace::Definite(known);
+                }
+                let height = if limits.has_height() {
+                    resolved_height_bounds(tree, node_id, &limits, &inputs, width)
+                } else {
+                    Bounds::default()
+                };
+                let adjustment = box_sizing_height_adjustment(
                     tree,
                     idx,
-                    inputs.parent_size.height,
-                    inputs.parent_size.width,
-                    height.apply(known),
-                )
-            });
-        }
-        let output = dispatch(tree, node_id, inputs);
-        saved.restore(tree, idx);
+                    inputs.parent_size.width.unwrap_or(0.0),
+                );
+                with_size_overrides(tree, idx, height.overrides(false, adjustment), |tree| {
+                    if limits.has_height() {
+                        inputs.known_dimensions.height =
+                            inputs.known_dimensions.height.map(|known| {
+                                clamp_known_height_to_style(
+                                    tree,
+                                    idx,
+                                    inputs.parent_size.height,
+                                    inputs.parent_size.width,
+                                    height.apply(known),
+                                )
+                            });
+                    }
+                    dispatch(tree, node_id, inputs)
+                })
+            })
+        }));
         tree.restore_layout_cache(idx, cache);
-        output
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     })
 }
 
@@ -682,11 +717,9 @@ pub(crate) fn with_width_limits<R>(
         resolved_width_bounds(tree, NodeId::from(node), &limits, &inputs)
     });
     let adjustment = box_sizing_adjustment(tree, node, parent_size.width.unwrap_or(0.0));
-    let saved = SavedSizes::capture(tree, node);
-    bounds.install_width(tree.layout_style_for_key_mut(node).unwrap(), adjustment);
-    bounds.record(tree, node, true, adjustment);
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
-    saved.restore(tree, node);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_size_overrides(tree, node, bounds.overrides(true, adjustment), f)
+    }));
     match result {
         Ok(value) => value,
         Err(payload) => {
@@ -912,6 +945,30 @@ struct Bounds {
 }
 
 impl Bounds {
+    fn overrides(self, width: bool, adjustment: f32) -> Vec<OwnedPropertyOverride> {
+        use LengthProperty::*;
+        let (min, max) = if width {
+            (MinWidth, MaxWidth)
+        } else {
+            (MinHeight, MaxHeight)
+        };
+        [(min, self.min), (max, self.max)]
+            .into_iter()
+            .filter_map(|(property, bound)| {
+                bound.map(|bound| {
+                    OwnedPropertyOverride::length(
+                        property,
+                        raikiri_style::ComputedLengthPercentageOrAuto::Px(
+                            (bound - adjustment).max(0.0),
+                        ),
+                        true,
+                    )
+                    .expect("resolved pixel bound")
+                })
+            })
+            .collect()
+    }
+
     fn record(self, tree: &mut LayoutSession<'_>, idx: usize, width: bool, adjustment: f32) {
         use raikiri_layout_style::LengthProperty::*;
         let (min, max) = if width {
@@ -1114,20 +1171,25 @@ fn probe(
     node_id: NodeId,
     key: MeasureKey,
     inputs: LayoutInput,
-    neutral: impl FnOnce(&mut LayoutSession<'_>, usize),
+    neutral: Vec<OwnedPropertyOverride>,
 ) -> f32 {
     if let Some(&size) = tree.context.content_limit_measures.get(&key) {
         return size;
     }
     let idx = usize::from(node_id);
-    let saved = SavedSizes::capture(tree, idx);
-    neutral(tree, idx);
-    tree.context.content_limit_probes.push(idx);
-    let cache = tree.take_layout_cache(idx);
-    let output = tree.compute_child_layout_with_block_ctx(node_id, inputs, None);
-    tree.restore_layout_cache(idx, cache);
-    tree.context.content_limit_probes.pop();
-    saved.restore(tree, idx);
+    let output = with_size_overrides(tree, idx, neutral, |tree| {
+        tree.context.content_limit_probes.push(idx);
+        let cache = tree.take_layout_cache(idx);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
+        }));
+        tree.restore_layout_cache(idx, cache);
+        tree.context.content_limit_probes.pop();
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    });
     let size = if key.width {
         output.size.width
     } else {
@@ -1234,26 +1296,19 @@ fn width_bounds(
                     vertical_margins_are_collapsible: Line::FALSE,
                 };
                 let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
-                probe(tree, node_id, key, along, |tree, idx| {
-                    let style = tree.layout_style_for_key_mut(idx).unwrap();
-                    if flex_grid_container {
-                        neutralize_all_sizes(style);
-                    } else {
-                        style.size.width = Dimension::auto();
-                        style.min_size.width = LengthPercentageAuto::auto();
-                        style.max_size.width = LengthPercentageAuto::auto();
-                    }
-                    {
-                        use raikiri_layout_style::LengthProperty::*;
-                        let properties: &[raikiri_layout_style::LengthProperty] =
-                            if flex_grid_container {
-                                &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
-                            } else {
-                                &[Width, MinWidth, MaxWidth]
-                            };
-                        record_neutral_sizes(tree, idx, properties);
-                    }
-                })
+                use LengthProperty::*;
+                let properties: &[LengthProperty] = if flex_grid_container {
+                    &[Width, Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
+                } else {
+                    &[Width, MinWidth, MaxWidth]
+                };
+                probe(
+                    tree,
+                    node_id,
+                    key,
+                    along,
+                    neutral_size_overrides(properties),
+                )
             };
             (
                 measure(AvailableSpace::MinContent),
@@ -1333,31 +1388,17 @@ fn height_bounds(
             .content_limit_percentage_height_bases
             .push((idx, height));
     }
-    let height = probe(tree, node_id, key, along, |tree, idx| {
-        let style = tree.layout_style_for_key_mut(idx).unwrap();
-        if flex_grid_container {
-            let preferred_width = style.size.width;
-            neutralize_all_sizes(style);
-            style.size.width = preferred_width;
-            width.install_width(style, width_adjustment);
-        } else {
-            style.size.height = Dimension::auto();
-            style.min_size.height = LengthPercentageAuto::auto();
-            style.max_size.height = LengthPercentageAuto::auto();
-        }
-        {
-            use raikiri_layout_style::LengthProperty::*;
-            let properties: &[raikiri_layout_style::LengthProperty] = if flex_grid_container {
-                &[Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
-            } else {
-                &[Height, MinHeight, MaxHeight]
-            };
-            record_neutral_sizes(tree, idx, properties);
-            if flex_grid_container {
-                width.record(tree, idx, true, width_adjustment);
-            }
-        }
-    });
+    use LengthProperty::*;
+    let properties: &[LengthProperty] = if flex_grid_container {
+        &[Height, MinWidth, MinHeight, MaxWidth, MaxHeight]
+    } else {
+        &[Height, MinHeight, MaxHeight]
+    };
+    let mut entries = neutral_size_overrides(properties);
+    if flex_grid_container {
+        entries.extend(width.overrides(true, width_adjustment));
+    }
+    let height = probe(tree, node_id, key, along, entries);
     if percentage_height_basis.is_some() {
         tree.context.content_limit_percentage_height_bases.pop();
     }
