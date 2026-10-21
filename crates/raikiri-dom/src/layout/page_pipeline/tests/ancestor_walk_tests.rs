@@ -2,6 +2,35 @@ use super::*;
 use crate::layout::ifc::test_support::block_fixture;
 
 #[test]
+fn defensive_ancestor_position_skips_inline_frames_and_stops_at_root() {
+    let mut doc = Document::new();
+    let root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let inline = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+    let child = doc.append_element(Some(inline), "div", Style::default(), None::<&str>);
+    doc.nodes[0].unrounded_layout.location.y = 1.0;
+    doc.nodes[root].unrounded_layout.location.y = 11.0;
+    doc.nodes[inline].unrounded_layout.location.y = 13.0;
+    doc.nodes[child].unrounded_layout.location.y = 7.0;
+    doc.nodes[root].flags.insert(NodeFlags::IS_IFC_ROOT);
+    doc.nodes[inline].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+    assert_eq!(current_abs_y_fallback(&doc, child), 19.0);
+    assert_eq!(current_abs_y_fallback(&doc, 0), 1.0);
+    doc.nodes[child].parent = None;
+    assert_eq!(current_abs_y_fallback(&doc, child), 7.0);
+}
+
+#[test]
+fn defensive_ancestor_position_bounds_a_cycle() {
+    let mut doc = Document::new();
+    let a = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let b = doc.append_element(Some(a), "div", Style::default(), None::<&str>);
+    doc.nodes[a].parent = Some(b);
+    doc.nodes[a].unrounded_layout.location.y = 2.0;
+    doc.nodes[b].unrounded_layout.location.y = 3.0;
+    assert_eq!(current_abs_y_fallback(&doc, a), 10.0);
+}
+
+#[test]
 fn a_candidate_parent_skips_contents_and_noncontributing_inline_layout_frames() {
     let mut ids = [0; 3];
     let mut fixture = block_fixture("", |doc, root| {

@@ -42,6 +42,21 @@ fn long_spanning_document() -> (Document, CascadeResult) {
 }
 
 #[test]
+fn spanning_pagination_completes_with_the_heading_after_the_column_tail() {
+    let (mut document, cascade) = long_spanning_document();
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 60.0;
+    let slices = layout_pages(&mut document, &cascade, page).unwrap();
+    assert!(slices.len() > 1);
+    document
+        .project_pages(&cascade, page, &slices, &[])
+        .unwrap();
+    let tail = document.page_text_runs(&cascade, slices.last().unwrap().page_index);
+    assert!(tail.iter().any(|run| run.text == "B"));
+}
+
+#[test]
 fn spanning_page_limit_is_checked_before_planning_the_unbounded_tail() {
     let (mut document, cascade) = long_spanning_document();
     let mut page = PageBox::new();

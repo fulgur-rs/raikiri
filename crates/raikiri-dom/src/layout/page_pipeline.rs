@@ -4023,6 +4023,11 @@ fn current_abs_y(document: &Document, node_id: usize) -> f32 {
     if let Some(origin) = document.layout_origin_of(node_id) {
         return origin.y;
     } // cov:ignore: callers supply existing layout keys; missing keys would panic in the fallback's arena indexing.
+    current_abs_y_fallback(document, node_id) // cov:ignore: valid keys return above; the defensive walk is tested directly.
+}
+
+// Keep the defensive walk testable without bypassing the coordinate-owner fast path.
+fn current_abs_y_fallback(document: &Document, node_id: usize) -> f32 {
     let mut id = document.ifc_source_owner(node_id);
     let mut y = if id != node_id {
         document
@@ -4035,9 +4040,7 @@ fn current_abs_y(document: &Document, node_id: usize) -> f32 {
         0.0
     };
     let mut guard = 0_usize;
-    // cov:ignore: existing layout keys return above; missing keys panic at the fallback's arena lookup.
     let mut walk = AncestorCursor::new(Some(id), ParentRelation::Layout);
-    // cov:ignore: this defensive fallback cannot run for an existing layout key.
     while guard <= document.nodes.len() {
         y += document.nodes[id].unrounded_layout.location.y;
         // A box of an inline engine paragraph is located from the root,
