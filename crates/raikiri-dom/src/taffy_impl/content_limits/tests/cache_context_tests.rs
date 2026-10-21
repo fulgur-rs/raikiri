@@ -287,3 +287,43 @@ fn oof_prepass_runs_again_after_an_unwind() {
     });
     assert_eq!(calls, 2);
 }
+
+#[test]
+#[should_panic(expected = "size cache scopes restore in reverse order")]
+fn saved_sizes_reject_restoring_an_outer_scope_first() {
+    let mut doc = crate::Document::new();
+    let mut tree = LayoutSession::new(&mut doc);
+    let outer = super::super::SavedSizes::capture(&mut tree, 0);
+    let _inner = super::super::SavedSizes::capture(&mut tree, 0);
+    outer.restore(&mut tree, 0);
+}
+
+#[test]
+fn measure_lengths_keep_calc_identity_and_canonicalize_nan_and_zero() {
+    use super::super::MeasureLength;
+    use raikiri_layout_style::AlignedCalc;
+    use raikiri_style::property::CalcLengthPercentage;
+    let a = AlignedCalc::new(
+        CalcLengthPercentage {
+            px: 1.0,
+            percent: 20.0,
+        },
+        true,
+    );
+    let b = AlignedCalc::new(
+        CalcLengthPercentage {
+            px: 1.0,
+            percent: 20.0,
+        },
+        true,
+    );
+    let calc = |value: &AlignedCalc| {
+        MeasureLength::new(taffy::Dimension::calc(std::ptr::from_ref(value).cast()).into_raw())
+    };
+    assert_eq!(calc(&a), calc(&a));
+    assert_ne!(calc(&a), calc(&b));
+    let number = |value| MeasureLength::new(taffy::Dimension::length(value).into_raw());
+    assert_eq!(number(f32::NAN), number(f32::from_bits(0x7fc0_0001)));
+    assert_eq!(number(-0.0), number(0.0));
+    assert_ne!(number(1.0), number(2.0));
+}

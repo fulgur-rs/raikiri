@@ -565,3 +565,32 @@ fn metadata_publication_resets_context_even_after_epoch_exhaustion() {
     assert!(!cache.can_store(key));
     cache.leave(frame);
 }
+
+#[test]
+fn metadata_publication_discards_inline_generated_identity() {
+    let mut cache = LayoutCacheContext::default();
+    let generated = BoxKey::AnonymousCell(0);
+    store_view(&mut cache, generated, ViewContext::default());
+    cache.publish_metadata();
+    assert!(cache.entries.borrow().get(&generated).is_none());
+    assert!(!cache.can_read(generated));
+}
+
+#[test]
+#[should_panic(expected = "cache frames leave in reverse order")]
+fn frames_reject_leaving_an_outer_computation_first() {
+    let mut cache = LayoutCacheContext::default();
+    let outer = cache.enter_view(BoxKey::Source(0), ViewContext::default());
+    let _inner = cache.enter_view(BoxKey::Source(1), ViewContext::default());
+    cache.leave(outer);
+}
+
+#[test]
+#[should_panic(expected = "only a current active computation may stamp its cache")]
+fn invalidated_computation_cannot_stamp_its_old_result() {
+    let mut cache = LayoutCacheContext::default();
+    let key = BoxKey::Source(0);
+    let _frame = cache.enter_view(key, ViewContext::default());
+    cache.invalidate();
+    cache.mark_stored(key);
+}
