@@ -274,3 +274,39 @@ fn table_and_multicol_flex_descendants_agree_after_forced_miss() {
         assert!(tree.layout_cache_context.active_frame.is_none());
     }
 }
+
+#[test]
+fn dirty_saved_cache_is_discarded_without_publishing_inside_an_override() {
+    use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+    use raikiri_style::ComputedLengthPercentageOrAuto as L;
+    let (mut doc, cascade, child, _) = crate::layout::style_views::tests::fixture();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let key = tree.nodes.box_key(child).unwrap();
+    let input = layout_input(10.0);
+    let id = taffy::NodeId::from(child);
+    tree.with_overrides(
+        vec![(
+            key,
+            OwnedPropertyOverride::length(LengthProperty::Width, L::Px(11.0), true).unwrap(),
+        )],
+        |tree| {
+            tree.with_cache_frame(child, ViewContext::default(), |tree| {
+                tree.cache_store(id, &input, taffy::LayoutOutput::HIDDEN)
+            });
+            let saved = tree.take_layout_cache(child);
+            let publication = tree.layout_cache_context.publication_epoch();
+            tree.layout_dirty = true;
+            tree.restore_layout_cache(child, saved);
+            assert!(tree.layout_dirty);
+            assert_eq!(tree.layout_cache_context.publication_epoch(), publication);
+            assert_eq!(tree.style_override_depth(child), 1);
+        },
+    );
+    assert_eq!(tree.override_checkpoint(), 0);
+    tree.with_cache_frame(child, ViewContext::default(), |tree| {
+        assert!(tree.cache_get(id, &input).is_none());
+        assert!(!tree.layout_dirty);
+    });
+}

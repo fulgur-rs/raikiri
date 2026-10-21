@@ -473,13 +473,18 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn restore_layout_cache(&mut self, idx: usize, saved: SavedLayoutCache) {
-        self.sync_layout_cache_mutations();
+        // A descendant unwind can dirty the document while outer scopes remain active.
+        // Discard saved caches without publishing metadata inside those scopes.
+        if !self.document.layout_dirty {
+            self.sync_layout_cache_mutations();
+        }
         let key = self
             .nodes
             .box_key(idx)
             .expect("restored cache has a box key");
         assert_eq!(key, saved.key, "saved cache belongs to the same box");
-        if !self.layout_cache_context.poisoned
+        if !self.document.layout_dirty
+            && !self.layout_cache_context.poisoned
             && saved.epoch == Some(self.layout_cache_context.epoch())
         {
             self.nodes[idx].cache = saved.cache;

@@ -317,7 +317,15 @@ fn intrinsic_probe_restores_after_a_descendant_unwinds() {
             );
         });
     }));
-    assert!(result.is_err());
+    let payload = result.expect_err("the descendant panic must propagate");
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    assert_eq!(
+        message,
+        Some("descendant while the intrinsic probe computes")
+    );
     assert!(OBSERVED.get());
     assert_eq!(tree.override_checkpoint(), 0);
     assert_eq!(tree.style_override_depth(root), 0);
