@@ -174,7 +174,7 @@ fn legacy_session_size_scope_restores_values_after_unwind() {
     }));
     assert!(panic.is_err());
     assert_eq!(tree.layout_style_for_key(child).unwrap().min_size, old);
-    assert!(tree.context.saved_size_scopes.is_empty());
+    assert_eq!(tree.override_checkpoint(), 0);
     assert!(tree.layout_cache_context.active_frame.is_none());
 }
 

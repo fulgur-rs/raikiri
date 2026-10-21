@@ -3,12 +3,18 @@ use crate::node::arena::BoxKey;
 use std::cell::Cell;
 use taffy::Dimension;
 
+type SetupInspector = fn(&LayoutSession<'_>, usize, usize);
+
 thread_local! {
+    static SETUP_INSPECTOR: Cell<Option<SetupInspector>> = const { Cell::new(None) };
     static SETUP_PANIC_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
     static SAW_APPLIED_SETUP: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) fn after_setup_entry(tree: &LayoutSession<'_>, index: usize, count: usize) {
+    if let Some(inspect) = SETUP_INSPECTOR.get() {
+        inspect(tree, index, count);
+    }
     if SETUP_PANIC_AFTER.get() == Some(count) {
         assert_eq!(
             tree.layout_style_for_key(index).unwrap().size.width,
@@ -17,6 +23,17 @@ pub(crate) fn after_setup_entry(tree: &LayoutSession<'_>, index: usize, count: u
         SAW_APPLIED_SETUP.set(true);
         panic!("fail after an applied setup entry");
     }
+}
+
+pub(crate) fn with_setup_inspector<R>(inspect: SetupInspector, f: impl FnOnce() -> R) -> R {
+    struct Reset(Option<SetupInspector>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SETUP_INSPECTOR.set(self.0);
+        }
+    }
+    let _reset = Reset(SETUP_INSPECTOR.replace(Some(inspect)));
+    f()
 }
 
 struct ResetSetupFailure;

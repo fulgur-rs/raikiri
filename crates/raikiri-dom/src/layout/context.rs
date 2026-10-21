@@ -17,12 +17,13 @@ pub(crate) struct LayoutContext {
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     pub(crate) orthogonal_block_in_layout: Option<usize>,
+    pub(crate) transposed_style_index: crate::taffy_impl::TransposedStyleIndex,
+    pub(crate) transposed_frame_serial: u64,
     pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
-    pub(crate) saved_size_scopes: Vec<(usize, crate::taffy_impl::content_limits::SavedSizes)>,
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
     /// sizes (see `taffy_impl::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,

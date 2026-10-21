@@ -289,13 +289,13 @@ fn oof_prepass_runs_again_after_an_unwind() {
 }
 
 #[test]
-#[should_panic(expected = "size cache scopes restore in reverse order")]
-fn saved_sizes_reject_restoring_an_outer_scope_first() {
+#[should_panic(expected = "style scopes restore in reverse order")]
+fn typed_scopes_reject_restoring_an_outer_scope_first() {
     let mut doc = crate::Document::new();
     let mut tree = LayoutSession::new(&mut doc);
-    let outer = super::super::SavedSizes::capture(&mut tree, 0);
-    let _inner = super::super::SavedSizes::capture(&mut tree, 0);
-    outer.restore(&mut tree, 0);
+    let outer = tree.record_style_overrides(0, Vec::new());
+    let _inner = tree.record_style_overrides(0, Vec::new());
+    tree.restore_recorded_style_overrides(outer);
 }
 
 #[test]

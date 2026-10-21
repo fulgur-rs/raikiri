@@ -134,10 +134,10 @@ fn non_target_edge_scopes_keep_legacy_restoration_and_epoch_notifications() {
         fixture_with_styles("display:block", "width:31px;height:7px");
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-    let marker = session.save_size_scope(child);
+    let marker = session.record_style_overrides(child, Vec::new());
     assert!(marker.is_some());
     session.record_scoped_length(child, LengthProperty::Width, L::Px(99.0), true);
-    session.restore_size_scope(marker);
+    session.restore_recorded_style_overrides(marker);
     session
         .layout_style_for_key_mut(child)
         .unwrap()
@@ -227,7 +227,7 @@ fn publication_is_prepared_before_size_scope_target_selection() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     session.document.append_child(flex, child).unwrap();
-    let marker = session.save_size_scope(child);
+    let marker = session.record_style_overrides(child, Vec::new());
     assert!(marker.is_some());
     session.record_scoped_length(child, LengthProperty::Width, L::Px(99.0), true);
     session.with_cache_frame(
@@ -240,7 +240,7 @@ fn publication_is_prepared_before_size_scope_target_selection() {
             );
         },
     );
-    session.restore_size_scope(marker);
+    session.restore_recorded_style_overrides(marker);
     assert_eq!(
         session.style_view(child).size().width,
         taffy::Dimension::length(31.0)

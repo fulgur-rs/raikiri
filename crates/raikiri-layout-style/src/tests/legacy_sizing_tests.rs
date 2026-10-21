@@ -107,3 +107,44 @@ fn legacy_sizing_rejects_unrelated_properties_before_mutation() {
     assert_eq!(style.margin.left, Lpa::length(91.0));
     assert_eq!(style.size.width, Dimension::auto());
 }
+
+#[test]
+fn transposed_legacy_sizing_swaps_physical_targets_and_undoes_only_the_target() {
+    let mut style = Style::<raikiri_style::SmolStr>::default();
+    style.padding.left = taffy::LengthPercentage::length(73.0);
+    for (property, expected) in [
+        (LengthProperty::Width, 11.0),
+        (LengthProperty::Height, 12.0),
+        (LengthProperty::MinWidth, 13.0),
+        (LengthProperty::MinHeight, 14.0),
+        (LengthProperty::MaxWidth, 15.0),
+        (LengthProperty::MaxHeight, 16.0),
+    ] {
+        let undo = OwnedPropertyOverride::length(property, L::Px(expected), true)
+            .unwrap()
+            .apply_transposed_legacy_sizing(&mut style)
+            .unwrap();
+        match property {
+            LengthProperty::Width => assert_eq!(style.size.height, Dimension::length(11.0)),
+            LengthProperty::Height => assert_eq!(style.size.width, Dimension::length(12.0)),
+            LengthProperty::MinWidth => assert_eq!(style.min_size.height, Lpa::length(13.0)),
+            LengthProperty::MinHeight => assert_eq!(style.min_size.width, Lpa::length(14.0)),
+            LengthProperty::MaxWidth => assert_eq!(style.max_size.height, Lpa::length(15.0)),
+            LengthProperty::MaxHeight => assert_eq!(style.max_size.width, Lpa::length(16.0)),
+            _ => unreachable!(),
+        }
+        undo.restore(&mut style);
+        assert_eq!(style.size, taffy::Size::auto());
+        assert_eq!(style.min_size, taffy::Size::auto());
+        assert_eq!(style.max_size, taffy::Size::auto());
+        assert_eq!(style.padding.left, taffy::LengthPercentage::length(73.0));
+    }
+    for ratio in [None, Some(3.0), Some(0.0)] {
+        let undo = OwnedPropertyOverride::aspect_ratio(ratio)
+            .apply_transposed_legacy_sizing(&mut style)
+            .unwrap();
+        assert_eq!(style.aspect_ratio, ratio.map(|r| 1.0 / r));
+        undo.restore(&mut style);
+        assert_eq!(style.aspect_ratio, None);
+    }
+}

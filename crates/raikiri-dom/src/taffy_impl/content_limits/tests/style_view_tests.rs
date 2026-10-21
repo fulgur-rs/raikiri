@@ -64,11 +64,14 @@ fn content_limit_resolved_scope_keeps_large_finite_used_values() {
     use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 
     let mut legacy = crate::LayoutStyle::default();
-    super::super::Bounds {
+    for entry in (super::super::Bounds {
         min: Some(20_000_000.0),
         max: None,
+    })
+    .overrides(true, 0.0)
+    {
+        let _previous = entry.apply_legacy_sizing(&mut legacy).unwrap();
     }
-    .install_width(&mut legacy, 0.0);
     assert_eq!(
         legacy.min_size.width,
         taffy::LengthPercentageAuto::length(20_000_000.0)
@@ -98,7 +101,7 @@ fn content_limit_resolved_scope_keeps_large_finite_used_values() {
     );
 }
 
-fn content_limit_inputs() -> taffy::LayoutInput {
+pub(super) fn content_limit_inputs() -> taffy::LayoutInput {
     taffy::LayoutInput {
         run_mode: taffy::RunMode::ComputeSize,
         sizing_mode: taffy::SizingMode::InherentSize,
@@ -192,7 +195,7 @@ fn width_limit_scope_restores_after_callback_unwinds() {
     );
     assert_eq!(session.style_view(child).min_size(), original);
     assert_eq!(session.style_override_depth(child), 0);
-    assert_eq!(session.size_scope_checkpoint(), 0);
+    assert_eq!(session.override_checkpoint(), 0);
     assert_eq!(session.context.content_limit_depth, 0);
 }
 

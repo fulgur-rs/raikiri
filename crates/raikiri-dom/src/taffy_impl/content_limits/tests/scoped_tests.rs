@@ -1,0 +1,228 @@
+use super::*;
+use crate::layout::style_views::tests::fixture;
+use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+use raikiri_style::ComputedLengthPercentageOrAuto as L;
+use taffy::CoreStyle;
+
+#[test]
+fn batched_content_limits_preserve_unrelated_pass_updates_after_unwind() {
+    for unwind in [false, true] {
+        let (mut doc, mut cascade, child, _) = fixture();
+        cascade.computed[child].min_width = L::MaxContent;
+        crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let parent = doc.nodes[child].parent.unwrap();
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        tree.prepare_style_views();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::super::with_item_content_limits(
+                &mut tree,
+                NodeId::from(parent),
+                super::style_view_tests::content_limit_inputs(),
+                Size {
+                    width: Some(100.0),
+                    height: None,
+                },
+                |tree, _, _| {
+                    assert!(!tree.style_view(child).min_size().width.is_auto());
+                    tree.cache_override_changed(child);
+                    tree.record_pass_override(
+                        child,
+                        OwnedPropertyOverride::length(LengthProperty::Height, L::Px(91.0), true)
+                            .unwrap(),
+                    );
+                    tree.layout_style_for_key_mut(child).unwrap().size.height =
+                        taffy::Dimension::length(91.0);
+                    if unwind {
+                        panic!("after batch pass update");
+                    }
+                    LayoutOutput::HIDDEN
+                },
+            );
+        }));
+        assert_eq!(result.is_err(), unwind);
+        assert_eq!(tree.style_override_depth(child), 0);
+        assert!(tree.context.content_limit_probes.is_empty());
+        assert_eq!(tree.context.content_limit_depth, 0);
+        assert_eq!(
+            tree.layout_style_for_key(child).unwrap().size.height,
+            taffy::Dimension::length(91.0)
+        );
+        assert_eq!(
+            tree.style_view(child).size().height,
+            taffy::Dimension::length(91.0)
+        );
+    }
+}
+
+#[test]
+fn batched_oof_scopes_restore_four_raw_constraints_and_keep_unrelated_updates() {
+    for unwind in [false, true] {
+        let (mut doc, _, first, _) = fixture();
+        let parent = doc.nodes[first].parent.unwrap();
+        let second = doc.append_element(
+            Some(parent),
+            "div",
+            crate::LayoutStyle::default(),
+            Some("width:41px;height:9px"),
+        );
+        doc.mark_in_document_flags();
+        let mut cascade =
+            raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        for child in [first, second] {
+            cascade.computed[child].position = raikiri_style::property::PositionValue::Absolute;
+            cascade.computed[child].min_width = L::Px(50.0);
+            cascade.computed[child].max_width = L::Px(60.0);
+            cascade.computed[child].min_height = L::Px(4.0);
+            cascade.computed[child].max_height = L::MaxContent;
+        }
+        crate::layout::test_support::with_ahem(&mut doc);
+        crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        tree.prepare_style_views();
+        let mut calls = 0;
+        let mut saw_raw = false;
+        let mut saw_final = false;
+        let inputs = LayoutInput {
+            parent_size: Size {
+                width: Some(100.0),
+                height: Some(100.0),
+            },
+            ..LayoutInput::HIDDEN
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_oof_content_limits(
+                &mut tree,
+                Some(&[NodeId::from(first), NodeId::from(second)]),
+                &[],
+                |tree| {
+                    calls += 1;
+                    if let Some(capture) = tree.context.oof_content_limit_inputs.last_mut() {
+                        for child in [first, second] {
+                            capture.insert(child, inputs);
+                        }
+                    }
+                    if calls == 2 {
+                        for child in [first, second] {
+                            let style = tree.layout_style_for_key(child).unwrap();
+                            assert_eq!(style.min_size, Size::auto());
+                            assert_eq!(style.max_size, Size::auto());
+                            assert_eq!(tree.style_view(child).min_size(), Size::auto());
+                            assert_eq!(tree.style_view(child).max_size(), Size::auto());
+                        }
+                        saw_raw = true;
+                    }
+                    if calls == 3 {
+                        assert!(tree.context.content_limit_probes.contains(&first));
+                        assert!(tree.context.content_limit_probes.contains(&second));
+                        tree.cache_override_changed(second);
+                        tree.record_pass_override(
+                            second,
+                            OwnedPropertyOverride::length(
+                                LengthProperty::Height,
+                                L::Px(91.0),
+                                true,
+                            )
+                            .unwrap(),
+                        );
+                        tree.layout_style_for_key_mut(second).unwrap().size.height =
+                            taffy::Dimension::length(91.0);
+                        saw_final = true;
+                        if unwind {
+                            panic!("multiple OOF candidates");
+                        }
+                    }
+                },
+            );
+        }));
+        assert!(saw_raw && saw_final);
+        assert_eq!(result.is_err(), unwind);
+        assert_eq!(calls, 3);
+        for child in [first, second] {
+            let style = tree.layout_style_for_key(child).unwrap();
+            assert_eq!(style.min_size.width, LengthPercentageAuto::length(50.0));
+            assert_eq!(style.max_size.width, LengthPercentageAuto::length(60.0));
+            assert_eq!(style.min_size.height, LengthPercentageAuto::length(4.0));
+            assert!(style.max_size.height.is_auto());
+            assert_eq!(tree.style_override_depth(child), 0);
+        }
+        assert_eq!(
+            tree.layout_style_for_key(second).unwrap().size.height,
+            taffy::Dimension::length(91.0)
+        );
+        assert_eq!(
+            tree.style_view(second).size().height,
+            taffy::Dimension::length(91.0)
+        );
+        assert!(tree.context.content_limit_probes.is_empty());
+        assert!(tree.context.oof_content_limit_inputs.is_empty());
+        assert_eq!(tree.context.oof_content_limit_prepass_depth, 0);
+    }
+}
+
+#[test]
+fn earlier_item_bounds_are_visible_while_the_next_item_is_measured() {
+    use std::cell::Cell;
+    thread_local! {
+        static ITEMS: Cell<(usize, usize)> = const { Cell::new((usize::MAX, usize::MAX)) };
+        static SAW_EARLIER_BOUND: Cell<bool> = const { Cell::new(false) };
+    }
+    fn inspect(tree: &LayoutSession<'_>, index: usize, _: usize) {
+        let (first, second) = ITEMS.get();
+        if index == second && tree.context.content_limit_probes.contains(&first) {
+            assert!(
+                !tree
+                    .layout_style_for_key(first)
+                    .unwrap()
+                    .min_size
+                    .width
+                    .is_auto()
+            );
+            SAW_EARLIER_BOUND.set(true);
+        }
+    }
+    let (mut doc, _, first, _) = fixture();
+    let parent = doc.nodes[first].parent.unwrap();
+    let second = doc.append_element(
+        Some(parent),
+        "div",
+        crate::LayoutStyle::default(),
+        Some("width:41px;height:9px"),
+    );
+    doc.mark_in_document_flags();
+    let mut cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    for child in [first, second] {
+        cascade.computed[child].min_width = L::MaxContent;
+    }
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    ITEMS.set((first, second));
+    SAW_EARLIER_BOUND.set(false);
+    crate::layout::style_views::tests::with_setup_inspector(inspect, || {
+        super::super::with_item_content_limits(
+            &mut tree,
+            NodeId::from(parent),
+            super::style_view_tests::content_limit_inputs(),
+            Size {
+                width: Some(100.0),
+                height: None,
+            },
+            |_, _, _| LayoutOutput::HIDDEN,
+        );
+    });
+    assert!(SAW_EARLIER_BOUND.get());
+    assert!(
+        tree.layout_style_for_key(first)
+            .unwrap()
+            .min_size
+            .width
+            .is_auto()
+    );
+    assert!(
+        tree.layout_style_for_key(second)
+            .unwrap()
+            .min_size
+            .width
+            .is_auto()
+    );
+}

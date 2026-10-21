@@ -405,8 +405,7 @@ impl LayoutSession<'_> {
     fn assert_preparation_outside_legacy_scopes(&self) {
         self.scoped_overrides.assert_inactive();
         assert!(
-            self.context.resolved_edge_bases.is_empty()
-                && self.context.saved_size_scopes.is_empty(),
+            self.context.resolved_edge_bases.is_empty(),
             "preparation runs outside legacy style scopes"
         );
     }
@@ -429,8 +428,7 @@ impl LayoutSession<'_> {
         {
             self.scoped_overrides.assert_inactive();
             assert!(
-                self.context.resolved_edge_bases.is_empty()
-                    && self.context.saved_size_scopes.is_empty(),
+                self.context.resolved_edge_bases.is_empty(),
                 "preparation runs outside legacy style scopes"
             );
             assert!(

@@ -20,30 +20,24 @@ struct ScopedBox {
 pub(crate) struct ScopedOverrides {
     boxes: HashMap<BoxKey, ScopedBox>,
     journal: Vec<ScopeUndo>,
-    size_scopes: Vec<OverrideToken>,
 }
 
 struct ScopeUndo {
     token: OverrideToken,
     index: usize,
     legacy: LegacyUndo,
-    size_scope: bool,
+    transposed: Vec<crate::taffy_impl::TransposedSizingUndo>,
 }
 
 enum LegacyUndo {
     None,
     Field(LegacySizingUndo),
-    Sizes {
-        size: taffy::Size<taffy::Dimension>,
-        min: taffy::Size<taffy::LengthPercentageAuto>,
-        max: taffy::Size<taffy::LengthPercentageAuto>,
-    },
 }
 
 impl ScopedOverrides {
     pub(in crate::layout) fn assert_inactive(&self) {
         assert!(
-            self.journal.is_empty() && self.size_scopes.is_empty(),
+            self.journal.is_empty(),
             "preparation runs outside style scopes"
         );
     }
@@ -52,6 +46,7 @@ impl ScopedOverrides {
         self.boxes.get(&key).map_or(&[], |state| &state.entries)
     }
 
+    #[cfg(test)]
     pub(super) fn depth(&self, key: BoxKey) -> usize {
         self.boxes.get(&key).map_or(0, |state| state.depth)
     }
@@ -127,6 +122,11 @@ impl LayoutSession<'_> {
                 .cloned(),
         );
         for (applied, (key, index, entry)) in indexed.into_iter().enumerate() {
+            let transposed = crate::taffy_impl::TransposedSizingUndo::prepare(
+                &self.context.transposed_blocks,
+                &self.context.transposed_style_index,
+                index,
+            );
             self.document.layout_cache_context.override_changed(key);
             let state = self
                 .scoped_overrides
@@ -146,7 +146,7 @@ impl LayoutSession<'_> {
                 token,
                 index,
                 legacy: LegacyUndo::None,
-                size_scope: false,
+                transposed,
             });
             let undo = self
                 .scoped_overrides
@@ -167,6 +167,12 @@ impl LayoutSession<'_> {
                     .apply_legacy_sizing(style)
                     .expect("validated sizing entry"),
             );
+            for snapshot in &mut undo.transposed {
+                snapshot.apply(
+                    &mut self.context.transposed_blocks,
+                    state.entries.last().expect("registered entry"),
+                );
+            }
             #[cfg(test)]
             super::tests::scoped_override_tests::after_setup_entry(self, index, applied + 1);
             #[cfg(not(test))]
@@ -195,9 +201,9 @@ impl LayoutSession<'_> {
             match saved.legacy {
                 LegacyUndo::None => {}
                 LegacyUndo::Field(undo) => undo.restore(style),
-                LegacyUndo::Sizes { size, min, max } => {
-                    (style.size, style.min_size, style.max_size) = (size, min, max);
-                }
+            }
+            for snapshot in saved.transposed.into_iter().rev() {
+                snapshot.restore(&mut self.context.transposed_blocks);
             }
             let state = self
                 .scoped_overrides
@@ -206,9 +212,6 @@ impl LayoutSession<'_> {
                 .expect("active scope key");
             state.entries.truncate(saved.token.length);
             state.depth = saved.token.depth;
-            if saved.size_scope {
-                assert_eq!(self.scoped_overrides.size_scopes.pop(), Some(saved.token));
-            }
         }
     }
 
@@ -248,53 +251,7 @@ impl LayoutSession<'_> {
         }
     }
 
-    pub(crate) fn size_scope_checkpoint(&self) -> usize {
-        self.scoped_overrides.size_scopes.len()
-    }
-
-    pub(crate) fn save_size_scope(&mut self, idx: usize) -> Option<usize> {
-        self.sync_layout_cache_mutations();
-        let old = self
-            .layout_style_for_key(idx)
-            .expect("size scope has a retained style");
-        let (size, min, max) = (old.size, old.min_size, old.max_size);
-        self.scoped_overrides.size_scopes.reserve(1);
-        let token = self
-            .record_style_overrides(idx, Vec::new())
-            .expect("live scope key");
-        let marker = self.scoped_overrides.size_scopes.len();
-        let undo = self
-            .scoped_overrides
-            .journal
-            .last_mut()
-            .expect("registered size scope");
-        undo.legacy = LegacyUndo::Sizes { size, min, max };
-        undo.size_scope = true;
-        self.scoped_overrides.size_scopes.push(token);
-        Some(marker)
-    }
-
-    pub(crate) fn restore_size_scope(&mut self, marker: Option<usize>) {
-        let Some(marker) = marker else { return };
-        assert_eq!(
-            self.scoped_overrides.size_scopes.len(),
-            marker + 1,
-            "size scopes restore in reverse order"
-        );
-        let token = *self
-            .scoped_overrides
-            .size_scopes
-            .last()
-            .expect("active size scope");
-        self.restore_recorded_style_overrides(Some(token));
-    }
-
-    pub(crate) fn restore_size_scopes_to(&mut self, checkpoint: usize) {
-        while self.size_scope_checkpoint() > checkpoint {
-            self.restore_size_scope(Some(self.size_scope_checkpoint() - 1));
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) fn record_scoped_length(
         &mut self,
         idx: usize,
@@ -350,7 +307,7 @@ impl LayoutSession<'_> {
             token,
             index: idx,
             legacy: LegacyUndo::None,
-            size_scope: false,
+            transposed: Vec::new(),
         });
         state.depth += 1;
         state.was_scoped = true;
