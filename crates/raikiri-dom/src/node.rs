@@ -561,10 +561,6 @@ pub struct Node {
     /// The `text-group-align` of this box (CSS Text 4), which makes it the
     /// root of a group of the lines in its block formatting context.
     pub(crate) text_group_align: shodo::style::TextGroupAlign,
-    /// The flex container width this node's percentage padding and borders
-    /// were last resolved against while taffy measured it as a flex item;
-    /// its layout cache holds results for that width.
-    pub(crate) flex_edge_basis: Option<f32>,
     /// Computed CSS `order`; consumed only when this node is a flex/grid item.
     pub(crate) order: i32,
     /// Optional order-modified child view for the last style bridge. This is
@@ -778,7 +774,6 @@ impl Node {
             },
             content_limits: crate::taffy_impl::content_limits::ContentLimits::NONE,
             text_group_align: shodo::style::TextGroupAlign::None,
-            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),

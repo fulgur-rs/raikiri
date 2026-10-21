@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefMut;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
@@ -10,7 +10,6 @@ use crate::node::arena::BoxKey;
 // The next task routes layout entrypoints through these types.
 #[derive(Debug, Default)]
 pub(crate) struct LayoutContext {
-    pub(crate) node_states: RefCell<HashMap<BoxKey, NodeLayoutState>>,
     pub(crate) layout_warnings: Vec<LayoutWarn>,
     pub(crate) table_layout_error: Option<String>,
     pub(super) table_cache: super::table::cache::TableCache,
@@ -22,6 +21,8 @@ pub(crate) struct LayoutContext {
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
+    pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
+    pub(crate) saved_size_scopes: Vec<(usize, crate::taffy_impl::content_limits::SavedSizes)>,
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
     /// sizes (see `taffy_impl::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,
@@ -98,6 +99,7 @@ pub(crate) struct LayoutSession<'doc> {
 
 impl<'doc> LayoutSession<'doc> {
     pub(crate) fn new(document: &'doc mut Document) -> Self {
+        document.layout_cache_context.begin_session();
         Self {
             document,
             context: LayoutContext::default(),
@@ -111,6 +113,7 @@ impl<'doc> LayoutSession<'doc> {
         document: &'doc mut Document,
         cascade: &'doc raikiri_style::CascadeResult,
     ) -> Self {
+        document.layout_cache_context.begin_session();
         Self {
             document,
             context: LayoutContext::default(),
@@ -118,18 +121,77 @@ impl<'doc> LayoutSession<'doc> {
         }
     }
 
+    /// Publish pending document mutations before any parent cache lookup.
+    pub(crate) fn sync_layout_cache_mutations(&mut self) {
+        if self.document.layout_dirty {
+            self.document.layout_cache_context.publish_metadata();
+            self.context.grid_layout_info.clear();
+            self.context.taffy_hoisted_children.clear();
+            self.document.layout_dirty = false;
+        }
+    }
+
+    pub(crate) fn resolved_edge_basis(&self, idx: usize) -> Option<f32> {
+        self.context
+            .resolved_edge_bases
+            .iter()
+            .rev()
+            .find(|(key, _)| *key == idx)
+            .map(|(_, basis)| *basis)
+    }
+
+    pub(crate) fn cache_override_changed(&mut self, idx: usize) {
+        let key = self
+            .nodes
+            .box_key(idx)
+            .expect("cache override has a box key");
+        self.document.layout_cache_context.override_changed(key);
+    }
+
+    /// Enclose both Taffy's lookup and its eventual store in the same frame.
+    pub(crate) fn with_cache_frame<R>(
+        &mut self,
+        idx: usize,
+        mut view: raikiri_layout_style::ViewContext,
+        compute: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.sync_layout_cache_mutations();
+        let key = self
+            .nodes
+            .box_key(idx)
+            .expect("cached layout has a box key");
+        if let Some((_, basis)) = self
+            .context
+            .resolved_edge_bases
+            .iter()
+            .rev()
+            .find(|(key, _)| *key == idx)
+        {
+            view.percent_basis = raikiri_layout_style::PercentBasis::Definite(*basis);
+        }
+        let frame = self.document.layout_cache_context.enter_view(key, view);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compute(self)));
+        self.document.layout_cache_context.leave(frame);
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
     pub(crate) fn node_state(&self, key: usize) -> Option<RefMut<'_, NodeLayoutState>> {
         let box_key = self.document.nodes.box_key(key)?;
-        let mut states = self.context.node_states.borrow_mut();
-        states.entry(box_key).or_insert_with(|| NodeLayoutState {
-            box_key,
-            taffy_child_walks: None,
-        });
-        let state = RefMut::map(states, |states| {
-            states.get_mut(&box_key).expect("state was inserted above")
-        });
+        let state = self
+            .document
+            .layout_cache_context
+            .node_state(box_key, self.document.layout_dirty);
         debug_assert_eq!(state.box_key, box_key);
         Some(state)
+    }
+}
+
+impl Drop for LayoutSession<'_> {
+    fn drop(&mut self) {
+        self.document.layout_cache_context.end_session();
     }
 }
 

@@ -237,3 +237,33 @@ fn rebridging_anonymous_tables_does_not_reuse_old_cell_placements() {
         70.0
     );
 }
+
+#[test]
+fn temporary_table_edges_rebuild_topology_on_entry_and_exit() {
+    let (mut doc, table, _) = fixture(1, 1);
+    GRID_BUILDS.with(|count| count.set(0));
+    let mut session = LayoutSession::new(&mut doc);
+    super::super::cache::table_grid(&mut session, table).unwrap();
+    session.with_resolved_edges(table, 100.0, true, |session| {
+        super::super::cache::table_grid(session, table).unwrap();
+    });
+    super::super::cache::table_grid(&mut session, table).unwrap();
+    assert_eq!(GRID_BUILDS.with(|count| count.get()), 3);
+}
+
+#[test]
+fn cell_measurement_unwind_restores_authored_height() {
+    let (mut doc, table, first) = fixture(1, 1);
+    let mut session = LayoutSession::new(&mut doc);
+    let mut grid = super::super::cache::table_grid(&mut session, table).unwrap();
+    let height = session.layout_style_for_key(first).unwrap().size.height;
+    session.nodes[first].children.push(usize::MAX - 1);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::super::measure_cell(&mut session, &mut grid.cells[0], 20.0);
+    }));
+    assert!(result.is_err());
+    assert_eq!(
+        session.layout_style_for_key(first).unwrap().size.height,
+        height
+    );
+}

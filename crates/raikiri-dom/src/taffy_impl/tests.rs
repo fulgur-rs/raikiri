@@ -358,11 +358,10 @@ fn children_walked_by_index_match_the_child_iterator() {
     // is seen without counting them again.
     assert!(
         session
-            .context
-            .node_states
-            .borrow()
-            .values()
-            .all(|state| state.taffy_child_walks.is_none())
+            .node_state(usize::from(parent))
+            .unwrap()
+            .taffy_child_walks
+            .is_none()
     );
     session.nodes[expected[0]].set_display(DisplayValue::Contents);
     assert_eq!(usize::from(session.get_child_id(parent, 0)), expected[1]);

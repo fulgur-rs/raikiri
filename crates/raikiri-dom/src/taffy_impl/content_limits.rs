@@ -48,8 +48,9 @@ impl ContentLimits {
 }
 
 /// The sizes of `style` that a box's content measure must not read.
-#[derive(Clone, Copy)]
-struct SavedSizes {
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SavedSizes {
+    marker: usize,
     size: Size<Dimension>,
     min_size: Size<LengthPercentageAuto>,
     max_size: Size<LengthPercentageAuto>,
@@ -60,6 +61,7 @@ struct SavedSizes {
 impl SavedSizes {
     fn of(style: &Style) -> Self {
         Self {
+            marker: usize::MAX,
             size: style.size,
             min_size: style.min_size,
             max_size: style.max_size,
@@ -69,16 +71,31 @@ impl SavedSizes {
     }
 
     fn capture(tree: &mut LayoutSession<'_>, idx: usize) -> Self {
-        let saved = Self::of(tree.layout_node_with_style(idx).unwrap().style);
+        tree.cache_override_changed(idx);
+        let mut saved = Self::of(tree.layout_node_with_style(idx).unwrap().style);
+        saved.marker = tree.context.saved_size_scopes.len();
         #[cfg(test)]
         let saved = Self {
             scope: tree.save_size_scope(idx),
             ..saved
         };
+        tree.context.saved_size_scopes.push((idx, saved));
         saved
     }
 
     fn restore(self, tree: &mut LayoutSession<'_>, idx: usize) {
+        assert_eq!(
+            tree.context.saved_size_scopes.len(),
+            self.marker + 1,
+            "size cache scopes restore in reverse order"
+        );
+        let (saved_idx, _) = tree
+            .context
+            .saved_size_scopes
+            .pop()
+            .expect("active size scope");
+        assert_eq!(saved_idx, idx);
+        tree.cache_override_changed(idx);
         let style = tree.layout_style_for_key_mut(idx).unwrap();
         style.size = self.size;
         style.min_size = self.min_size;
@@ -181,12 +198,26 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
     tree.context.content_limit_depth += 1;
     #[cfg(test)]
     let checkpoint = tree.size_scope_checkpoint();
-    #[cfg(test)]
     let probe_depth = tree.context.content_limit_probes.len();
-    #[cfg(test)]
+    let height_basis_depth = tree.context.content_limit_percentage_height_bases.len();
+    let saved_depth = tree.context.saved_size_scopes.len();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
-    #[cfg(not(test))]
-    let result = f(tree);
+    if result.is_err() {
+        while tree.context.saved_size_scopes.len() > saved_depth {
+            let &(idx, saved) = tree
+                .context
+                .saved_size_scopes
+                .last()
+                .expect("active size scope");
+            saved.restore(tree, idx);
+        }
+        tree.context.content_limit_probes.truncate(probe_depth);
+        tree.context
+            .content_limit_percentage_height_bases
+            .truncate(height_basis_depth);
+        tree.layout_dirty = true;
+        tree.context.content_limit_measures.clear();
+    }
     #[cfg(test)]
     {
         tree.restore_size_scopes_to(checkpoint);
@@ -197,12 +228,10 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
         }
     }
     tree.context.content_limit_depth -= 1;
-    #[cfg(test)]
-    let result = match result {
+    match result {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
-    };
-    result
+    }
 }
 
 /// Lay out node `node_id` with `dispatch` after resolving its keyword `min-*`
@@ -273,16 +302,34 @@ pub(crate) fn with_oof_child_content_limits(
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let limits = tree.nodes[idx].content_limits;
-    if limits == ContentLimits::NONE
-        || !is_oof_box(tree, idx)
-        || is_table_content_limits(tree, idx)
-        || tree.context.content_limit_probes.contains(&idx)
+    if limits == ContentLimits::NONE || !is_oof_box(tree, idx) || is_table_content_limits(tree, idx)
     {
         return dispatch(tree, node_id, inputs);
     }
 
+    if tree.context.content_limit_probes.contains(&idx) {
+        // The outer OOF wrapper has already installed numeric bounds. Avoid
+        // measuring keywords again, but constrain inline-CB known dimensions
+        // even when a fresh cache miss dispatches this final placement.
+        if let Some(known) = inputs.known_dimensions.width {
+            let known = clamp_known_width_to_style(tree, idx, inputs.parent_size.width, known);
+            inputs.known_dimensions.width = Some(known);
+            inputs.available_space.width = AvailableSpace::Definite(known);
+        }
+        inputs.known_dimensions.height = inputs.known_dimensions.height.map(|known| {
+            clamp_known_height_to_style(
+                tree,
+                idx,
+                inputs.parent_size.height,
+                inputs.parent_size.width,
+                known,
+            )
+        });
+        return dispatch(tree, node_id, inputs);
+    }
+
     scoped(tree, |tree| {
-        let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
+        let cache = tree.take_layout_cache(idx);
         let saved = SavedSizes::capture(tree, idx);
         let mut width = Bounds::default();
         if limits.has_width() || (is_replaced_content(tree, idx) && limits.has_height()) {
@@ -318,7 +365,7 @@ pub(crate) fn with_oof_child_content_limits(
         }
         let output = dispatch(tree, node_id, inputs);
         saved.restore(tree, idx);
-        tree.nodes[idx].cache = cache;
+        tree.restore_layout_cache(idx, cache);
         output
     })
 }
@@ -363,19 +410,13 @@ pub(crate) fn with_oof_content_limits<R>(
     scoped(tree, |tree| {
         let saved_caches = targets
             .iter()
-            .map(|&idx| {
-                (
-                    idx,
-                    std::mem::replace(&mut tree.nodes[idx].cache, Cache::new()),
-                )
-            })
+            .map(|&idx| (idx, tree.take_layout_cache(idx)))
             .collect::<Vec<_>>();
 
         let suppress_nested_prepasses = candidate_ids.is_some();
         let saved_prepass_caches = suppress_nested_prepasses.then(|| {
-            tree.nodes
-                .iter()
-                .map(|node| node.cache.clone())
+            (0..tree.nodes.len())
+                .map(|idx| tree.clone_layout_cache(idx))
                 .collect::<Vec<_>>()
         });
         let constrained_inputs =
@@ -486,8 +527,8 @@ pub(crate) fn with_oof_content_limits<R>(
             // Discard cache entries produced while descendant OOF wrappers
             // were bypassed for this candidate's preliminary measurements.
             debug_assert_eq!(caches.len(), tree.nodes.len());
-            for (node, cache) in tree.nodes.iter_mut().zip(caches) {
-                node.cache = cache;
+            for (idx, cache) in caches.into_iter().enumerate() {
+                tree.restore_layout_cache(idx, cache);
             }
         }
         for &node_id in clear_cached_nodes {
@@ -505,7 +546,7 @@ pub(crate) fn with_oof_content_limits<R>(
             saved.restore(tree, idx);
         }
         for (idx, cache) in saved_caches.into_iter().rev() {
-            tree.nodes[idx].cache = cache;
+            tree.restore_layout_cache(idx, cache);
         }
         output
     })
@@ -569,18 +610,28 @@ fn capture_oof_layout_inputs<R>(
     dispatch: &mut impl FnMut(&mut LayoutSession<'_>) -> R,
     suppress_nested_prepasses: bool,
 ) -> HashMap<usize, LayoutInput> {
+    let capture_depth = tree.context.oof_content_limit_inputs.len();
+    let prepass_depth = tree.context.oof_content_limit_prepass_depth;
     tree.context.oof_content_limit_inputs.push(HashMap::new());
     if suppress_nested_prepasses {
         tree.context.oof_content_limit_prepass_depth += 1;
     }
-    let _ = dispatch(tree);
-    if suppress_nested_prepasses {
-        tree.context.oof_content_limit_prepass_depth -= 1;
-    }
-    tree.context
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = dispatch(tree);
+    }));
+    tree.context.oof_content_limit_prepass_depth = prepass_depth;
+    let captured = tree
+        .context
         .oof_content_limit_inputs
         .pop()
-        .expect("OOF layout input capture was pushed above")
+        .expect("OOF layout input capture was pushed above");
+    tree.context
+        .oof_content_limit_inputs
+        .truncate(capture_depth);
+    match result {
+        Ok(()) => captured,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 /// Give `style`, a copy of the style of the block-flow child `child`, the
@@ -649,21 +700,16 @@ pub(crate) fn with_width_limits<R>(
     bounds.install_width(tree.layout_style_for_key_mut(node).unwrap(), adjustment);
     #[cfg(test)]
     bounds.record(tree, node, true, adjustment);
-    #[cfg(test)]
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
-    #[cfg(not(test))]
-    let result = f(tree);
     saved.restore(tree, node);
-    #[cfg(test)]
-    let result = match result {
+    match result {
         Ok(value) => value,
         Err(payload) => {
             tree.layout_dirty = true;
             tree.context.content_limit_measures.clear();
             std::panic::resume_unwind(payload)
         }
-    };
-    result
+    }
 }
 
 /// Resolve intrinsic min/max constraints on the in-flow children of a
@@ -710,12 +756,7 @@ pub(super) fn with_grid_item_content_limits(
         .collect::<Vec<_>>();
     let saved_caches = cache_indices
         .into_iter()
-        .map(|idx| {
-            (
-                idx,
-                std::mem::replace(&mut tree.nodes[idx].cache, Cache::new()),
-            )
-        })
+        .map(|idx| (idx, tree.take_layout_cache(idx)))
         .collect::<Vec<_>>();
 
     tree.context.grid_layout_info.remove(&usize::from(node_id));
@@ -733,7 +774,7 @@ pub(super) fn with_grid_item_content_limits(
         dispatch,
     );
     for (idx, cache) in saved_caches.into_iter().rev() {
-        tree.nodes[idx].cache = cache;
+        tree.restore_layout_cache(idx, cache);
     }
     output
 }
@@ -814,7 +855,7 @@ fn with_item_content_limits_for_parent_sizes(
                 height.record(tree, idx, false, height_adjustment);
             }
 
-            let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
+            let cache = tree.take_layout_cache(idx);
             tree.context.content_limit_probes.push(idx);
             prepared.push((idx, saved, cache));
         }
@@ -823,7 +864,7 @@ fn with_item_content_limits_for_parent_sizes(
         for (idx, saved, cache) in prepared.into_iter().rev() {
             tree.context.content_limit_probes.pop();
             saved.restore(tree, idx);
-            tree.nodes[idx].cache = cache;
+            tree.restore_layout_cache(idx, cache);
         }
         output
     })
@@ -940,14 +981,49 @@ impl Bounds {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct MeasureLength {
+    tag: usize,
+    value: usize,
+}
+
+impl MeasureLength {
+    fn new(raw: taffy::style::CompactLength) -> Self {
+        let value = if raw.has_calc() {
+            raw.calc_value().addr()
+        } else {
+            let value = raw.value();
+            if value.is_nan() {
+                f32::NAN.to_bits() as usize
+            } else if value == 0.0 {
+                0
+            } else {
+                value.to_bits() as usize
+            }
+        };
+        Self {
+            tag: raw.tag(),
+            value,
+        }
+    }
+}
+
 /// What a measure of a box is keyed by: the box, the axis measured, and
 /// everything the layout it runs reads besides the box's contents.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct MeasureKey {
     node: usize,
+    publication_epoch: crate::layout::cache_context::CacheEpoch,
+    pagination_transposed: bool,
+    flex_intrinsic_probe: Option<usize>,
     width: bool,
     /// The basis a flex item's percentage edges were resolved against.
     edge_basis: Option<u32>,
+    percentage_height_basis: Option<u32>,
+    insets: [MeasureLength; 8],
+    cross_sizes: [Option<MeasureLength>; 3],
+    empty: bool,
+    orthogonal_guard: bool,
     /// The minimum and maximum width the height is measured under.
     bounds: [Option<u32>; 2],
     known: [Option<u32>; 2],
@@ -964,7 +1040,39 @@ impl MeasureKey {
         width: bool,
         inputs: &LayoutInput,
         bounds: Bounds,
+        percentage_height_basis: Option<f32>,
     ) -> Self {
+        let style = tree
+            .layout_style_for_key(node)
+            .expect("measure has a retained style");
+        let flex_grid = is_flex_grid_container(tree, node);
+        // Key only the cross-axis sizes that the probe deliberately preserves.
+        let cross_sizes = if width && flex_grid {
+            [None; 3]
+        } else if width {
+            [
+                Some(MeasureLength::new(style.size.height.into_raw())),
+                Some(MeasureLength::new(style.min_size.height.into_raw())),
+                Some(MeasureLength::new(style.max_size.height.into_raw())),
+            ]
+        } else if flex_grid {
+            [
+                Some(MeasureLength::new(style.size.width.into_raw())),
+                None,
+                None,
+            ]
+        } else {
+            [
+                Some(MeasureLength::new(style.size.width.into_raw())),
+                Some(MeasureLength::new(style.min_size.width.into_raw())),
+                Some(MeasureLength::new(style.max_size.width.into_raw())),
+            ]
+        };
+        let edge_basis = if tree.nodes[node].formatting_context == FormattingContext::Inline {
+            super::ifc_parent_inline_size(tree, node, inputs.parent_size)
+        } else {
+            tree.resolved_edge_basis(node)
+        };
         let bits = |size: Option<f32>| size.map(f32::to_bits);
         let space = |space: AvailableSpace| match space {
             AvailableSpace::Definite(size) => (0, size.to_bits()),
@@ -973,8 +1081,26 @@ impl MeasureKey {
         };
         Self {
             node,
+            publication_epoch: tree.layout_cache_context.publication_epoch(),
+            pagination_transposed: tree.context.pagination_on_transposed_axes,
+            flex_intrinsic_probe: tree.context.flex_intrinsic_probe,
             width,
-            edge_basis: bits(tree.nodes[node].flex_edge_basis),
+            edge_basis: bits(edge_basis),
+            percentage_height_basis: bits(percentage_height_basis),
+            insets: [
+                style.padding.top,
+                style.padding.right,
+                style.padding.bottom,
+                style.padding.left,
+                style.border.top,
+                style.border.right,
+                style.border.bottom,
+                style.border.left,
+            ]
+            .map(|edge| MeasureLength::new(edge.into_raw())),
+            cross_sizes,
+            empty: tree.context.size_contained_measure.last() == Some(&node),
+            orthogonal_guard: tree.context.orthogonal_block_in_layout == Some(node),
             bounds: [bits(bounds.min), bits(bounds.max)],
             known: [
                 bits(inputs.known_dimensions.width),
@@ -1015,9 +1141,9 @@ fn probe(
     let saved = SavedSizes::capture(tree, idx);
     neutral(tree, idx);
     tree.context.content_limit_probes.push(idx);
-    let cache = std::mem::replace(&mut tree.nodes[idx].cache, Cache::new());
+    let cache = tree.take_layout_cache(idx);
     let output = tree.compute_child_layout_with_block_ctx(node_id, inputs, None);
-    tree.nodes[idx].cache = cache;
+    tree.restore_layout_cache(idx, cache);
     tree.context.content_limit_probes.pop();
     saved.restore(tree, idx);
     let size = if key.width {
@@ -1125,7 +1251,7 @@ fn width_bounds(
                     },
                     vertical_margins_are_collapsible: Line::FALSE,
                 };
-                let key = MeasureKey::new(tree, idx, true, &along, Bounds::default());
+                let key = MeasureKey::new(tree, idx, true, &along, Bounds::default(), None);
                 probe(tree, node_id, key, along, |tree, idx| {
                     let style = tree.layout_style_for_key_mut(idx).unwrap();
                     if flex_grid_container {
@@ -1215,12 +1341,12 @@ fn height_bounds(
     along.known_dimensions.height = None;
     along.known_dimensions_are_definite.height = false;
     along.vertical_margins_are_collapsible = Line::FALSE;
-    let key = MeasureKey::new(tree, usize::from(node_id), false, &along, width);
     let percentage_height_basis = (is_oof_box(tree, idx)
         || is_flex_grid_container(tree, idx)
         || is_flex_grid_item(tree, idx))
     .then(|| content_percentage_height_basis(tree, idx, inputs))
     .flatten();
+    let key = MeasureKey::new(tree, idx, false, &along, width, percentage_height_basis);
     if let Some(height) = percentage_height_basis {
         tree.context
             .content_limit_percentage_height_bases

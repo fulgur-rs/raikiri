@@ -11,12 +11,11 @@
 use crate::LayoutStyle as Style;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BoxGenerationMode, Cache, CacheTree, CollapsibleMarginSet,
-    ContainingBlockClaims, CoreStyle, DetailedGridInfo, ExpandedDimension, Layout,
-    LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput,
-    LayoutPartialTree, MaybeMath, NodeId, Position as TaffyPosition, Size, TraversePartialTree,
-    TraverseTree, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
-    compute_leaf_layout,
+    AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, ContainingBlockClaims,
+    CoreStyle, DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer,
+    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
+    MaybeMath, NodeId, Position as TaffyPosition, Size, TraversePartialTree, TraverseTree,
+    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
 use self::block_flow::{compute_block_flow, context::BlockContext};
@@ -185,10 +184,10 @@ pub(crate) fn measure_against_parent_height<T>(
     measure: impl FnOnce(&mut LayoutSession<'_>) -> T,
 ) -> T {
     let afresh = parent_height.is_some() && height_follows_containing_block(tree, node);
-    let saved = afresh.then(|| std::mem::replace(&mut tree.nodes[node].cache, Cache::new()));
+    let saved = afresh.then(|| tree.take_layout_cache(node));
     let measured = measure(tree);
     if let Some(saved) = saved {
-        tree.nodes[node].cache = saved;
+        tree.restore_layout_cache(node, saved);
     }
     measured
 }
@@ -577,13 +576,28 @@ const WALKED_CHILDREN_MIN: usize = 32;
 
 impl CacheTree for LayoutSession<'_> {
     fn cache_get(&mut self, node_id: NodeId, inputs: &LayoutInput) -> Option<LayoutOutput> {
-        self.nodes[usize::from(node_id)].cache.get(inputs)
+        self.sync_layout_cache_mutations();
+        let idx = usize::from(node_id);
+        let key = self.nodes.box_key(idx)?;
+        self.layout_cache_context
+            .can_read(key)
+            .then(|| self.nodes[idx].cache.get(inputs))
+            .flatten()
     }
 
     fn cache_store(&mut self, node_id: NodeId, inputs: &LayoutInput, layout_output: LayoutOutput) {
-        self.nodes[usize::from(node_id)]
-            .cache
-            .store(inputs, layout_output)
+        self.sync_layout_cache_mutations();
+        let idx = usize::from(node_id);
+        let key = self.nodes.box_key(idx).expect("cached node has a box key");
+        // Reject a late outer store before touching a valid inner computation's cache.
+        if !self.layout_cache_context.can_store(key) {
+            return;
+        }
+        if !self.layout_cache_context.can_read(key) {
+            self.nodes[idx].cache.clear();
+        }
+        self.nodes[idx].cache.store(inputs, layout_output);
+        self.layout_cache_context.mark_stored(key);
     }
 
     fn cache_clear(&mut self, node_id: NodeId) {
@@ -712,17 +726,7 @@ impl LayoutSession<'_> {
         inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
-        // Lazy layout cache invalidation — mutations only set a flag; we
-        // clear all node caches on the first compute after the flag flips
-        // (amortized O(1) per mutation over N-node batches).
-        if self.layout_dirty {
-            for node in self.nodes.layout_nodes_mut() {
-                node.cache.clear();
-            }
-            self.context.grid_layout_info.clear();
-            self.context.taffy_hoisted_children.clear();
-            self.layout_dirty = false;
-        }
+        self.sync_layout_cache_mutations();
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
         let inputs = with_content_height_not_definite(self, usize::from(node_id), inputs);
         if inputs.run_mode == taffy::RunMode::PerformLayout {
@@ -1074,37 +1078,26 @@ impl LayoutSession<'_> {
         let compute = |tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInput| {
             content_limits::with_content_limits(tree, node_id, inputs, dispatch)
         };
+        let view_context = raikiri_layout_style::ViewContext {
+            layout_wm: self.nodes[idx].used_writing_mode,
+            percent_basis: edge_basis.map_or(
+                raikiri_layout_style::PercentBasis::Taffy,
+                raikiri_layout_style::PercentBasis::Definite,
+            ),
+            ..raikiri_layout_style::ViewContext::default()
+        };
         let mut output = if let Some(basis) = edge_basis {
-            // The edges come out as they would against a parent size of the
-            // same width, so cached layouts stay valid while the basis does.
-            if self.nodes[idx].flex_edge_basis != Some(basis) {
-                self.nodes[idx].cache.clear();
-                self.nodes[idx].flex_edge_basis = Some(basis);
-            }
-            #[cfg(test)]
-            let output = self.with_resolved_edges(idx, basis, true, |tree| {
-                compute_cached_layout(tree, node_id, inputs, compute)
-            });
-            #[cfg(not(test))]
-            let output = {
-                let style = self.layout_style_for_key_mut(idx).unwrap();
-                let edges = (style.padding, style.border);
-                style.padding = style
-                    .padding
-                    .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
-                style.border = style
-                    .border
-                    .map(|edge| taffy::LengthPercentage::length(ifc_edge(edge, Some(basis))));
-                let output = compute_cached_layout(self, node_id, inputs, compute);
-                let style = self.layout_style_for_key_mut(idx).unwrap();
-                (style.padding, style.border) = edges;
-                output
-            };
-            output
+            self.with_resolved_edges(idx, basis, true, |tree| {
+                tree.with_cache_frame(idx, view_context, |tree| {
+                    compute_cached_layout(tree, node_id, inputs, compute)
+                })
+            })
         } else if uncached {
             compute(self, node_id, inputs)
         } else {
-            compute_cached_layout(self, node_id, inputs, compute)
+            self.with_cache_frame(idx, view_context, |tree| {
+                compute_cached_layout(tree, node_id, inputs, compute)
+            })
         };
         // An ifc root measured its baseline from the lines of this very call;
         // the stored lines may be those of another width.
@@ -2262,7 +2255,7 @@ struct FlexItemBounds {
     width: taffy::Dimension,
     min: taffy::LengthPercentageAuto,
     max: taffy::LengthPercentageAuto,
-    cache: Cache,
+    cache: crate::layout::cache_context::SavedLayoutCache,
     #[cfg(test)]
     view_token: Option<crate::layout::style_views::OverrideToken>,
 }
@@ -2284,12 +2277,13 @@ fn with_flex_intrinsic_probe<R>(
     probe: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
     let idx = usize::from(node_id);
+    tree.cache_override_changed(idx);
     let style = tree.layout_style_for_key_mut(idx).unwrap();
     let container_max = style.max_size.width;
     style.max_size.width = taffy::LengthPercentageAuto::auto();
     let outer = tree.context.flex_intrinsic_probe.replace(idx);
     #[cfg(test)]
-    let token = tree.push_style_overrides(
+    let token = tree.record_style_overrides(
         idx,
         vec![
             raikiri_layout_style::OwnedPropertyOverride::length(
@@ -2300,20 +2294,16 @@ fn with_flex_intrinsic_probe<R>(
             .expect("physical intrinsic maximum"),
         ],
     );
-    #[cfg(test)]
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe(tree)));
-    #[cfg(not(test))]
-    let result = probe(tree);
+    tree.cache_override_changed(idx);
     tree.context.flex_intrinsic_probe = outer;
     tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
     #[cfg(test)]
-    tree.restore_style_overrides(token);
-    #[cfg(test)]
-    let result = match result {
+    tree.restore_recorded_style_overrides(token);
+    match result {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
-    };
-    result
+    }
 }
 
 /// Run `layout`, a layout of the row flex container `node_id`, with each item
@@ -2435,10 +2425,11 @@ fn with_flex_item_basis_bounds<R>(
                     );
                 }
             }
-            tree.push_style_overrides(child_idx, entries)
+            tree.record_style_overrides(child_idx, entries)
         } else {
             None
         };
+        tree.cache_override_changed(child_idx);
         let style = tree.layout_style_for_key_mut(child_idx).unwrap();
         // Taffy floors the contribution of an item that cannot shrink by its
         // flex base size on its own, ahead of the item's maximum. The floor
@@ -2452,7 +2443,7 @@ fn with_flex_item_basis_bounds<R>(
         style.min_size.width = new_min.unwrap_or(min);
         style.max_size.width = new_max.unwrap_or(max);
         // The entries cached while the bounds differ answer no other layout.
-        let cache = std::mem::replace(&mut tree.nodes[child_idx].cache, Cache::new());
+        let cache = tree.take_layout_cache(child_idx);
         saved.push(FlexItemBounds {
             idx: child_idx,
             shrink,
@@ -2464,26 +2455,22 @@ fn with_flex_item_basis_bounds<R>(
             view_token,
         });
     }
-    #[cfg(test)]
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout(tree)));
-    #[cfg(not(test))]
-    let result = layout(tree);
     for item in saved.into_iter().rev() {
+        tree.cache_override_changed(item.idx);
         let style = tree.layout_style_for_key_mut(item.idx).unwrap();
         style.flex_shrink = item.shrink;
         style.size.width = item.width;
         style.min_size.width = item.min;
         style.max_size.width = item.max;
-        tree.nodes[item.idx].cache = item.cache;
+        tree.restore_layout_cache(item.idx, item.cache);
         #[cfg(test)]
-        tree.restore_style_overrides(item.view_token);
+        tree.restore_recorded_style_overrides(item.view_token);
     }
-    #[cfg(test)]
-    let result = match result {
+    match result {
         Ok(value) => value,
         Err(payload) => std::panic::resume_unwind(payload),
-    };
-    result
+    }
 }
 
 /// The border-box `min-width` and `max-width` of element `idx` that resolve

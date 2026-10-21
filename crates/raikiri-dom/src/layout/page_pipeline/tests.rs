@@ -17596,6 +17596,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &mut shifts,
         0,
     );
+    drop(session);
     assert!(!bounded);
     assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
     assert_eq!(doc.nodes[second].unrounded_layout.location.y, 50.0);
@@ -17616,6 +17617,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &mut shifts,
         0,
     );
+    drop(session);
     assert!(!bounded);
     assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
     assert_eq!(doc.nodes[second].unrounded_layout.location.y, 40.0);
@@ -17634,6 +17636,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &mut shifts,
         0,
     );
+    drop(session);
     assert_eq!(doc.nodes[first].unrounded_layout.location.y, 30.0);
     assert_eq!(doc.nodes[second].unrounded_layout.location.y, 10.0);
     assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
@@ -17651,6 +17654,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
         &mut shifts,
         0,
     );
+    drop(session);
     assert!(bounded);
     assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 20.0);
 }

@@ -2628,6 +2628,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-traits",
  "rayon",
+ "rustc-hash",
  "serde",
  "serde_json",
  "shodo",
