@@ -95,7 +95,8 @@ fn a_body_outside_html_keeps_its_overflow() {
     let cascade = cascade(&doc, &rules).expect("cascade");
     crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
     let before = doc.layout_node_with_style(body).unwrap().style.overflow;
-    propagate_body_overflow_to_viewport(&mut doc, &cascade, body);
+    crate::layout::context::LayoutSession::new(&mut doc)
+        .propagate_viewport_overflow(&cascade, body);
     assert_eq!(
         doc.layout_node_with_style(body).unwrap().style.overflow,
         before

@@ -18,7 +18,7 @@ fn initial_explicit_preparation_fills_non_element_foundations_without_a_bridge()
         assert!(matches!(record.base, LayoutBase::Synthetic(_)));
         assert_eq!(
             record.metadata.flags,
-            raikiri_layout_style::StyleFlags::EMPTY
+            raikiri_layout_style::StyleFlags::TEXT
         );
     }
     assert_eq!(
@@ -545,7 +545,10 @@ fn source_wrapper_rebinds_when_the_same_key_becomes_a_spanner_recipe() {
             .count(),
         2
     );
-    session.record_pass_override(wrapper, OwnedPropertyOverride::aspect_ratio(Some(2.0)));
+    session.record_pass_override(
+        wrapper,
+        OwnedPropertyOverride::clear(raikiri_style::property::ClearValue::None),
+    );
     session.nodes[spanner].column_span_all = true;
     crate::layout::spanner_wrappers::lift_spanner_wrappers(&mut session, &cascade);
     super::prepare_for_inspection(&mut session);

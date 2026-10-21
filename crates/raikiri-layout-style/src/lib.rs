@@ -3,6 +3,7 @@
 mod calc;
 mod context;
 mod core;
+pub use core::preferred_aspect_ratio;
 mod flex;
 mod grid;
 pub use grid::{Areas, GridRepetition, LineNames, TemplateTracks, Tracks};

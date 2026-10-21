@@ -14644,6 +14644,9 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
 
     layout_pages(&mut doc, &cascade, page).expect("paged layout succeeds");
     assert_eq!(doc.forced_break_clearance, vec![second]);
+    let key = doc.nodes.box_key(second).unwrap();
+    assert!(!doc.box_style_data.get(key).unwrap().pass.is_empty());
+    assert_eq!(cascade.computed[second].clear, ClearValue::None);
     assert_eq!(
         doc.layout_node_with_style(second).unwrap().style.clear,
         taffy::Clear::Both
@@ -14653,6 +14656,14 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     // float again and the cached paged layout is not reused.
     layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
     assert!(doc.forced_break_clearance.is_empty());
+    let mut projection = Style {
+        clear: taffy::Clear::Right,
+        ..Style::default()
+    };
+    for entry in &doc.box_style_data.get(key).unwrap().pass {
+        entry.apply_to_style(&mut projection);
+    }
+    assert_eq!(projection.clear, taffy::Clear::Right);
     assert_eq!(
         doc.layout_node_with_style(second).unwrap().style.clear,
         taffy::Clear::None

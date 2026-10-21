@@ -115,6 +115,18 @@ impl StyleFlags {
     pub const CONTAIN_HEIGHT: Self = Self(1 << 11);
     /// Direction follows the source box's vertical axes even for physical size queries.
     pub const SOURCE_VERTICAL_DIRECTION: Self = Self(1 << 12);
+    /// Prepared inline formatting context.
+    pub const IFC: Self = Self(1 << 13);
+    /// Prepared flex formatting context.
+    pub const FLEX: Self = Self(1 << 14);
+    /// Prepared grid formatting context.
+    pub const GRID: Self = Self(1 << 15);
+    /// Prepared table formatting context.
+    pub const TABLE: Self = Self(1 << 16);
+    /// Prepared multicol formatting context.
+    pub const MULTICOL: Self = Self(1 << 17);
+    /// Prepared text leaf classification.
+    pub const TEXT: Self = Self(1 << 18);
     /// No prepared facts.
     pub const EMPTY: Self = Self(0);
     /// Combine prepared facts.
