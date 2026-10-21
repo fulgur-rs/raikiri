@@ -294,3 +294,51 @@ fn invalidated_box_identity_publishes_before_parent_cache_lookup() {
         );
     });
 }
+
+#[test]
+fn failed_rebinding_keeps_replaced_prepared_data_until_full_recovery() {
+    use std::sync::Arc;
+    let (mut doc, _, child, _) = fixture_with_styles("display:flex", "width:calc(50% + 10px)");
+    let body = doc.nodes[child].parent.unwrap();
+    let later = doc.append_element(Some(body), "div", LayoutStyle::default(), Some("width:7px"));
+    doc.mark_in_document_flags();
+    let mut cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let old = {
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        Arc::downgrade(
+            &session
+                .box_style_data
+                .get(BoxKey::Source(child))
+                .unwrap()
+                .prepared,
+        )
+    };
+    cascade.computed[child].width = L::Calc(raikiri_style::property::CalcLengthPercentage {
+        px: 20.0,
+        percent: 25.0,
+    });
+    // A later missing value interrupts preparation after the first calc rebind.
+    let tail = cascade.computed.split_off(later);
+    {
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            session.prepare_style_views()
+        }));
+        assert!(interrupted.is_err());
+        assert!(!session.box_style_data.is_ready());
+        assert!(old.upgrade().is_some());
+    }
+    cascade.computed.extend(tail);
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    assert!(session.box_style_data.is_ready());
+    assert!(old.upgrade().is_none());
+    let pointer = session
+        .style_view(child)
+        .size()
+        .width
+        .into_raw()
+        .calc_value();
+    assert_eq!(crate::taffy_impl::resolve_calc(pointer, 100.0), 45.0);
+}

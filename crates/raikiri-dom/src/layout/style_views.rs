@@ -144,28 +144,43 @@ impl<'a> StyleViews<'a> {
                     }),
                 );
             }
-            let old = doc.box_style_data.take(key);
-            let mut record = match old {
-                Some(mut record) => {
+            match doc.box_style_data.get(key) {
+                Some(record) => {
                     assert_eq!(
                         matches!(record.base, LayoutBase::Synthetic(_)),
                         record.recipe.is_some(),
                         "synthetic bases carry an explicit recipe origin"
                     );
-                    if let LayoutBase::Source(source) = record.base {
-                        record.metadata = metadata::prepare_metadata(doc, self.cascade, idx);
-                        if PreparedStyle::from_data(
+                    if let LayoutBase::Source(source) = &record.base {
+                        let source = *source;
+                        let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
+                        let valid = PreparedStyle::from_data(
                             &self.cascade.computed[source],
-                            record.metadata,
+                            metadata,
                             record.prepared.clone(),
                         )
-                        .is_err()
-                        {
-                            record.prepared =
+                        .is_ok();
+                        if valid {
+                            doc.box_style_data.get_mut(key).unwrap().metadata = metadata;
+                        } else {
+                            let prepared =
                                 self.prepare_data(doc, key, &self.cascade.computed[source]);
+                            let pass =
+                                std::mem::take(&mut doc.box_style_data.get_mut(key).unwrap().pass);
+                            // Replacing through the store retires the previous binding data.
+                            doc.box_style_data.insert(
+                                key,
+                                BoxStyleData {
+                                    base: LayoutBase::Source(source),
+                                    recipe: None,
+                                    metadata,
+                                    pass,
+                                    prepared,
+                                    stamp: doc.box_style_data.stamp(),
+                                },
+                            );
                         }
                     }
-                    record
                 }
                 None => {
                     let BoxKey::Source(source) = key else {
@@ -178,21 +193,28 @@ impl<'a> StyleViews<'a> {
                         raikiri_style::property::DisplayValue::Contents,
                         "neutralized source must publish its explicit recipe before binding"
                     );
-                    BoxStyleData {
-                        base: LayoutBase::Source(source),
-                        recipe: None,
-                        metadata: metadata::prepare_metadata(doc, self.cascade, idx),
-                        pass: Vec::new(),
-                        prepared: self.prepare_data(doc, key, &self.cascade.computed[source]),
-                        stamp: doc.box_style_data.stamp(),
-                    }
+                    let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
+                    let prepared = self.prepare_data(doc, key, &self.cascade.computed[source]);
+                    doc.box_style_data.insert(
+                        key,
+                        BoxStyleData {
+                            base: LayoutBase::Source(source),
+                            recipe: None,
+                            metadata,
+                            pass: Vec::new(),
+                            prepared,
+                            stamp: doc.box_style_data.stamp(),
+                        },
+                    );
                 }
-            };
-            if let Some(pending) = doc.box_style_data.pending.remove(&key) {
-                record.pass.extend(pending);
             }
-            record.stamp = doc.box_style_data.stamp();
-            doc.box_style_data.insert(key, record);
+            if let Some(pending) = doc.box_style_data.pending.remove(&key) {
+                doc.box_style_data
+                    .get_mut(key)
+                    .unwrap()
+                    .pass
+                    .extend(pending);
+            }
         }
         // Recipe creation may advance epochs while filling neutral source holes.
         let stamp = doc.box_style_data.stamp();
