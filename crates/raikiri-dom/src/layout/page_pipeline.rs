@@ -1012,7 +1012,7 @@ fn record_candidate_pages(
 /// Each paragraph is broken at the content width of the nearest ancestor
 /// with an authored width, otherwise at `max_advance`.
 pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult, max_advance: f32) {
-    let mut session = super::context::LayoutSession::new(document);
+    let mut session = super::context::LayoutSession::with_cascade(document, cascade);
     session.page_projection.clear();
     crate::layout::ifc::flow::rebreak_roots(&mut session, cascade, max_advance);
 }
@@ -1048,7 +1048,7 @@ pub fn layout_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), LayoutError> {
-    let mut session = super::context::LayoutSession::new(document);
+    let mut session = super::context::LayoutSession::with_cascade(document, cascade);
     layout_single_page_with_table_projection(&mut session, cascade, page_box, false, false)
 }
 
@@ -1162,10 +1162,7 @@ fn layout_single_page_with_table_projection(
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
-    #[cfg(test)]
     document.propagate_viewport_overflow(cascade, body_id);
-    #[cfg(not(test))]
-    propagate_body_overflow_to_viewport(document, cascade, body_id);
     prepare_authored_block_widths(document, cascade, content_width);
     if let Some(state) = document.ifc.as_mut() {
         state.page_width = Some(content_width);
@@ -3112,7 +3109,7 @@ pub fn layout_pages_with_page_geometry_and_control(
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
-    let mut session = super::context::LayoutSession::new(document);
+    let mut session = super::context::LayoutSession::with_cascade(document, cascade);
     // A root with `display: none` generates no boxes, so there is nothing to
     // lay out or break into later pages: the document prints as a single
     // blank page.

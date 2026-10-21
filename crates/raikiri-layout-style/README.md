@@ -16,7 +16,10 @@ Logical size sources have separate slots when present in the computed values.
 `PreparedStyle::prepare` borrows the CV and owns its calc bindings;
 `prepare_shared` also retains an `Arc<ComputedValues>`. These forms avoid
 self-references when a session owns prepared styles. Preparation allocates;
-querying does not. `PreparedStyle` is cloneable, while the borrowed
+querying does not. `prepare_with` and `prepare_shared_with` accept the adapter's
+existing calc owners and validate their expressions and range policies.
+`set_metadata` refreshes box facts without rebuilding bindings or cloning the CV.
+`PreparedStyle` is cloneable, while the borrowed
 `LayoutStyleView` remains `Copy`.
 
 `LayoutStyleView::new` then borrows that prepared style, `ViewContext`, and
@@ -73,3 +76,23 @@ measurement. It consumes all Grid iterators and their clones, including long
 shared identifiers, across physical and vertical contexts. It does not prove
 allocation counts or timing for an integrated full-document layout. Corpus
 comparison at actual getter-read time belongs to RAIKIRI-711/713.
+
+## DOM integration
+
+The DOM layout session borrows the external cascade and prepares Flex/Grid
+containers and all of their projected children before style queries. Hidden
+and out-of-flow children are included because Taffy reads their styles before
+filtering them. Source values are borrowed; synthetic recipes own shared values.
+The production Flex/Grid associated style types use this view. Unit tests wrap
+the same prepared views in `CheckedStyle`, compare each consumed value against
+an independently converted retained style, and return that retained value.
+Core, Block and out-of-flow layout still use the retained style, including the
+Grid rows needed by pagination and sizing. `Document::layout_style` continues
+to expose the complete converted style.
+
+Document metadata publications refresh preparation before parent cache lookup
+and before entering size or edge scopes. Preparation rejects active scopes;
+getters neither prepare nor validate. The document retains every shared calc
+payload before publishing its raw handle, including payloads from popped
+scopes. A successful source bridge releases only the previous bridge's payload
+prefix; error and unwind paths preserve it.

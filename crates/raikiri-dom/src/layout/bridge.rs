@@ -166,7 +166,6 @@ pub(crate) fn apply_computed_to_style_in_session(
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
     doc.document.layout_cache_context.publish_source();
-    #[cfg(test)]
     doc.begin_style_bridge();
     doc.context.table_cache.clear();
     // Keep the previous payloads alive while styles are rebuilt in place.
@@ -183,7 +182,6 @@ pub(crate) fn apply_computed_to_style_in_session(
             .count()
             + 8;
         doc.document.layout_cache_context.configure_nodes(expected);
-        #[cfg(test)]
         doc.prepare_style_views();
         doc.document
             .retained_layout_styles
@@ -193,7 +191,6 @@ pub(crate) fn apply_computed_to_style_in_session(
     result
 }
 
-#[cfg(test)]
 pub(super) fn view_sizing_flags(
     doc: &Document,
     cascade: &CascadeResult,
@@ -361,7 +358,6 @@ fn apply_computed_to_style_in_session_inner(
             .unwrap()
             .style
             .aspect_ratio = preferred_ratio;
-        #[cfg(test)]
         if natural_ratio.is_some() {
             doc.record_pass_override(
                 idx,
@@ -391,7 +387,6 @@ fn apply_computed_to_style_in_session_inner(
                     .style
                     .size
                     .width = Dimension::percent(1.0);
-                #[cfg(test)]
                 doc.record_pass_override(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::length(
@@ -409,7 +404,6 @@ fn apply_computed_to_style_in_session_inner(
                     .unwrap()
                     .style
                     .aspect_ratio = None;
-                #[cfg(test)]
                 doc.record_pass_override(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
@@ -428,7 +422,6 @@ fn apply_computed_to_style_in_session_inner(
             if matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.height = Dimension::length(intrinsic_height);
             }
-            #[cfg(test)]
             {
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 for (property, value, original) in [
@@ -528,7 +521,6 @@ fn apply_computed_to_style_in_session_inner(
         if let Some(container) = container {
             let _overrides =
                 bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[container]);
-            #[cfg(test)]
             {
                 if let Some(value) = _overrides.0 {
                     doc.record_pass_override(
@@ -579,13 +571,7 @@ fn apply_computed_to_style_in_session_inner(
         // retained style map. A panic while inserting owners can only leave
         // extra owners behind; it cannot leave a dangling style handle.
         let key = doc.nodes.box_key(idx).expect("source node has a box key");
-        #[cfg(test)]
         doc.retain_bridge_calcs(key, calc_values);
-        #[cfg(not(test))]
-        doc.document
-            .retained_layout_styles
-            .calc_values
-            .extend(calc_values);
         doc.document.retained_layout_styles.insert(key, style);
     }
     super::spanner_wrappers::lift_spanner_wrappers(doc, cascade);
@@ -617,7 +603,6 @@ fn apply_computed_to_style_in_session_inner(
             if containment.height && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.height = Dimension::auto();
             }
-            #[cfg(test)]
             {
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 doc.record_pass_override(idx, O::aspect_ratio(contained_ratio));
@@ -642,7 +627,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .aspect_ratio = None;
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
@@ -653,7 +637,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .justify_self = Some(TaffyAlignItems::START);
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(
@@ -666,7 +649,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .align_self = Some(TaffyAlignItems::FLEX_START);
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(
@@ -679,7 +661,6 @@ fn apply_computed_to_style_in_session_inner(
                 .unwrap()
                 .style
                 .align_self = Some(fallback);
-            #[cfg(test)]
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),

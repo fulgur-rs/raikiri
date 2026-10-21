@@ -23,17 +23,14 @@ impl LayoutSession<'_> {
     ) -> Option<raikiri_layout_style::PercentBasis> {
         use raikiri_layout_style::PercentBasis;
         let key = self.nodes.box_key(idx).expect("edge scope has a box key");
-        self.style_views.as_mut().map(|views| {
-            let prepared = views
-                .boxes
-                .get_mut(&key)
-                .expect("edge scope has a prepared style");
+        self.style_views.as_mut().and_then(|views| {
+            let prepared = views.boxes.get_mut(&key)?;
             let previous = prepared.context.percent_basis;
             if previous == PercentBasis::Taffy {
                 prepared.context.percent_basis = PercentBasis::Definite(basis);
             }
             prepared.was_scoped = true;
-            previous
+            Some(previous)
         })
     }
 
@@ -62,7 +59,10 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn save_size_scope(&mut self, idx: usize) -> Option<usize> {
-        self.style_views.as_ref()?;
+        self.sync_layout_cache_mutations();
+        if !self.has_style_view(idx) {
+            return None;
+        }
         let old = self
             .layout_style_for_key(idx)
             .expect("size scope has a retained style");
@@ -115,10 +115,9 @@ impl LayoutSession<'_> {
         let Some(views) = &mut self.style_views else {
             return;
         };
-        let prepared = views
-            .boxes
-            .get_mut(&key)
-            .expect("override has a prepared style");
+        let Some(prepared) = views.boxes.get_mut(&key) else {
+            return;
+        };
         assert!(
             !prepared.scopes.is_empty(),
             "temporary values require an active scope"
@@ -139,12 +138,10 @@ impl LayoutSession<'_> {
         idx: usize,
         entries: Vec<OwnedPropertyOverride>,
     ) -> Option<OverrideToken> {
+        self.sync_layout_cache_mutations();
         let key = self.nodes.box_key(idx).expect("override has a box key");
         let views = self.style_views.as_mut()?;
-        let prepared = views
-            .boxes
-            .get_mut(&key)
-            .expect("override has a prepared style");
+        let prepared = views.boxes.get_mut(&key)?;
         let token = OverrideToken {
             key,
             length: prepared.scoped.len(),
@@ -182,6 +179,7 @@ impl LayoutSession<'_> {
         prepared.scoped.truncate(token.length);
     }
 
+    #[cfg(test)]
     pub(crate) fn push_style_overrides(
         &mut self,
         idx: usize,
@@ -191,6 +189,7 @@ impl LayoutSession<'_> {
         self.record_style_overrides(idx, entries)
     }
 
+    #[cfg(test)]
     pub(crate) fn restore_style_overrides(&mut self, token: Option<OverrideToken>) {
         if let Some(token) = token {
             self.document
@@ -200,6 +199,7 @@ impl LayoutSession<'_> {
         self.restore_recorded_style_overrides(token);
     }
 
+    #[cfg(test)]
     pub(crate) fn style_override_depth(&self, idx: usize) -> usize {
         let key = self.nodes.box_key(idx).expect("scope has a box key");
         self.style_views
@@ -208,6 +208,7 @@ impl LayoutSession<'_> {
             .map_or(0, |prepared| prepared.scopes.len())
     }
 
+    #[cfg(test)]
     pub(crate) fn with_style_overrides<R>(
         &mut self,
         idx: usize,

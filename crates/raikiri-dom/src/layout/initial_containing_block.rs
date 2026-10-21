@@ -73,7 +73,6 @@ pub(crate) fn prepare(
             .expect("principal element has a style")
             .direction;
     }
-    #[cfg(test)]
     {
         use raikiri_style::{ComputedLengthPercentageOrAuto as L, property::Direction};
         let mut values = super::style_views::neutral_initial_values();

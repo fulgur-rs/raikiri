@@ -93,22 +93,20 @@ pub(crate) struct NodeLayoutState {
 pub(crate) struct LayoutSession<'doc> {
     pub(crate) document: &'doc mut Document,
     pub(crate) context: LayoutContext,
-    #[cfg(test)]
     pub(crate) style_views: Option<super::style_views::StyleViews<'doc>>,
 }
 
 impl<'doc> LayoutSession<'doc> {
+    #[cfg(test)]
     pub(crate) fn new(document: &'doc mut Document) -> Self {
         document.layout_cache_context.begin_session();
         Self {
             document,
             context: LayoutContext::default(),
-            #[cfg(test)]
             style_views: None,
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn with_cascade(
         document: &'doc mut Document,
         cascade: &'doc raikiri_style::CascadeResult,
@@ -129,6 +127,7 @@ impl<'doc> LayoutSession<'doc> {
             self.context.taffy_hoisted_children.clear();
             self.document.layout_dirty = false;
         }
+        self.refresh_style_views();
     }
 
     pub(crate) fn resolved_edge_basis(&self, idx: usize) -> Option<f32> {

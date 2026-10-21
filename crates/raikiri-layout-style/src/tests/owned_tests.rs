@@ -317,3 +317,24 @@ fn owned_override_exposes_its_payload_for_adapter_retention() {
             .is_none()
     );
 }
+
+#[test]
+fn metadata_refresh_keeps_existing_calc_bindings() {
+    let mut cv = ComputedValues::initial();
+    cv.width = L::Calc(CalcLengthPercentage {
+        px: 3.0,
+        percent: 25.0,
+    });
+    let mut prepared = PreparedStyle::prepare(&cv, StyleMetadata::default());
+    let pointer = std::ptr::from_ref(prepared.payload(CalcSlot::Property(LengthProperty::Width)));
+    prepared.set_metadata(StyleMetadata {
+        flags: StyleFlags::HIDDEN,
+        ..StyleMetadata::default()
+    });
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(view.box_generation_mode(), taffy::BoxGenerationMode::None);
+    assert_eq!(
+        std::ptr::from_ref(prepared.payload(CalcSlot::Property(LengthProperty::Width))),
+        pointer
+    );
+}

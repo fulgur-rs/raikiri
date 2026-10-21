@@ -98,6 +98,11 @@ enum CalcBindings<'a> {
     Owned(Box<[(CalcSlot, Arc<AlignedCalc>)]>),
 }
 impl<'a> PreparedStyle<'a> {
+    /// Refresh document facts without rebuilding computed values or calc bindings.
+    pub fn set_metadata(&mut self, metadata: StyleMetadata) {
+        self.metadata = metadata;
+    }
+
     /// Borrow computed values and allocate owners for their calc slots once.
     pub fn prepare(values: &'a ComputedValues, metadata: StyleMetadata) -> Self {
         Self::prepare_source(ComputedSource::Borrowed(values), metadata)

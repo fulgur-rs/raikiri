@@ -54,7 +54,6 @@ pub(crate) struct SavedSizes {
     size: Size<Dimension>,
     min_size: Size<LengthPercentageAuto>,
     max_size: Size<LengthPercentageAuto>,
-    #[cfg(test)]
     scope: Option<usize>,
 }
 
@@ -65,7 +64,6 @@ impl SavedSizes {
             size: style.size,
             min_size: style.min_size,
             max_size: style.max_size,
-            #[cfg(test)]
             scope: None,
         }
     }
@@ -74,7 +72,6 @@ impl SavedSizes {
         tree.cache_override_changed(idx);
         let mut saved = Self::of(tree.layout_node_with_style(idx).unwrap().style);
         saved.marker = tree.context.saved_size_scopes.len();
-        #[cfg(test)]
         let saved = Self {
             scope: tree.save_size_scope(idx),
             ..saved
@@ -100,7 +97,6 @@ impl SavedSizes {
         style.size = self.size;
         style.min_size = self.min_size;
         style.max_size = self.max_size;
-        #[cfg(test)]
         tree.restore_size_scope(self.scope);
     }
 }
@@ -169,7 +165,6 @@ fn neutralize_all_sizes(style: &mut Style) {
     style.max_size = Size::auto();
 }
 
-#[cfg(test)]
 fn record_neutral_sizes(
     tree: &mut LayoutSession<'_>,
     idx: usize,
@@ -196,7 +191,6 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
         tree.context.content_limit_measures.clear();
     }
     tree.context.content_limit_depth += 1;
-    #[cfg(test)]
     let checkpoint = tree.size_scope_checkpoint();
     let probe_depth = tree.context.content_limit_probes.len();
     let height_basis_depth = tree.context.content_limit_percentage_height_bases.len();
@@ -218,7 +212,6 @@ fn scoped<R>(tree: &mut LayoutSession<'_>, f: impl FnOnce(&mut LayoutSession<'_>
         tree.layout_dirty = true;
         tree.context.content_limit_measures.clear();
     }
-    #[cfg(test)]
     {
         tree.restore_size_scopes_to(checkpoint);
         tree.context.content_limit_probes.truncate(probe_depth);
@@ -264,7 +257,6 @@ pub(super) fn with_content_limits(
             let adjustment =
                 box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            #[cfg(test)]
             width.record(tree, idx, true, adjustment);
             if let Some(known) = inputs.known_dimensions.width {
                 let known = width.apply(known);
@@ -278,7 +270,6 @@ pub(super) fn with_content_limits(
             let adjustment =
                 box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            #[cfg(test)]
             height.record(tree, idx, false, adjustment);
             inputs.known_dimensions.height = inputs
                 .known_dimensions
@@ -337,7 +328,6 @@ pub(crate) fn with_oof_child_content_limits(
             let adjustment =
                 box_sizing_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             width.install_width(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            #[cfg(test)]
             width.record(tree, idx, true, adjustment);
         }
         if let Some(known) = inputs.known_dimensions.width {
@@ -351,7 +341,6 @@ pub(crate) fn with_oof_child_content_limits(
             let adjustment =
                 box_sizing_height_adjustment(tree, idx, inputs.parent_size.width.unwrap_or(0.0));
             height.install_height(tree.layout_style_for_key_mut(idx).unwrap(), adjustment);
-            #[cfg(test)]
             height.record(tree, idx, false, adjustment);
             inputs.known_dimensions.height = inputs.known_dimensions.height.map(|known| {
                 clamp_known_height_to_style(
@@ -444,7 +433,6 @@ pub(crate) fn with_oof_content_limits<R>(
                 let style = tree.layout_style_for_key_mut(idx).unwrap();
                 style.min_size = Size::auto();
                 style.max_size = Size::auto();
-                #[cfg(test)]
                 record_neutral_sizes(
                     tree,
                     idx,
@@ -490,7 +478,6 @@ pub(crate) fn with_oof_content_limits<R>(
                 tree.layout_style_for_key_mut(idx).unwrap(),
                 width_adjustment,
             );
-            #[cfg(test)]
             width.record(tree, idx, true, width_adjustment);
 
             if limits.has_height() {
@@ -517,7 +504,6 @@ pub(crate) fn with_oof_content_limits<R>(
                     tree.layout_style_for_key_mut(idx).unwrap(),
                     height_adjustment,
                 );
-                #[cfg(test)]
                 height.record(tree, idx, false, height_adjustment);
             }
             prepared.push((idx, saved));
@@ -698,7 +684,6 @@ pub(crate) fn with_width_limits<R>(
     let adjustment = box_sizing_adjustment(tree, node, parent_size.width.unwrap_or(0.0));
     let saved = SavedSizes::capture(tree, node);
     bounds.install_width(tree.layout_style_for_key_mut(node).unwrap(), adjustment);
-    #[cfg(test)]
     bounds.record(tree, node, true, adjustment);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
     saved.restore(tree, node);
@@ -840,7 +825,6 @@ fn with_item_content_limits_for_parent_sizes(
                 tree.layout_style_for_key_mut(idx).unwrap(),
                 width_adjustment,
             );
-            #[cfg(test)]
             width.record(tree, idx, true, width_adjustment);
 
             if limits.has_height() {
@@ -851,7 +835,6 @@ fn with_item_content_limits_for_parent_sizes(
                     tree.layout_style_for_key_mut(idx).unwrap(),
                     height_adjustment,
                 );
-                #[cfg(test)]
                 height.record(tree, idx, false, height_adjustment);
             }
 
@@ -929,7 +912,6 @@ struct Bounds {
 }
 
 impl Bounds {
-    #[cfg(test)]
     fn record(self, tree: &mut LayoutSession<'_>, idx: usize, width: bool, adjustment: f32) {
         use raikiri_layout_style::LengthProperty::*;
         let (min, max) = if width {
@@ -1261,7 +1243,6 @@ fn width_bounds(
                         style.min_size.width = LengthPercentageAuto::auto();
                         style.max_size.width = LengthPercentageAuto::auto();
                     }
-                    #[cfg(test)]
                     {
                         use raikiri_layout_style::LengthProperty::*;
                         let properties: &[raikiri_layout_style::LengthProperty] =
@@ -1364,7 +1345,6 @@ fn height_bounds(
             style.min_size.height = LengthPercentageAuto::auto();
             style.max_size.height = LengthPercentageAuto::auto();
         }
-        #[cfg(test)]
         {
             use raikiri_layout_style::LengthProperty::*;
             let properties: &[raikiri_layout_style::LengthProperty] = if flex_grid_container {

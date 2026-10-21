@@ -1,4 +1,5 @@
 mod calc_owner_tests;
+mod preparation_tests;
 
 use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession};
 use crate::{Document, LayoutStyle};
@@ -238,6 +239,15 @@ fn assert_neutral_getters(view: raikiri_layout_style::LayoutStyleView<'_>, old: 
     );
 }
 
+// These recipe tests inspect boxes outside the production Flex/Grid query set.
+fn prepare_for_inspection(tree: &mut LayoutSession<'_>) {
+    let keys = tree.document.nodes.layout_keys().collect();
+    tree.style_views
+        .as_mut()
+        .unwrap()
+        .prepare_keys(tree.document, keys);
+}
+
 #[test]
 fn contents_recipe_keeps_only_explicit_inherited_direction() {
     let (mut doc, cascade, child, _) = fixture_with_styles(
@@ -246,6 +256,7 @@ fn contents_recipe_keeps_only_explicit_inherited_direction() {
     );
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    prepare_for_inspection(&mut tree);
     assert_neutral_getters(
         tree.style_view(child),
         tree.layout_style_for_key(child).unwrap(),
@@ -258,7 +269,7 @@ fn initial_containing_block_recipe_uses_page_dimensions() {
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
     let icb = super::super::initial_containing_block::prepare(&mut tree, &cascade, 123.0, 456.0);
-    tree.prepare_style_views();
+    prepare_for_inspection(&mut tree);
     assert_neutral_getters(
         tree.style_view(icb),
         tree.layout_style_for_key(icb).unwrap(),
@@ -289,7 +300,7 @@ fn anonymous_table_and_cell_recipes_inherit_only_selected_facts() {
     let table = doc.nodes.anonymous_table_key(0);
     let cell = doc.nodes.anonymous_cell_key(0);
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    prepare_for_inspection(&mut tree);
     for idx in [table, cell] {
         assert_neutral_getters(
             tree.style_view(idx),
@@ -421,6 +432,7 @@ fn source_metadata_covers_hidden_logical_and_keyword_policies() {
         let (mut doc, cascade, child, _) = fixture_with_styles(parent, child_css);
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        prepare_for_inspection(&mut tree);
         assert_neutral_getters(
             tree.style_view(child),
             tree.layout_style_for_key(child).unwrap(),

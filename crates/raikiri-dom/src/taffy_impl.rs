@@ -2234,7 +2234,6 @@ struct FlexItemBounds {
     min: taffy::LengthPercentageAuto,
     max: taffy::LengthPercentageAuto,
     cache: crate::layout::cache_context::SavedLayoutCache,
-    #[cfg(test)]
     view_token: Option<crate::layout::style_views::OverrideToken>,
 }
 
@@ -2254,13 +2253,13 @@ fn with_flex_intrinsic_probe<R>(
     node_id: NodeId,
     probe: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
+    tree.sync_layout_cache_mutations();
     let idx = usize::from(node_id);
     tree.cache_override_changed(idx);
     let style = tree.layout_style_for_key_mut(idx).unwrap();
     let container_max = style.max_size.width;
     style.max_size.width = taffy::LengthPercentageAuto::auto();
     let outer = tree.context.flex_intrinsic_probe.replace(idx);
-    #[cfg(test)]
     let token = tree.record_style_overrides(
         idx,
         vec![
@@ -2276,7 +2275,6 @@ fn with_flex_intrinsic_probe<R>(
     tree.cache_override_changed(idx);
     tree.context.flex_intrinsic_probe = outer;
     tree.layout_style_for_key_mut(idx).unwrap().max_size.width = container_max;
-    #[cfg(test)]
     tree.restore_recorded_style_overrides(token);
     match result {
         Ok(value) => value,
@@ -2307,6 +2305,7 @@ fn with_flex_item_basis_bounds<R>(
     node_id: NodeId,
     layout: impl FnOnce(&mut LayoutSession<'_>) -> R,
 ) -> R {
+    tree.sync_layout_cache_mutations();
     let is_row = matches!(
         tree.layout_node_with_style(usize::from(node_id))
             .unwrap()
@@ -2374,8 +2373,7 @@ fn with_flex_item_basis_bounds<R>(
         if new_min.is_none() && new_max.is_none() && new_width.is_none() {
             continue;
         }
-        #[cfg(test)]
-        let view_token = if tree.style_views.is_some() {
+        let view_token = if tree.has_style_view(child_idx) {
             use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
             let mut entries = Vec::new();
             if cannot_shrink {
@@ -2429,7 +2427,6 @@ fn with_flex_item_basis_bounds<R>(
             min,
             max,
             cache,
-            #[cfg(test)]
             view_token,
         });
     }
@@ -2442,7 +2439,6 @@ fn with_flex_item_basis_bounds<R>(
         style.min_size.width = item.min;
         style.max_size.width = item.max;
         tree.restore_layout_cache(item.idx, item.cache);
-        #[cfg(test)]
         tree.restore_recorded_style_overrides(item.view_token);
     }
     match result {
@@ -3764,7 +3760,7 @@ impl LayoutBlockContainer for LayoutSession<'_> {
 impl LayoutFlexboxContainer for LayoutSession<'_> {
     #[cfg(not(test))]
     type FlexboxContainerStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3774,7 +3770,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(not(test))]
     type FlexboxItemStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3793,9 +3789,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(node_id))
         }
     }
 
@@ -3809,9 +3803,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(child_node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(child_node_id))
         }
     }
 }
@@ -3819,7 +3811,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
 impl LayoutGridContainer for LayoutSession<'_> {
     #[cfg(not(test))]
     type GridContainerStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3829,7 +3821,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(not(test))]
     type GridItemStyle<'a>
-        = &'a Style
+        = raikiri_layout_style::LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(test)]
@@ -3848,9 +3840,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(node_id))
         }
     }
 
@@ -3864,9 +3854,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.layout_node_with_style(usize::from(child_node_id))
-                .unwrap()
-                .style
+            self.style_view(usize::from(child_node_id))
         }
     }
 
