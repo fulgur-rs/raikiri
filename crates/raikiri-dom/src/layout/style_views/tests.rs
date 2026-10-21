@@ -648,3 +648,41 @@ fn non_element_has_no_css_sizing_keyword_policy() {
         raikiri_layout_style::StyleFlags::EMPTY,
     );
 }
+
+#[test]
+fn flex_grid_queries_preserve_legacy_claims_and_prepared_facts() {
+    use taffy::{LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree};
+    for display in ["flex", "grid"] {
+        for policy in ["transform:translateX(0)", "contain:layout size"] {
+            for position in ["static", "relative"] {
+                let css = format!("display:{display};{policy};position:{position}");
+                let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", &css);
+                let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+                apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+                let id = taffy::NodeId::from(child);
+                assert!(tree.style_view(child).is_containing_block().fixed);
+                assert!(
+                    tree.get_core_container_style(id)
+                        .is_containing_block()
+                        .fixed
+                );
+                let expected = taffy::ContainingBlockClaims {
+                    absolute: position == "relative",
+                    fixed: false,
+                };
+                assert_eq!(
+                    tree.style_view(child).for_flex_grid().is_containing_block(),
+                    expected
+                );
+                for actual in [
+                    tree.get_flexbox_container_style(id).is_containing_block(),
+                    tree.get_flexbox_child_style(id).is_containing_block(),
+                    tree.get_grid_container_style(id).is_containing_block(),
+                    tree.get_grid_child_style(id).is_containing_block(),
+                ] {
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
+}

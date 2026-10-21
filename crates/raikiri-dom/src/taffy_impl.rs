@@ -3841,7 +3841,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(node_id))
+            self.style_view(usize::from(node_id)).for_flex_grid()
         }
     }
 
@@ -3855,7 +3855,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(child_node_id))
+            self.style_view(usize::from(child_node_id)).for_flex_grid()
         }
     }
 }
@@ -3892,7 +3892,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(node_id))
+            self.style_view(usize::from(node_id)).for_flex_grid()
         }
     }
 
@@ -3906,7 +3906,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(child_node_id))
+            self.style_view(usize::from(child_node_id)).for_flex_grid()
         }
     }
 

@@ -342,7 +342,7 @@ impl LayoutSession<'_> {
             context.pass_entries = self.document.box_style_data.get(key).unwrap().pass.len();
             context.scope_depth = self.scoped_overrides.depth(key);
             context.was_scoped = prepared.was_scoped || self.scoped_overrides.was_scoped(key);
-            self.style_view(idx)
+            self.style_view(idx).for_flex_grid()
         });
         checked::CheckedStyle::new(
             self.layout_style_for_key(idx)

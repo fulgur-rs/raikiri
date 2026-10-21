@@ -282,6 +282,7 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
                 );
                 for _ in 0..100 {
                     read_all(black_box(&v));
+                    read_all(black_box(&v.for_flex_grid()));
                     black_box(v);
                     for prepared in [&owned, &shared, &from_data, &from_shared_data] {
                         let v = LayoutStyleView::with_owned_overrides(
@@ -295,6 +296,7 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
                             &owned_scoped,
                         );
                         read_all(black_box(&v));
+                        read_all(black_box(&v.for_flex_grid()));
                         black_box(v);
                     }
                 }

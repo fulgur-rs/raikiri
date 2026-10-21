@@ -102,13 +102,15 @@ impl CoreStyle for LayoutStyleView<'_> {
     }
     #[inline]
     fn is_containing_block(&self) -> taffy::ContainingBlockClaims {
-        self.prepared
-            .metadata
-            .claims
-            .unwrap_or(taffy::ContainingBlockClaims {
-                absolute: self.position().is_positioned(),
-                fixed: false,
-            })
+        let positioning = taffy::ContainingBlockClaims {
+            absolute: self.position().is_positioned(),
+            fixed: false,
+        };
+        if self.use_prepared_claims {
+            self.prepared.metadata.claims.unwrap_or(positioning)
+        } else {
+            positioning
+        }
     }
     #[inline]
     fn size(&self) -> taffy::Size<taffy::Dimension> {
