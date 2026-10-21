@@ -2670,12 +2670,9 @@ fn collapsed_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
             let row = &doc.nodes[row_id];
             // `display: contents` wrappers are transparent to the grid, so
             // the row group may sit further up.
-            let mut group = row.parent;
-            while let Some(id) = group
-                && doc.nodes[id].display() == DisplayValue::Contents
-            {
-                group = doc.nodes[id].parent;
-            }
+            let group = doc
+                .ancestors(row_id)
+                .find(|&id| doc.nodes[id].display() != DisplayValue::Contents);
             let in_collapsed_group =
                 group.is_some_and(|group| doc.nodes[group].collapses_table_rows);
             match row.display() {

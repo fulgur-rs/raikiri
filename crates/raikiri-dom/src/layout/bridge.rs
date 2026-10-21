@@ -510,12 +510,9 @@ fn apply_computed_to_style_in_session_inner(
         // ancestor that makes a box: `display: contents` ones are flattened
         // away, except the document element, which is blockified.
         let boxes = super::box_tree::BoxTree::for_cascade(doc, cascade);
-        let mut container = doc.nodes[idx].parent;
-        while let Some(ancestor) = container
-            && boxes.display(ancestor) == Some(DisplayValue::Contents)
-        {
-            container = doc.nodes[ancestor].parent;
-        }
+        let container = doc
+            .ancestors(idx)
+            .find(|&ancestor| boxes.display(ancestor) != Some(DisplayValue::Contents));
         if let Some(container) = container {
             let _overrides =
                 bridge_inherited_last_baseline(&mut style, cv, &cascade.computed[container]);
@@ -1095,7 +1092,7 @@ fn is_flex_or_grid_item(doc: &Document, cascade: &CascadeResult, idx: usize) -> 
 /// The element whose box contains the box of element `idx`: its nearest
 /// ancestor that is not `display: contents`, which has no box of its own.
 fn layout_container(doc: &Document, cascade: &CascadeResult, idx: usize) -> Option<usize> {
-    std::iter::successors(doc.parent_of(idx), |&id| doc.parent_of(id))
+    doc.ancestors(idx)
         .find(|&id| cascade.computed[id].display != DisplayValue::Contents)
 }
 

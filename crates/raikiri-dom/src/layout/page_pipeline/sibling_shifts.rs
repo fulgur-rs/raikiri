@@ -80,7 +80,7 @@ impl SiblingShifts {
         }
         let mut offset = 0.0;
         let mut id = node;
-        while let Some(parent) = document.layout_parent_of(id) {
+        for parent in document.layout_ancestors(node) {
             offset += self.pending_for(document, parent, id);
             id = parent;
         }

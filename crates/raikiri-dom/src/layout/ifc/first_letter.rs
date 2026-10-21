@@ -1,6 +1,7 @@
 //! Source-preserving projection and retained paint for typographic letters.
 
 use super::{error::IfcError, first_line::FirstLine, projection::styled, style};
+use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::layout::box_tree::BoxTree;
 use crate::node::BoxPropertiesRef;
 use crate::{Document, generated_content::generated_node_id};
@@ -588,8 +589,8 @@ fn typographic_origins_in(
 ) -> (Vec<usize>, Vec<usize>) {
     let mut origins = Vec::new();
     let mut line_origins = Vec::new();
-    let mut current = Some(origin);
-    while let Some(id) = current {
+    let mut walk = AncestorCursor::new(Some(origin), ParentRelation::Source);
+    while let Some(id) = walk.current() {
         let cv = &cascade.computed[id];
         let properties = boxes.identity(id);
         let transparent = properties.display() == DisplayValue::Contents
@@ -637,7 +638,8 @@ fn typographic_origins_in(
         if !ancestors {
             break;
         }
-        let Some(parent) = doc.parent_of(id) else {
+        walk.advance(doc);
+        let Some(parent) = walk.current() else {
             break; // cov:ignore: eligible IFC element roots have a document parent; the document root is not a block-container cascade node.
         };
         if crate::generated_content::is_line_making_generated_text(
@@ -651,7 +653,6 @@ fn typographic_origins_in(
         if blocked {
             break;
         }
-        current = Some(parent);
     }
     origins.reverse();
     line_origins.reverse();

@@ -1,4 +1,5 @@
 use super::box_tree::BoxTree;
+use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::node::BoxPropertiesRef;
 mod candidates;
 pub(crate) mod column_projection;
@@ -44,10 +45,8 @@ type ProjectedSlices = (
 // items; preserve their stored offsets relative to the visited parent.
 fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, raw_y: f32) -> f32 {
     let mut child_parent_y = raw_y;
-    let mut skipped_parent = document.parent_of(child);
-    while let Some(id) = skipped_parent.filter(|&id| id != parent) {
+    for id in document.ancestors(child).take_while(|&id| id != parent) {
         child_parent_y += document.nodes[id].unrounded_layout.location.y;
-        skipped_parent = document.parent_of(id);
     }
     child_parent_y
 }
@@ -327,15 +326,17 @@ fn accumulated_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
-    std::iter::successors(Some(node_id), |&id| {
-        if id == body_id {
-            None
-        } else {
-            document.parent_of(id)
-        }
-    })
-    .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
-    .sum()
+    document
+        .inclusive_ancestors(node_id)
+        .scan(false, |finished, id| {
+            if *finished {
+                return None;
+            }
+            *finished = id == body_id;
+            Some(id)
+        })
+        .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
+        .sum()
 }
 
 /// The block offset of a relatively positioned box that layout leaves to
@@ -782,15 +783,18 @@ impl ColumnContexts {
         document: &Document,
         cascade: &CascadeResult,
     ) -> Option<usize> {
-        let mut current = node_id;
+        let mut walk = AncestorCursor::new(Some(node_id), ParentRelation::Source);
         let mut visited = Vec::new();
-        let context = loop {
+        let mut context = None;
+        while let Some(current) = walk.current() {
             if let Some(cached) = self.cache[current] {
-                break cached;
+                context = cached;
+                break;
             }
             visited.push(current);
-            let Some(parent) = document.parent_of(current) else {
-                break None;
+            walk.advance(document);
+            let Some(parent) = walk.current() else {
+                break;
             };
             let computed = &cascade.computed[parent];
             if document.nodes[parent].formatting_context == FormattingContext::Flex
@@ -799,10 +803,10 @@ impl ColumnContexts {
                     FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                 )
             {
-                break Some(parent);
+                context = Some(parent);
+                break;
             }
-            current = parent;
-        };
+        }
         for node in visited {
             self.cache[node] = Some(context);
         }
@@ -2793,14 +2797,9 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
     if !matches!(value, BreakBetween::Always) {
         return false;
     }
-    let mut ancestor = document.layout_parent_of(node_id);
-    while let Some(id) = ancestor {
-        if document.nodes[id].multicol.is_some() {
-            return false;
-        }
-        ancestor = document.layout_parent_of(id);
-    }
-    true
+    !document
+        .layout_ancestors(node_id)
+        .any(|id| document.nodes[id].multicol.is_some())
 }
 
 // Find the first/last generated child box, eliding Contents without cloning
@@ -3596,16 +3595,12 @@ fn table_row_leads(
             .map(|candidate| (candidate.node_id, candidate.raw_y))
             .collect();
         let table_of = |row: usize| {
-            let mut table = document.parent_of(row);
-            while let Some(id) = table
-                && !matches!(
+            document.ancestors(row).find(|&id| {
+                matches!(
                     document.nodes[id].display(),
                     DisplayValue::Table | DisplayValue::InlineTable
                 )
-            {
-                table = document.parent_of(id);
-            }
-            table
+            })
         };
         // Each table's first row in visual order: the table layout places a
         // footer group after the body groups wherever it is in the source.
@@ -4016,14 +4011,17 @@ fn current_abs_y(document: &Document, node_id: usize) -> f32 {
         0.0
     };
     let mut guard = 0_usize;
+    // cov:ignore: existing layout keys return above; missing keys panic at the fallback's arena lookup.
+    let mut walk = AncestorCursor::new(Some(id), ParentRelation::Layout);
+    // cov:ignore: this defensive fallback cannot run for an existing layout key.
     while guard <= document.nodes.len() {
         y += document.nodes[id].unrounded_layout.location.y;
         // A box of an inline engine paragraph is located from the root,
         // not from the inline elements around it.
-        let Some(parent_id) = document
-            .parent_of(id)
-            .and_then(|_| document.layout_parent_of(id))
-        else {
+        let Some(parent_id) = document.parent_of(id).and_then(|_| {
+            walk.advance(document);
+            walk.current()
+        }) else {
             break;
         };
         id = parent_id;
@@ -4049,8 +4047,9 @@ fn first_box_ancestor_at_top(document: &Document, block: usize, body_id: usize) 
             .contains(NodeFlags::IN_IFC_SUBTREE);
     let mut moved = block;
     let mut child = block;
-    while let Some(parent) = document.layout_parent_of(child)
-        && parent != body_id
+    for parent in document
+        .layout_ancestors(block)
+        .take_while(|&id| id != body_id)
     {
         // Content before `child`, such as a float beside the paragraph,
         // already sits on this page, and so may a later absolutely
@@ -4495,7 +4494,7 @@ fn generated_box_separates(
             .or_else(|| separates(id, PseudoElem::Before).then_some(true))
     }
     let mut current = node_id;
-    while let Some(parent) = document.parent_of(current) {
+    for parent in document.ancestors(node_id) {
         let siblings = &document.nodes[parent].children;
         let index = siblings
             .iter()
@@ -5047,10 +5046,7 @@ fn adjoins_previous_sibling(
     previous: usize,
 ) -> bool {
     let mut current = node_id;
-    loop {
-        let Some(parent) = document.parent_of(current) else {
-            return false;
-        };
+    for parent in document.ancestors(node_id) {
         let siblings = &document.nodes[parent].children;
         let Some(index) = siblings.iter().position(|&id| id == current) else {
             return false;
@@ -5072,6 +5068,7 @@ fn adjoins_previous_sibling(
         }
         current = parent;
     }
+    false
 }
 
 /// Whether `node_id` is a block box that takes no block space, so that only
@@ -5572,14 +5569,12 @@ impl EnteredParagraphs {
         let mut first = ifc_root
             .filter(|&(root, _)| document.is_anonymous_cell(root))
             .is_none_or(|(root, _)| self.roots.insert(root));
-        let mut current = document.parent_of(node_id);
-        while let Some(id) = current {
+        for id in document.ancestors(node_id) {
             if document.nodes[id].is_ifc_root() && !self.roots.insert(id) {
                 first = false;
                 // Higher IFC roots were registered when this root was first entered.
                 break;
             }
-            current = document.parent_of(id);
         }
         first
     }
@@ -6702,13 +6697,15 @@ fn placed_in_block_flow(
     body_id: usize,
 ) -> bool {
     let mut child = block;
+    let mut walk = AncestorCursor::new(Some(block), ParentRelation::Layout);
     loop {
         let placed_apart = is_floating_box_for_pagination(document, cascade, child)
             || matches!(
                 document.nodes[child].position(),
                 PositionValue::Absolute | PositionValue::Fixed
             );
-        match document.layout_parent_of(child) {
+        walk.advance(document);
+        match walk.current() {
             Some(parent) if !placed_apart && parent == body_id => return true,
             // A `display: contents` element has no box; its parent lays the
             // child out.
@@ -7422,7 +7419,8 @@ fn float_context_root(
 /// Whether `node_id` is the root of an inline formatting context or an
 /// inline inside one, whose boxes sit in the root's coordinates.
 fn in_inline_context(document: &Document, node_id: usize) -> bool {
-    std::iter::successors(Some(node_id), |&id| document.parent_of(id))
+    document
+        .inclusive_ancestors(node_id)
         .find(|&id| {
             let display = document.nodes[id].display();
             document.nodes[id].is_ifc_root()

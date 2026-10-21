@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn parent_lookup_lifts_contents_but_keeps_a_layout_root_parent() {
+    let mut doc = Document::new();
+    let parent = child(&mut doc, 0, DisplayValue::Block);
+    let outer = child(&mut doc, parent, DisplayValue::Contents);
+    let inner = child(&mut doc, outer, DisplayValue::Contents);
+    let leaf = child(&mut doc, inner, DisplayValue::Block);
+    doc.mark_in_document_flags();
+    assert_eq!(doc.parent_of(leaf), Some(inner));
+    assert_eq!(doc.taffy_parent_of(leaf), Some(parent));
+    doc.nodes[inner].flags.insert(NodeFlags::IS_ROOT_ELEMENT);
+    assert_eq!(doc.taffy_parent_of(leaf), Some(inner));
+}
+
 fn child(doc: &mut Document, parent: usize, display: DisplayValue) -> usize {
     let id = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
     doc.set_display(id, display);
