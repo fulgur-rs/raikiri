@@ -10,6 +10,7 @@ use raikiri_style::{ComputedLengthPercentageOrAuto as L, ComputedLengthPercentag
 pub struct LayoutStyleView<'a> {
     pub(crate) prepared: &'a PreparedStyle<'a>,
     pub(crate) context: ViewContext,
+    pub(crate) use_prepared_claims: bool,
     pass: OverrideLayer<'a>,
     scoped: OverrideLayer<'a>,
 }
@@ -44,6 +45,7 @@ impl<'a> LayoutStyleView<'a> {
         Self {
             prepared,
             context,
+            use_prepared_claims: true,
             pass: OverrideLayer::Borrowed(pass),
             scoped: OverrideLayer::Borrowed(scoped),
         }
@@ -59,10 +61,21 @@ impl<'a> LayoutStyleView<'a> {
         Self {
             prepared,
             context,
+            use_prepared_claims: true,
             pass: OverrideLayer::Owned(pass),
             scoped: OverrideLayer::Owned(scoped),
         }
     }
+    /// Preserve positioning-only containing-block claims for Flex/Grid queries.
+    ///
+    /// The generic view retains prepared claims for consumers that previously
+    /// read the node's containing-block policy through the Core container path.
+    #[inline]
+    pub const fn for_flex_grid(mut self) -> Self {
+        self.use_prepared_claims = false;
+        self
+    }
+
     pub(crate) fn overrides(&self) -> impl Iterator<Item = OverrideKind<'a>> {
         (0..self.scoped.len())
             .rev()

@@ -23,6 +23,7 @@ use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
+use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::DisplayValue;
 
 /// The intrinsic size of a leaf: an `<img>`'s resolved size, `None` for any
@@ -30,6 +31,16 @@ use raikiri_style::property::DisplayValue;
 fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
     node.image_intrinsic_size()
         .map(|(width, height)| Size { width, height })
+}
+
+/// Apply sizing entries to a local clone without publishing session state.
+/// Callers keep calc owners alive for every read of the clone.
+fn apply_local_sizing(style: &mut Style, entries: &[OwnedPropertyOverride]) {
+    for entry in entries {
+        let _previous = entry
+            .apply_legacy_sizing(style)
+            .expect("local physical sizing override");
+    }
 }
 
 /// The preferred ratio a replaced leaf can use for size transfer.
@@ -899,7 +910,10 @@ impl LayoutSession<'_> {
                 let ratio = tree.nodes[idx].preferred_aspect_ratio.unwrap_or(ratio);
                 let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
                 let mut resolver_style = tree.layout_node_with_style(idx).unwrap().style.clone();
-                resolver_style.aspect_ratio = Some(ratio);
+                apply_local_sizing(
+                    &mut resolver_style,
+                    &[OwnedPropertyOverride::aspect_ratio(Some(ratio))],
+                );
                 if tree.nodes[idx].svg_width_follows_available
                     && matches!(inputs.available_space.width, AvailableSpace::Definite(_))
                 {
@@ -909,12 +923,20 @@ impl LayoutSession<'_> {
                     // sizes of the height ask for; as `auto` the constraint
                     // table of CSS 2.1 §10.4 moves it along the ratio. An
                     // intrinsic size measurement keeps the percentage.
-                    resolver_style.size.width = taffy::Dimension::auto();
+                    apply_local_sizing(
+                        &mut resolver_style,
+                        &[OwnedPropertyOverride::length(
+                            LengthProperty::Width,
+                            raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+                            false,
+                        )
+                        .expect("local auto width")],
+                    );
                 }
                 let mut style = resolver_style.clone();
                 // Transfer the ratio in measurement only. Taffy's leaf ratio
                 // floor would otherwise override explicit/max heights.
-                style.aspect_ratio = None;
+                apply_local_sizing(&mut style, &[OwnedPropertyOverride::aspect_ratio(None)]);
                 let limits = tree.nodes[idx].content_limits;
                 // An authored height gives an auto width through the ratio
                 // (CSS 2.1 10.3.2), also when no parent passes the height in
@@ -1000,7 +1022,12 @@ impl LayoutSession<'_> {
                     && !tree.nodes[idx].size_containment.width
                     && !tree.nodes[idx].size_containment.height
                 {
-                    style.aspect_ratio = leaf_intrinsic_ratio(&tree.nodes[idx]);
+                    apply_local_sizing(
+                        &mut style,
+                        &[OwnedPropertyOverride::aspect_ratio(leaf_intrinsic_ratio(
+                            &tree.nodes[idx],
+                        ))],
+                    );
                 }
                 // A replaced leaf with an `auto` side takes its size from the
                 // ratio and the min/max sizes; Taffy's ratio floor on the
@@ -1016,7 +1043,7 @@ impl LayoutSession<'_> {
                     )
                 });
                 if constrained.is_some() {
-                    style.aspect_ratio = None;
+                    apply_local_sizing(&mut style, &[OwnedPropertyOverride::aspect_ratio(None)]);
                 }
                 compute_leaf_layout(inputs, &style, resolve_calc, |known, _available| {
                     // An explicit size from the style wins; otherwise an
@@ -1145,7 +1172,9 @@ mod replaced_size;
 mod vertical_block;
 mod vertical_oof;
 pub(crate) use oof::{compute_root_layout_with_content_limits, layout_container_candidates};
-pub(crate) use vertical_block::{TransposedBlock, block_right_to_left, is_table_box};
+pub(crate) use vertical_block::{
+    TransposedBlock, TransposedSizingUndo, TransposedStyleIndex, block_right_to_left, is_table_box,
+};
 pub(crate) use vertical_oof::used_writing_mode;
 
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
@@ -1208,7 +1237,10 @@ fn compute_ifc_root(
             inputs.known_dimensions.width = Some(width);
             inputs.known_dimensions_are_definite.width = true;
         }
-        layout_style.aspect_ratio = None;
+        apply_local_sizing(
+            &mut layout_style,
+            &[OwnedPropertyOverride::aspect_ratio(None)],
+        );
     }
     // Border-box top inset, resolved here: the parent has not
     // stored this node's layout yet.
@@ -1380,7 +1412,10 @@ fn compute_ifc_root(
             measured.size
         });
     if ratio_height_follows {
-        layout_style.aspect_ratio = ratio;
+        apply_local_sizing(
+            &mut layout_style,
+            &[OwnedPropertyOverride::aspect_ratio(ratio)],
+        );
         let mut settled = inputs;
         settled.known_dimensions.width = Some(output.size.width);
         let metrics =
@@ -2526,10 +2561,18 @@ fn compute_inline_block_shrink_wrap(
         && !tree.nodes[idx].size_containment.height
         && leaf_style.aspect_ratio.is_none()
     {
-        leaf_style.aspect_ratio = leaf_intrinsic_ratio(&tree.nodes[idx]);
+        apply_local_sizing(
+            &mut leaf_style,
+            &[OwnedPropertyOverride::aspect_ratio(leaf_intrinsic_ratio(
+                &tree.nodes[idx],
+            ))],
+        );
     }
     if empty {
-        leaf_style.aspect_ratio = None;
+        apply_local_sizing(
+            &mut leaf_style,
+            &[OwnedPropertyOverride::aspect_ratio(None)],
+        );
     }
     let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]).filter(|_| !empty);
     // A replaced leaf with an `auto` side is sized by its ratio and its
@@ -2556,7 +2599,10 @@ fn compute_inline_block_shrink_wrap(
     // Taffy's ratio floor is off for a leaf the helper above sizes.
     let mut ratio_free_style = leaf_style.clone();
     if leaf_auto_sides.is_some() {
-        ratio_free_style.aspect_ratio = None;
+        apply_local_sizing(
+            &mut ratio_free_style,
+            &[OwnedPropertyOverride::aspect_ratio(None)],
+        );
     }
 
     // Intrinsic outer width under the given width constraint.
@@ -2673,7 +2719,10 @@ fn compute_inline_block_shrink_wrap(
             )
         });
         if fixed_width.is_some() {
-            leaf_style.aspect_ratio = None;
+            apply_local_sizing(
+                &mut leaf_style,
+                &[OwnedPropertyOverride::aspect_ratio(None)],
+            );
         }
         let natural = fixed_width.or(leaf_intrinsic);
         compute_leaf_layout(final_inputs, &leaf_style, resolve_calc, |known, _avail| {
@@ -3792,7 +3841,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(node_id))
+            self.style_view(usize::from(node_id)).for_flex_grid()
         }
     }
 
@@ -3806,7 +3855,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(child_node_id))
+            self.style_view(usize::from(child_node_id)).for_flex_grid()
         }
     }
 }
@@ -3843,7 +3892,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(node_id))
+            self.style_view(usize::from(node_id)).for_flex_grid()
         }
     }
 
@@ -3857,7 +3906,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         }
         #[cfg(not(test))]
         {
-            self.style_view(usize::from(child_node_id))
+            self.style_view(usize::from(child_node_id)).for_flex_grid()
         }
     }
 

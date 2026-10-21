@@ -43,6 +43,7 @@ use raikiri_style::property::{DisplayValue, WritingMode};
 /// A vertical block container being laid out on transposed axes.
 #[derive(Clone, Debug)]
 pub(crate) struct TransposedBlock {
+    id: u64,
     container: usize,
     /// The physical width of the container's content box, when definite.
     block_space: Option<f32>,
@@ -50,6 +51,149 @@ pub(crate) struct TransposedBlock {
     child_styles: HashMap<usize, Style>,
     /// The children taffy stored a transposed layout for.
     placed: Vec<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TransposedLocation {
+    frame: usize,
+    id: u64,
+    child: Option<usize>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct TransposedStyleIndex(HashMap<usize, Vec<TransposedLocation>>);
+
+impl TransposedStyleIndex {
+    fn register(&mut self, block: &TransposedBlock, frame: usize) {
+        self.0
+            .entry(block.container)
+            .or_default()
+            .push(TransposedLocation {
+                frame,
+                id: block.id,
+                child: None,
+            });
+        for &child in block.child_styles.keys() {
+            self.0.entry(child).or_default().push(TransposedLocation {
+                frame,
+                id: block.id,
+                child: Some(child),
+            });
+        }
+    }
+
+    fn remove(&mut self, idx: usize, location: TransposedLocation) {
+        let locations = self.0.get_mut(&idx).expect("registered snapshot");
+        assert_eq!(
+            locations.pop(),
+            Some(location),
+            "snapshot registrations restore in reverse order"
+        );
+        if locations.is_empty() {
+            self.0.remove(&idx);
+        }
+    }
+
+    fn unregister(&mut self, block: &TransposedBlock, frame: usize) {
+        for &child in block.child_styles.keys() {
+            self.remove(
+                child,
+                TransposedLocation {
+                    frame,
+                    id: block.id,
+                    child: Some(child),
+                },
+            );
+        }
+        self.remove(
+            block.container,
+            TransposedLocation {
+                frame,
+                id: block.id,
+                child: None,
+            },
+        );
+    }
+}
+
+fn push_transposed_frame(tree: &mut LayoutSession<'_>, block: TransposedBlock) {
+    tree.context
+        .transposed_style_index
+        .register(&block, tree.context.transposed_blocks.len());
+    tree.context.transposed_blocks.push(block);
+}
+
+pub(crate) struct TransposedSizingUndo {
+    frame: usize,
+    id: u64,
+    child: Option<usize>,
+    previous: Option<raikiri_layout_style::LegacySizingUndo>,
+}
+
+impl TransposedSizingUndo {
+    pub(crate) fn prepare(
+        blocks: &[TransposedBlock],
+        index: &TransposedStyleIndex,
+        idx: usize,
+    ) -> Vec<Self> {
+        let mut undo = Vec::new();
+        for location in index.0.get(&idx).into_iter().flatten() {
+            if blocks
+                .get(location.frame)
+                .is_some_and(|block| block.id == location.id)
+            {
+                undo.push(Self {
+                    frame: location.frame,
+                    id: location.id,
+                    child: location.child,
+                    previous: None,
+                });
+            }
+        }
+        undo
+    }
+
+    fn target<'a>(&self, blocks: &'a mut [TransposedBlock]) -> &'a mut Style {
+        let block = &mut blocks[self.frame];
+        assert_eq!(
+            block.id, self.id,
+            "scope restores the same transposed frame"
+        );
+        if let Some(child) = self.child {
+            block
+                .child_styles
+                .get_mut(&child)
+                .expect("scoped snapshot stays live")
+        } else {
+            &mut block.container_style
+        }
+    }
+
+    pub(crate) fn apply(
+        &mut self,
+        blocks: &mut [TransposedBlock],
+        entry: &raikiri_layout_style::OwnedPropertyOverride,
+    ) {
+        self.previous = Some(
+            entry
+                .apply_transposed_legacy_sizing(self.target(blocks))
+                .expect("validated sizing entry"),
+        );
+    }
+
+    pub(crate) fn restore(mut self, blocks: &mut [TransposedBlock]) {
+        if let Some(previous) = self.previous.take() {
+            previous.restore(self.target(blocks));
+        }
+    }
+}
+
+fn next_transposed_frame_id(tree: &mut LayoutSession<'_>) -> u64 {
+    let id = tree.context.transposed_frame_serial;
+    tree.context.transposed_frame_serial = id
+        .checked_add(1)
+        .expect("transposed frame serial exhausted");
+    id
 }
 
 /// The block direction of `idx` when it lays out its block children on
@@ -148,22 +292,22 @@ impl LayoutSession<'_> {
         let right_to_left = block_right_to_left(self, block.container).unwrap_or(false);
         let share_context =
             block_ctx.is_some() && same_vertical_block_mode(self, block.container, idx);
-        let inputs = orthogonal_child_inputs(
-            self,
-            idx,
-            transpose_inputs(inputs, share_context),
-            block.block_space,
-        );
-        // Taffy resolves a box's percentage padding against the width of
-        // its parent, but the containing block of a horizontally flowing
-        // child is the vertical container, whose inline size is its
-        // physical height (CSS Writing Modes 4 §7.1). A vertical child
-        // transposes its own inputs and needs no help.
-        let physical_padding_basis = flows_horizontally(self, idx)
-            .then_some(inputs.parent_size.height)
-            .flatten();
-        let child_block_ctx = if share_context { block_ctx } else { None };
         let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let inputs = orthogonal_child_inputs(
+                self,
+                idx,
+                transpose_inputs(inputs, share_context),
+                block.block_space,
+            );
+            // Taffy resolves a box's percentage padding against the width of
+            // its parent, but the containing block of a horizontally flowing
+            // child is the vertical container, whose inline size is its
+            // physical height (CSS Writing Modes 4 §7.1). A vertical child
+            // transposes its own inputs and needs no help.
+            let physical_padding_basis = flows_horizontally(self, idx)
+                .then_some(inputs.parent_size.height)
+                .flatten();
+            let child_block_ctx = if share_context { block_ctx } else { None };
             if let Some(basis) = physical_padding_basis {
                 self.with_resolved_edges(idx, basis, false, |tree| {
                     tree.compute_child_layout_with_block_ctx(node_id, inputs, child_block_ctx)
@@ -313,6 +457,25 @@ fn resolve_child_padding(tree: &mut LayoutSession<'_>, width: f32) {
     }
 }
 
+fn with_transposed_frame<R>(
+    tree: &mut LayoutSession<'_>,
+    block: TransposedBlock,
+    f: impl FnOnce(&mut LayoutSession<'_>) -> R,
+) -> (R, TransposedBlock) {
+    let id = block.id;
+    push_transposed_frame(tree, block);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tree)));
+    let block = tree.context.transposed_blocks.pop().expect("pushed frame");
+    tree.context
+        .transposed_style_index
+        .unregister(&block, tree.context.transposed_blocks.len());
+    assert_eq!(block.id, id, "vertical frames restore in reverse order");
+    match result {
+        Ok(result) => (result, block),
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 /// Lay out the vertical block container `node_id`, whose block axis runs
 /// from right to left when `right_to_left` is set, on transposed axes.
 ///
@@ -365,21 +528,23 @@ pub(super) fn compute_vertical_block(
         let border = container_style.border.resolve_or_zero(None, resolve_calc);
         (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
     });
-    tree.context.transposed_blocks.push(TransposedBlock {
+    let block = TransposedBlock {
+        id: next_transposed_frame_id(tree),
         container: idx,
         block_space,
         container_style,
         child_styles,
         placed: Vec::new(),
+    };
+    let (output, mut block) = with_transposed_frame(tree, block, |tree| {
+        if inputs.known_dimensions.width.is_none() && shrinks_to_fit(tree, idx, &inputs) {
+            inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));
+        }
+        if let Some(width) = inputs.known_dimensions.width {
+            resolve_child_padding(tree, width);
+        }
+        compute_block_flow(tree, node_id, inputs, block_ctx)
     });
-    if inputs.known_dimensions.width.is_none() && shrinks_to_fit(tree, idx, &inputs) {
-        inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));
-    }
-    if let Some(width) = inputs.known_dimensions.width {
-        resolve_child_padding(tree, width);
-    }
-    let output = compute_block_flow(tree, node_id, inputs, block_ctx);
-    let mut block = tree.context.transposed_blocks.pop().expect("pushed above");
     let reverse_extent = output.size.height;
     let output =
         transpose_output_to_physical(output, right_to_left, reverse_extent, shares_parent_context);

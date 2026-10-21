@@ -24,6 +24,8 @@ pub enum OverrideError {
     WrongRange,
     /// An already resolved value must be a physical pixel length.
     ResolvedNonPixel,
+    /// The property is outside the temporary legacy sizing compatibility layer.
+    UnsupportedLegacySizing,
 }
 impl std::fmt::Display for OverrideError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

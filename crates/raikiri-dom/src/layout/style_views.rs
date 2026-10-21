@@ -13,12 +13,10 @@ use raikiri_traits::NodeKind;
 pub(crate) mod checked;
 pub(super) mod metadata;
 mod overrides;
-pub(crate) use overrides::OverrideToken;
+pub(crate) use overrides::{OverrideToken, ScopedOverrides};
 
 pub(crate) struct PreparedBox<'a> {
     prepared: PreparedStyle<'a>,
-    scoped: Vec<OwnedPropertyOverride>,
-    scopes: Vec<usize>,
     context: ViewContext,
     was_scoped: bool,
 }
@@ -27,7 +25,6 @@ pub(crate) struct StyleViews<'a> {
     cascade: &'a CascadeResult,
     boxes: HashMap<BoxKey, PreparedBox<'a>>,
     legacy_calcs: HashMap<BoxKey, Vec<Arc<raikiri_layout_style::AlignedCalc>>>,
-    size_scopes: Vec<overrides::SizeScope>,
     prepared_publication: Option<super::cache_context::CacheEpoch>,
     prepared_stamp: Option<PreparedStamp>,
     preparation_batch: bool,
@@ -40,7 +37,6 @@ impl<'a> StyleViews<'a> {
             cascade,
             boxes: HashMap::default(),
             legacy_calcs: HashMap::default(),
-            size_scopes: Vec::new(),
             prepared_publication: None,
             prepared_stamp: None,
             preparation_batch: false,
@@ -48,14 +44,7 @@ impl<'a> StyleViews<'a> {
         }
     }
 
-    fn assert_outside_scopes(&self) {
-        assert!(
-            self.size_scopes.is_empty() && self.boxes.values().all(|item| item.scopes.is_empty()),
-            "preparation runs outside style scopes"
-        );
-    }
-
-    fn prepare(&mut self, doc: &mut Document) {
+    fn prepare(&mut self, doc: &mut Document, scoped: &ScopedOverrides) {
         use taffy::TraversePartialTree;
         let mut keys = Vec::new();
         for idx in doc.nodes.layout_keys() {
@@ -75,11 +64,11 @@ impl<'a> StyleViews<'a> {
         }
         keys.sort_unstable();
         keys.dedup();
-        self.prepare_keys(doc, keys);
+        self.prepare_keys(doc, keys, scoped);
     }
 
-    fn prepare_keys(&mut self, doc: &mut Document, keys: Vec<usize>) {
-        self.assert_outside_scopes();
+    fn prepare_keys(&mut self, doc: &mut Document, keys: Vec<usize>, scoped: &ScopedOverrides) {
+        scoped.assert_inactive();
         doc.layout_cache_context.publish_metadata();
         doc.box_style_data.invalidate_metadata();
         self.prepared_stamp = None;
@@ -108,8 +97,6 @@ impl<'a> StyleViews<'a> {
                 key,
                 PreparedBox {
                     prepared,
-                    scoped: Vec::new(),
-                    scopes: Vec::new(),
                     context: ViewContext::default(),
                     was_scoped: false,
                 },
@@ -300,7 +287,6 @@ impl LayoutSession<'_> {
         self.assert_style_queries_allowed();
         self.assert_preparation_outside_legacy_scopes();
         if let Some(views) = &mut self.style_views {
-            views.assert_outside_scopes();
             views.preparation_batch = true;
             views.prepared_stamp = None;
             self.document.box_style_data.begin_publication();
@@ -354,9 +340,9 @@ impl LayoutSession<'_> {
                 .unwrap_or_else(|| panic!("missing prepared style for {key:?}"));
             context.context = prepared.context;
             context.pass_entries = self.document.box_style_data.get(key).unwrap().pass.len();
-            context.scope_depth = prepared.scopes.len();
-            context.was_scoped = prepared.was_scoped;
-            self.style_view(idx)
+            context.scope_depth = self.scoped_overrides.depth(key);
+            context.was_scoped = prepared.was_scoped || self.scoped_overrides.was_scoped(key);
+            self.style_view(idx).for_flex_grid()
         });
         checked::CheckedStyle::new(
             self.layout_style_for_key(idx)
@@ -407,7 +393,6 @@ impl LayoutSession<'_> {
     pub(crate) fn begin_style_bridge(&mut self) {
         self.assert_preparation_outside_legacy_scopes();
         if let Some(views) = &mut self.style_views {
-            views.assert_outside_scopes();
             views.boxes.clear();
             self.document.box_style_data.begin_bridge();
             self.document
@@ -419,9 +404,9 @@ impl LayoutSession<'_> {
         }
     }
     fn assert_preparation_outside_legacy_scopes(&self) {
+        self.scoped_overrides.assert_inactive();
         assert!(
-            self.context.resolved_edge_bases.is_empty()
-                && self.context.saved_size_scopes.is_empty(),
+            self.context.resolved_edge_bases.is_empty(),
             "preparation runs outside legacy style scopes"
         );
     }
@@ -430,7 +415,8 @@ impl LayoutSession<'_> {
         self.assert_style_queries_allowed();
         self.assert_preparation_outside_legacy_scopes();
         if let Some(views) = &mut self.style_views {
-            views.prepare(self.document);
+            self.scoped_overrides.clear_history();
+            views.prepare(self.document, &self.scoped_overrides);
         }
     }
 
@@ -441,9 +427,9 @@ impl LayoutSession<'_> {
             && (views.prepared_publication != Some(publication)
                 || !self.document.box_style_data.is_ready())
         {
+            self.scoped_overrides.assert_inactive();
             assert!(
-                self.context.resolved_edge_bases.is_empty()
-                    && self.context.saved_size_scopes.is_empty(),
+                self.context.resolved_edge_bases.is_empty(),
                 "preparation runs outside legacy style scopes"
             );
             assert!(
@@ -455,7 +441,8 @@ impl LayoutSession<'_> {
                 // Publish before the parent's cache lookup can hide that change.
                 self.document.layout_cache_context.publish_metadata();
             }
-            views.prepare(self.document);
+            self.scoped_overrides.clear_history();
+            views.prepare(self.document, &self.scoped_overrides);
         }
     }
 
@@ -492,7 +479,7 @@ impl LayoutSession<'_> {
                 .get(key)
                 .expect("prepared foundation exists")
                 .pass,
-            &prepared.scoped,
+            self.scoped_overrides.entries(key),
         )
     }
 

@@ -1,3 +1,5 @@
+mod scoped_override_tests;
+
 use crate::Document;
 use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
@@ -891,13 +893,14 @@ fn comparison_unwind_restores_transposed_stack_and_percentage_padding() {
     tree.prepare_style_views();
     let padding = tree.layout_style_for_key(child).unwrap().padding;
     let block = super::TransposedBlock {
+        id: super::next_transposed_frame_id(&mut tree),
         container: parent,
         block_space: Some(200.0),
         container_style: tree.layout_style_for_key(parent).unwrap().clone(),
         child_styles: [(child, tree.layout_style_for_key(child).unwrap().clone())].into(),
         placed: Vec::new(),
     };
-    tree.context.transposed_blocks.push(block);
+    super::push_transposed_frame(&mut tree, block);
     tree.layout_style_for_key_mut(child).unwrap().size.width = taffy::Dimension::length(99.0);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         tree.compute_transposed_child(

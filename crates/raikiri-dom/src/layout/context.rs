@@ -17,12 +17,13 @@ pub(crate) struct LayoutContext {
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     pub(crate) orthogonal_block_in_layout: Option<usize>,
+    pub(crate) transposed_style_index: crate::taffy_impl::TransposedStyleIndex,
+    pub(crate) transposed_frame_serial: u64,
     pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
     pub(crate) size_contained_measure: Vec<usize>,
     pub(crate) resolved_edge_bases: Vec<(usize, f32)>,
-    pub(crate) saved_size_scopes: Vec<(usize, crate::taffy_impl::content_limits::SavedSizes)>,
     /// The boxes being measured without their intrinsic `min-*` and `max-*`
     /// sizes (see `taffy_impl::content_limits`).
     pub(crate) content_limit_probes: Vec<usize>,
@@ -94,6 +95,7 @@ pub(crate) struct LayoutSession<'doc> {
     pub(crate) document: &'doc mut Document,
     pub(crate) context: LayoutContext,
     pub(crate) style_views: Option<super::style_views::StyleViews<'doc>>,
+    pub(crate) scoped_overrides: super::style_views::ScopedOverrides,
 }
 
 impl<'doc> LayoutSession<'doc> {
@@ -104,6 +106,7 @@ impl<'doc> LayoutSession<'doc> {
             document,
             context: LayoutContext::default(),
             style_views: None,
+            scoped_overrides: Default::default(),
         }
     }
 
@@ -118,6 +121,7 @@ impl<'doc> LayoutSession<'doc> {
             document,
             context: LayoutContext::default(),
             style_views: Some(super::style_views::StyleViews::new(cascade)),
+            scoped_overrides: Default::default(),
         }
     }
 
@@ -130,6 +134,7 @@ impl<'doc> LayoutSession<'doc> {
 
     pub(crate) fn publish_layout_cache_mutations(&mut self) {
         if self.document.layout_dirty {
+            self.scoped_overrides.assert_inactive();
             self.document.layout_cache_context.publish_metadata();
             self.context.grid_layout_info.clear();
             self.context.taffy_hoisted_children.clear();

@@ -4,6 +4,7 @@
 //! at its longest word, 90px wide on one line.
 
 mod cache_context_tests;
+mod scoped_tests;
 mod style_view_tests;
 
 use super::{

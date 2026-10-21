@@ -74,3 +74,15 @@ fn grid_calc_repeats_and_contents_items_keep_self_alignment() {
     assert_box(rects[1], (115.0, 25.0, 30.0, 10.0));
     assert_box(rects[2], (50.0, 50.0, 30.0, 10.0));
 }
+
+#[test]
+fn grid_query_keeps_position_based_claims_for_static_position() {
+    for policy in ["transform:translateX(0)", "contain:layout size"] {
+        let html = format!(
+            "<!doctype html><style>{BASE}.grid{{display:grid;width:200px;height:40px;grid-template-columns:100px 100px;grid-template-rows:40px;{policy}}}.abs{{position:absolute;grid-column:2;grid-row:1;width:10px;height:10px}}</style><div class=grid><div id=abs class=abs></div></div>"
+        );
+        assert_box(boxes(&html, &["abs"])[0], (20.0, 20.0, 10.0, 10.0));
+        let html = html.replace("display:grid", "display:grid;position:relative");
+        assert_box(boxes(&html, &["abs"])[0], (120.0, 20.0, 10.0, 10.0));
+    }
+}

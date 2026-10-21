@@ -1,6 +1,8 @@
 mod calc_owner_tests;
 mod foundation_tests;
 mod preparation_tests;
+pub(super) mod scoped_override_tests;
+pub(crate) use scoped_override_tests::with_setup_inspector;
 
 use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession};
 use crate::{Document, LayoutStyle};
@@ -246,7 +248,7 @@ fn prepare_for_inspection(tree: &mut LayoutSession<'_>) {
     tree.style_views
         .as_mut()
         .unwrap()
-        .prepare_keys(tree.document, keys);
+        .prepare_keys(tree.document, keys, &tree.scoped_overrides);
 }
 
 #[test]
@@ -469,20 +471,20 @@ fn invalid_scope_order_and_republication_are_rejected_without_losing_state() {
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
     let original = tree.style_view(child).size();
-    let outer = tree.save_size_scope(child);
+    let outer = tree.record_style_overrides(child, Vec::new());
     let prepare =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tree.prepare_style_views()));
     assert!(prepare.is_err());
     let bridge =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tree.begin_style_bridge()));
     assert!(bridge.is_err());
-    let inner = tree.save_size_scope(child);
+    let inner = tree.record_style_overrides(child, Vec::new());
     let order = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        tree.restore_size_scope(outer)
+        tree.restore_recorded_style_overrides(outer)
     }));
     assert!(order.is_err());
-    tree.restore_size_scope(inner);
-    tree.restore_size_scope(outer);
+    tree.restore_recorded_style_overrides(inner);
+    tree.restore_recorded_style_overrides(outer);
     let outer = tree.push_style_overrides(child, width(17.0));
     let inner = tree.push_style_overrides(child, width(23.0));
     let order = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -645,4 +647,42 @@ fn non_element_has_no_css_sizing_keyword_policy() {
         super::metadata::sizing_flags(&doc, &cascade, text),
         raikiri_layout_style::StyleFlags::EMPTY,
     );
+}
+
+#[test]
+fn flex_grid_queries_preserve_legacy_claims_and_prepared_facts() {
+    use taffy::{LayoutFlexboxContainer, LayoutGridContainer, LayoutPartialTree};
+    for display in ["flex", "grid"] {
+        for policy in ["transform:translateX(0)", "contain:layout size"] {
+            for position in ["static", "relative"] {
+                let css = format!("display:{display};{policy};position:{position}");
+                let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", &css);
+                let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+                apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+                let id = taffy::NodeId::from(child);
+                assert!(tree.style_view(child).is_containing_block().fixed);
+                assert!(
+                    tree.get_core_container_style(id)
+                        .is_containing_block()
+                        .fixed
+                );
+                let expected = taffy::ContainingBlockClaims {
+                    absolute: position == "relative",
+                    fixed: false,
+                };
+                assert_eq!(
+                    tree.style_view(child).for_flex_grid().is_containing_block(),
+                    expected
+                );
+                for actual in [
+                    tree.get_flexbox_container_style(id).is_containing_block(),
+                    tree.get_flexbox_child_style(id).is_containing_block(),
+                    tree.get_grid_container_style(id).is_containing_block(),
+                    tree.get_grid_child_style(id).is_containing_block(),
+                ] {
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
 }
