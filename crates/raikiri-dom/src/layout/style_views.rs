@@ -126,9 +126,8 @@ impl<'a> StyleViews<'a> {
 
     fn prepare_foundations(&mut self, doc: &mut Document) {
         // Every live box needs a foundation even when Taffy never queries its view.
-        // Split the arena borrow from the owner store; source values stay external.
-        let keys: Vec<_> = doc.nodes.layout_keys().collect();
-        for idx in keys {
+        // The range iterator owns indices; source values stay externally borrowed.
+        for idx in doc.nodes.layout_keys() {
             let key = doc.nodes.box_key(idx).expect("foundation key is live");
             if doc.box_style_data.get(key).is_none()
                 && matches!(key, BoxKey::Source(_))
@@ -381,6 +380,9 @@ impl LayoutSession<'_> {
             views.assert_outside_scopes();
             views.boxes.clear();
             self.document.box_style_data.begin_bridge();
+            self.document
+                .box_style_data
+                .reserve_sources(self.document.nodes.len());
             views.legacy_calcs.clear();
             views.prepared_publication = None;
             views.prepared_stamp = None;

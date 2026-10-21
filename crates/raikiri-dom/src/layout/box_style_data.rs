@@ -36,6 +36,7 @@ pub(crate) struct BoxStyleData {
 pub(crate) struct BoxStyleStore {
     source: Vec<Option<BoxStyleData>>,
     generated: HashMap<BoxKey, BoxStyleData>,
+    icb: Option<BoxStyleData>,
     retired: Vec<BoxStyleData>,
     pub(crate) calc_values: Vec<Arc<AlignedCalc>>,
     pub(crate) pending: HashMap<BoxKey, Vec<OwnedPropertyOverride>>,
@@ -75,6 +76,7 @@ impl BoxStyleStore {
                 .source
                 .iter()
                 .flatten()
+                .chain(self.icb.iter())
                 .chain(self.generated.values())
                 .any(|record| record.stamp != stamp)
         {
@@ -92,6 +94,7 @@ impl BoxStyleStore {
     pub(crate) fn get(&self, key: BoxKey) -> Option<&BoxStyleData> {
         match key {
             BoxKey::Source(index) => self.source.get(index)?.as_ref(),
+            BoxKey::InitialContainingBlock => self.icb.as_ref(),
             _ => self.generated.get(&key),
         }
     }
@@ -99,6 +102,7 @@ impl BoxStyleStore {
     pub(crate) fn get_mut(&mut self, key: BoxKey) -> Option<&mut BoxStyleData> {
         match key {
             BoxKey::Source(index) => self.source.get_mut(index)?.as_mut(),
+            BoxKey::InitialContainingBlock => self.icb.as_mut(),
             _ => self.generated.get_mut(&key),
         }
     }
@@ -112,6 +116,7 @@ impl BoxStyleStore {
                 }
                 self.source[index].replace(data)
             }
+            BoxKey::InitialContainingBlock => self.icb.replace(data),
             _ => self.generated.insert(key, data),
         };
         if let Some(old) = old {
@@ -122,6 +127,7 @@ impl BoxStyleStore {
     pub(crate) fn take(&mut self, key: BoxKey) -> Option<BoxStyleData> {
         match key {
             BoxKey::Source(index) => self.source.get_mut(index)?.take(),
+            BoxKey::InitialContainingBlock => self.icb.take(),
             _ => self.generated.remove(&key),
         }
     }
@@ -133,17 +139,23 @@ impl BoxStyleStore {
             .source
             .iter_mut()
             .flatten()
+            .chain(self.icb.iter_mut())
             .chain(self.generated.values_mut())
         {
             record.pass.clear();
         }
     }
 
+    pub(crate) fn reserve_sources(&mut self, count: usize) {
+        self.source
+            .reserve_exact(count.saturating_sub(self.source.len()));
+    }
+
     pub(crate) fn begin_bridge(&mut self) {
         self.begin_publication();
         self.retired.extend(self.source.drain(..).flatten());
         self.pending.clear();
-        for record in self.generated.values_mut() {
+        for record in self.icb.iter_mut().chain(self.generated.values_mut()) {
             record.pass.clear();
         }
     }
@@ -189,11 +201,8 @@ impl BoxStyleStore {
 
     pub(crate) fn invalidate_anonymous_tables(&mut self) {
         self.begin_publication();
-        self.retired.extend(
-            self.generated
-                .extract_if(|key, _| !matches!(key, BoxKey::InitialContainingBlock))
-                .map(|(_, record)| record),
-        );
+        self.retired
+            .extend(self.generated.drain().map(|(_, record)| record));
         self.invalidate_recipe();
     }
 

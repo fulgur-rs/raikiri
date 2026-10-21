@@ -43,11 +43,13 @@ pub(crate) struct NodeArena {
 }
 
 impl NodeArena {
-    /// Every current source and generated layout key, without allocating.
-    pub(crate) fn layout_keys(&self) -> impl Iterator<Item = usize> + '_ {
+    /// Snapshot the current source and generated key ranges without allocating.
+    pub(crate) fn layout_keys(&self) -> impl Iterator<Item = usize> + use<> {
+        let tables = self.anonymous_base..self.anonymous_base + self.anonymous_tables.len();
+        let cells = tables.end..tables.end + self.anonymous_cells.len();
         (0..self.source.len())
-            .chain((0..self.anonymous_tables.len()).map(|index| self.anonymous_table_key(index)))
-            .chain((0..self.anonymous_cells.len()).map(|index| self.anonymous_cell_key(index)))
+            .chain(tables)
+            .chain(cells)
             .chain(self.initial_containing_block_key())
     }
 
