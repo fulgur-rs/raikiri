@@ -47,6 +47,7 @@ use taffy::{
 };
 
 use crate::document::Document;
+use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::layout::context::LayoutSession;
 use crate::taffy_impl::content_limits::ContentLimits;
 use taffy::util::{MaybeResolve, ResolveOrZero};
@@ -1502,8 +1503,9 @@ fn position_source_table_parts(
             let mut listed = std::collections::HashSet::new();
             let end_row = (usize::from(cell.row) + usize::from(cell.row_span)).min(grid.rows.len());
             for &marker in &grid.rows[usize::from(cell.row)..end_row] {
-                let mut source = Some(doc.ifc_source_owner(marker));
-                while let Some(id) = source {
+                let mut source =
+                    AncestorCursor::new(Some(doc.ifc_source_owner(marker)), ParentRelation::Source);
+                while let Some(id) = source.current() {
                     if id == boundary {
                         break;
                     }
@@ -1529,7 +1531,7 @@ fn position_source_table_parts(
                                 ));
                         }
                     }
-                    source = doc.parent_of(id);
+                    source.advance(doc);
                 }
             }
         }

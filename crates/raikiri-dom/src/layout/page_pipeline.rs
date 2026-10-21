@@ -3311,6 +3311,56 @@ fn fixed_page_step(content_height: f32, paper_height: f32) -> f32 {
     }
 }
 
+/// Propagate a spanning owner's growth only while its ancestors can absorb it.
+fn grow_spanning_column_ancestors(
+    document: &mut super::context::LayoutSession<'_>,
+    owner: usize,
+    delta: f32,
+    body_id: usize,
+    sibling_shifts: &mut sibling_shifts::SiblingShifts,
+    fragment_edits: &mut FragmentEdits,
+    column_work: &mut ProjectionWork<'_, '_>,
+) -> Result<(), LayoutError> {
+    let mut child = owner;
+    let mut walk = AncestorCursor::new(document.layout_parent_of(owner), ParentRelation::Layout);
+    while let Some(parent) = walk.current() {
+        if document.nodes[child].taffy_position() == TaffyPosition::Absolute
+            || document
+                .layout_node_with_style(child)
+                .unwrap()
+                .style
+                .float
+                .is_floated()
+        {
+            break;
+        }
+        // A paragraph's line shifts follow its boxes' current positions.
+        if document.nodes[parent].ifc.is_some() {
+            sibling_shifts.apply(document, fragment_edits, parent);
+        }
+        let _ = follow_moved_ifc_block(document, child, delta);
+        sibling_shifts.record(document, parent, child, delta, column_work)?;
+        if !document
+            .layout_node_with_style(parent)
+            .unwrap()
+            .style
+            .size
+            .height
+            .is_auto()
+        {
+            break;
+        }
+        document.nodes[parent].unrounded_layout.size.height += delta;
+        fragment_edits.grow(parent, delta);
+        if parent == body_id {
+            break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
+        }
+        child = parent;
+        walk.advance(document);
+    }
+    Ok(())
+}
+
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
 /// page area, as for [`layout_pages_with_options`].
@@ -3390,41 +3440,15 @@ fn paginate_flow(
         if delta == 0.0 {
             continue;
         }
-        let mut child = owner;
-        while let Some(parent) = document.layout_parent_of(child) {
-            if document.nodes[child].taffy_position() == TaffyPosition::Absolute
-                || document
-                    .layout_node_with_style(child)
-                    .unwrap()
-                    .style
-                    .float
-                    .is_floated()
-            {
-                break;
-            }
-            // A paragraph's line shifts follow its boxes' current positions.
-            if document.nodes[parent].ifc.is_some() {
-                sibling_shifts.apply(document, &mut fragment_edits, parent);
-            }
-            let _ = follow_moved_ifc_block(document, child, delta);
-            sibling_shifts.record(document, parent, child, delta, &mut column_work)?;
-            if !document
-                .layout_node_with_style(parent)
-                .unwrap()
-                .style
-                .size
-                .height
-                .is_auto()
-            {
-                break;
-            }
-            document.nodes[parent].unrounded_layout.size.height += delta;
-            fragment_edits.grow(parent, delta);
-            if parent == body_id {
-                break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
-            }
-            child = parent;
-        }
+        grow_spanning_column_ancestors(
+            document,
+            owner,
+            delta,
+            body_id,
+            &mut sibling_shifts,
+            &mut fragment_edits,
+            &mut column_work,
+        )?;
     }
     sibling_shifts.apply_all(document, &mut fragment_edits);
     fragment_edits.finish(document, &mut column_work)?;
@@ -6500,12 +6524,12 @@ fn grow_ancestors_for_shift(
     let mut flow_delta = delta;
     let mut size_delta = delta;
     let mut float_delta = delta;
-    let mut next = document.parent_of(child);
-    while let Some(parent) = next {
+    let mut walk = AncestorCursor::new(document.parent_of(child), ParentRelation::Source);
+    while let Some(parent) = walk.current() {
         if document.nodes[parent].kind() != NodeKind::Element {
             break;
         }
-        next = document.parent_of(parent);
+        walk.advance(document);
         // A `display: contents` element has no box to grow; its parent lays
         // the moved box out.
         if document.nodes[parent].display() == DisplayValue::Contents {
@@ -6613,9 +6637,9 @@ fn shrink_ancestors_after_margin_truncation(
     let mut flow_delta = delta;
     let mut size_delta = delta;
     let mut float_delta = delta;
-    let mut next = document.layout_parent_of(child);
-    while let Some(parent) = next {
-        next = document.layout_parent_of(parent);
+    let mut walk = AncestorCursor::new(document.layout_parent_of(child), ParentRelation::Layout);
+    while let Some(parent) = walk.current() {
+        walk.advance(document);
         if document.nodes[parent].kind() != NodeKind::Element
             || document.nodes[parent].size_containment.height
         {
@@ -7678,11 +7702,9 @@ fn shift_block_flow_after(
     flow_delta: f32,
 ) {
     let mut child = node_id;
-    let mut next = document.parent_of(node_id);
-    while let Some(parent) = next
-        && parent != body_id
-    {
-        next = document.parent_of(parent);
+    let mut walk = AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
+    while let Some(parent) = walk.current().filter(|&parent| parent != body_id) {
+        walk.advance(document);
         if document.nodes[parent].display() == DisplayValue::Contents {
             continue;
         }
