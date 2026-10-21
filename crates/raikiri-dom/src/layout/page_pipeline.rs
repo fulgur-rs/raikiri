@@ -3171,7 +3171,14 @@ pub fn layout_pages_with_page_geometry_and_control(
     page_widths: &[f32],
     control: &PageLayoutControl<'_>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
-    layout_pages_core(document, cascade, page_box, page_steps, page_widths, control)
+    layout_pages_core(
+        document,
+        cascade,
+        page_box,
+        page_steps,
+        page_widths,
+        control,
+    )
 }
 
 fn layout_pages_core(
