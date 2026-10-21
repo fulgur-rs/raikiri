@@ -101,6 +101,7 @@ pub use layout::{
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
 pub use column_rules::ColumnRule;
+// cov:ignore: public re-exports have no runtime behavior to measure.
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, MAX_LAYOUT_DEPTH,
     PageContentInsets, PageImageOptions, PageLayoutControl, PageLayoutOptions, PageMargins,
