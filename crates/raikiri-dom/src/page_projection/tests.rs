@@ -442,17 +442,33 @@ fn assert_paged_resolver_error_clears_projection(with_geometry: bool) {
     assert!(doc.page_fragments(0).next().is_some());
     assert!(doc.page_links(0).next().is_some());
     let result = if with_geometry {
-        crate::layout_pages_with_page_geometry_and_resolver_and_base_url(
+        crate::layout_pages_with_options(
             &mut doc,
             &cascade,
             page,
-            &[100.0],
-            &[100.0],
-            &Fails,
-            None,
+            crate::PageLayoutOptions {
+                page_steps: &[100.0],
+                page_widths: &[100.0],
+                images: Some(crate::PageImageOptions {
+                    resolver: &Fails,
+                    base_url: None,
+                }),
+                ..Default::default()
+            },
         )
     } else {
-        crate::layout_pages_with_resolver_and_base_url(&mut doc, &cascade, page, &Fails, None)
+        crate::layout_pages_with_options(
+            &mut doc,
+            &cascade,
+            page,
+            crate::PageLayoutOptions {
+                images: Some(crate::PageImageOptions {
+                    resolver: &Fails,
+                    base_url: None,
+                }),
+                ..Default::default()
+            },
+        )
     };
     assert!(matches!(
         result,

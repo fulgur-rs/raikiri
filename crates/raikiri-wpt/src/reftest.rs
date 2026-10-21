@@ -2884,9 +2884,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         build_cascaded_with_options,
     };
     use raikiri_dom::{
-        layout_pages, layout_pages_with_page_geometry,
-        layout_pages_with_page_geometry_and_resolver_and_base_url,
-        layout_pages_with_resolver_and_base_url, page_content_insets_for_page,
+        layout_pages, layout_pages_with_options, page_content_insets_for_page,
         page_margins_for_page,
     };
     use raikiri_html::parse;
@@ -3048,12 +3046,14 @@ pub(crate) fn render_raikiri_pages_with_resources(
             first_page_box,
         );
     let provisional_slices = if let Some(resolver) = image_resolver {
-        layout_pages_with_resolver_and_base_url(
+        layout_pages_with_options(
             &mut uncascaded.dom,
             &first_cascade,
             first_page_box,
-            resolver,
-            base_url,
+            raikiri_dom::PageLayoutOptions {
+                images: Some(raikiri_dom::PageImageOptions { resolver, base_url }),
+                ..Default::default()
+            },
         )
     } else {
         layout_pages(&mut uncascaded.dom, &first_cascade, first_page_box)
@@ -3151,22 +3151,27 @@ pub(crate) fn render_raikiri_pages_with_resources(
         let mut fresh_slices = if let Some(resolver) = image_resolver {
             // The geometry-varying path reparses the source, so the image
             // intrinsic pre-pass must run on the fresh DOM as well.
-            layout_pages_with_page_geometry_and_resolver_and_base_url(
+            layout_pages_with_options(
                 &mut fresh.dom,
                 &fresh_cascade,
                 first_page_box,
-                &page_steps,
-                &page_widths,
-                resolver,
-                base_url,
+                raikiri_dom::PageLayoutOptions {
+                    page_steps: &page_steps,
+                    page_widths: &page_widths,
+                    images: Some(raikiri_dom::PageImageOptions { resolver, base_url }),
+                    ..Default::default()
+                },
             )? // cov:ignore: rustc maps this standalone success/error propagation token only to the unreachable resolver-error edge
         } else {
-            layout_pages_with_page_geometry(
+            layout_pages_with_options(
                 &mut fresh.dom,
                 &fresh_cascade,
                 first_page_box,
-                &page_steps,
-                &page_widths,
+                raikiri_dom::PageLayoutOptions {
+                    page_steps: &page_steps,
+                    page_widths: &page_widths,
+                    ..Default::default()
+                },
             )? // cov:ignore: the layout API's standalone error edge is not reachable from valid reftest documents
         };
         let continuations = if let Some(pristine) = &pristine {
