@@ -498,3 +498,140 @@ fn invalid_scope_order_and_republication_are_rejected_without_losing_state() {
     assert_eq!(tree.style_override_depth(child), 0);
     assert_eq!(tree.style_view(child).size(), original);
 }
+
+#[test]
+fn pass_override_publication_invalidates_parent_before_child_compute() {
+    let (mut doc, cascade, child, _) = fixture();
+    let parent = doc.nodes[child].parent.unwrap();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    let key = session.nodes.box_key(parent).unwrap();
+    let frame = session
+        .layout_cache_context
+        .enter_view(key, Default::default());
+    let before = session.layout_cache_context.epoch();
+    session.record_pass_override(child, width(55.0).pop().unwrap());
+    assert!(session.layout_cache_context.epoch() > before);
+    assert!(!session.layout_cache_context.can_store(key));
+    assert_eq!(
+        session.style_view(child).size().width,
+        taffy::Dimension::length(55.0)
+    );
+    session.layout_cache_context.leave(frame);
+}
+
+#[test]
+fn prepared_claims_include_transform_containing_blocks() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:flex",
+        "transform:translateX(0);width:31px;height:7px",
+    );
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    let claims = session.style_view(child).is_containing_block();
+    assert!(claims.absolute);
+    assert!(claims.fixed);
+}
+
+#[test]
+fn repeated_pass_overrides_replace_the_property_and_project_legacy_values() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    session.record_pass_override(child, width(44.0).pop().unwrap());
+    session.record_pass_override(child, width(55.0).pop().unwrap());
+    let key = session.nodes.box_key(child).unwrap();
+    assert_eq!(session.box_style_data.get(key).unwrap().pass.len(), 1);
+    assert_eq!(
+        session.layout_style_for_key(child).unwrap().size.width,
+        taffy::Dimension::length(55.0)
+    );
+}
+
+#[test]
+fn metadata_republication_prevents_ancestor_store() {
+    let (mut doc, cascade, child, _) = fixture();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    let key = session.nodes.box_key(child).unwrap();
+    let frame = session
+        .layout_cache_context
+        .enter_view(key, Default::default());
+    let before = session.layout_cache_context.epoch();
+    session.nodes[child].claims_fixed_oof = true;
+    session.prepare_style_views();
+    assert!(session.layout_cache_context.epoch() > before);
+    assert!(!session.layout_cache_context.can_store(key));
+    assert!(session.style_view(child).is_containing_block().fixed);
+    session.layout_cache_context.leave(frame);
+}
+
+#[test]
+fn prepared_flags_keep_the_final_formatting_context() {
+    use raikiri_layout_style::StyleFlags as F;
+    for (css, flag) in [
+        ("display:flex", F::FLEX),
+        ("display:grid", F::GRID),
+        ("display:table", F::TABLE),
+        ("display:block;column-count:2", F::MULTICOL),
+    ] {
+        let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", css);
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        let key = session.nodes.box_key(child).unwrap();
+        assert!(
+            session
+                .box_style_data
+                .get(key)
+                .unwrap()
+                .metadata
+                .flags
+                .contains(flag),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn fallback_image_replaced_policy_uses_normalized_keyword_sizes() {
+    let (mut doc, cascade, child, _) =
+        fixture_with_styles("display:flex", "width:max-content;height:20px");
+    doc.nodes[child].data.as_element_mut().unwrap().tag_name = "img".into();
+    doc.set_element_attribute(child, "src", "green.png")
+        .unwrap();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    assert_eq!(
+        session.style_view(child).size().width,
+        taffy::Dimension::length(100.0)
+    );
+    assert!(session.style_view(child).is_replaced());
+    assert!(
+        session
+            .layout_style_for_key(child)
+            .unwrap()
+            .item_is_replaced
+    );
+}
+
+#[test]
+fn neutral_text_paragraph_publishes_its_final_ifc_classification() {
+    let (mut doc, cascade, _, text) = fixture();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    assert_eq!(
+        session.nodes[text].formatting_context,
+        crate::node::FormattingContext::Inline
+    );
+    let key = session.nodes.box_key(text).unwrap();
+    assert!(
+        session
+            .box_style_data
+            .get(key)
+            .unwrap()
+            .metadata
+            .flags
+            .contains(raikiri_layout_style::StyleFlags::IFC)
+    );
+}

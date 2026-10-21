@@ -138,3 +138,4 @@ fn prepared_style_rejects_wrong_bindings() {
         .is_err()
     );
 }
+mod pass_tests;

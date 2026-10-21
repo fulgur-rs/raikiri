@@ -569,7 +569,12 @@ fn restoring_a_source_box_discards_contents_and_spanner_recipes() {
                 .get(key)
                 .expect("ordinary source foundation is restored");
             assert!(record.recipe.is_none());
-            assert!(record.pass.is_empty());
+            // A projected block width is valid in the new pass, but the old ratio is not.
+            let mut projection = LayoutStyle::default();
+            for entry in &record.pass {
+                entry.apply_to_style(&mut projection);
+            }
+            assert_eq!(projection.aspect_ratio, None);
             assert!(matches!(record.base, super::super::LayoutBase::Source(id) if id == source));
         }
         assert_eq!(second.computed.len(), doc.node_count());

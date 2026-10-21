@@ -31,11 +31,7 @@ impl BoxFacts {
         }
         Self {
             direction,
-            metadata: StyleMetadata {
-                flags,
-                used_writing_mode: node.used_writing_mode,
-                claims: None,
-            },
+            metadata: crate::layout::style_views::metadata::node_metadata(node, flags),
         }
     }
 }
@@ -258,7 +254,10 @@ pub(crate) fn refresh(
             );
             let mut facts = BoxFacts::for_node(&document.nodes[index], direction);
             if old_kind == RecipeKind::Contents {
-                facts.metadata.flags = raikiri_layout_style::StyleFlags::EMPTY;
+                facts.metadata = crate::layout::style_views::metadata::node_metadata(
+                    &document.nodes[index],
+                    raikiri_layout_style::StyleFlags::EMPTY,
+                );
             }
             (old_kind, facts, None)
         }
@@ -271,11 +270,10 @@ pub(crate) fn refresh(
             );
             let facts = BoxFacts {
                 direction: taffy::Direction::Ltr,
-                metadata: StyleMetadata {
-                    flags: raikiri_layout_style::StyleFlags::EMPTY,
-                    used_writing_mode: document.nodes[index].used_writing_mode,
-                    claims: None,
-                },
+                metadata: crate::layout::style_views::metadata::node_metadata(
+                    &document.nodes[index],
+                    raikiri_layout_style::StyleFlags::EMPTY,
+                ),
             };
             (old_kind, facts, None)
         }

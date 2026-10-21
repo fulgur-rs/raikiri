@@ -11,7 +11,7 @@ use raikiri_traits::NodeKind;
 
 #[cfg(test)]
 pub(crate) mod checked;
-mod metadata;
+pub(super) mod metadata;
 mod overrides;
 pub(crate) use overrides::OverrideToken;
 
@@ -80,6 +80,7 @@ impl<'a> StyleViews<'a> {
 
     fn prepare_keys(&mut self, doc: &mut Document, keys: Vec<usize>) {
         self.assert_outside_scopes();
+        doc.layout_cache_context.publish_metadata();
         doc.box_style_data.invalidate_metadata();
         self.prepared_stamp = None;
         self.prepare_foundations(doc);
@@ -370,7 +371,8 @@ impl LayoutSession<'_> {
     pub(crate) fn propagate_viewport_overflow(&mut self, cascade: &CascadeResult, body: usize) {
         use raikiri_layout_style::Axis;
         use raikiri_style::property::OverflowValue;
-        if super::body_overflow::propagate_body_overflow_to_viewport(self.document, cascade, body) {
+        if super::body_overflow::body_overflow_propagates_to_viewport(self.document, cascade, body)
+        {
             for (axis, original) in [
                 (Axis::X, cascade.computed[body].overflow.x),
                 (Axis::Y, cascade.computed[body].overflow.y),
@@ -496,23 +498,25 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn record_pass_override(&mut self, idx: usize, value: OwnedPropertyOverride) {
+        // Publish before a parent cache lookup can hide the child's new input.
+        self.cache_override_changed(idx);
         let key = self.nodes.box_key(idx).expect("override has a box key");
+        if let Some(payload) = value.calc_owner() {
+            self.document
+                .box_style_data
+                .calc_values
+                .push(payload.clone());
+        }
+        value.apply_to_style(
+            self.document
+                .layout_style_for_key_mut(idx)
+                .expect("override has a retained projection"),
+        );
         if self.style_views.is_some() {
-            if let Some(payload) = value.calc_owner() {
-                self.document
-                    .box_style_data
-                    .calc_values
-                    .push(payload.clone());
-            }
             if let Some(record) = self.document.box_style_data.get_mut(key) {
-                record.pass.push(value);
+                value.install(&mut record.pass);
             } else {
-                self.document
-                    .box_style_data
-                    .pending
-                    .entry(key)
-                    .or_default()
-                    .push(value);
+                value.install(self.document.box_style_data.pending.entry(key).or_default());
             }
         }
     }

@@ -24,28 +24,30 @@ pub(crate) fn viewport_overflow_source(doc: &Document, cascade: &CascadeResult) 
 }
 
 /// When the root overflow is visible, propagate body overflow to the viewport
-/// and give the body its visible used overflow value (CSS Overflow 3 §3.3).
-/// Return whether the body's used value was installed.
+/// (CSS Overflow 3 §3.3). The pass publisher installs visible used overflow
+/// on the body when this predicate holds.
+pub(crate) fn body_overflow_propagates_to_viewport(
+    doc: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+) -> bool {
+    viewport_overflow_source(doc, cascade) == Some(body_id)
+        && doc.parent_of(body_id) == doc.document_element_index()
+        && doc.nodes[body_id].tag_name() == Some("body")
+}
+
+#[cfg(test)]
 pub(crate) fn propagate_body_overflow_to_viewport(
     doc: &mut Document,
     cascade: &CascadeResult,
     body_id: usize,
 ) -> bool {
-    if viewport_overflow_source(doc, cascade) == Some(body_id)
-        && doc.parent_of(body_id) == doc.document_element_index()
-        && doc.nodes[body_id].tag_name() == Some("body")
-    {
-        doc.layout_node_with_style_mut(body_id)
-            .unwrap()
-            .style
-            .overflow = Point {
-            x: TaffyOverflow::Visible,
-            y: TaffyOverflow::Visible,
-        };
-        true
-    } else {
-        false
+    let propagated = body_overflow_propagates_to_viewport(doc, cascade, body_id);
+    if propagated {
+        let mut session = super::context::LayoutSession::new(doc);
+        session.propagate_viewport_overflow(cascade, body_id);
     }
+    propagated
 }
 
 #[cfg(test)]
