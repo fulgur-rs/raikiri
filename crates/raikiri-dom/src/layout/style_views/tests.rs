@@ -1,6 +1,7 @@
 mod calc_owner_tests;
 mod foundation_tests;
 mod preparation_tests;
+pub(super) mod scoped_override_tests;
 
 use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession};
 use crate::{Document, LayoutStyle};
@@ -246,7 +247,7 @@ fn prepare_for_inspection(tree: &mut LayoutSession<'_>) {
     tree.style_views
         .as_mut()
         .unwrap()
-        .prepare_keys(tree.document, keys);
+        .prepare_keys(tree.document, keys, &tree.scoped_overrides);
 }
 
 #[test]

@@ -1,21 +1,221 @@
 use super::*;
+use raikiri_layout_style::LegacySizingUndo;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OverrideToken {
     key: BoxKey,
     length: usize,
     depth: usize,
+    checkpoint: usize,
 }
 
-pub(super) struct SizeScope {
-    idx: usize,
-    token: Option<OverrideToken>,
-    size: taffy::Size<taffy::Dimension>,
-    min: taffy::Size<taffy::LengthPercentageAuto>,
-    max: taffy::Size<taffy::LengthPercentageAuto>,
+#[derive(Default)]
+struct ScopedBox {
+    entries: Vec<OwnedPropertyOverride>,
+    depth: usize,
+    was_scoped: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct ScopedOverrides {
+    boxes: HashMap<BoxKey, ScopedBox>,
+    journal: Vec<ScopeUndo>,
+    size_scopes: Vec<OverrideToken>,
+}
+
+struct ScopeUndo {
+    token: OverrideToken,
+    index: usize,
+    legacy: LegacyUndo,
+    size_scope: bool,
+}
+
+enum LegacyUndo {
+    None,
+    Field(LegacySizingUndo),
+    Sizes {
+        size: taffy::Size<taffy::Dimension>,
+        min: taffy::Size<taffy::LengthPercentageAuto>,
+        max: taffy::Size<taffy::LengthPercentageAuto>,
+    },
+}
+
+impl ScopedOverrides {
+    pub(in crate::layout) fn assert_inactive(&self) {
+        assert!(
+            self.journal.is_empty() && self.size_scopes.is_empty(),
+            "preparation runs outside style scopes"
+        );
+    }
+
+    pub(super) fn entries(&self, key: BoxKey) -> &[OwnedPropertyOverride] {
+        self.boxes.get(&key).map_or(&[], |state| &state.entries)
+    }
+
+    pub(super) fn depth(&self, key: BoxKey) -> usize {
+        self.boxes.get(&key).map_or(0, |state| state.depth)
+    }
+
+    #[cfg(test)]
+    pub(super) fn was_scoped(&self, key: BoxKey) -> bool {
+        self.boxes.get(&key).is_some_and(|state| state.was_scoped)
+    }
+
+    pub(super) fn clear_history(&mut self) {
+        self.assert_inactive();
+        self.boxes.clear();
+    }
 }
 
 impl LayoutSession<'_> {
+    #[cfg_attr(
+        not(any(test, doc)),
+        expect(dead_code, reason = "Content-limit callers migrate in the next task.")
+    )]
+    pub(crate) fn with_overrides<R>(
+        &mut self,
+        entries: Vec<(BoxKey, OwnedPropertyOverride)>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let checkpoint = self.override_checkpoint();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.push_overrides(entries);
+            f(self)
+        }));
+        self.restore_overrides_to(checkpoint);
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+
+    pub(crate) fn override_checkpoint(&self) -> usize {
+        self.scoped_overrides.journal.len()
+    }
+
+    pub(crate) fn push_overrides(&mut self, entries: Vec<(BoxKey, OwnedPropertyOverride)>) {
+        self.sync_layout_cache_mutations();
+        if entries.is_empty() {
+            return;
+        }
+        let mut indexed = Vec::with_capacity(entries.len());
+        let mut counts = HashMap::<BoxKey, usize>::default();
+        // Validate with the same projection before changing any published field.
+        let mut validation_style = crate::LayoutStyle::default();
+        for (key, entry) in entries {
+            let index = self.nodes.layout_index(key).expect("override key is live");
+            assert!(
+                self.layout_style_for_key(index).is_some(),
+                "override has a retained style"
+            );
+            let _ = entry
+                .apply_legacy_sizing(&mut validation_style)
+                .expect("scope entry is a physical sizing override");
+            *counts.entry(key).or_default() += 1;
+            indexed.push((key, index, entry));
+        }
+        self.scoped_overrides.boxes.reserve(counts.len());
+        self.scoped_overrides.journal.reserve(indexed.len());
+        for (key, count) in counts {
+            self.scoped_overrides
+                .boxes
+                .entry(key)
+                .or_default()
+                .entries
+                .reserve(count);
+        }
+        self.document.box_style_data.calc_values.extend(
+            indexed
+                .iter()
+                .filter_map(|(_, _, entry)| entry.calc_owner())
+                .cloned(),
+        );
+        for (applied, (key, index, entry)) in indexed.into_iter().enumerate() {
+            self.document.layout_cache_context.override_changed(key);
+            let state = self
+                .scoped_overrides
+                .boxes
+                .get_mut(&key)
+                .expect("reserved scope key");
+            let token = OverrideToken {
+                key,
+                length: state.entries.len(),
+                depth: state.depth,
+                checkpoint: self.scoped_overrides.journal.len(),
+            };
+            state.depth += 1;
+            state.was_scoped = true;
+            state.entries.push(entry);
+            self.scoped_overrides.journal.push(ScopeUndo {
+                token,
+                index,
+                legacy: LegacyUndo::None,
+                size_scope: false,
+            });
+            let undo = self
+                .scoped_overrides
+                .journal
+                .last_mut()
+                .expect("registered undo slot");
+            let style = self
+                .document
+                .retained_layout_styles
+                .get_mut(key)
+                .expect("validated style");
+            // Both slots are reserved before the infallible field replacement.
+            undo.legacy = LegacyUndo::Field(
+                state
+                    .entries
+                    .last()
+                    .expect("registered entry")
+                    .apply_legacy_sizing(style)
+                    .expect("validated sizing entry"),
+            );
+            #[cfg(test)]
+            super::tests::scoped_override_tests::after_setup_entry(self, index, applied + 1);
+            #[cfg(not(test))]
+            let _ = applied;
+        }
+    }
+
+    pub(crate) fn restore_overrides_to(&mut self, checkpoint: usize) {
+        assert!(
+            checkpoint <= self.override_checkpoint(),
+            "scope checkpoint is active"
+        );
+        while self.override_checkpoint() > checkpoint {
+            let saved = self
+                .scoped_overrides
+                .journal
+                .pop()
+                .expect("active override");
+            self.document
+                .layout_cache_context
+                .override_changed(saved.token.key);
+            let style = self
+                .document
+                .layout_style_for_key_mut(saved.index)
+                .expect("scope key stays live");
+            match saved.legacy {
+                LegacyUndo::None => {}
+                LegacyUndo::Field(undo) => undo.restore(style),
+                LegacyUndo::Sizes { size, min, max } => {
+                    (style.size, style.min_size, style.max_size) = (size, min, max);
+                }
+            }
+            let state = self
+                .scoped_overrides
+                .boxes
+                .get_mut(&saved.token.key)
+                .expect("active scope key");
+            state.entries.truncate(saved.token.length);
+            state.depth = saved.token.depth;
+            if saved.size_scope {
+                assert_eq!(self.scoped_overrides.size_scopes.pop(), Some(saved.token));
+            }
+        }
+    }
+
     pub(crate) fn begin_edge_recording(
         &mut self,
         idx: usize,
@@ -53,49 +253,44 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn size_scope_checkpoint(&self) -> usize {
-        self.style_views
-            .as_ref()
-            .map_or(0, |views| views.size_scopes.len())
+        self.scoped_overrides.size_scopes.len()
     }
 
     pub(crate) fn save_size_scope(&mut self, idx: usize) -> Option<usize> {
         self.sync_layout_cache_mutations();
-        if !self.has_style_view(idx) {
-            return None;
-        }
         let old = self
             .layout_style_for_key(idx)
             .expect("size scope has a retained style");
         let (size, min, max) = (old.size, old.min_size, old.max_size);
-        let token = self.record_style_overrides(idx, Vec::new());
-        let views = self.style_views.as_mut().expect("checked session");
-        let marker = views.size_scopes.len();
-        views.size_scopes.push(SizeScope {
-            idx,
-            token,
-            size,
-            min,
-            max,
-        });
+        self.scoped_overrides.size_scopes.reserve(1);
+        let token = self
+            .record_style_overrides(idx, Vec::new())
+            .expect("live scope key");
+        let marker = self.scoped_overrides.size_scopes.len();
+        let undo = self
+            .scoped_overrides
+            .journal
+            .last_mut()
+            .expect("registered size scope");
+        undo.legacy = LegacyUndo::Sizes { size, min, max };
+        undo.size_scope = true;
+        self.scoped_overrides.size_scopes.push(token);
         Some(marker)
     }
 
     pub(crate) fn restore_size_scope(&mut self, marker: Option<usize>) {
-        let Some(marker) = marker else {
-            return;
-        };
-        let views = self.style_views.as_mut().expect("size scope has a session");
+        let Some(marker) = marker else { return };
         assert_eq!(
-            views.size_scopes.len(),
+            self.scoped_overrides.size_scopes.len(),
             marker + 1,
             "size scopes restore in reverse order"
         );
-        let saved = views.size_scopes.pop().expect("active size scope");
-        self.restore_recorded_style_overrides(saved.token);
-        let style = self
-            .layout_style_for_key_mut(saved.idx)
-            .expect("size scope has a retained style");
-        (style.size, style.min_size, style.max_size) = (saved.size, saved.min, saved.max);
+        let token = *self
+            .scoped_overrides
+            .size_scopes
+            .last()
+            .expect("active size scope");
+        self.restore_recorded_style_overrides(Some(token));
     }
 
     pub(crate) fn restore_size_scopes_to(&mut self, checkpoint: usize) {
@@ -112,14 +307,8 @@ impl LayoutSession<'_> {
         resolved: bool,
     ) {
         let key = self.nodes.box_key(idx).expect("override has a box key");
-        let Some(views) = &mut self.style_views else {
-            return;
-        };
-        let Some(prepared) = views.boxes.get_mut(&key) else {
-            return;
-        };
         assert!(
-            !prepared.scopes.is_empty(),
+            self.scoped_overrides.depth(key) > 0,
             "temporary values require an active scope"
         );
         let entry = OwnedPropertyOverride::length(property, value, resolved)
@@ -130,7 +319,12 @@ impl LayoutSession<'_> {
                 .calc_values
                 .push(payload.clone());
         }
-        prepared.scoped.push(entry);
+        self.scoped_overrides
+            .boxes
+            .get_mut(&key)
+            .expect("active scope key")
+            .entries
+            .push(entry);
     }
 
     pub(crate) fn record_style_overrides(
@@ -140,43 +334,42 @@ impl LayoutSession<'_> {
     ) -> Option<OverrideToken> {
         self.sync_layout_cache_mutations();
         let key = self.nodes.box_key(idx).expect("override has a box key");
-        let views = self.style_views.as_mut()?;
-        let prepared = views.boxes.get_mut(&key)?;
-        let token = OverrideToken {
-            key,
-            length: prepared.scoped.len(),
-            depth: prepared.scopes.len(),
-        };
-        prepared.scopes.push(token.length);
-        prepared.was_scoped = true;
+        self.scoped_overrides.journal.reserve(1);
+        let state = self.scoped_overrides.boxes.entry(key).or_default();
+        state.entries.reserve(entries.len());
         self.document.box_style_data.calc_values.extend(
             entries
                 .iter()
                 .filter_map(OwnedPropertyOverride::calc_owner)
                 .cloned(),
         );
-        prepared.scoped.extend(entries);
+        self.document.layout_cache_context.override_changed(key);
+        let token = OverrideToken {
+            key,
+            length: state.entries.len(),
+            depth: state.depth,
+            checkpoint: self.scoped_overrides.journal.len(),
+        };
+        self.scoped_overrides.journal.push(ScopeUndo {
+            token,
+            index: idx,
+            legacy: LegacyUndo::None,
+            size_scope: false,
+        });
+        state.depth += 1;
+        state.was_scoped = true;
+        state.entries.extend(entries);
         Some(token)
     }
 
     pub(crate) fn restore_recorded_style_overrides(&mut self, token: Option<OverrideToken>) {
-        let Some(token) = token else {
-            return;
-        };
-        let prepared = self
-            .style_views
-            .as_mut()
-            .expect("scope has a session")
-            .boxes
-            .get_mut(&token.key)
-            .expect("scope has a prepared style");
+        let Some(token) = token else { return };
         assert_eq!(
-            prepared.scopes.len(),
-            token.depth + 1,
+            self.scoped_overrides.journal.last().map(|undo| undo.token),
+            Some(token),
             "style scopes restore in reverse order"
         );
-        assert_eq!(prepared.scopes.pop(), Some(token.length));
-        prepared.scoped.truncate(token.length);
+        self.restore_overrides_to(token.checkpoint);
     }
 
     #[cfg(test)]
@@ -202,10 +395,7 @@ impl LayoutSession<'_> {
     #[cfg(test)]
     pub(crate) fn style_override_depth(&self, idx: usize) -> usize {
         let key = self.nodes.box_key(idx).expect("scope has a box key");
-        self.style_views
-            .as_ref()
-            .and_then(|views| views.boxes.get(&key))
-            .map_or(0, |prepared| prepared.scopes.len())
+        self.scoped_overrides.depth(key)
     }
 
     #[cfg(test)]

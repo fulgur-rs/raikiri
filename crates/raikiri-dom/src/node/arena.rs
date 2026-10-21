@@ -72,6 +72,22 @@ impl NodeArena {
         (index < self.anonymous_cells.len()).then_some(BoxKey::AnonymousCell(index))
     }
 
+    /// Resolve a live typed key without scanning the arena.
+    pub(crate) fn layout_index(&self, key: BoxKey) -> Option<usize> {
+        let index = match key {
+            BoxKey::Source(index) => index,
+            BoxKey::AnonymousTable(index) if index < self.anonymous_tables.len() => {
+                self.anonymous_table_key(index)
+            }
+            BoxKey::AnonymousCell(index) if index < self.anonymous_cells.len() => {
+                self.anonymous_cell_key(index)
+            }
+            BoxKey::InitialContainingBlock => self.initial_containing_block_key()?,
+            _ => return None,
+        };
+        (self.box_key(index) == Some(key)).then_some(index)
+    }
+
     /// Whether `key` names a layout-only anonymous table cell.
     pub(crate) fn is_anonymous_cell(&self, key: usize) -> bool {
         matches!(self.box_key(key), Some(BoxKey::AnonymousCell(_)))

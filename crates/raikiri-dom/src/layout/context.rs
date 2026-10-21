@@ -94,6 +94,7 @@ pub(crate) struct LayoutSession<'doc> {
     pub(crate) document: &'doc mut Document,
     pub(crate) context: LayoutContext,
     pub(crate) style_views: Option<super::style_views::StyleViews<'doc>>,
+    pub(crate) scoped_overrides: super::style_views::ScopedOverrides,
 }
 
 impl<'doc> LayoutSession<'doc> {
@@ -104,6 +105,7 @@ impl<'doc> LayoutSession<'doc> {
             document,
             context: LayoutContext::default(),
             style_views: None,
+            scoped_overrides: Default::default(),
         }
     }
 
@@ -118,6 +120,7 @@ impl<'doc> LayoutSession<'doc> {
             document,
             context: LayoutContext::default(),
             style_views: Some(super::style_views::StyleViews::new(cascade)),
+            scoped_overrides: Default::default(),
         }
     }
 
@@ -130,6 +133,7 @@ impl<'doc> LayoutSession<'doc> {
 
     pub(crate) fn publish_layout_cache_mutations(&mut self) {
         if self.document.layout_dirty {
+            self.scoped_overrides.assert_inactive();
             self.document.layout_cache_context.publish_metadata();
             self.context.grid_layout_info.clear();
             self.context.taffy_hoisted_children.clear();

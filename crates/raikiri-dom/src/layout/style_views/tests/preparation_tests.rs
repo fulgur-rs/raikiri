@@ -135,7 +135,7 @@ fn non_target_edge_scopes_keep_legacy_restoration_and_epoch_notifications() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let marker = session.save_size_scope(child);
-    assert!(marker.is_none());
+    assert!(marker.is_some());
     session.record_scoped_length(child, LengthProperty::Width, L::Px(99.0), true);
     session.restore_size_scope(marker);
     session
