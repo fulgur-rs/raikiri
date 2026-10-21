@@ -7,6 +7,9 @@ use raikiri_style::{
 };
 use std::{ops::Deref, sync::Arc};
 
+mod data;
+pub use data::PreparedData;
+
 /// A preparation error, detected before any getter runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrepareError {
@@ -96,8 +99,60 @@ impl Deref for ComputedSource<'_> {
 enum CalcBindings<'a> {
     Borrowed(&'a [PreparedCalc<'a>]),
     Owned(Box<[(CalcSlot, Arc<AlignedCalc>)]>),
+    Shared(Arc<PreparedData>),
 }
 impl<'a> PreparedStyle<'a> {
+    /// Bind borrowed computed values to shared calc owners after checking every slot.
+    ///
+    /// Sharing the payload data does not extend the computed values' lifetime.
+    ///
+    /// ```compile_fail
+    /// use raikiri_layout_style::{AlignedCalc, PreparedData, PreparedStyle, StyleMetadata};
+    /// use raikiri_style::ComputedValues;
+    /// use std::sync::Arc;
+    /// let values = ComputedValues::initial();
+    /// let data = Arc::new(PreparedData::prepare_with(&values, |_, expression, range| {
+    ///     Arc::new(AlignedCalc::new(expression, range))
+    /// }).unwrap());
+    /// let prepared = {
+    ///     let temporary = ComputedValues::initial();
+    ///     PreparedStyle::from_data(&temporary, StyleMetadata::default(), data).unwrap()
+    /// };
+    /// drop(prepared);
+    /// ```
+    ///
+    /// # Errors
+    /// Rejects missing, unexpected or mismatched expressions and ranges.
+    pub fn from_data(
+        values: &'a ComputedValues,
+        metadata: StyleMetadata,
+        data: Arc<PreparedData>,
+    ) -> Result<Self, PrepareError> {
+        data.validate(values)?;
+        Ok(Self {
+            values: ComputedSource::Borrowed(values),
+            metadata,
+            calcs: CalcBindings::Shared(data),
+        })
+    }
+
+    /// Retain computed values and shared calc owners after checking every slot.
+    ///
+    /// # Errors
+    /// Rejects missing, unexpected or mismatched expressions and ranges.
+    pub fn from_shared_data(
+        values: Arc<ComputedValues>,
+        metadata: StyleMetadata,
+        data: Arc<PreparedData>,
+    ) -> Result<PreparedStyle<'static>, PrepareError> {
+        data.validate(&values)?;
+        Ok(PreparedStyle {
+            values: ComputedSource::Shared(values),
+            metadata,
+            calcs: CalcBindings::Shared(data),
+        })
+    }
+
     /// Refresh document facts without rebuilding computed values or calc bindings.
     pub fn set_metadata(&mut self, metadata: StyleMetadata) {
         self.metadata = metadata;
@@ -225,11 +280,17 @@ impl<'a> PreparedStyle<'a> {
                     .expect("constructed immutable calc bindings");
                 &bindings[index].1
             }
+            CalcBindings::Shared(data) => data
+                .payload(slot)
+                .expect("validated immutable shared calc bindings"),
         }
     }
     pub(crate) fn scalar(&self, property: LengthProperty) -> L {
+        Self::scalar_value(&self.values, property)
+    }
+
+    fn scalar_value(c: &ComputedValues, property: LengthProperty) -> L {
         use LengthProperty::*;
-        let c = &*self.values;
         let padding = |v| match v {
             P::Px(v) => L::Px(v),
             P::Percent(v) => L::Percent(v),
@@ -288,6 +349,13 @@ impl<'a> PreparedStyle<'a> {
     }
     fn visit_calcs(
         &self,
+        visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+    ) -> Result<(), PrepareError> {
+        Self::visit_values_calcs(&self.values, visit)
+    }
+
+    fn visit_values_calcs(
+        values: &ComputedValues,
         mut visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
     ) -> Result<(), PrepareError> {
         for &property in LengthProperty::ALL {
@@ -295,11 +363,11 @@ impl<'a> PreparedStyle<'a> {
             if matches!(
                 property,
                 LengthProperty::LogicalWidth | LengthProperty::LogicalHeight
-            ) && self.values.vertical_logical_size.is_none()
+            ) && values.vertical_logical_size.is_none()
             {
                 continue;
             }
-            let expression = match self.scalar(property) {
+            let expression = match Self::scalar_value(values, property) {
                 L::Calc(c) | L::FitContentOf(P::Calc(c)) => Some(c),
                 _ => None,
             };
@@ -330,7 +398,7 @@ impl<'a> PreparedStyle<'a> {
             }
             Ok::<_, PrepareError>(())
         };
-        let c = &*self.values;
+        let c = values;
         for (axis, template, auto) in [
             (Axis::X, &c.grid_template_columns, &c.grid_auto_columns),
             (Axis::Y, &c.grid_template_rows, &c.grid_auto_rows),

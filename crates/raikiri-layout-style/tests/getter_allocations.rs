@@ -217,6 +217,19 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
     let prepared = PreparedStyle::new(&cv, StyleMetadata::default(), &bindings).unwrap();
     let owned = PreparedStyle::prepare(&cv, StyleMetadata::default());
     let shared = PreparedStyle::prepare_shared(Arc::new(cv.clone()), StyleMetadata::default());
+    let data = Arc::new(
+        PreparedData::prepare_with(&cv, |_, expression, range| {
+            Arc::new(AlignedCalc::new(expression, range))
+        })
+        .unwrap(),
+    );
+    let from_data = PreparedStyle::from_data(&cv, StyleMetadata::default(), data.clone()).unwrap();
+    let from_shared_data = PreparedStyle::from_shared_data(
+        Arc::new(cv.clone()),
+        StyleMetadata::default(),
+        data.clone(),
+    )
+    .unwrap();
     let owned_pass = [
         OwnedPropertyOverride::aspect_ratio(Some(2.0)),
         OwnedPropertyOverride::overflow(Axis::X, OverflowValue::Hidden),
@@ -270,7 +283,7 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
                 for _ in 0..100 {
                     read_all(black_box(&v));
                     black_box(v);
-                    for prepared in [&owned, &shared] {
+                    for prepared in [&owned, &shared, &from_data, &from_shared_data] {
                         let v = LayoutStyleView::with_owned_overrides(
                             prepared,
                             ViewContext {
