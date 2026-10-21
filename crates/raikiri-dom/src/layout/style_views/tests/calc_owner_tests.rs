@@ -70,7 +70,7 @@ fn session_drop_preserves_retained_handle_owner() {
             .calc_value();
         let owner = session
             .document
-            .retained_layout_styles
+            .box_style_data
             .calc_values
             .iter()
             .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
@@ -104,7 +104,7 @@ fn rebridge_failure_keeps_old_handle_alive() {
         .calc_value();
     let owner = session
         .document
-        .retained_layout_styles
+        .box_style_data
         .calc_values
         .iter()
         .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
@@ -159,7 +159,7 @@ fn popped_override_handle_outlives_the_session() {
             .calc_value();
         let owner = session
             .document
-            .retained_layout_styles
+            .box_style_data
             .calc_values
             .iter()
             .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
@@ -195,7 +195,7 @@ fn rebridge_unwind_keeps_old_handle_alive() {
         .calc_value();
     let owner = session
         .document
-        .retained_layout_styles
+        .box_style_data
         .calc_values
         .iter()
         .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
@@ -246,7 +246,7 @@ fn pass_and_recorded_scope_calcs_get_document_owners() {
                 .calc_value();
             let owner = session
                 .document
-                .retained_layout_styles
+                .box_style_data
                 .calc_values
                 .iter()
                 .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)
@@ -320,7 +320,7 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
             assert_eq!(handle, Arc::as_ptr(first).cast::<()>());
             assert!(
                 session
-                    .retained_layout_styles
+                    .box_style_data
                     .calc_values
                     .iter()
                     .any(|owner| Arc::as_ptr(owner).cast::<()>() == handle)

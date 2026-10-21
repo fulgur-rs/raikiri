@@ -13,6 +13,38 @@ pub(crate) struct CacheEpoch {
     value: u64,
 }
 
+impl Default for CacheEpoch {
+    fn default() -> Self {
+        Self {
+            namespace: 0,
+            value: 1,
+        }
+    }
+}
+
+impl CacheEpoch {
+    #[cfg(test)]
+    pub(crate) fn for_test(namespace: u64, value: u64) -> Self {
+        Self { namespace, value }
+    }
+
+    /// Advance without reusing a counter in the same namespace.
+    pub(crate) fn advance(&mut self) -> bool {
+        if let Some(value) = self.value.checked_add(1) {
+            self.value = value;
+            true
+        } else if let Some(namespace) = self.namespace.checked_add(1) {
+            *self = Self {
+                namespace,
+                value: 1,
+            };
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BasisKey {
     Taffy,
@@ -188,10 +220,7 @@ pub(crate) struct LayoutCacheContext {
 
 impl Default for LayoutCacheContext {
     fn default() -> Self {
-        let epoch = CacheEpoch {
-            namespace: 0,
-            value: 1,
-        };
+        let epoch = CacheEpoch::default();
         Self {
             epoch,
             publication_epoch: epoch,
@@ -271,21 +300,15 @@ impl LayoutCacheContext {
         if self.poisoned {
             return;
         }
-        if let Some(value) = self.epoch.value.checked_add(1) {
-            self.epoch.value = value;
-        } else {
+        let namespace = self.epoch.namespace;
+        if !self.epoch.advance() {
+            // No generation remains distinguishable, so keep every read/store disabled.
+            self.poisoned = true;
+        }
+        if self.epoch.namespace != namespace || self.poisoned {
             for state in self.entries.get_mut().values_mut() {
                 state.stamp = 0;
                 state.context = None;
-            }
-            if let Some(namespace) = self.epoch.namespace.checked_add(1) {
-                self.epoch = CacheEpoch {
-                    namespace,
-                    value: 1,
-                };
-            } else {
-                // No generation remains distinguishable, so keep every read/store disabled.
-                self.poisoned = true;
             }
         }
     }

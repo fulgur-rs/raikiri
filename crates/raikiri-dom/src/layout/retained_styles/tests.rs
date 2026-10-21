@@ -59,19 +59,10 @@ fn retain_operations_preserve_each_box_category() {
 }
 
 #[test]
-fn cloned_styles_are_independent_and_keep_calc_owners() {
+fn cloned_styles_are_independent() {
     let mut styles = RetainedLayoutStyles::default();
     styles.insert(BoxKey::Source(1), style(1.0));
     styles.insert(BoxKey::AnonymousTable(0), style(2.0));
-    let calc = Arc::new(raikiri_layout_style::AlignedCalc::new(
-        raikiri_style::property::CalcLengthPercentage {
-            px: 1.0,
-            percent: 2.0,
-        },
-        true,
-    ));
-    let weak = Arc::downgrade(&calc);
-    styles.calc_values.push(calc);
     let mut cloned = styles.clone();
     cloned.get_mut(BoxKey::Source(1)).unwrap().flex_grow = 10.0;
     cloned.get_mut(BoxKey::AnonymousTable(0)).unwrap().flex_grow = 20.0;
@@ -80,8 +71,4 @@ fn cloned_styles_are_independent_and_keep_calc_owners() {
         styles.get(BoxKey::AnonymousTable(0)).unwrap().flex_grow,
         2.0
     );
-    drop(styles);
-    assert!(weak.upgrade().is_some());
-    drop(cloned);
-    assert!(weak.upgrade().is_none());
 }

@@ -165,6 +165,7 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    doc.document.box_style_data.invalidate_source();
     doc.document.layout_cache_context.publish_source();
     doc.begin_style_bridge();
     doc.context.table_cache.clear();
@@ -172,7 +173,7 @@ pub(crate) fn apply_computed_to_style_in_session(
     // A later error or unwind may leave some styles with old handles and
     // others with newly appended handles, so only a complete successful
     // bridge can release the old prefix.
-    let old_calc_len = doc.document.retained_layout_styles.calc_values.len();
+    let old_calc_len = doc.document.box_style_data.calc_values.len();
     let result = apply_computed_to_style_in_session_inner(doc, cascade);
     if result.is_ok() {
         let expected = doc
@@ -1332,13 +1333,13 @@ fn bridge_inset(
 fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues) {
     // width and height are written together, so use a struct literal.
     let width = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.document.retained_layout_styles.calc_values,
+        &mut doc.document.box_style_data.calc_values,
         cv.width,
         "width",
         &mut doc.context.layout_warnings,
     );
     let height = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.document.retained_layout_styles.calc_values,
+        &mut doc.document.box_style_data.calc_values,
         cv.height,
         "height",
         &mut doc.context.layout_warnings,

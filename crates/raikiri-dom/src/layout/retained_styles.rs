@@ -1,5 +1,4 @@
 use rustc_hash::FxHashMap as HashMap;
-use std::sync::Arc;
 
 use crate::node::arena::BoxKey;
 
@@ -8,7 +7,6 @@ pub(crate) struct RetainedLayoutStyles {
     // Source keys are arena indices; holes stay absent during out-of-order insertion.
     source_styles: Vec<Option<crate::LayoutStyle>>,
     styles: HashMap<BoxKey, crate::LayoutStyle>,
-    pub(crate) calc_values: Vec<Arc<raikiri_layout_style::AlignedCalc>>,
 }
 
 #[cfg(test)]

@@ -191,7 +191,7 @@ impl<'a> StyleViews<'a> {
             }
             let payload = Arc::new(raikiri_layout_style::AlignedCalc::new(expression, range));
             // Retain owners before the prepared binding can publish a raw handle.
-            doc.retained_layout_styles.calc_values.push(payload.clone());
+            doc.box_style_data.calc_values.push(payload.clone());
             owner_index
                 .get_or_insert_with(std::collections::HashMap::new)
                 .insert(key, pool.len());
@@ -242,10 +242,7 @@ impl LayoutSession<'_> {
             Ok(Ok(value)) => {
                 self.sync_layout_cache_mutations();
                 if let Some(length) = old_prefix {
-                    self.document
-                        .retained_layout_styles
-                        .calc_values
-                        .drain(..length);
+                    self.document.box_style_data.calc_values.drain(..length);
                 }
                 Ok(value)
             }
@@ -263,7 +260,7 @@ impl LayoutSession<'_> {
         }
         self.prepare_style_views();
         self.document
-            .retained_layout_styles
+            .box_style_data
             .calc_values
             .drain(..old_calc_len);
     }
@@ -322,17 +319,14 @@ impl LayoutSession<'_> {
     ) {
         if let Some(views) = &mut self.style_views {
             self.document
-                .retained_layout_styles
+                .box_style_data
                 .calc_values
                 .extend(values.iter().cloned());
             if !values.is_empty() {
                 views.legacy_calcs.insert(key, values);
             }
         } else {
-            self.document
-                .retained_layout_styles
-                .calc_values
-                .extend(values);
+            self.document.box_style_data.calc_values.extend(values);
         }
     }
 
@@ -409,7 +403,7 @@ impl LayoutSession<'_> {
         if let Some(views) = &mut self.style_views {
             if let Some(payload) = value.calc_owner() {
                 self.document
-                    .retained_layout_styles
+                    .box_style_data
                     .calc_values
                     .push(payload.clone());
             }

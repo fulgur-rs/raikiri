@@ -379,6 +379,7 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
     pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
+    pub(crate) box_style_data: crate::layout::box_style_data::BoxStyleStore,
     pub(crate) layout_cache_context: crate::layout::cache_context::LayoutCacheContext,
     pub(crate) synthetic_style_values: std::collections::HashMap<
         crate::node::arena::BoxKey,
@@ -672,6 +673,7 @@ impl Document {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
             retained_layout_styles,
+            box_style_data: Default::default(),
             layout_cache_context: Default::default(),
             synthetic_style_values: Default::default(),
             #[cfg(test)]
@@ -2068,6 +2070,7 @@ impl Document {
             flags_dirty: _,
             stylesheets,
             retained_layout_styles: _,
+            box_style_data: _,
             layout_cache_context: _,
             synthetic_style_values: _,
             #[cfg(test)]
@@ -2972,6 +2975,8 @@ impl Document {
     }
 
     pub(crate) fn set_initial_containing_block(&mut self, node: Node, mut style: Style) -> usize {
+        self.box_style_data
+            .invalidate_key(crate::node::arena::BoxKey::InitialContainingBlock);
         self.layout_cache_context.publish_metadata();
         node.refresh_box_style(&mut style);
         let key = self.nodes.set_initial_containing_block(node);
@@ -2981,6 +2986,7 @@ impl Document {
     }
 
     pub(crate) fn set_anonymous_tables(&mut self, boxes: Vec<(Node, Style)>) {
+        self.box_style_data.invalidate_anonymous_tables();
         self.layout_cache_context.publish_metadata();
         let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
         self.nodes.set_anonymous_tables(nodes);
@@ -2993,6 +2999,7 @@ impl Document {
     }
 
     pub(crate) fn set_anonymous_cells(&mut self, boxes: Vec<(Node, Style)>) {
+        self.box_style_data.invalidate_anonymous_cells();
         self.layout_cache_context.publish_metadata();
         let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
         self.nodes.set_anonymous_cells(nodes);
@@ -3009,6 +3016,10 @@ impl Document {
         display: raikiri_style::property::DisplayValue,
         position: raikiri_style::property::PositionValue,
     ) {
+        if self.nodes[key].display() != display || self.nodes[key].position() != &position {
+            let box_key = self.nodes.box_key(key).expect("box key has a node");
+            self.box_style_data.invalidate_key(box_key);
+        }
         let Self {
             nodes,
             retained_layout_styles,
@@ -3064,6 +3075,7 @@ impl Document {
     /// `compute_child_layout` advances the document generation lazily. Each
     /// mutation batch invalidates cache stamps in O(1).
     pub(crate) fn invalidate_layout_cache(&mut self) {
+        self.box_style_data.invalidate_source();
         self.page_projection.clear();
         self.counter_snapshot_cache.take();
         self.drop_retained_paragraphs();

@@ -399,7 +399,7 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
             .calc_value();
         let owner = Arc::downgrade(
             session
-                .retained_layout_styles
+                .box_style_data
                 .calc_values
                 .iter()
                 .find(|owner| Arc::as_ptr(owner).cast::<()>() == handle)

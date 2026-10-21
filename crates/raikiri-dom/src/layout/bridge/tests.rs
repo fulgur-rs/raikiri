@@ -187,7 +187,7 @@ fn retained_calc_payloads_survive_bridge_error_until_successful_rebuild() {
 
     apply_computed_to_style(&mut doc, &cascade).expect("initial style bridge");
     let old_payload = Arc::downgrade(
-        doc.retained_layout_styles
+        doc.box_style_data
             .calc_values
             .first()
             .expect("calc payload retained"),
