@@ -218,3 +218,20 @@ fn exhausted_recipe_epoch_keeps_store_permanently_unready() {
     assert!(!store.finish_publication(store.stamp()));
     assert!(!store.is_ready());
 }
+
+#[test]
+fn old_records_survive_interrupted_bridge_until_successful_publication() {
+    let mut store = BoxStyleStore::default();
+    let key = BoxKey::Source(1);
+    let old = record(LayoutBase::Source(1), store.stamp());
+    let weak = Arc::downgrade(&old.prepared);
+    store.insert(key, old);
+    assert!(store.finish_publication(store.stamp()));
+    store.begin_bridge();
+    assert!(weak.upgrade().is_some());
+    assert!(!store.is_ready());
+    store.insert(key, record(LayoutBase::Source(1), store.stamp()));
+    assert!(weak.upgrade().is_some());
+    assert!(store.finish_publication(store.stamp()));
+    assert!(weak.upgrade().is_none());
+}

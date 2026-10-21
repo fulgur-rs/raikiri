@@ -36,7 +36,9 @@ pub(crate) struct BoxStyleData {
 pub(crate) struct BoxStyleStore {
     source: Vec<Option<BoxStyleData>>,
     generated: HashMap<BoxKey, BoxStyleData>,
+    retired: Vec<BoxStyleData>,
     pub(crate) calc_values: Vec<Arc<AlignedCalc>>,
+    pub(crate) pending: HashMap<BoxKey, Vec<OwnedPropertyOverride>>,
     stamp: PreparedStamp,
     ready: Option<PreparedStamp>,
     poisoned: bool,
@@ -78,6 +80,7 @@ impl BoxStyleStore {
         {
             return false;
         }
+        self.retired.clear();
         self.ready = Some(stamp);
         true
     }
@@ -102,21 +105,57 @@ impl BoxStyleStore {
 
     pub(crate) fn insert(&mut self, key: BoxKey, data: BoxStyleData) {
         self.begin_publication();
-        match key {
+        let old = match key {
             BoxKey::Source(index) => {
                 if index >= self.source.len() {
                     self.source.resize_with(index + 1, || None);
                 }
-                self.source[index] = Some(data);
+                self.source[index].replace(data)
             }
-            _ => {
-                self.generated.insert(key, data);
-            }
+            _ => self.generated.insert(key, data),
+        };
+        if let Some(old) = old {
+            self.retired.push(old);
         }
+    }
+
+    pub(crate) fn take(&mut self, key: BoxKey) -> Option<BoxStyleData> {
+        match key {
+            BoxKey::Source(index) => self.source.get_mut(index)?.take(),
+            _ => self.generated.remove(&key),
+        }
+    }
+
+    pub(crate) fn begin_session(&mut self) {
+        self.begin_publication();
+        self.pending.clear();
+        for record in self
+            .source
+            .iter_mut()
+            .flatten()
+            .chain(self.generated.values_mut())
+        {
+            record.pass.clear();
+        }
+    }
+
+    pub(crate) fn begin_bridge(&mut self) {
+        self.begin_publication();
+        self.retired.extend(self.source.drain(..).flatten());
+        self.pending.clear();
+        for record in self.generated.values_mut() {
+            record.pass.clear();
+        }
+    }
+
+    pub(crate) fn invalidate_metadata(&mut self) {
+        self.begin_publication();
+        self.poisoned |= !self.stamp.metadata.advance();
     }
 
     pub(crate) fn publish_recipe(&mut self, key: BoxKey, recipe: recipes::Recipe) {
         self.invalidate_recipe();
+        self.pending.remove(&key);
         self.insert(
             key,
             BoxStyleData {
@@ -139,31 +178,32 @@ impl BoxStyleStore {
 
     pub(crate) fn invalidate_key(&mut self, key: BoxKey) {
         self.begin_publication();
-        match key {
-            BoxKey::Source(index) => {
-                if let Some(record) = self.source.get_mut(index) {
-                    *record = None;
-                }
-                self.poisoned |= !self.stamp.source.advance();
-            }
-            _ => {
-                self.generated.remove(&key);
-            }
+        if let Some(old) = self.take(key) {
+            self.retired.push(old);
+        }
+        if matches!(key, BoxKey::Source(_)) {
+            self.poisoned |= !self.stamp.source.advance();
         }
         self.invalidate_recipe();
     }
 
     pub(crate) fn invalidate_anonymous_tables(&mut self) {
         self.begin_publication();
-        self.generated
-            .retain(|key, _| matches!(key, BoxKey::InitialContainingBlock));
+        self.retired.extend(
+            self.generated
+                .extract_if(|key, _| !matches!(key, BoxKey::InitialContainingBlock))
+                .map(|(_, record)| record),
+        );
         self.invalidate_recipe();
     }
 
     pub(crate) fn invalidate_anonymous_cells(&mut self) {
         self.begin_publication();
-        self.generated
-            .retain(|key, _| !matches!(key, BoxKey::AnonymousCell(_)));
+        self.retired.extend(
+            self.generated
+                .extract_if(|key, _| matches!(key, BoxKey::AnonymousCell(_)))
+                .map(|(_, record)| record),
+        );
         self.invalidate_recipe();
     }
 

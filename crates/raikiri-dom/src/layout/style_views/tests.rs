@@ -1,4 +1,5 @@
 mod calc_owner_tests;
+mod foundation_tests;
 mod preparation_tests;
 
 use crate::layout::{bridge::apply_computed_to_style_in_session, context::LayoutSession};
@@ -299,6 +300,18 @@ fn anonymous_table_and_cell_recipes_inherit_only_selected_facts() {
     doc.set_anonymous_cells(vec![make(DisplayValue::TableCell)]);
     let table = doc.nodes.anonymous_table_key(0);
     let cell = doc.nodes.anonymous_cell_key(0);
+    use crate::layout::box_style_data::recipes;
+    // The fixture supplies the same explicit lowering owner for both boxes.
+    for (idx, is_cell) in [(table, false), (cell, true)] {
+        let facts = recipes::TableFacts::from_owner(&doc, &cascade, idx, parent);
+        let recipe = if is_cell {
+            recipes::anonymous_cell(facts)
+        } else {
+            recipes::anonymous_table(facts)
+        };
+        doc.box_style_data
+            .publish_recipe(doc.nodes.box_key(idx).unwrap(), recipe);
+    }
     let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
     prepare_for_inspection(&mut tree);
     for idx in [table, cell] {
@@ -437,7 +450,14 @@ fn source_metadata_covers_hidden_logical_and_keyword_policies() {
             tree.style_view(child),
             tree.layout_style_for_key(child).unwrap(),
         );
-        let neutral = super::metadata::neutral_values(&tree, &cascade, 0);
+        let crate::layout::box_style_data::LayoutBase::Synthetic(neutral) = &tree
+            .box_style_data
+            .get(crate::node::arena::BoxKey::Source(0))
+            .unwrap()
+            .base
+        else {
+            panic!("document root has a neutral recipe");
+        };
         assert_eq!(neutral.width, L::Auto);
         assert_eq!(neutral.direction, raikiri_style::property::Direction::Ltr);
     }

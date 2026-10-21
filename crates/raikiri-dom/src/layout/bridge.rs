@@ -165,9 +165,9 @@ pub(crate) fn apply_computed_to_style_in_session(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    doc.begin_style_bridge();
     doc.document.box_style_data.invalidate_source();
     doc.document.layout_cache_context.publish_source();
-    doc.begin_style_bridge();
     doc.context.table_cache.clear();
     // Keep the previous payloads alive while styles are rebuilt in place.
     // A later error or unwind may leave some styles with old handles and

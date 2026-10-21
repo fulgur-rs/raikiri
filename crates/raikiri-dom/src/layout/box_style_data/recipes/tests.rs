@@ -514,7 +514,11 @@ fn restoring_a_source_box_discards_contents_and_spanner_recipes() {
             doc.nodes[source].display(),
             raikiri_style::property::DisplayValue::Block
         );
-        if let Some(record) = doc.box_style_data.get(key) {
+        {
+            let record = doc
+                .box_style_data
+                .get(key)
+                .expect("ordinary source foundation is restored");
             assert!(record.recipe.is_none());
             assert!(record.pass.is_empty());
             assert!(matches!(record.base, super::super::LayoutBase::Source(id) if id == source));

@@ -92,11 +92,6 @@ pub(crate) fn prepare(
             },
         },
     );
-    // The sparse adapter keeps the same immutable owner until session binding moves.
-    document.synthetic_style_values.insert(
-        crate::node::arena::BoxKey::InitialContainingBlock,
-        recipe.values.clone(),
-    );
     document
         .box_style_data
         .publish_recipe(crate::node::arena::BoxKey::InitialContainingBlock, recipe);
