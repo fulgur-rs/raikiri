@@ -139,19 +139,14 @@ impl CoreStyle for LayoutStyleView<'_> {
             _ => None,
         }) {
             value
-        } else if let Some(preferred) = c.aspect_ratio.preferred(None) {
-            let width = self.base_length(LengthProperty::Width).value;
-            let height = self.base_length(LengthProperty::Height).value;
-            if matches!(width, L::Auto)
-                || (!self.flags().contains(StyleFlags::CONTAIN_WIDTH) && width.is_content_keyword())
-                || matches!(height, L::Auto)
-            {
-                Some(preferred)
-            } else {
-                None
-            }
         } else {
-            None
+            preferred_aspect_ratio(
+                c.aspect_ratio,
+                self.base_length(LengthProperty::Width).value,
+                self.base_length(LengthProperty::Height).value,
+                None,
+                self.flags().contains(StyleFlags::CONTAIN_WIDTH),
+            )
         };
         if self.vertical() {
             ratio.map(|r| 1.0 / r)
@@ -212,11 +207,53 @@ impl CoreStyle for LayoutStyleView<'_> {
         }
     }
 }
-fn overflow(value: OverflowValue) -> taffy::Overflow {
+pub(crate) fn overflow(value: OverflowValue) -> taffy::Overflow {
     match value {
         OverflowValue::Hidden => taffy::Overflow::Hidden,
         OverflowValue::Clip => taffy::Overflow::Clip,
         OverflowValue::Auto | OverflowValue::Scroll => taffy::Overflow::Scroll,
         _ => taffy::Overflow::Visible,
+    }
+}
+
+impl LayoutStyleView<'_> {
+    /// The physical clearance, including fragmentation-pass overrides.
+    pub fn clear(&self) -> taffy::Clear {
+        let value = self
+            .overrides()
+            .find_map(|entry| match entry {
+                OverrideKind::Clear(value) => Some(value),
+                _ => None,
+            })
+            .unwrap_or(self.prepared.values.clear);
+        clear(value)
+    }
+}
+
+pub(crate) fn clear(value: raikiri_style::property::ClearValue) -> taffy::Clear {
+    use raikiri_style::property::ClearValue as C;
+    match value {
+        C::Left => taffy::Clear::Left,
+        C::Right => taffy::Clear::Right,
+        C::Both => taffy::Clear::Both,
+        _ => taffy::Clear::None,
+    }
+}
+
+/// Preferred ratio after automatic-size and containment policy, before axis projection.
+pub fn preferred_aspect_ratio(
+    ratio: raikiri_style::property::AspectRatioValue,
+    width: L,
+    height: L,
+    natural: Option<f32>,
+    size_contained: bool,
+) -> Option<f32> {
+    if matches!(width, L::Auto)
+        || (natural.is_none() && !size_contained && width.is_content_keyword())
+        || matches!(height, L::Auto)
+    {
+        ratio.preferred(natural)
+    } else {
+        None
     }
 }

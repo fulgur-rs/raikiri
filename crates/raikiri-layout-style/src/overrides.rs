@@ -1,7 +1,7 @@
 use crate::{AlignedCalc, Axis, LengthProperty};
 use raikiri_style::{
     ComputedLengthPercentageOrAuto as L, ComputedLengthPercentageOrCalc as P,
-    property::OverflowValue,
+    property::{ClearValue, OverflowValue},
 };
 use std::sync::Arc;
 
@@ -74,6 +74,7 @@ pub(crate) enum OverrideKind<'a> {
     Length(LengthProperty, LengthValue<'a>),
     AspectRatio(Option<f32>),
     Overflow(Axis, OverflowValue),
+    Clear(ClearValue),
     FlexShrink(f32),
     AlignSelf(Option<taffy::AlignSelf>),
     JustifySelf(Option<taffy::AlignSelf>),
@@ -107,6 +108,10 @@ impl<'a> PropertyOverride<'a> {
     pub const fn overflow(axis: Axis, value: OverflowValue) -> Self {
         Self(OverrideKind::Overflow(axis, value))
     }
+    /// Override clearance for a fragmentation pass.
+    pub const fn clear(value: ClearValue) -> Self {
+        Self(OverrideKind::Clear(value))
+    }
     /// Override flex shrink during an intrinsic probe.
     pub const fn flex_shrink(value: f32) -> Self {
         Self(OverrideKind::FlexShrink(value))
@@ -137,6 +142,87 @@ enum OwnedOverrideKind {
     },
 }
 impl OwnedPropertyOverride {
+    /// Override clearance for a fragmentation pass.
+    pub const fn clear(value: ClearValue) -> Self {
+        Self(OwnedOverrideKind::Inline(PropertyOverride::clear(value)))
+    }
+
+    /// Replace the entry for this property, preserving a sparse pass layer.
+    pub fn install(self, entries: &mut Vec<Self>) {
+        if let Some(previous) = entries.iter_mut().find(|entry| self.same_property(entry)) {
+            *previous = self;
+        } else {
+            entries.push(self);
+        }
+    }
+
+    fn same_property(&self, other: &Self) -> bool {
+        use OverrideKind::*;
+        match (self.as_borrowed().0, other.as_borrowed().0) {
+            (Length(a, _), Length(b, _)) => a == b,
+            (Overflow(a, _), Overflow(b, _)) => a == b,
+            (AspectRatio(_), AspectRatio(_))
+            | (Clear(_), Clear(_))
+            | (FlexShrink(_), FlexShrink(_))
+            | (AlignSelf(_), AlignSelf(_))
+            | (JustifySelf(_), JustifySelf(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Project a physical override into the transitional retained style.
+    ///
+    /// Scalar conversion is shared with the view getters. The adapter must retain
+    /// calc owners before publishing the resulting raw handles.
+    pub fn apply_to_style(&self, style: &mut taffy::Style<raikiri_style::SmolStr>) {
+        use LengthProperty::*;
+        match self.as_borrowed().0 {
+            OverrideKind::Length(property, value) => match property {
+                Width => style.size.width = value.dimension(),
+                Height => style.size.height = value.dimension(),
+                MinWidth => style.min_size.width = value.auto(false),
+                MinHeight => style.min_size.height = value.auto(false),
+                MaxWidth => style.max_size.width = value.auto(false),
+                MaxHeight => style.max_size.height = value.auto(false),
+                MarginTop => style.margin.top = value.auto(true),
+                MarginRight => style.margin.right = value.auto(true),
+                MarginBottom => style.margin.bottom = value.auto(true),
+                MarginLeft => style.margin.left = value.auto(true),
+                PaddingTop => style.padding.top = value.lp(crate::PercentBasis::Taffy),
+                PaddingRight => style.padding.right = value.lp(crate::PercentBasis::Taffy),
+                PaddingBottom => style.padding.bottom = value.lp(crate::PercentBasis::Taffy),
+                PaddingLeft => style.padding.left = value.lp(crate::PercentBasis::Taffy),
+                BorderTop => style.border.top = value.lp(crate::PercentBasis::Taffy),
+                BorderRight => style.border.right = value.lp(crate::PercentBasis::Taffy),
+                BorderBottom => style.border.bottom = value.lp(crate::PercentBasis::Taffy),
+                BorderLeft => style.border.left = value.lp(crate::PercentBasis::Taffy),
+                Top => style.inset.top = value.auto(false),
+                Right => style.inset.right = value.auto(false),
+                Bottom => style.inset.bottom = value.auto(false),
+                Left => style.inset.left = value.auto(false),
+                FlexBasis => style.flex_basis = value.dimension(),
+                ColumnGap => style.gap.width = value.lp(crate::PercentBasis::Taffy),
+                RowGap => style.gap.height = value.lp(crate::PercentBasis::Taffy),
+                // cov:ignore: constructors reject preparation-only override targets.
+                LogicalWidth | LogicalHeight | MinBlock => {
+                    unreachable!("validated physical override")
+                }
+            },
+            OverrideKind::AspectRatio(value) => style.aspect_ratio = value,
+            OverrideKind::Overflow(axis, value) => {
+                let target = match axis {
+                    Axis::X => &mut style.overflow.x,
+                    Axis::Y => &mut style.overflow.y,
+                };
+                *target = crate::core::overflow(value);
+            }
+            OverrideKind::Clear(value) => style.clear = crate::core::clear(value),
+            OverrideKind::FlexShrink(value) => style.flex_shrink = value,
+            OverrideKind::AlignSelf(value) => style.align_self = value,
+            OverrideKind::JustifySelf(value) => style.justify_self = value,
+        }
+    }
+
     /// Construct a physical length override, preparing a calc owner if needed.
     /// `resolved` marks values already resolved in physical pixels.
     ///

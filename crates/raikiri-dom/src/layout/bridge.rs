@@ -1,3 +1,4 @@
+use super::style_views::metadata::{size_containment, sizing_flags as view_sizing_flags};
 use super::*;
 use crate::layout::context::LayoutSession;
 use crate::node::{FormattingContext, Node};
@@ -188,56 +189,6 @@ pub(crate) fn apply_computed_to_style_in_session(
     result
 }
 
-pub(super) fn view_sizing_flags(
-    doc: &Document,
-    cascade: &CascadeResult,
-    idx: usize,
-) -> raikiri_layout_style::StyleFlags {
-    use raikiri_layout_style::StyleFlags as F;
-    if doc.nodes[idx].kind() != NodeKind::Element {
-        return F::EMPTY;
-    }
-    let cv = &cascade.computed[idx];
-    let mut flags = F::EMPTY;
-    let content_keyword = |size| {
-        matches!(
-            size,
-            ComputedLengthPercentageOrAuto::MaxContent
-                | ComputedLengthPercentageOrAuto::FitContent
-                | ComputedLengthPercentageOrAuto::FitContentOf(_)
-        )
-    };
-    let logical = vertical_logical_size(cascade, idx);
-    let width = logical.map_or(cv.width, |size| size.width);
-    let height = logical.map_or(cv.height, |size| size.height);
-    if logical.is_some() {
-        flags = flags.union(F::VERTICAL_LOGICAL_SIZE);
-    }
-    if min_content_width_is_auto(doc, cascade, idx) {
-        flags = flags.union(F::MIN_CONTENT_WIDTH_AUTO);
-    }
-    if (content_keyword(width) || (logical.is_some() && content_keyword(height)))
-        && !sized_by_content_keyword(doc, cascade, idx, cv)
-    {
-        if content_keyword(width) {
-            flags = flags.union(F::IGNORE_WIDTH_KEYWORD);
-        }
-        if logical.is_some() && content_keyword(height) {
-            flags = flags.union(F::IGNORE_HEIGHT_KEYWORD);
-        }
-    }
-    if !honors_content_limits(doc, cascade, idx, cv) {
-        flags = flags.union(F::IGNORE_LIMIT_KEYWORDS);
-    }
-    if cv.min_block_size.is_some_and(is_sizing_keyword)
-        && (is_supported_flex_grid_item(doc, cascade, idx, cv)
-            || is_supported_flex_grid_container(doc, idx, cv))
-    {
-        flags = flags.union(F::IGNORE_LOGICAL_MIN_BLOCK);
-    }
-    flags
-}
-
 fn apply_computed_to_style_in_session_inner(
     doc: &mut LayoutSession<'_>,
     cascade: &CascadeResult,
@@ -346,22 +297,23 @@ fn apply_computed_to_style_in_session_inner(
         doc.layout_node_with_style_mut(idx)
             .unwrap()
             .style
-            .item_is_replaced = crate::paint_rules::lays_out_as_replaced(doc, idx);
+            .item_is_replaced = super::style_views::metadata::is_replaced(doc, cascade, idx);
         // A resolver may give the natural size and leave its ratio unset; the
         // ratio of that size is then the natural one.
         let natural_ratio = crate::taffy_impl::leaf_intrinsic_ratio(&doc.nodes[idx]);
         let preferred_ratio = preferred_aspect_ratio(cv, natural_ratio, false);
         doc.nodes[idx].preferred_aspect_ratio = preferred_ratio;
         doc.nodes[idx].ratio_in_content_box = cv.aspect_ratio.relates_content_box(natural_ratio);
-        doc.layout_node_with_style_mut(idx)
-            .unwrap()
-            .style
-            .aspect_ratio = preferred_ratio;
         if natural_ratio.is_some() {
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(preferred_ratio),
             );
+        } else {
+            doc.layout_node_with_style_mut(idx)
+                .unwrap()
+                .style
+                .aspect_ratio = preferred_ratio;
         }
         doc.nodes[idx].svg_width_follows_available = false;
         // SVG 2 geometry: auto dimensions on svg are treated as 100%.
@@ -381,11 +333,6 @@ fn apply_computed_to_style_in_session_inner(
                 && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
             {
                 doc.nodes[idx].svg_width_follows_available = true;
-                doc.layout_node_with_style_mut(idx)
-                    .unwrap()
-                    .style
-                    .size
-                    .width = Dimension::percent(1.0);
                 doc.record_pass_override(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::length(
@@ -399,10 +346,6 @@ fn apply_computed_to_style_in_session_inner(
                 // Taffy transfers max-height to max-width through this ratio
                 // even for a definite width. SVG leaf measurement handles its
                 // auto height without shrinking an authored width.
-                doc.layout_node_with_style_mut(idx)
-                    .unwrap()
-                    .style
-                    .aspect_ratio = None;
                 doc.record_pass_override(
                     idx,
                     raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
@@ -410,17 +353,8 @@ fn apply_computed_to_style_in_session_inner(
             }
         }
         if let Some((intrinsic_width, intrinsic_height)) =
-            bridge_known_image_intrinsic_size(doc, idx, cv)
+            bridge_known_image_intrinsic_size(doc, idx, cv.width, cv.height)
         {
-            let style = &mut doc.document.layout_node_with_style_mut(idx).unwrap().style;
-            // The supplied size is the image's natural size.
-            style.item_is_replaced = true;
-            if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
-                style.size.width = Dimension::length(intrinsic_width);
-            }
-            if matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
-                style.size.height = Dimension::length(intrinsic_height);
-            }
             {
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 for (property, value, original) in [
@@ -573,11 +507,10 @@ fn apply_computed_to_style_in_session_inner(
             let recipe = super::box_style_data::recipes::contents(
                 super::box_style_data::recipes::BoxFacts {
                     direction: direction_for_axes(cv, vertical_axes),
-                    metadata: raikiri_layout_style::StyleMetadata {
-                        flags: raikiri_layout_style::StyleFlags::EMPTY,
-                        used_writing_mode: doc.nodes[idx].used_writing_mode,
-                        claims: None,
-                    },
+                    metadata: super::style_views::metadata::node_metadata(
+                        &doc.nodes[idx],
+                        raikiri_layout_style::StyleFlags::EMPTY,
+                    ),
                 },
             );
             doc.document.box_style_data.publish_recipe(key, recipe);
@@ -588,11 +521,10 @@ fn apply_computed_to_style_in_session_inner(
             let recipe = super::box_style_data::recipes::neutral_source(
                 super::box_style_data::recipes::BoxFacts {
                     direction: taffy::Direction::Ltr,
-                    metadata: raikiri_layout_style::StyleMetadata {
-                        flags: raikiri_layout_style::StyleFlags::EMPTY,
-                        used_writing_mode: doc.nodes[idx].used_writing_mode,
-                        claims: None,
-                    },
+                    metadata: super::style_views::metadata::node_metadata(
+                        &doc.nodes[idx],
+                        raikiri_layout_style::StyleFlags::EMPTY,
+                    ),
                 },
             );
             doc.document
@@ -621,14 +553,6 @@ fn apply_computed_to_style_in_session_inner(
         // keyword width at the width of an empty box.
         if containment.width || containment.height {
             let contained_ratio = preferred_aspect_ratio(cv, None, containment.width);
-            let style = &mut doc.layout_node_with_style_mut(idx).unwrap().style;
-            style.aspect_ratio = contained_ratio;
-            if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
-                style.size.width = Dimension::auto();
-            }
-            if containment.height && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
-                style.size.height = Dimension::auto();
-            }
             {
                 use raikiri_layout_style::{LengthProperty as P, OwnedPropertyOverride as O};
                 doc.record_pass_override(idx, O::aspect_ratio(contained_ratio));
@@ -649,20 +573,12 @@ fn apply_computed_to_style_in_session_inner(
         if stretches_on_both_grid_axes(doc, idx, cv)
             && !replaced_keyword_width(doc.document, cascade, idx)
         {
-            doc.layout_node_with_style_mut(idx)
-                .unwrap()
-                .style
-                .aspect_ratio = None;
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::aspect_ratio(None),
             );
         }
         if is_stretched_by_replaced_keyword_width_in_grid(doc, cascade, idx) {
-            doc.layout_node_with_style_mut(idx)
-                .unwrap()
-                .style
-                .justify_self = Some(TaffyAlignItems::START);
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::justify_self(Some(
@@ -671,10 +587,6 @@ fn apply_computed_to_style_in_session_inner(
             );
         }
         if is_stretched_by_keyword_width(doc, cascade, idx) {
-            doc.layout_node_with_style_mut(idx)
-                .unwrap()
-                .style
-                .align_self = Some(TaffyAlignItems::FLEX_START);
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(
@@ -683,10 +595,6 @@ fn apply_computed_to_style_in_session_inner(
             );
         }
         if let Some(fallback) = unstretched_keyword_height_alignment(doc, cascade, idx) {
-            doc.layout_node_with_style_mut(idx)
-                .unwrap()
-                .style
-                .align_self = Some(fallback);
             doc.record_pass_override(
                 idx,
                 raikiri_layout_style::OwnedPropertyOverride::align_self(Some(fallback)),
@@ -783,52 +691,6 @@ fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
     }
 }
 
-/// The physical axes in which `contain` sizes the box as if it had no
-/// content (CSS Containment 2 §3.1 size containment, §3.2 inline-size
-/// containment).
-///
-/// Neither applies to a box that is not generated, to a non-atomic inline
-/// box, or to an internal table box (§3.1, §3.2), which a table caption is
-/// not. Tables are left out as well: their width algorithm sizes the grid
-/// from its cells. Inline-size containment acts on the inline axis of the
-/// box's own writing mode.
-fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::Size<bool> {
-    use raikiri_style::property::Contain;
-
-    let none = taffy::Size {
-        width: false,
-        height: false,
-    };
-    let applies = (cv.display.is_flex_or_grid_container()
-        || (cv.display.is_inline_flow_box()
-            || matches!(
-                cv.display,
-                DisplayValue::Block
-                    | DisplayValue::FlowRoot
-                    | DisplayValue::ListItem
-                    | DisplayValue::TableCaption
-                    | DisplayValue::BlockRuby
-            )))
-        && !super::fixed::generates_inline_box(doc, idx, cv);
-    if !applies {
-        return none;
-    }
-    if cv.contain.contains(Contain::SIZE) {
-        return taffy::Size {
-            width: true,
-            height: true,
-        };
-    }
-    if !cv.contain.contains(Contain::INLINE_SIZE) {
-        return none;
-    }
-    let vertical = crate::taffy_impl::used_writing_mode(doc, idx).is_vertical();
-    taffy::Size {
-        width: !vertical,
-        height: vertical,
-    }
-}
-
 /// Whether painting `cv` draws effects sized from the whole border box
 /// (background and border images, rounded corners, shadows, outlines, masks,
 /// clips and filters) or composites the whole box as one group (opacity and
@@ -895,34 +757,42 @@ fn layout_values<'a>(
     vertical_sized: Option<&'a ComputedValues>,
 ) -> std::borrow::Cow<'a, ComputedValues> {
     let cv = vertical_sized.unwrap_or(&cascade.computed[idx]);
-    let content_keyword = |size| {
-        matches!(
-            size,
-            ComputedLengthPercentageOrAuto::MaxContent
-                | ComputedLengthPercentageOrAuto::FitContent
-                | ComputedLengthPercentageOrAuto::FitContentOf(_)
-        )
-    };
-    let width = content_keyword(cv.width)
-        || (matches!(cv.width, ComputedLengthPercentageOrAuto::MinContent)
-            && min_content_width_is_auto(doc, cascade, idx));
-    let height = vertical_sized.is_some() && content_keyword(cv.height);
-    let limited = [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
-        .into_iter()
-        .any(is_sizing_keyword);
-    let ignore_logical_min_block = cv.min_block_size.is_some_and(is_sizing_keyword)
-        && (is_supported_flex_grid_item(doc, cascade, idx, cv)
-            || is_supported_flex_grid_container(doc, idx, cv));
-    let plain_sizes = (width || height) && !sized_by_content_keyword(doc, cascade, idx, cv);
-    let plain_limits = limited && !honors_content_limits(doc, cascade, idx, cv);
-    if !(plain_sizes || plain_limits || ignore_logical_min_block) {
+    // Only intrinsic keywords need contextual normalization. Keep the ordinary
+    // scalar path free of repeated ancestor and formatting-context queries.
+    if ![
+        cv.width,
+        cv.height,
+        cv.min_width,
+        cv.max_width,
+        cv.min_height,
+        cv.max_height,
+        cv.min_block_size
+            .unwrap_or(ComputedLengthPercentageOrAuto::Auto),
+    ]
+    .into_iter()
+    .any(is_sizing_keyword)
+    {
+        return std::borrow::Cow::Borrowed(cv);
+    }
+    use raikiri_layout_style::StyleFlags as F;
+    let flags = view_sizing_flags(doc, cascade, idx);
+    let width = flags.contains(F::IGNORE_WIDTH_KEYWORD)
+        || (flags.contains(F::MIN_CONTENT_WIDTH_AUTO)
+            && cv.width == ComputedLengthPercentageOrAuto::MinContent);
+    let height = flags.contains(F::IGNORE_HEIGHT_KEYWORD);
+    let plain_limits = flags.contains(F::IGNORE_LIMIT_KEYWORDS)
+        && [cv.min_width, cv.max_width, cv.min_height, cv.max_height]
+            .into_iter()
+            .any(is_sizing_keyword);
+    let ignore_logical_min_block = flags.contains(F::IGNORE_LOGICAL_MIN_BLOCK);
+    if !(width || height || plain_limits || ignore_logical_min_block) {
         return std::borrow::Cow::Borrowed(cv);
     }
     let mut plain = cv.clone();
-    if plain_sizes && width {
+    if width {
         plain.width = ComputedLengthPercentageOrAuto::Auto;
     }
-    if plain_sizes && height {
+    if height {
         plain.height = ComputedLengthPercentageOrAuto::Auto;
     }
     if plain_limits {
@@ -947,7 +817,7 @@ fn layout_values<'a>(
 }
 
 /// Whether `size` is one of the intrinsic sizing keywords.
-fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
+pub(super) fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
     matches!(
         size,
         ComputedLengthPercentageOrAuto::MinContent
@@ -972,7 +842,7 @@ fn is_sizing_keyword(size: ComputedLengthPercentageOrAuto) -> bool {
 /// - table containers and items, replaced items, and inline-level boxes
 ///   other than inline-blocks measure themselves by algorithms of their own;
 /// - a vertical box swaps the axes a keyword refers to.
-fn honors_content_limits(
+pub(super) fn honors_content_limits(
     doc: &Document,
     cascade: &CascadeResult,
     idx: usize,
@@ -1004,7 +874,11 @@ fn honors_content_limits(
 
 /// Whether `idx` is an in-flow flex/grid container whose own intrinsic min/max
 /// constraints this bridge can preserve.
-fn is_supported_flex_grid_container(doc: &Document, idx: usize, cv: &ComputedValues) -> bool {
+pub(super) fn is_supported_flex_grid_container(
+    doc: &Document,
+    idx: usize,
+    cv: &ComputedValues,
+) -> bool {
     cv.display.is_flex_or_grid_container()
         && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
         && cv.float == FloatValue::None
@@ -1016,7 +890,7 @@ fn is_supported_flex_grid_container(doc: &Document, idx: usize, cv: &ComputedVal
 /// Whether `idx` participates as a flex/grid item whose intrinsic min/max
 /// constraints this bridge can preserve. Other item types remain on their
 /// existing size paths.
-fn is_supported_flex_grid_item(
+pub(super) fn is_supported_flex_grid_item(
     doc: &Document,
     cascade: &CascadeResult,
     idx: usize,
@@ -1080,7 +954,7 @@ pub(crate) fn width_sized_by_keyword(doc: &Document, cascade: &CascadeResult, id
 /// - a flex or grid item with a `min-width` or `max-width` is measured by Taffy
 ///   at the keyword size before that size is clamped, so the lines of its
 ///   content break at a width the box does not keep.
-fn sized_by_content_keyword(
+pub(super) fn sized_by_content_keyword(
     doc: &Document,
     cascade: &CascadeResult,
     idx: usize,
@@ -1394,19 +1268,22 @@ fn preferred_aspect_ratio(
     natural: Option<f32>,
     size_contained: bool,
 ) -> Option<f32> {
-    if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
-        || (natural.is_none() && !size_contained && cv.width.is_content_keyword())
-        || matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
-    {
-        cv.aspect_ratio.preferred(natural)
-    } else {
-        None
-    }
+    raikiri_layout_style::preferred_aspect_ratio(
+        cv.aspect_ratio,
+        cv.width,
+        cv.height,
+        natural,
+        size_contained,
+    )
 }
 
 /// Whether element `idx` is a replaced box of a horizontal writing mode, which
 /// sizes itself by its `min-content` width as it does by `auto`.
-fn min_content_width_is_auto(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+pub(super) fn min_content_width_is_auto(
+    doc: &Document,
+    cascade: &CascadeResult,
+    idx: usize,
+) -> bool {
     crate::paint_rules::is_replaced_element(doc, idx) && !lays_out_vertically(cascade, idx)
 }
 
@@ -1627,10 +1504,11 @@ fn has_only_fixed_rows(doc: &LayoutSession<'_>, grid: usize) -> bool {
 /// An image that was decoded has its own natural size, which is not the one
 /// supplied here: the supplied size would be taken as authored and win over it.
 /// The empty box a resolver's fallback leaves is not a natural size.
-fn bridge_known_image_intrinsic_size(
+pub(super) fn bridge_known_image_intrinsic_size(
     doc: &Document,
     node_id: usize,
-    cv: &ComputedValues,
+    width: ComputedLengthPercentageOrAuto,
+    height: ComputedLengthPercentageOrAuto,
 ) -> Option<(f32, f32)> {
     let node = &doc.layout_node_with_style(node_id).unwrap();
     let has_natural_size = node
@@ -1644,8 +1522,8 @@ fn bridge_known_image_intrinsic_size(
     if basename != "green.png" {
         return None;
     }
-    let width_auto = matches!(cv.width, ComputedLengthPercentageOrAuto::Auto);
-    let height_auto = matches!(cv.height, ComputedLengthPercentageOrAuto::Auto);
+    let width_auto = matches!(width, ComputedLengthPercentageOrAuto::Auto);
+    let height_auto = matches!(height, ComputedLengthPercentageOrAuto::Auto);
     (width_auto || height_auto).then_some((100.0, 50.0))
 }
 

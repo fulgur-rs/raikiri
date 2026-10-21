@@ -3499,11 +3499,15 @@ pub(crate) fn prepare_authored_block_widths(
             } else {
                 ancestors.content_width[idx]
             };
-            doc.layout_node_with_style_mut(idx)
-                .unwrap()
-                .style
-                .size
-                .width = Dimension::length(used_width);
+            doc.record_pass_override(
+                idx,
+                raikiri_layout_style::OwnedPropertyOverride::length(
+                    raikiri_layout_style::LengthProperty::Width,
+                    ComputedLengthPercentageOrAuto::Px(used_width),
+                    true,
+                )
+                .expect("resolved physical multicol width"),
+            );
         }
     }
 }

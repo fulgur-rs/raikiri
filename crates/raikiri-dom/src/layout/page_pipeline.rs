@@ -2706,11 +2706,10 @@ fn clear_floats_at_forced_breaks<'name>(
                     last_block = None;
                 }
                 if after_forced_break && !float_after_break {
-                    document
-                        .layout_node_with_style_mut(child)
-                        .unwrap()
-                        .style
-                        .clear = taffy::Clear::Both;
+                    document.record_pass_override(
+                        child,
+                        raikiri_layout_style::OwnedPropertyOverride::clear(ClearValue::Both),
+                    );
                     cleared.push(child);
                     float_after_break = true;
                 }
@@ -2759,11 +2758,10 @@ fn clear_floats_at_forced_breaks<'name>(
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too.
             if forced {
-                document
-                    .layout_node_with_style_mut(child)
-                    .unwrap()
-                    .style
-                    .clear = taffy::Clear::Both;
+                document.record_pass_override(
+                    child,
+                    raikiri_layout_style::OwnedPropertyOverride::clear(ClearValue::Both),
+                );
                 cleared.push(child);
             }
         }
