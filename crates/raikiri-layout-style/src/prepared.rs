@@ -289,6 +289,7 @@ impl<'a> PreparedStyle<'a> {
         Self::scalar_value(&self.values, property)
     }
 
+    #[inline]
     fn scalar_value(c: &ComputedValues, property: LengthProperty) -> L {
         use LengthProperty::*;
         let padding = |v| match v {
