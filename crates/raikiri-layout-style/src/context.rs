@@ -70,36 +70,6 @@ pub enum LengthProperty {
     MinBlock,
 }
 impl LengthProperty {
-    pub(crate) const ALL: &'static [Self] = &[
-        Self::Width,
-        Self::Height,
-        Self::MinWidth,
-        Self::MinHeight,
-        Self::MaxWidth,
-        Self::MaxHeight,
-        Self::MarginTop,
-        Self::MarginRight,
-        Self::MarginBottom,
-        Self::MarginLeft,
-        Self::PaddingTop,
-        Self::PaddingRight,
-        Self::PaddingBottom,
-        Self::PaddingLeft,
-        Self::BorderTop,
-        Self::BorderRight,
-        Self::BorderBottom,
-        Self::BorderLeft,
-        Self::Top,
-        Self::Right,
-        Self::Bottom,
-        Self::Left,
-        Self::FlexBasis,
-        Self::ColumnGap,
-        Self::RowGap,
-        Self::LogicalWidth,
-        Self::LogicalHeight,
-        Self::MinBlock,
-    ];
     pub(crate) fn non_negative(self) -> bool {
         !matches!(
             self,
