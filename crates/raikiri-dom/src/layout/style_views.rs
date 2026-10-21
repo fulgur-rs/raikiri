@@ -133,11 +133,8 @@ impl<'a> StyleViews<'a> {
         // A source box may become a Flex/Grid item after a later topology change.
         for (key, old) in previous {
             if matches!(key, BoxKey::Source(_)) && !old.pass.is_empty() {
-                let mut pass = old.pass;
-                if let Some(newer) = self.pending.remove(&key) {
-                    pass.extend(newer);
-                }
-                self.pending.insert(key, pass);
+                // Overrides enter either a prepared box or pending, so these keys are disjoint.
+                self.pending.insert(key, old.pass);
             }
         }
         self.prepared_publication = Some(doc.layout_cache_context.publication_epoch());

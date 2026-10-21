@@ -81,6 +81,46 @@ fn flex_basis_bounds_record_only_changed_values_and_restore_on_error_and_unwind(
 }
 
 #[test]
+fn legacy_flex_basis_probe_restores_retained_values_after_error_and_unwind() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:flex",
+        "flex:1 0 20px;width:10px;min-width:3px;max-width:30px",
+    );
+    let parent = doc.nodes[child].parent.unwrap();
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::new(&mut doc);
+    let original = tree.layout_style_for_key(child).unwrap().clone();
+    let result: Result<(), ()> =
+        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), |tree| {
+            let style = tree.layout_style_for_key(child).unwrap();
+            assert_eq!(style.size.width, taffy::Dimension::length(20.0));
+            assert_eq!(
+                style.min_size.width,
+                taffy::LengthPercentageAuto::length(20.0)
+            );
+            assert_eq!(style.flex_shrink, 1.0);
+            Err(())
+        });
+    assert!(result.is_err());
+    let restored = tree.layout_style_for_key(child).unwrap();
+    assert_eq!(restored.size, original.size);
+    assert_eq!(restored.min_size, original.min_size);
+    assert_eq!(restored.max_size, original.max_size);
+    assert_eq!(restored.flex_shrink, original.flex_shrink);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        super::super::with_flex_item_basis_bounds(&mut tree, NodeId::from(parent), |_| {
+            panic!("legacy flex bound unwind")
+        });
+    }));
+    assert!(panic.is_err());
+    let restored = tree.layout_style_for_key(child).unwrap();
+    assert_eq!(restored.size, original.size);
+    assert_eq!(restored.min_size, original.min_size);
+    assert_eq!(restored.max_size, original.max_size);
+    assert_eq!(restored.flex_shrink, original.flex_shrink);
+}
+
+#[test]
 fn flex_item_container_resolves_edges_during_indefinite_main_axis_measurement() {
     let (mut doc, cascade, child, _) = fixture_with_styles(
         "display:flex;width:100px",
