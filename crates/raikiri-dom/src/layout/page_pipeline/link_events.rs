@@ -4,6 +4,7 @@ use super::{
     Document, HashMap, HashSet, NodeId, NodeKind, PageFragment, PageFragmentEvent,
     PageFragmentItem, PageFragmentKind, PageFragmentLink, PageFragmentLinkEvent, find_body,
 };
+use crate::document::ancestors::{AncestorCursor, ParentRelation};
 
 /// Collect deterministic page-local link events from page snapshots.
 ///
@@ -77,14 +78,15 @@ pub(crate) fn page_fragment_events_from_pages(
                 // Start at the parent: another fragment of this node is not
                 // a descendant. A marked ancestor's remaining chain has
                 // already been visited for this page and anchor identity.
-                let mut parent = document.parent_of(node_id);
-                while let Some(id) = parent {
+                let mut parent =
+                    AncestorCursor::new(document.parent_of(node_id), ParentRelation::Source);
+                while let Some(id) = parent.current() {
                     #[cfg(all(test, debug_assertions))]
                     super::tests::link_ancestor_tests::note_probe();
                     if owners.get(&id) != owner || !suppressed_boxes.insert(id) {
                         break;
                     }
-                    parent = document.parent_of(id);
+                    parent.advance(document);
                 }
             }
         }

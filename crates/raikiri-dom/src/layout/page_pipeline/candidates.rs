@@ -380,11 +380,9 @@ impl FlowRoots {
 /// The box from whose coordinates a candidate is positioned. Inline
 /// ancestors of paragraph boxes and contents elements add no layout frame.
 pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usize> {
-    let mut parent = document.layout_parent_of(child)?;
-    while document.nodes[parent].display() == DisplayValue::Contents {
-        parent = document.layout_parent_of(parent)?;
-    }
-    Some(parent)
+    document
+        .layout_ancestors(child)
+        .find(|&parent| document.nodes[parent].display() != DisplayValue::Contents)
 }
 
 /// Collects the page candidates of a laid-out subtree. Page membership is

@@ -1,6 +1,32 @@
 use super::*;
 use crate::layout::ifc::test_support::block_fixture;
 
+#[test]
+fn a_candidate_parent_skips_contents_and_noncontributing_inline_layout_frames() {
+    let mut ids = [0; 3];
+    let mut fixture = block_fixture("", |doc, root| {
+        ids[0] = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+        ids[1] = doc.append_element(
+            Some(ids[0]),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        ids[2] = doc.append_element(Some(ids[1]), "div", Style::default(), Some("display:block"));
+    });
+    fixture.doc.nodes[fixture.root]
+        .flags
+        .insert(NodeFlags::IS_IFC_ROOT);
+    fixture.doc.nodes[ids[0]]
+        .flags
+        .insert(NodeFlags::IN_IFC_SUBTREE);
+    assert_eq!(
+        candidates::candidate_parent(&fixture.doc, ids[2]),
+        Some(fixture.root)
+    );
+    assert_eq!(candidates::candidate_parent(&fixture.doc, 0), None);
+}
+
 fn spanning_growth_fixture(
     owner_css: &str,
 ) -> (crate::layout::ifc::test_support::Fixture, usize, usize) {
