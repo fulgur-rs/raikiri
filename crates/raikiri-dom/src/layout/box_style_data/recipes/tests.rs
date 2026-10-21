@@ -156,6 +156,39 @@ fn neutral_source_recipe_matches_native_defaults_and_empty_auto_tracks() {
 }
 
 #[test]
+fn neutral_values_share_only_equal_directions() {
+    let ltr = neutral_source(facts(taffy::Direction::Ltr, false));
+    let rtl = neutral_source(facts(taffy::Direction::Rtl, false));
+    let again = neutral_source(facts(taffy::Direction::Rtl, true));
+    assert!(std::sync::Arc::ptr_eq(&rtl.values, &again.values));
+    assert!(!std::sync::Arc::ptr_eq(&ltr.values, &rtl.values));
+    assert_eq!(
+        rtl.values.direction,
+        raikiri_style::property::Direction::Rtl
+    );
+    assert_legacy(
+        &rtl,
+        &LayoutStyle {
+            direction: taffy::Direction::Rtl,
+            ..LayoutStyle::default()
+        },
+    );
+}
+
+#[test]
+fn hidden_box_facts_suppress_box_generation() {
+    let style = LayoutStyle {
+        display: taffy::Display::None,
+        ..LayoutStyle::default()
+    };
+    let node = crate::node::Node::new_element("div".into(), style, None);
+    let recipe = contents(BoxFacts::for_node(&node, taffy::Direction::Rtl));
+    let prepared = PreparedStyle::prepare(&recipe.values, recipe.metadata);
+    let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
+    assert_eq!(view.box_generation_mode(), taffy::BoxGenerationMode::None);
+}
+
+#[test]
 fn icb_publication_registers_document_owned_recipe_without_extending_source_values() {
     let mut doc = crate::Document::new();
     let html = doc.append_element(

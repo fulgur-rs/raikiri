@@ -13,8 +13,7 @@ pub use data::PreparedData;
 #[cfg(test)]
 mod tests;
 
-// One exhaustive field mapping generates both queries and the straight-line calc scan.
-// Constant property identities let preparation inspect fields without runtime dispatch.
+// One exhaustive field mapping generates both queries and ordered calc visits.
 macro_rules! scalar_properties {
     ($c:ident; $($property:ident => $value:expr),+ $(,)?) => {
         impl LengthProperty {
@@ -30,18 +29,7 @@ macro_rules! scalar_properties {
                 $c: &ComputedValues,
                 mut visit: impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
             ) -> Result<(), PrepareError> {
-                $(
-                    // Logical aliases are distinct slots only when explicitly present.
-                    if !matches!(LengthProperty::$property,
-                        LengthProperty::LogicalWidth | LengthProperty::LogicalHeight)
-                        || $c.vertical_logical_size.is_some()
-                    {
-                        if let L::Calc(expression) | L::FitContentOf(P::Calc(expression)) = $value {
-                            visit(CalcSlot::Property(LengthProperty::$property), expression,
-                                LengthProperty::$property.non_negative())?;
-                        }
-                    }
-                )+
+                $(Self::visit_scalar_calc($c, LengthProperty::$property, $value, &mut visit)?;)+
                 Ok(())
             }
         }
@@ -203,6 +191,30 @@ enum CalcBindings<'a> {
     Shared(Arc<PreparedData>),
 }
 impl<'a> PreparedStyle<'a> {
+    fn visit_scalar_calc(
+        values: &ComputedValues,
+        property: LengthProperty,
+        value: L,
+        visit: &mut impl FnMut(CalcSlot, CalcLengthPercentage, bool) -> Result<(), PrepareError>,
+    ) -> Result<(), PrepareError> {
+        // Logical aliases are distinct slots only when explicitly present.
+        if matches!(
+            property,
+            LengthProperty::LogicalWidth | LengthProperty::LogicalHeight
+        ) && values.vertical_logical_size.is_none()
+        {
+            return Ok(());
+        }
+        match value {
+            L::Calc(expression) | L::FitContentOf(P::Calc(expression)) => visit(
+                CalcSlot::Property(property),
+                expression,
+                property.non_negative(),
+            ),
+            _ => Ok(()),
+        }
+    }
+
     /// Bind borrowed computed values to shared calc owners after checking every slot.
     ///
     /// Sharing the payload data does not extend the computed values' lifetime.

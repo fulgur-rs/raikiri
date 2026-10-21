@@ -95,9 +95,8 @@ pub(crate) fn empty_prepared_data() -> Arc<raikiri_layout_style::PreparedData> {
         Arc::new(
             raikiri_layout_style::PreparedData::prepare_with(
                 &neutral_initial_values(),
-                |_, expression, range| {
-                    Arc::new(raikiri_layout_style::AlignedCalc::new(expression, range))
-                },
+                // cov:ignore: neutral CSS-initial values have no calc slots, so this factory cannot run.
+                |_, _, _| unreachable!("neutral initial properties have no calc slots"),
             )
             .expect("neutral initial properties have valid calc payloads"),
         )

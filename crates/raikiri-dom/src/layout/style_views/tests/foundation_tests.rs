@@ -3,6 +3,32 @@ use crate::layout::box_style_data::LayoutBase;
 use crate::node::arena::BoxKey;
 
 #[test]
+fn initial_explicit_preparation_fills_non_element_foundations_without_a_bridge() {
+    let (mut doc, cascade, child, text) = fixture();
+    let sources = cascade.computed.len();
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    assert!(session.box_style_data.is_ready());
+    for source in [0, text] {
+        let record = session.box_style_data.get(BoxKey::Source(source)).unwrap();
+        assert_eq!(
+            record.recipe,
+            Some(crate::layout::box_style_data::recipes::RecipeKind::NeutralSource)
+        );
+        assert!(matches!(record.base, LayoutBase::Synthetic(_)));
+        assert_eq!(
+            record.metadata.flags,
+            raikiri_layout_style::StyleFlags::EMPTY
+        );
+    }
+    assert_eq!(
+        session.style_view(child).size().width,
+        taffy::Dimension::length(31.0)
+    );
+    assert_eq!(cascade.computed.len(), sources);
+}
+
+#[test]
 fn new_session_refreshes_contents_recipe_from_current_source_direction() {
     use raikiri_style::property::Direction;
     let (mut doc, mut cascade, child, _) =
@@ -276,6 +302,7 @@ fn mismatched_recipe_provenance_cannot_publish_ready_foundations() {
     use crate::layout::box_style_data::recipes;
     for case in [
         "source-base",
+        "missing-origin",
         "table-key",
         "cell-key",
         "wrapper-key",
@@ -299,6 +326,12 @@ fn mismatched_recipe_provenance_cannot_publish_ready_foundations() {
             metadata: Default::default(),
         };
         match case {
+            "missing-origin" => {
+                let record = doc.box_style_data.get_mut(BoxKey::Source(child)).unwrap();
+                record.base = LayoutBase::Synthetic(std::sync::Arc::new(
+                    raikiri_style::ComputedValues::initial(),
+                ));
+            }
             "source-base" => {
                 doc.box_style_data
                     .get_mut(BoxKey::Source(child))
