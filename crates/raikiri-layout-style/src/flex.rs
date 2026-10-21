@@ -75,6 +75,7 @@ impl LayoutStyleView<'_> {
     }
 }
 impl taffy::FlexboxContainerStyle for LayoutStyleView<'_> {
+    #[inline]
     fn flex_direction(&self) -> taffy::FlexDirection {
         match self.prepared.values.flex_direction {
             D::RowReverse => taffy::FlexDirection::RowReverse,
@@ -83,6 +84,7 @@ impl taffy::FlexboxContainerStyle for LayoutStyleView<'_> {
             _ => taffy::FlexDirection::Row,
         }
     }
+    #[inline]
     fn flex_wrap(&self) -> taffy::FlexWrap {
         match self.prepared.values.flex_wrap {
             W::Wrap => taffy::FlexWrap::Wrap,
@@ -90,20 +92,25 @@ impl taffy::FlexboxContainerStyle for LayoutStyleView<'_> {
             _ => taffy::FlexWrap::NoWrap,
         }
     }
+    #[inline]
     fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
         self.gap_value()
     }
+    #[inline]
     fn align_content(&self) -> taffy::AlignContent {
         content(self.prepared.values.align_content)
     }
+    #[inline]
     fn justify_content(&self) -> taffy::JustifyContent {
         content(self.prepared.values.justify_content)
     }
+    #[inline]
     fn align_items(&self) -> taffy::AlignItems {
         items(self.prepared.values.align_items)
     }
 }
 impl taffy::FlexboxItemStyle for LayoutStyleView<'_> {
+    #[inline]
     fn flex_basis(&self) -> taffy::Dimension {
         if matches!(self.prepared.values.flex_basis, ComputedFlexBasis::Content) {
             if self
@@ -118,9 +125,11 @@ impl taffy::FlexboxItemStyle for LayoutStyleView<'_> {
             self.length(LengthProperty::FlexBasis).dimension()
         }
     }
+    #[inline]
     fn flex_grow(&self) -> f32 {
         self.prepared.values.flex_grow
     }
+    #[inline]
     fn flex_shrink(&self) -> f32 {
         self.overrides()
             .find_map(|o| match o {
@@ -129,6 +138,7 @@ impl taffy::FlexboxItemStyle for LayoutStyleView<'_> {
             })
             .unwrap_or(self.prepared.values.flex_shrink)
     }
+    #[inline]
     fn align_self(&self) -> Option<taffy::AlignSelf> {
         self.self_alignment(self.context.align_axis_is_inline)
     }

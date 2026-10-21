@@ -318,6 +318,10 @@ fn metadata_publication_inside_edge_scope_is_rejected_and_restored() {
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     session.with_resolved_edges(child, 200.0, false, |session| {
+        let direct = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            session.prepare_style_views();
+        }));
+        assert!(direct.is_err());
         session.document.layout_cache_context.publish_metadata();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             session.with_cache_frame(child, raikiri_layout_style::ViewContext::default(), |_| {});

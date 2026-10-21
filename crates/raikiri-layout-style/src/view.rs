@@ -34,6 +34,7 @@ impl<'a> OverrideLayer<'a> {
 }
 impl<'a> LayoutStyleView<'a> {
     /// Construct a query without cloning, scanning or allocating computed style.
+    #[inline]
     pub const fn new(
         prepared: &'a PreparedStyle<'a>,
         context: ViewContext,
@@ -48,6 +49,7 @@ impl<'a> LayoutStyleView<'a> {
         }
     }
     /// Query owning override layers without allocating borrowed entry arrays.
+    #[inline]
     pub const fn with_owned_overrides(
         prepared: &'a PreparedStyle<'a>,
         context: ViewContext,
@@ -71,12 +73,15 @@ impl<'a> LayoutStyleView<'a> {
                     .map(|index| self.pass.get(index).0),
             )
     }
+    #[inline]
     pub(crate) fn flags(&self) -> StyleFlags {
         self.prepared.metadata.flags
     }
+    #[inline]
     pub(crate) fn vertical(&self) -> bool {
         self.context.layout_wm.is_vertical()
     }
+    #[inline]
     pub(crate) fn length(&self, property: LengthProperty) -> LengthValue<'a> {
         if let Some(value) = self.overrides().find_map(|entry| match entry {
             OverrideKind::Length(p, v) if p == property => Some(v),
@@ -86,6 +91,7 @@ impl<'a> LayoutStyleView<'a> {
         }
         self.base_length(property)
     }
+    #[inline]
     pub(crate) fn base_length(&self, property: LengthProperty) -> LengthValue<'a> {
         use LengthProperty::*;
         let flags = self.flags();

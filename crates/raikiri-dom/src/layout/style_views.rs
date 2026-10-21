@@ -1,4 +1,5 @@
-use std::{collections::HashMap, sync::Arc};
+use rustc_hash::FxHashMap as HashMap;
+use std::sync::Arc;
 
 use crate::{Document, layout::context::LayoutSession, node::arena::BoxKey};
 use raikiri_layout_style::{
@@ -36,9 +37,9 @@ impl<'a> StyleViews<'a> {
     pub(crate) fn new(cascade: &'a CascadeResult) -> Self {
         Self {
             cascade,
-            boxes: HashMap::new(),
-            pending: HashMap::new(),
-            legacy_calcs: HashMap::new(),
+            boxes: HashMap::default(),
+            pending: HashMap::default(),
+            legacy_calcs: HashMap::default(),
             size_scopes: Vec::new(),
             prepared_publication: None,
         }
@@ -93,7 +94,10 @@ impl<'a> StyleViews<'a> {
             self.prepared_publication = Some(doc.layout_cache_context.publication_epoch());
             return;
         }
-        let mut previous = std::mem::replace(&mut self.boxes, HashMap::with_capacity(keys.len()));
+        let mut previous = std::mem::replace(
+            &mut self.boxes,
+            HashMap::with_capacity_and_hasher(keys.len(), Default::default()),
+        );
         for idx in keys {
             let key = doc.nodes.box_key(idx).expect("prepared layout key exists");
             let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
@@ -306,6 +310,7 @@ impl LayoutSession<'_> {
         })
     }
 
+    #[inline]
     pub(crate) fn style_view(&self, idx: usize) -> LayoutStyleView<'_> {
         let key = self.nodes.box_key(idx).expect("style query has a box key");
         let views = self

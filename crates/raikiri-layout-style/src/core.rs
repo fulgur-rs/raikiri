@@ -10,6 +10,7 @@ use taffy::CoreStyle;
 
 impl CoreStyle for LayoutStyleView<'_> {
     type CustomIdent = raikiri_style::SmolStr;
+    #[inline]
     fn box_generation_mode(&self) -> taffy::BoxGenerationMode {
         if self.flags().contains(StyleFlags::HIDDEN) {
             taffy::BoxGenerationMode::None
@@ -17,15 +18,19 @@ impl CoreStyle for LayoutStyleView<'_> {
             taffy::BoxGenerationMode::Normal
         }
     }
+    #[inline]
     fn is_block(&self) -> bool {
         self.flags().contains(StyleFlags::BLOCK)
     }
+    #[inline]
     fn is_compressible_replaced(&self) -> bool {
         self.flags().contains(StyleFlags::COMPRESSIBLE_REPLACED)
     }
+    #[inline]
     fn is_replaced(&self) -> bool {
         self.flags().contains(StyleFlags::REPLACED)
     }
+    #[inline]
     fn box_sizing(&self) -> taffy::BoxSizing {
         let c = &*self.prepared.values;
         let side_borders = c.border.left.width().px() > 0.0 || c.border.right.width().px() > 0.0;
@@ -43,6 +48,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             taffy::BoxSizing::ContentBox
         }
     }
+    #[inline]
     fn direction(&self) -> taffy::Direction {
         let c = &*self.prepared.values;
         let vertical =
@@ -61,6 +67,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             taffy::Direction::Ltr
         }
     }
+    #[inline]
     fn overflow(&self) -> taffy::Point<taffy::Overflow> {
         let get = |axis, base| {
             self.overrides()
@@ -81,9 +88,11 @@ impl CoreStyle for LayoutStyleView<'_> {
             taffy::Point { x, y }
         }
     }
+    #[inline]
     fn scrollbar_width(&self) -> f32 {
         0.0
     }
+    #[inline]
     fn position(&self) -> taffy::Position {
         match self.prepared.values.position {
             PositionValue::Absolute | PositionValue::Fixed => taffy::Position::Absolute,
@@ -91,6 +100,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             _ => taffy::Position::Static,
         }
     }
+    #[inline]
     fn is_containing_block(&self) -> taffy::ContainingBlockClaims {
         self.prepared
             .metadata
@@ -100,24 +110,28 @@ impl CoreStyle for LayoutStyleView<'_> {
                 fixed: false,
             })
     }
+    #[inline]
     fn size(&self) -> taffy::Size<taffy::Dimension> {
         self.size_axes(
             self.length(LengthProperty::Width).dimension(),
             self.length(LengthProperty::Height).dimension(),
         )
     }
+    #[inline]
     fn min_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
         self.size_axes(
             self.length(LengthProperty::MinWidth).auto(false),
             self.length(LengthProperty::MinHeight).auto(false),
         )
     }
+    #[inline]
     fn max_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
         self.size_axes(
             self.length(LengthProperty::MaxWidth).auto(false),
             self.length(LengthProperty::MaxHeight).auto(false),
         )
     }
+    #[inline]
     fn aspect_ratio(&self) -> Option<f32> {
         let c = &*self.prepared.values;
         let width = self.base_length(LengthProperty::Width).value;
@@ -143,6 +157,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             ratio
         }
     }
+    #[inline]
     fn margin(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
         use LengthProperty::*;
         self.edges(
@@ -152,6 +167,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             self.length(MarginLeft).auto(true),
         )
     }
+    #[inline]
     fn inset(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
         use LengthProperty::*;
         self.edges(
@@ -161,6 +177,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             self.length(Left).auto(false),
         )
     }
+    #[inline]
     fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
         use LengthProperty::*;
         let get = |p| self.length(p).lp(self.context.percent_basis);
@@ -171,6 +188,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             get(PaddingLeft),
         )
     }
+    #[inline]
     fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
         use LengthProperty::*;
         let get = |p| self.length(p).lp(self.context.percent_basis);
@@ -181,6 +199,7 @@ impl CoreStyle for LayoutStyleView<'_> {
             get(BorderLeft),
         )
     }
+    #[inline]
     fn contain(&self) -> taffy::Contain {
         let c = self.prepared.values.contain;
         match (c.contains(Contain::LAYOUT), c.contains(Contain::PAINT)) {
