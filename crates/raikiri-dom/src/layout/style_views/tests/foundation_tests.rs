@@ -272,6 +272,71 @@ fn changed_wrapper_identity_requires_bridge_and_keeps_old_recipe_until_recovery(
 }
 
 #[test]
+fn mismatched_recipe_provenance_cannot_publish_ready_foundations() {
+    use crate::layout::box_style_data::recipes;
+    for case in [
+        "source-base",
+        "table-key",
+        "cell-key",
+        "wrapper-key",
+        "icb-key",
+        "neutral-kind",
+    ] {
+        let (mut doc, cascade, child, _) = fixture();
+        {
+            let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+            apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+            crate::layout::initial_containing_block::prepare(
+                session.document,
+                &cascade,
+                80.0,
+                120.0,
+            );
+            session.prepare_style_views();
+        }
+        let facts = recipes::BoxFacts {
+            direction: taffy::Direction::Ltr,
+            metadata: Default::default(),
+        };
+        match case {
+            "source-base" => {
+                doc.box_style_data
+                    .get_mut(BoxKey::Source(child))
+                    .unwrap()
+                    .recipe = Some(recipes::RecipeKind::Contents);
+            }
+            "table-key" | "cell-key" => {
+                let table_facts = recipes::TableFacts::from_owner(&doc, &cascade, child, child);
+                let recipe = if case == "table-key" {
+                    recipes::anonymous_table(table_facts)
+                } else {
+                    recipes::anonymous_cell(table_facts)
+                };
+                doc.box_style_data
+                    .publish_recipe(BoxKey::Source(child), recipe);
+            }
+            "wrapper-key" => doc
+                .box_style_data
+                .publish_recipe(BoxKey::InitialContainingBlock, recipes::contents(facts)),
+            "icb-key" => doc.box_style_data.publish_recipe(
+                BoxKey::Source(child),
+                recipes::initial_containing_block(80.0, 120.0, facts),
+            ),
+            "neutral-kind" => doc
+                .box_style_data
+                .publish_recipe(BoxKey::Source(child), recipes::neutral_source(facts)),
+            _ => unreachable!(),
+        }
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            session.prepare_style_views()
+        }));
+        assert!(failed.is_err(), "{case}");
+        assert!(!session.box_style_data.is_ready(), "{case}");
+    }
+}
+
+#[test]
 fn all_live_boxes_have_document_foundations_without_expanding_query_targets() {
     let (mut doc, cascade, child, _) = fixture_with_styles("display:block", "width:31px");
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
