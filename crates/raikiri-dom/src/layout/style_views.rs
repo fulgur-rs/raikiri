@@ -138,11 +138,10 @@ impl<'a> StyleViews<'a> {
                     key,
                     recipes::neutral_source(recipes::BoxFacts {
                         direction: taffy::Direction::Ltr,
-                        metadata: StyleMetadata {
-                            flags: raikiri_layout_style::StyleFlags::EMPTY,
-                            used_writing_mode: doc.nodes[idx].used_writing_mode,
-                            ..StyleMetadata::default()
-                        },
+                        metadata: metadata::node_metadata(
+                            &doc.nodes[idx],
+                            raikiri_layout_style::StyleFlags::EMPTY,
+                        ),
                     }),
                 );
             }

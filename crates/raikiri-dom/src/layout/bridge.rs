@@ -507,11 +507,10 @@ fn apply_computed_to_style_in_session_inner(
             let recipe = super::box_style_data::recipes::contents(
                 super::box_style_data::recipes::BoxFacts {
                     direction: direction_for_axes(cv, vertical_axes),
-                    metadata: raikiri_layout_style::StyleMetadata {
-                        flags: raikiri_layout_style::StyleFlags::EMPTY,
-                        used_writing_mode: doc.nodes[idx].used_writing_mode,
-                        claims: None,
-                    },
+                    metadata: super::style_views::metadata::node_metadata(
+                        &doc.nodes[idx],
+                        raikiri_layout_style::StyleFlags::EMPTY,
+                    ),
                 },
             );
             doc.document.box_style_data.publish_recipe(key, recipe);
@@ -522,11 +521,10 @@ fn apply_computed_to_style_in_session_inner(
             let recipe = super::box_style_data::recipes::neutral_source(
                 super::box_style_data::recipes::BoxFacts {
                     direction: taffy::Direction::Ltr,
-                    metadata: raikiri_layout_style::StyleMetadata {
-                        flags: raikiri_layout_style::StyleFlags::EMPTY,
-                        used_writing_mode: doc.nodes[idx].used_writing_mode,
-                        claims: None,
-                    },
+                    metadata: super::style_views::metadata::node_metadata(
+                        &doc.nodes[idx],
+                        raikiri_layout_style::StyleFlags::EMPTY,
+                    ),
                 },
             );
             doc.document
