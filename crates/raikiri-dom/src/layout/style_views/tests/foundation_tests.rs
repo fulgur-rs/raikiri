@@ -3,6 +3,275 @@ use crate::layout::box_style_data::LayoutBase;
 use crate::node::arena::BoxKey;
 
 #[test]
+fn new_session_refreshes_contents_recipe_from_current_source_direction() {
+    use raikiri_style::property::Direction;
+    let (mut doc, mut cascade, child, _) =
+        fixture_with_styles("display:flex", "display:contents;direction:ltr");
+    {
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        let record = session.box_style_data.get(BoxKey::Source(child)).unwrap();
+        let LayoutBase::Synthetic(values) = &record.base else {
+            panic!("contents recipe")
+        };
+        assert_eq!(values.direction, Direction::Ltr);
+    }
+    let address = cascade.computed.as_ptr();
+    let generation = cascade.generation();
+    cascade.computed[child].direction = Direction::Rtl;
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    assert_eq!(cascade.computed.as_ptr(), address);
+    assert_eq!(cascade.generation(), generation);
+    assert!(session.box_style_data.is_ready());
+    let record = session.box_style_data.get(BoxKey::Source(child)).unwrap();
+    let LayoutBase::Synthetic(values) = &record.base else {
+        panic!("contents recipe")
+    };
+    assert_eq!(values.direction, Direction::Rtl);
+}
+
+#[test]
+fn new_session_refreshes_spanner_recipe_from_current_source_direction() {
+    use raikiri_style::property::Direction;
+    let (mut doc, _, wrapper, _) = fixture_with_styles(
+        "display:block;column-count:2;width:120px",
+        "display:block;direction:ltr",
+    );
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        LayoutStyle::default(),
+        Some("display:block;column-span:all;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let mut cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    {
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        assert_eq!(
+            session
+                .box_style_data
+                .get(BoxKey::Source(wrapper))
+                .unwrap()
+                .recipe,
+            Some(crate::layout::box_style_data::recipes::RecipeKind::Spanner)
+        );
+    }
+    cascade.computed[wrapper].direction = Direction::Rtl;
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    let LayoutBase::Synthetic(values) = &session
+        .box_style_data
+        .get(BoxKey::Source(wrapper))
+        .unwrap()
+        .base
+    else {
+        panic!("spanner recipe")
+    };
+    assert_eq!(values.direction, Direction::Rtl);
+}
+
+#[test]
+fn new_session_refreshes_anonymous_recipes_from_their_explicit_owners() {
+    use raikiri_style::property::{Direction, WritingMode};
+    let (mut doc, _, owner, _) = fixture_with_styles("display:block", "display:block");
+    let row = doc.append_element(
+        Some(owner),
+        "div",
+        LayoutStyle::default(),
+        Some("display:table-row"),
+    );
+    doc.append_text(row, "A");
+    doc.mark_in_document_flags();
+    let mut cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let owners = [
+        doc.table_objects.tables[0].parent,
+        doc.table_objects.cells[0].owner,
+    ];
+    for (i, &owner) in owners.iter().enumerate() {
+        cascade.computed[owner].direction = Direction::Rtl;
+        doc.nodes[owner].used_writing_mode = WritingMode::VerticalRl;
+        doc.nodes[owner].border_spacing.horizontal = raikiri_style::ComputedLength(23.0 + i as f32);
+    }
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    for (i, key) in [BoxKey::AnonymousTable(0), BoxKey::AnonymousCell(0)]
+        .into_iter()
+        .enumerate()
+    {
+        let record = session.box_style_data.get(key).unwrap();
+        let LayoutBase::Synthetic(values) = &record.base else {
+            panic!("anonymous recipe")
+        };
+        assert_eq!(values.direction, Direction::Rtl);
+        assert_eq!(values.border_spacing.horizontal.0, 23.0 + i as f32);
+        assert_eq!(record.metadata.used_writing_mode, WritingMode::VerticalRl);
+    }
+}
+
+#[test]
+fn new_session_refreshes_icb_principal_facts_and_retains_published_dimensions() {
+    use raikiri_style::property::{Direction, WritingMode};
+    let (mut doc, mut cascade, _, _) = fixture();
+    let mut page = crate::layout::test_support::page_box_800x600();
+    page.width = 80.0;
+    page.height = 120.0;
+    crate::layout::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut doc),
+        &cascade,
+        page,
+    )
+    .unwrap();
+    for value in &mut cascade.computed {
+        value.direction = Direction::Rtl;
+    }
+    for node in doc.nodes.iter_mut() {
+        node.used_writing_mode = WritingMode::VerticalLr;
+    }
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    let record = session
+        .box_style_data
+        .get(BoxKey::InitialContainingBlock)
+        .unwrap();
+    let LayoutBase::Synthetic(values) = &record.base else {
+        panic!("ICB recipe")
+    };
+    assert_eq!(values.direction, Direction::Rtl);
+    assert_eq!(values.width, L::Px(80.0));
+    assert_eq!(values.height, L::Px(120.0));
+    assert_eq!(record.metadata.used_writing_mode, WritingMode::VerticalLr);
+}
+
+#[test]
+fn neutral_recipe_refreshes_metadata_without_replacing_shared_initial_values() {
+    use raikiri_style::property::WritingMode;
+    let (mut doc, cascade, _, text) = fixture();
+    let original = {
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        let LayoutBase::Synthetic(values) = &session
+            .box_style_data
+            .get(BoxKey::Source(text))
+            .unwrap()
+            .base
+        else {
+            panic!("neutral recipe")
+        };
+        values.clone()
+    };
+    doc.nodes[text].used_writing_mode = WritingMode::VerticalRl;
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    let record = session.box_style_data.get(BoxKey::Source(text)).unwrap();
+    let LayoutBase::Synthetic(values) = &record.base else {
+        panic!("neutral recipe")
+    };
+    assert!(std::sync::Arc::ptr_eq(values, &original));
+    assert_eq!(record.metadata.used_writing_mode, WritingMode::VerticalRl);
+}
+
+#[test]
+fn same_recipe_metadata_refresh_preserves_document_pass_entries() {
+    use raikiri_style::property::WritingMode;
+    let (mut doc, cascade, child, _) = fixture_with_styles("display:flex", "display:contents");
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    session.record_pass_override(child, OwnedPropertyOverride::aspect_ratio(Some(2.0)));
+    session.nodes[child].used_writing_mode = WritingMode::VerticalRl;
+    session.document.layout_cache_context.publish_metadata();
+    session.refresh_style_views();
+    let record = session.box_style_data.get(BoxKey::Source(child)).unwrap();
+    assert_eq!(record.pass.len(), 1);
+    assert_eq!(record.metadata.used_writing_mode, WritingMode::VerticalRl);
+}
+
+#[test]
+fn changed_anonymous_owner_discards_the_previous_identity_pass_entries() {
+    let (mut doc, _, owner, _) = fixture_with_styles("display:block", "display:block");
+    let row = doc.append_element(
+        Some(owner),
+        "div",
+        LayoutStyle::default(),
+        Some("display:table-row"),
+    );
+    doc.append_text(row, "A");
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(
+        crate::layout::test_support::with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let table = doc.nodes.anonymous_table_key(0);
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    session.prepare_style_views();
+    session.record_pass_override(table, OwnedPropertyOverride::aspect_ratio(Some(2.0)));
+    assert_eq!(
+        session
+            .box_style_data
+            .get(BoxKey::AnonymousTable(0))
+            .unwrap()
+            .pass
+            .len(),
+        1
+    );
+    session.table_objects.tables[0].parent = row;
+    session.document.layout_cache_context.publish_metadata();
+    session.refresh_style_views();
+    let record = session
+        .box_style_data
+        .get(BoxKey::AnonymousTable(0))
+        .unwrap();
+    assert!(record.pass.is_empty());
+    assert_eq!(
+        record.recipe,
+        Some(crate::layout::box_style_data::recipes::RecipeKind::AnonymousTable { owner: row })
+    );
+}
+
+#[test]
+fn changed_wrapper_identity_requires_bridge_and_keeps_old_recipe_until_recovery() {
+    use raikiri_style::property::DisplayValue;
+    let (mut doc, mut cascade, child, _) = fixture_with_styles("display:flex", "display:contents");
+    let old = {
+        let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+        let LayoutBase::Synthetic(values) = &session
+            .box_style_data
+            .get(BoxKey::Source(child))
+            .unwrap()
+            .base
+        else {
+            panic!("contents recipe")
+        };
+        std::sync::Arc::downgrade(values)
+    };
+    cascade.computed[child].display = DisplayValue::Block;
+    let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session.prepare_style_views()
+    }));
+    assert!(failed.is_err());
+    assert!(!session.box_style_data.is_ready());
+    assert!(old.upgrade().is_some());
+    apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
+    assert!(session.box_style_data.is_ready());
+    assert!(old.upgrade().is_none());
+    assert!(
+        matches!(session.box_style_data.get(BoxKey::Source(child)).unwrap().base, LayoutBase::Source(source) if source == child)
+    );
+}
+
+#[test]
 fn all_live_boxes_have_document_foundations_without_expanding_query_targets() {
     let (mut doc, cascade, child, _) = fixture_with_styles("display:block", "width:31px");
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);

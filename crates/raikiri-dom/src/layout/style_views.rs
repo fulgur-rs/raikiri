@@ -138,11 +138,18 @@ impl<'a> StyleViews<'a> {
                     recipes::neutral_source(recipes::BoxFacts {
                         direction: taffy::Direction::Ltr,
                         metadata: StyleMetadata {
+                            flags: raikiri_layout_style::StyleFlags::EMPTY,
                             used_writing_mode: doc.nodes[idx].used_writing_mode,
                             ..StyleMetadata::default()
                         },
                     }),
                 );
+            }
+            if let Some(record) = doc.box_style_data.get(key)
+                && record.recipe.is_some()
+                && let Some(recipe) = recipes::refresh(doc, self.cascade, key, idx, record)
+            {
+                doc.box_style_data.refresh_recipe(key, recipe);
             }
             match doc.box_style_data.get(key) {
                 Some(record) => {

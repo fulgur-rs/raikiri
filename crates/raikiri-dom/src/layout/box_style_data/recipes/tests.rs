@@ -69,7 +69,13 @@ fn icb_recipe_keeps_physical_dimensions_and_independent_direction() {
             },
             ..LayoutStyle::default()
         };
-        assert_eq!(recipe.kind, RecipeKind::InitialContainingBlock);
+        assert_eq!(
+            recipe.kind,
+            RecipeKind::InitialContainingBlock {
+                width: 80.0,
+                height: 120.0
+            }
+        );
         assert_eq!(recipe.values.width, L::Px(80.0));
         assert_eq!(recipe.values.height, L::Px(120.0));
         assert_eq!(recipe.metadata.used_writing_mode, WritingMode::VerticalRl);
@@ -105,6 +111,7 @@ fn contents_and_spanner_have_distinct_origins_with_neutral_layout_values() {
 #[test]
 fn anonymous_recipes_inherit_only_the_explicit_owner_facts() {
     let inherited = TableFacts {
+        owner: 0,
         box_facts: facts(taffy::Direction::Rtl, true),
         border_collapse: BorderCollapseValue::Collapse,
         border_spacing: ComputedBorderSpacing {
@@ -116,7 +123,7 @@ fn anonymous_recipes_inherit_only_the_explicit_owner_facts() {
     for recipe in [anonymous_table(inherited), anonymous_cell(inherited)] {
         assert!(matches!(
             recipe.kind,
-            RecipeKind::AnonymousTable | RecipeKind::AnonymousCell
+            RecipeKind::AnonymousTable { .. } | RecipeKind::AnonymousCell { .. }
         ));
         assert_eq!(recipe.values.border_collapse, BorderCollapseValue::Collapse);
         assert_eq!(recipe.values.border_spacing, inherited.border_spacing);
@@ -178,7 +185,13 @@ fn icb_publication_registers_document_owned_recipe_without_extending_source_valu
         .box_style_data
         .get(crate::node::arena::BoxKey::InitialContainingBlock)
         .expect("ICB recipe is published with its node");
-    assert_eq!(record.recipe, Some(RecipeKind::InitialContainingBlock));
+    assert_eq!(
+        record.recipe,
+        Some(RecipeKind::InitialContainingBlock {
+            width: 80.0,
+            height: 120.0
+        })
+    );
     let super::super::LayoutBase::Synthetic(values) = &record.base else {
         panic!("ICB owns synthetic values")
     };
@@ -186,7 +199,10 @@ fn icb_publication_registers_document_owned_recipe_without_extending_source_valu
     assert_eq!(values.height, L::Px(120.0));
     assert_legacy(
         &Recipe {
-            kind: RecipeKind::InitialContainingBlock,
+            kind: RecipeKind::InitialContainingBlock {
+                width: 80.0,
+                height: 120.0,
+            },
             values: values.clone(),
             metadata: record.metadata,
         },
@@ -227,13 +243,13 @@ fn anonymous_publication_uses_the_lowering_owner_for_each_recipe() {
             table,
             crate::node::arena::BoxKey::AnonymousTable(0),
             owner,
-            RecipeKind::AnonymousTable,
+            RecipeKind::AnonymousTable { owner },
         ),
         (
             cell,
             crate::node::arena::BoxKey::AnonymousCell(0),
             row,
-            RecipeKind::AnonymousCell,
+            RecipeKind::AnonymousCell { owner: row },
         ),
     ] {
         assert_eq!(doc.ifc_source_owner(key), source);

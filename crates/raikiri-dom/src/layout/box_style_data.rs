@@ -188,6 +188,19 @@ impl BoxStyleStore {
         self.poisoned |= !self.stamp.metadata.advance();
     }
 
+    pub(crate) fn refresh_recipe(&mut self, key: BoxKey, recipe: recipes::Recipe) {
+        let pass = if self
+            .get(key)
+            .is_some_and(|record| record.recipe == Some(recipe.kind))
+        {
+            std::mem::take(&mut self.get_mut(key).unwrap().pass)
+        } else {
+            Vec::new()
+        };
+        self.publish_recipe(key, recipe);
+        self.get_mut(key).unwrap().pass = pass;
+    }
+
     pub(crate) fn invalidate_key(&mut self, key: BoxKey) {
         self.begin_publication();
         if let Some(old) = self.take(key) {

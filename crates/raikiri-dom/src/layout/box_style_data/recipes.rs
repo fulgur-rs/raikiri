@@ -3,11 +3,11 @@ use raikiri_style::property::{BorderCollapseValue, CaptionSideValue, Direction, 
 use raikiri_style::{ComputedBorderSpacing, ComputedLengthPercentageOrAuto as L, ComputedValues};
 use std::sync::{Arc, OnceLock};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum RecipeKind {
-    InitialContainingBlock,
-    AnonymousTable,
-    AnonymousCell,
+    InitialContainingBlock { width: f32, height: f32 },
+    AnonymousTable { owner: usize },
+    AnonymousCell { owner: usize },
     Contents,
     Spanner,
     NeutralSource,
@@ -42,6 +42,7 @@ impl BoxFacts {
 
 #[derive(Clone, Copy)]
 pub(crate) struct TableFacts {
+    pub(crate) owner: usize,
     pub(crate) box_facts: BoxFacts,
     pub(crate) border_collapse: BorderCollapseValue,
     pub(crate) border_spacing: ComputedBorderSpacing,
@@ -60,8 +61,11 @@ impl TableFacts {
             &cascade.computed[owner],
             crate::layout::bridge::uses_vertical_axes(cascade, owner),
         );
+        let mut box_facts = BoxFacts::for_node(&document.nodes[key], direction);
+        box_facts.metadata.used_writing_mode = source.used_writing_mode;
         Self {
-            box_facts: BoxFacts::for_node(&document.nodes[key], direction),
+            owner,
+            box_facts,
             border_collapse: source.border_collapse,
             border_spacing: source.border_spacing,
             caption_side: source.caption_side,
@@ -116,7 +120,7 @@ pub(crate) fn initial_containing_block(width: f32, height: f32, facts: BoxFacts)
     values.width = L::Px(width);
     values.height = L::Px(height);
     Recipe {
-        kind: RecipeKind::InitialContainingBlock,
+        kind: RecipeKind::InitialContainingBlock { width, height },
         values: Arc::new(values),
         metadata: facts.metadata,
     }
@@ -135,11 +139,19 @@ fn table(kind: RecipeKind, display: DisplayValue, facts: TableFacts) -> Recipe {
 }
 
 pub(crate) fn anonymous_table(facts: TableFacts) -> Recipe {
-    table(RecipeKind::AnonymousTable, DisplayValue::Table, facts)
+    table(
+        RecipeKind::AnonymousTable { owner: facts.owner },
+        DisplayValue::Table,
+        facts,
+    )
 }
 
 pub(crate) fn anonymous_cell(facts: TableFacts) -> Recipe {
-    table(RecipeKind::AnonymousCell, DisplayValue::TableCell, facts)
+    table(
+        RecipeKind::AnonymousCell { owner: facts.owner },
+        DisplayValue::TableCell,
+        facts,
+    )
 }
 
 pub(crate) fn contents(facts: BoxFacts) -> Recipe {
@@ -172,6 +184,139 @@ pub(crate) fn neutral_source(facts: BoxFacts) -> Recipe {
             .clone(),
         metadata: facts.metadata,
     }
+}
+
+pub(crate) fn refresh(
+    document: &crate::Document,
+    cascade: &raikiri_style::CascadeResult,
+    key: crate::node::arena::BoxKey,
+    index: usize,
+    record: &super::BoxStyleData,
+) -> Option<Recipe> {
+    use crate::node::arena::BoxKey;
+    let old_kind = record.recipe.expect("synthetic recipe has explicit inputs");
+    let super::LayoutBase::Synthetic(values) = &record.base else {
+        panic!("recipe input belongs to a synthetic base")
+    };
+    let (kind, facts, table_facts) = match old_kind {
+        RecipeKind::InitialContainingBlock { .. } => {
+            assert_eq!(key, BoxKey::InitialContainingBlock);
+            (
+                old_kind,
+                crate::layout::initial_containing_block::recipe_facts(document, cascade),
+                None,
+            )
+        }
+        RecipeKind::AnonymousTable { owner } => {
+            let BoxKey::AnonymousTable(slot) = key else {
+                panic!("anonymous table identity")
+            };
+            let owner = document
+                .table_objects
+                .tables
+                .get(slot)
+                .map_or(owner, |table| table.parent);
+            let facts = TableFacts::from_owner(document, cascade, index, owner);
+            (
+                RecipeKind::AnonymousTable { owner },
+                facts.box_facts,
+                Some(facts),
+            )
+        }
+        RecipeKind::AnonymousCell { owner } => {
+            let BoxKey::AnonymousCell(slot) = key else {
+                panic!("anonymous cell identity")
+            };
+            let owner = document
+                .table_objects
+                .cells
+                .get(slot)
+                .map_or(owner, |cell| cell.owner);
+            let facts = TableFacts::from_owner(document, cascade, index, owner);
+            (
+                RecipeKind::AnonymousCell { owner },
+                facts.box_facts,
+                Some(facts),
+            )
+        }
+        RecipeKind::Contents | RecipeKind::Spanner => {
+            let BoxKey::Source(source) = key else {
+                panic!("source wrapper identity")
+            };
+            let cv = &cascade.computed[source];
+            let expected = if old_kind == RecipeKind::Contents {
+                DisplayValue::Contents
+            } else {
+                DisplayValue::Block
+            };
+            assert_eq!(
+                cv.display, expected,
+                "changed wrapper identity requires source bridge"
+            );
+            let direction = crate::layout::bridge::direction_for_axes(
+                cv,
+                crate::layout::bridge::uses_vertical_axes(cascade, source),
+            );
+            let mut facts = BoxFacts::for_node(&document.nodes[index], direction);
+            if old_kind == RecipeKind::Contents {
+                facts.metadata.flags = raikiri_layout_style::StyleFlags::EMPTY;
+            }
+            (old_kind, facts, None)
+        }
+        RecipeKind::NeutralSource => {
+            assert!(matches!(key, BoxKey::Source(_)));
+            assert_ne!(
+                document.nodes[index].kind(),
+                raikiri_traits::NodeKind::Element,
+                "changed source identity requires source bridge"
+            );
+            let facts = BoxFacts {
+                direction: taffy::Direction::Ltr,
+                metadata: StyleMetadata {
+                    flags: raikiri_layout_style::StyleFlags::EMPTY,
+                    used_writing_mode: document.nodes[index].used_writing_mode,
+                    claims: None,
+                },
+            };
+            (old_kind, facts, None)
+        }
+    };
+    let direction = match facts.direction {
+        taffy::Direction::Ltr => Direction::Ltr,
+        taffy::Direction::Rtl => Direction::Rtl,
+    };
+    let same_table = table_facts.is_none_or(|facts| {
+        values.border_collapse == facts.border_collapse
+            && values.border_spacing == facts.border_spacing
+            && values.caption_side == facts.caption_side
+    });
+    let same_dimensions = match kind {
+        RecipeKind::InitialContainingBlock { width, height } => {
+            values.width == L::Px(width) && values.height == L::Px(height)
+        }
+        _ => true,
+    };
+    if old_kind == kind
+        && values.direction == direction
+        && same_table
+        && same_dimensions
+        && record.metadata.flags == facts.metadata.flags
+        && record.metadata.used_writing_mode == facts.metadata.used_writing_mode
+        && record.metadata.claims == facts.metadata.claims
+    {
+        return None;
+    }
+    // Allocate a replacement only after current explicit inputs differ.
+    Some(match kind {
+        RecipeKind::InitialContainingBlock { width, height } => {
+            initial_containing_block(width, height, facts)
+        }
+        RecipeKind::AnonymousTable { .. } => anonymous_table(table_facts.unwrap()),
+        RecipeKind::AnonymousCell { .. } => anonymous_cell(table_facts.unwrap()),
+        RecipeKind::Contents => contents(facts),
+        RecipeKind::Spanner => spanner(facts),
+        RecipeKind::NeutralSource => neutral_source(facts),
+    })
 }
 
 #[cfg(test)]
