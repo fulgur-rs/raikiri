@@ -1096,7 +1096,12 @@ fn replaced_keyword_bounds(
         return (Bounds::default(), Bounds::default()); // cov:ignore: every source node retains a layout style for its lifetime; this guards malformed arena state.
     };
     if style.aspect_ratio.is_none() {
-        style.aspect_ratio = super::leaf_intrinsic_ratio(&tree.nodes[idx]);
+        super::apply_local_sizing(
+            &mut style,
+            &[OwnedPropertyOverride::aspect_ratio(
+                super::leaf_intrinsic_ratio(&tree.nodes[idx]),
+            )],
+        );
     }
     let content_box_ratio = tree.nodes[idx].ratio_in_content_box;
     let Some(bounds) =
