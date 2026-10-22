@@ -7,7 +7,7 @@ pub(in crate::layout::table) fn before_measure(tree: &mut LayoutSession<'_>, idx
         inspect(tree, idx);
     }
 }
-fn with_inspector<R>(inspect: Inspector, f: impl FnOnce() -> R) -> R {
+pub(super) fn with_inspector<R>(inspect: Inspector, f: impl FnOnce() -> R) -> R {
     struct Reset(Option<Inspector>);
     impl Drop for Reset {
         fn drop(&mut self) {

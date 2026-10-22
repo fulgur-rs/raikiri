@@ -12,6 +12,7 @@ use taffy::{AvailableSpace, LayoutInput, Rect, Size};
 mod ancestor_walk_tests;
 mod anonymous_table_tests;
 mod authored_length_tests;
+pub(super) mod border_scope_tests;
 mod border_state_tests;
 mod cache_tests;
 mod cell_index_tests;
@@ -4370,7 +4371,7 @@ fn with_retained_border_state(
 ) {
     let mut state = super::BorderState::retained(doc, grid);
     resolve(doc, &mut state);
-    super::apply_borders(doc, &state);
+    publish_border_state_for_assertions(doc, &state);
 }
 fn resolve_collapsed_cell_borders_in_document(
     doc: &mut Document,
@@ -4431,4 +4432,41 @@ fn resolve_collapsed_border_pair_in_document(
             state.set_side(trailing, trailing_side, winner.border, winner.taffy_width);
         }
     });
+}
+
+// Materialize the pure resolver result for legacy mathematical assertions.
+fn publish_border_state_for_assertions(doc: &mut Document, state: &super::BorderState) {
+    let entries = state.entries(doc);
+    let changed: Vec<_> = state
+        .cells
+        .iter()
+        .filter(|cell| {
+            doc.layout_style_for_key(cell.node_id)
+                .expect("table cell layout style")
+                .border
+                != cell.widths
+        })
+        .map(|cell| cell.node_id)
+        .collect();
+    if !changed.is_empty() {
+        doc.layout_cache_context.invalidate();
+    }
+    for (key, entry) in entries {
+        let idx = doc.nodes.layout_index(key).expect("border key is live");
+        let _previous = entry
+            .apply_legacy_sizing(
+                doc.layout_style_for_key_mut(idx)
+                    .expect("border has a retained style"),
+            )
+            .expect("validated border entry");
+    }
+    for cell in &state.cells {
+        doc.table_layout_node_mut(cell.node_id).collapsed_border = cell.paint;
+    }
+    for &(row, paint) in &state.rows {
+        doc.nodes[row].collapsed_border = paint;
+    }
+    for cell in changed {
+        doc.table_layout_node_mut(cell).cache.clear();
+    }
 }

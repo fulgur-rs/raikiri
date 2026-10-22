@@ -49,7 +49,7 @@ pub(super) struct PreparedBorders {
     pub(super) collapsed_cols: Vec<bool>,
     pub(super) columns_in_place: Option<ColumnsInPlace>,
     pub(super) collapsed: CollapsedLines,
-    borders: Option<BorderState>,
+    pub(super) borders: Option<BorderState>,
 }
 
 pub(super) fn table_grid(
@@ -113,11 +113,7 @@ pub(super) fn prepared_borders(
         && *cached_key == key
         && *cached_epoch == epoch
     {
-        let prepared = Rc::clone(prepared);
-        if let Some(borders) = &prepared.borders {
-            apply_borders(doc, borders);
-        }
-        return prepared;
+        return Rc::clone(prepared);
     }
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     let mut borders = collapse.then(|| BorderState::authored(doc, grid));
@@ -277,8 +273,5 @@ pub(super) fn prepared_borders(
         .table_cache
         .borders
         .insert(table_idx, (key, epoch, Rc::clone(&prepared)));
-    if let Some(borders) = &prepared.borders {
-        apply_borders(doc, borders);
-    }
     prepared
 }

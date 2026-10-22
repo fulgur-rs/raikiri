@@ -686,3 +686,12 @@ fn flex_grid_queries_preserve_legacy_claims_and_prepared_facts() {
         }
     }
 }
+
+pub(crate) fn prepare_all_layout_views(tree: &mut LayoutSession<'_>) {
+    tree.publish_layout_cache_mutations();
+    let keys = tree.nodes.layout_keys().collect();
+    tree.style_views
+        .as_mut()
+        .expect("view-owning test session")
+        .prepare_keys(tree.document, keys, &tree.scoped_overrides);
+}

@@ -2,7 +2,7 @@ use super::*;
 
 use super::super::{BORDER_RESOLUTIONS, GRID_BUILDS};
 
-fn fixture(rows: usize, columns: usize) -> (Document, usize, usize) {
+pub(super) fn fixture(rows: usize, columns: usize) -> (Document, usize, usize) {
     let mut doc = Document::new();
     let table = append_grid_part(
         &mut doc,
@@ -41,7 +41,7 @@ fn fixture(rows: usize, columns: usize) -> (Document, usize, usize) {
 
 #[test]
 fn repeated_table_probes_build_grid_and_resolve_borders_once() {
-    for (rows, columns) in [(2, 2), (32, 16)] {
+    for (rows, columns) in [(2, 2), (32, 16), (64, 16)] {
         let (mut doc, table, _) = fixture(rows, columns);
         GRID_BUILDS.with(|count| count.set(0));
         BORDER_RESOLUTIONS.with(|count| count.set(0));
