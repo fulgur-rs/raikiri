@@ -2,80 +2,73 @@ use super::*;
 use crate::LayoutStyle as Style;
 use crate::node::FormattingContext;
 
+/// A session over `doc` without a cascade, whose style queries read the
+/// styles the fixture bridged.
+fn session(doc: &mut Document) -> LayoutSession<'_> {
+    LayoutSession::new(doc)
+}
+
+/// Bridge the computed styles of `doc`, as layout does before it queries them.
+fn bridged(doc: &mut Document) -> raikiri_style::CascadeResult {
+    let rules = raikiri_style::build_rule_tree(doc);
+    let cascade = raikiri_style::cascade(doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(doc, &cascade).expect("styles");
+    cascade
+}
+
 #[test]
 fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let parent = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:100px;column-count:2;column-gap:20px"),
-    );
-    let child = doc.append_element(
-        Some(parent),
-        "p",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    doc.append_text(child, "text");
-    layout_nested_flex_float_fixture(&mut doc);
-    assert!(can_balance_single_paragraph(&doc, child));
+    // A laid-out multicol container with one paragraph, whose boxes carry
+    // `parent_css` and `child_css`.
+    let laid_out = |parent_css: &str, child_css: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                format!("display:block;width:100px;column-count:2;column-gap:20px;{parent_css}")
+                    .as_str(),
+            ),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "p",
+            Style::default(),
+            Some(format!("display:block;margin:0;{child_css}").as_str()),
+        );
+        doc.append_text(child, "text");
+        layout_nested_flex_float_fixture(&mut doc);
+        (doc, child)
+    };
+    let balances = |parent_css: &str, child_css: &str| {
+        let (mut doc, child) = laid_out(parent_css, child_css);
+        can_balance_single_paragraph(&session(&mut doc), child)
+    };
+    assert!(balances("", ""));
+    // A height, a minimum height or a maximum height on the paragraph keeps
+    // it whole.
+    assert!(!balances("", "height:80px"));
+    assert!(!balances("", "min-height:80px"));
+    assert!(!balances("", "max-height:80px"));
 
-    let original = doc.layout_node_with_style(child).unwrap().style.clone();
-    doc.layout_node_with_style_mut(child)
-        .unwrap()
-        .style
-        .size
-        .height = Dimension::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, child));
-    *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
-    doc.layout_node_with_style_mut(child)
-        .unwrap()
-        .style
-        .min_size
-        .height = LengthPercentageAuto::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, child));
-    *doc.layout_style_for_key_mut(child).unwrap() = original.clone();
-    doc.layout_node_with_style_mut(child)
-        .unwrap()
-        .style
-        .max_size
-        .height = LengthPercentageAuto::length(80.0);
-    assert!(!can_balance_single_paragraph(&doc, child));
-    *doc.layout_style_for_key_mut(child).unwrap() = original;
+    let (mut doc, child) = laid_out("", "");
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Avoid;
-    assert!(!can_balance_single_paragraph(&doc, child));
+    assert!(!can_balance_single_paragraph(&session(&mut doc), child));
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Auto;
     doc.nodes[child].unrounded_layout.padding.top = 4.0;
-    assert!(!can_balance_single_paragraph(&doc, child));
+    assert!(!can_balance_single_paragraph(&session(&mut doc), child));
     doc.nodes[child].unrounded_layout.padding.top = 0.0;
     doc.nodes[child].unrounded_layout.border.bottom = 4.0;
-    assert!(!can_balance_single_paragraph(&doc, child));
+    assert!(!can_balance_single_paragraph(&session(&mut doc), child));
     doc.nodes[child].unrounded_layout.border.bottom = 0.0;
-    doc.layout_node_with_style_mut(parent)
-        .unwrap()
-        .style
-        .padding
-        .left = LengthPercentage::length(4.0);
-    assert!(can_balance_single_paragraph(&doc, child));
-    doc.layout_node_with_style_mut(parent)
-        .unwrap()
-        .style
-        .border
-        .top = LengthPercentage::length(1.0);
-    assert!(can_balance_single_paragraph(&doc, child));
-    doc.layout_node_with_style_mut(parent)
-        .unwrap()
-        .style
-        .padding
-        .left = LengthPercentage::length(0.0);
-    doc.layout_node_with_style_mut(parent)
-        .unwrap()
-        .style
-        .direction = TaffyDirection::Rtl;
-    assert!(can_balance_single_paragraph(&doc, child));
+    // The container's own padding, border and direction are no concern of
+    // its paragraph.
+    assert!(balances("padding-left:4px", ""));
+    assert!(balances("padding-left:4px;border-top:1px solid", ""));
+    assert!(balances("direction:rtl", ""));
 }
 
 #[test]
@@ -190,16 +183,16 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
     let mut doc = Document::new();
     let root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
-    let float = doc.append_element(Some(hidden), "div", Style::default(), None::<&str>);
+    doc.append_element(Some(hidden), "div", Style::default(), Some("float:left"));
+    bridged(&mut doc);
     doc.set_display(hidden, raikiri_style::property::DisplayValue::None);
     doc.nodes[hidden].formatting_context = FormattingContext::None;
-    doc.layout_node_with_style_mut(float).unwrap().style.float = taffy::Float::Left;
 
-    assert!(!multicol_subtree_has_float(&doc, root));
+    assert!(!multicol_subtree_has_float(&session(&mut doc), root));
 
     doc.set_display(hidden, raikiri_style::property::DisplayValue::Block);
     doc.nodes[hidden].formatting_context = FormattingContext::Block;
-    assert!(multicol_subtree_has_float(&doc, root));
+    assert!(multicol_subtree_has_float(&session(&mut doc), root));
 }
 
 #[test]
@@ -265,22 +258,46 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     page.height = 400.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
-    assert!(!multicol_ends_with_its_only_float(&doc, empty));
-    assert!(multicol_ends_with_its_only_float(&doc, alone));
-    assert!(multicol_ends_with_its_only_float(&doc, trailing));
+    assert!(!multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        empty
+    ));
+    assert!(multicol_ends_with_its_only_float(&session(&mut doc), alone));
+    assert!(multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        trailing
+    ));
     // Content after the float wraps beside it, and a second float shares its
     // line, also when that float is inside an earlier child.
-    assert!(!multicol_ends_with_its_only_float(&doc, leading));
-    assert!(!multicol_ends_with_its_only_float(&doc, two));
-    assert!(!multicol_ends_with_its_only_float(&doc, nested));
+    assert!(!multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        leading
+    ));
+    assert!(!multicol_ends_with_its_only_float(&session(&mut doc), two));
+    assert!(!multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        nested
+    ));
     // Adjoining margins collapse on the block layout, also through a wrapper.
-    assert!(!multicol_ends_with_its_only_float(&doc, margin));
-    assert!(!multicol_ends_with_its_only_float(&doc, nested_margin));
+    assert!(!multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        margin
+    ));
+    assert!(!multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        nested_margin
+    ));
     // Hidden content takes no part in either.
-    assert!(multicol_ends_with_its_only_float(&doc, hidden));
+    assert!(multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        hidden
+    ));
     // Lines of the container's own are laid out beside the float.
     assert!(doc.nodes[inline].ifc.is_some());
-    assert!(!multicol_ends_with_its_only_float(&doc, inline));
+    assert!(!multicol_ends_with_its_only_float(
+        &session(&mut doc),
+        inline
+    ));
 }
 
 #[test]
@@ -288,28 +305,49 @@ fn flex_float_chain_is_not_a_scope_without_a_multicol_ancestor() {
     let mut doc = Document::new();
     let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
 
-    assert!(!FlexFloatChain::of_ancestors(&doc, node).is_scope());
+    assert!(!FlexFloatChain::of_ancestors(&session(&mut doc), node).is_scope());
 }
 
 // The chain carried down a traversal must agree with walking every node's
 // ancestors, for every arrangement of the boxes that end or extend a chain.
 #[test]
 fn flex_float_chain_matches_an_ancestor_walk() {
-    fn walk(tree: &Document, node_id: usize) -> bool {
+    /// What a box of the chain is: plain, a row or column flex container, a
+    /// float, a vertical writing mode, or a horizontal or vertical multicol
+    /// container.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Kind {
+        Plain,
+        RowFlex,
+        ColumnFlex,
+        Float,
+        Vertical,
+        HorizontalMulticol,
+        VerticalMulticol,
+    }
+    const KINDS: [Kind; 7] = [
+        Kind::Plain,
+        Kind::RowFlex,
+        Kind::ColumnFlex,
+        Kind::Float,
+        Kind::Vertical,
+        Kind::HorizontalMulticol,
+        Kind::VerticalMulticol,
+    ];
+    // Walk the ancestors of the box at `depth` from the box itself up.
+    fn walk(kinds: &[Kind], depth: usize) -> bool {
         let mut has_row_flex = false;
         let mut has_float = false;
-        for current in tree.inclusive_ancestors(node_id) {
-            let node = &tree.layout_node_with_style(current).unwrap();
-            has_float |= node.style.float.is_floated();
-            if node.authored_writing_mode == Some(raikiri_style::property::WritingMode::VerticalRl)
-            {
-                return false;
+        for kind in kinds[..=depth].iter().rev() {
+            has_float |= *kind == Kind::Float;
+            match kind {
+                Kind::Vertical => return false,
+                Kind::HorizontalMulticol | Kind::VerticalMulticol => {
+                    return has_row_flex && has_float && *kind == Kind::HorizontalMulticol;
+                }
+                _ => {}
             }
-            if let Some(multicol) = node.multicol {
-                return has_row_flex && has_float && multicol.horizontal;
-            }
-            has_row_flex |= node.style.display == Display::Flex
-                && node.style.flex_direction == taffy::FlexDirection::Row;
+            has_row_flex |= *kind == Kind::RowFlex;
         }
         false
     }
@@ -325,42 +363,46 @@ fn flex_float_chain_matches_an_ancestor_walk() {
         orphans: 1,
         widows: 1,
     };
-    const KINDS: usize = 7;
-    for mut arrangement in 0..KINDS.pow(4) {
+    for mut arrangement in 0..KINDS.len().pow(4) {
+        let mut kinds = Vec::new();
+        for _ in 0..4 {
+            kinds.push(KINDS[arrangement % KINDS.len()]);
+            arrangement /= KINDS.len();
+        }
         let mut doc = Document::new();
         let mut parent = 0;
         let mut nodes = Vec::new();
-        for _ in 0..4 {
-            let node = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
-            match arrangement % KINDS {
-                0 => {}
-                1 => doc.set_display(node, raikiri_style::property::DisplayValue::Flex),
-                2 => {
-                    doc.set_display(node, raikiri_style::property::DisplayValue::Flex);
-                    doc.layout_node_with_style_mut(node)
-                        .unwrap()
-                        .style
-                        .flex_direction = taffy::FlexDirection::Column;
-                }
-                3 => doc.layout_node_with_style_mut(node).unwrap().style.float = taffy::Float::Left,
-                4 => {
-                    doc.nodes[node].authored_writing_mode =
-                        Some(raikiri_style::property::WritingMode::VerticalRl)
-                }
-                5 => doc.nodes[node].multicol = Some(multicol(true)),
-                _ => doc.nodes[node].multicol = Some(multicol(false)),
-            }
-            arrangement /= KINDS;
+        for kind in &kinds {
+            let css = match kind {
+                Kind::RowFlex => "display:flex",
+                Kind::ColumnFlex => "display:flex;flex-direction:column",
+                Kind::Float => "float:left",
+                _ => "display:block",
+            };
+            let node = doc.append_element(Some(parent), "div", Style::default(), Some(css));
             nodes.push(node);
             parent = node;
         }
-        let mut carried = FlexFloatChain::of_ancestors(&doc, 0);
-        for &node in &nodes {
-            carried = carried.below(&doc, node);
-            assert_eq!(carried.is_scope(), walk(&doc, node));
+        bridged(&mut doc);
+        for (&node, kind) in nodes.iter().zip(&kinds) {
+            match kind {
+                Kind::Vertical => {
+                    doc.nodes[node].authored_writing_mode =
+                        Some(raikiri_style::property::WritingMode::VerticalRl)
+                }
+                Kind::HorizontalMulticol => doc.nodes[node].multicol = Some(multicol(true)),
+                Kind::VerticalMulticol => doc.nodes[node].multicol = Some(multicol(false)),
+                _ => {}
+            }
+        }
+        let tree = session(&mut doc);
+        let mut carried = FlexFloatChain::of_ancestors(&tree, 0);
+        for (depth, &node) in nodes.iter().enumerate() {
+            carried = carried.below(&tree, node);
+            assert_eq!(carried.is_scope(), walk(&kinds, depth));
             assert_eq!(
-                FlexFloatChain::of_ancestors(&doc, node).is_scope(),
-                walk(&doc, node)
+                FlexFloatChain::of_ancestors(&tree, node).is_scope(),
+                walk(&kinds, depth)
             );
         }
     }
@@ -459,43 +501,33 @@ fn avoid_page_min_block_child_can_continue_across_columns() {
 #[test]
 fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
     let mut doc = Document::new();
-    let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    doc.layout_node_with_style_mut(node)
-        .unwrap()
-        .style
-        .box_sizing = taffy::BoxSizing::BorderBox;
-    doc.layout_node_with_style_mut(node)
-        .unwrap()
-        .style
-        .max_size
-        .height = LengthPercentageAuto::length(100.0);
+    let node = doc.append_element(
+        Some(0),
+        "div",
+        Style::default(),
+        Some("box-sizing:border-box;max-height:100px"),
+    );
+    bridged(&mut doc);
 
     assert_eq!(
-        multicol_max_fragmentainer_height(&doc, node, 120.0, None, None),
+        multicol_max_fragmentainer_height(&session(&mut doc), node, 120.0, None, None),
         Some(100.0),
     );
 }
 
 #[test]
 fn multicol_min_constrained_child_requires_all_constraints() {
-    let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
-    doc.nodes[child].has_logical_min_block_size = true;
-    doc.layout_node_with_style_mut(child)
-        .unwrap()
-        .style
-        .min_size
-        .height = LengthPercentageAuto::length(40.0);
+    let constrained = |child_css: &str| {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), Some(child_css));
+        bridged(&mut doc);
+        doc.nodes[child].has_logical_min_block_size = true;
+        multicol_has_min_constrained_child(&session(&mut doc), parent)
+    };
 
-    assert!(multicol_has_min_constrained_child(&doc, parent));
-
-    doc.layout_node_with_style_mut(child)
-        .unwrap()
-        .style
-        .min_size
-        .height = LengthPercentageAuto::auto();
-    assert!(!multicol_has_min_constrained_child(&doc, parent));
+    assert!(constrained("min-height:40px"));
+    assert!(!constrained("min-height:auto"));
 }
 
 #[test]
@@ -517,14 +549,8 @@ fn authored_containing_width_uses_the_cascade_resolved_ch_width() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("styles");
 
-    let taffy_width = style_dimension_length(
-        doc.layout_node_with_style(container)
-            .unwrap()
-            .style
-            .size
-            .width,
-    )
-    .expect("cascade-resolved ch width should be a finite length");
+    let taffy_width = style_dimension_length(style_of(&session(&mut doc), container).size().width)
+        .expect("cascade-resolved ch width should be a finite length");
     assert_eq!(
         AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
         Some(taffy_width),
@@ -1418,10 +1444,7 @@ fn multicol_block_children_with_lines_get_text_ranges() {
     doc.append_element(Some(second), "br", Style::default(), None::<&str>);
 
     layout_nested_flex_float_fixture(&mut doc);
-    assert_ne!(
-        doc.layout_node_with_style(multicol).unwrap().style.display,
-        Display::Flex
-    );
+    assert_ne!(doc.nodes[multicol].taffy_display(), Display::Flex);
     assert!(doc.nodes[first].is_ifc_root(), "first child must own lines");
     assert!(
         doc.nodes[first].ifc_multicol_fragments().is_some(),
@@ -2168,10 +2191,10 @@ fn auto_height_columns_balance_wrappers_with_padding_taller_than_a_column() {
 
 #[test]
 fn auto_height_columns_balance_lineless_blocks_inside_nested_wrappers() {
-    let (doc, parent, child) = nested_wrapped_lineless_fixture();
+    let (mut doc, parent, child) = nested_wrapped_lineless_fixture();
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
     assert!(
-        lineless::supported_with_wrappers(&doc, parent).is_some(),
+        lineless::supported_with_wrappers(&session(&mut doc), parent).is_some(),
         "a span below flow-root is regular column content"
     );
     let fragments = fragment_rects(&doc, child);
@@ -2216,7 +2239,7 @@ fn auto_balance_preserves_spanners_in_the_multicol_formatting_context() {
     layout_nested_flex_float_fixture(&mut doc);
 
     assert!(
-        lineless::supported_with_wrappers(&doc, parent).is_none(),
+        lineless::supported_with_wrappers(&session(&mut doc), parent).is_none(),
         "a spanner in the multicol formatting context must keep the spanning path active"
     );
 }
@@ -2247,17 +2270,17 @@ fn wrappers_keep_empty_spanners_out_of_the_stream() {
     // The margins of the two spanners collapse into the larger one. The
     // plain wrapper makes no box, so the spanners are among the children
     // that the container places.
-    let (doc, parent) = spanners("display:block");
+    let (mut doc, parent) = spanners("display:block");
     assert!(
         doc.children_through_contents(parent)
             .into_iter()
-            .all(|child| spanning::is_spanner(&doc, child))
+            .all(|child| spanning::is_spanner(&session(&mut doc), child))
     );
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
 
     // Below a flow root they are ordinary blocks of the columns.
-    let (doc, parent) = spanners("display:flow-root");
-    assert!(lineless::supported_with_wrappers(&doc, parent).is_some());
+    let (mut doc, parent) = spanners("display:flow-root");
+    assert!(lineless::supported_with_wrappers(&session(&mut doc), parent).is_some());
 }
 
 #[test]
@@ -2325,9 +2348,9 @@ fn containers_with_content_or_replaced_children_keep_other_strategies() {
         Some("display:block;height:100px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&doc, parent, true).is_some());
+    assert!(lineless::supported(&session(&mut doc), parent, true).is_some());
     doc.append_text(child, "text");
-    assert!(lineless::supported(&doc, parent, true).is_none());
+    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -2345,17 +2368,17 @@ fn containers_with_content_or_replaced_children_keep_other_strategies() {
         Some("display:block;height:100px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&doc, parent, true).is_none());
+    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
 }
 
 #[test]
 fn only_a_relative_leaf_block_keeps_its_insets_in_the_stream() {
     let supported = |child: &str| {
-        let (doc, parent, _) = lineless_fixture(
+        let (mut doc, parent, _) = lineless_fixture(
             "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
             &[child],
         );
-        lineless::supported(&doc, parent, true).is_some()
+        lineless::supported(&session(&mut doc), parent, true).is_some()
     };
     assert!(supported(
         "display:block;height:50px;position:relative;left:5px"
@@ -2380,11 +2403,11 @@ fn only_a_relative_leaf_block_keeps_its_insets_in_the_stream() {
 #[test]
 fn a_relative_containing_block_with_insets_keeps_other_strategies() {
     let supported = |block: &str| {
-        let (doc, parent, _) = absolute_fixture(
+        let (mut doc, parent, _) = absolute_fixture(
             DEFINITE_COLUMNS,
             &[(block, &["position:absolute;top:0;width:10px;height:20px"])],
         );
-        lineless::supported(&doc, parent, true).is_some()
+        lineless::supported(&session(&mut doc), parent, true).is_some()
     };
     assert!(supported("display:block;position:relative;height:50px"));
     assert!(!supported(
@@ -2404,11 +2427,11 @@ fn an_orthogonal_block_without_lines_is_not_sliced() {
 #[test]
 fn a_block_with_size_containment_is_not_sliced() {
     // Size containment makes the box monolithic (CSS Contain 2, 3.1).
-    let (doc, parent, _) = lineless_fixture(
+    let (mut doc, parent, _) = lineless_fixture(
         "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
         &["display:block;height:400px;contain:size"],
     );
-    assert!(lineless::supported(&doc, parent, true).is_none());
+    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
 }
 
 #[test]
@@ -3203,7 +3226,7 @@ fn an_inherited_vertical_writing_mode_keeps_blocks_without_lines_whole() {
         Some("display:block;height:200px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&doc, parent, true).is_none());
+    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
     assert!(fragment_rects(&doc, child).len() <= 1);
 }
 
@@ -3497,7 +3520,10 @@ fn blocks_without_lines_skip_children_that_generate_no_box() {
             .map(|style| doc.append_element(Some(parent), "div", Style::default(), Some(*style)))
             .collect();
         layout_nested_flex_float_fixture(&mut doc);
-        (super::lineless::supported(&doc, parent, true), ids)
+        (
+            super::lineless::supported(&session(&mut doc), parent, true),
+            ids,
+        )
     };
     // A box with no display and a comment are skipped, and a minimum height
     // makes the other block one without lines.
@@ -3820,9 +3846,8 @@ fn ancestor_width_table_uses_cascade_resolved_ch_and_percentage_inputs() {
         cascade.computed[ch].width,
         ComputedLengthPercentageOrAuto::Px(64.0)
     );
-    let resolved_ch =
-        style_dimension_length(doc.layout_node_with_style(ch).unwrap().style.size.width)
-            .expect("cascade-resolved ch width should be a finite length");
+    let resolved_ch = style_dimension_length(style_of(&session(&mut doc), ch).size().width)
+        .expect("cascade-resolved ch width should be a finite length");
     assert_eq!(resolved_ch, 64.0);
     for page_width in [800.0, 400.0, 800.0] {
         let rebreak = AncestorFacts::new(&doc, &cascade, page_width);
@@ -4274,8 +4299,8 @@ fn a_cut_containing_block_holds_absolute_pieces_in_the_columns_after_its_own() {
 #[test]
 fn only_a_positioned_block_breaks_the_absolute_boxes_it_contains() {
     let supported = |block: &str, absolute: &str, out_of_flow: bool| {
-        let (doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &[absolute])]);
-        lineless::supported(&doc, parent, out_of_flow).is_some()
+        let (mut doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &[absolute])]);
+        lineless::supported(&session(&mut doc), parent, out_of_flow).is_some()
     };
     let absolute = "position:absolute;top:0;width:10px;height:20px";
     let block = "display:block;position:relative;height:50px";
@@ -4356,7 +4381,7 @@ fn a_containing_block_that_holds_blocks_breaks_with_them_and_its_absolute_boxes(
 #[test]
 fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
     let supported = |block: &str, out_of_flow: bool| {
-        let (doc, parent, _) = absolute_fixture(
+        let (mut doc, parent, _) = absolute_fixture(
             DEFINITE_COLUMNS,
             &[(
                 block,
@@ -4366,7 +4391,7 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
                 ],
             )],
         );
-        lineless::supported(&doc, parent, out_of_flow).is_some()
+        lineless::supported(&session(&mut doc), parent, out_of_flow).is_some()
     };
     let block = "display:block;position:relative";
     assert!(supported(block, true));
@@ -4416,7 +4441,7 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
         Style::default(),
         Some("height:10px"),
     );
-    assert!(lineless::supported(&doc, parent, true).is_none());
+    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
 }
 
 #[test]
@@ -4427,8 +4452,8 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
             .chain([nested])
             .map(|css| (css, &[] as &[&str]))
             .collect();
-        let (doc, _, ids) = absolute_fixture(outer, &children);
-        lineless::starts_the_outer_columns(&doc, ids.last().unwrap().0)
+        let (mut doc, _, ids) = absolute_fixture(outer, &children);
+        lineless::starts_the_outer_columns(&session(&mut doc), ids.last().unwrap().0)
     };
     let nested = "display:block;columns:2;height:50px";
     assert!(starts(DEFINITE_COLUMNS, None, nested));
@@ -4453,7 +4478,7 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
         doc.append_text(parent, text);
         let nested = doc.append_element(Some(parent), "div", Style::default(), Some(nested));
         layout_nested_flex_float_fixture(&mut doc);
-        lineless::starts_the_outer_columns(&doc, nested)
+        lineless::starts_the_outer_columns(&session(&mut doc), nested)
     };
     let text_before = |text: &str| text_before_in(DEFINITE_COLUMNS, text);
     assert!(!text_before("text"));
@@ -4467,8 +4492,8 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
     // A parent that is not a multicol container may itself sit anywhere.
     assert!(!starts("display:block;height:100px", None, nested));
     // The root has no parent.
-    let doc = Document::new();
-    assert!(!lineless::starts_the_outer_columns(&doc, 0));
+    let mut doc = Document::new();
+    assert!(!lineless::starts_the_outer_columns(&session(&mut doc), 0));
 }
 
 #[test]
@@ -4493,7 +4518,7 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         let second = doc.append_element(Some(parent), "p", Style::default(), Some(child_style));
         doc.append_text(second, "B");
         layout_nested_flex_float_fixture(&mut doc);
-        multicol_has_only_paragraph_children(&doc, parent)
+        multicol_has_only_paragraph_children(&session(&mut doc), parent)
     };
     assert!(paragraphs("display:block;margin:0"));
     // A single paragraph keeps the existing path.
@@ -4564,8 +4589,8 @@ fn an_absolute_box_in_an_empty_containing_block_starts_in_the_first_column() {
 fn a_containing_block_with_no_block_size_is_sliced_for_the_absolute_boxes_it_holds() {
     let supported = |block: &str, absolute: Option<&str>, out_of_flow: bool| {
         let boxes: Vec<&str> = absolute.into_iter().collect();
-        let (doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &boxes)]);
-        lineless::supported(&doc, parent, out_of_flow).is_some()
+        let (mut doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &boxes)]);
+        lineless::supported(&session(&mut doc), parent, out_of_flow).is_some()
     };
     let absolute = "position:absolute;top:0;width:10px;height:20px";
     let block = "display:block;position:relative";
@@ -4907,107 +4932,207 @@ fn a_block_that_fills_the_column_takes_its_ratio_height_from_the_column_width() 
     );
 }
 
-/// Put `doc` on the transposed axes of a `vertical-lr` root the way
-/// pagination does: the facts of every box the paginator reads along its flow
-/// are its physical ones with the axes exchanged, top and bottom being the
-/// physical left and right.
-fn on_transposed_axes(doc: &mut Document) {
-    let styles = (0..doc.nodes.len())
-        .map(|key| {
-            let style = doc.layout_style_for_key(key).unwrap();
-            crate::layout::block_axis_style::BlockAxisStyle {
-                height: style.size.width,
-                min_height: style.min_size.width,
-                max_height: style.max_size.width,
-                min_width: style.min_size.height,
-                max_width: style.max_size.height,
-                margin: Rect {
-                    top: style.margin.left,
-                    right: style.margin.bottom,
-                    bottom: style.margin.right,
-                    left: style.margin.top,
-                },
-                ..crate::layout::block_axis_style::BlockAxisStyle::of_retained(style)
-            }
-        })
-        .collect();
-    doc.pagination_block_styles = styles;
-}
-
 #[test]
-fn spanner_cut_checks_read_margins_along_the_paginated_axes() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let owner = doc.append_element(
-        Some(html),
-        "div",
-        Style::default(),
-        Some("display:block;column-count:2"),
-    );
-    let spanner = doc.append_element(
-        Some(owner),
-        "div",
-        Style::default(),
-        Some("display:block;column-span:all;margin-top:10px"),
-    );
-    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    // A block margin is plain along the flow...
-    assert!(lineless::is_plain_block_holding_lines(&doc, spanner));
-    // ...but the physical top margin of a box in a vertical root lies across
-    // the flow, which a page may not end inside.
-    on_transposed_axes(&mut doc);
-    assert!(!lineless::is_plain_block_holding_lines(&doc, spanner));
-}
+fn authored_box_reads_what_the_style_view_reads() {
+    let close = |a: f32, b: f32| (a - b).abs() <= 1e-3;
+    let close_option = |a: Option<f32>, b: Option<f32>| match (a, b) {
+        (Some(a), Some(b)) => close(a, b),
+        (a, b) => a == b,
+    };
+    // `(tag, css)` of a box inside a 200px wide parent. The parent and the
+    // body are plain blocks.
+    let cases = [
+        ("div", ""),
+        ("div", "box-sizing:border-box;padding:10px;border:3px solid"),
+        ("div", "padding:10%;border:2px solid"),
+        (
+            "div",
+            "padding:calc(5px + 10%) calc(2px + 1%);border:1px solid",
+        ),
+        ("div", "padding-left:-3px"),
+        ("div", "border-left:4px solid;border-right:6px solid"),
+        (
+            "div",
+            "border-left:4px solid;border-right:6px solid;width:50px",
+        ),
+        (
+            "div",
+            "border-left:4px solid;border-right:6px solid;padding-top:3px",
+        ),
+        (
+            "div",
+            "border-left:4px solid;border-right:6px solid;padding-top:0%",
+        ),
+        ("div", "border-left:4px solid;border-top:1px solid"),
+        ("div", "min-width:30px;max-width:80px"),
+        ("div", "min-width:25%;max-width:calc(50% - 4px)"),
+        ("div", "min-width:min-content;max-width:fit-content"),
+        ("div", "min-width:max-content;max-width:max-content"),
+        ("div", "min-width:auto;max-width:none"),
+        ("div", "float:left"),
+        ("div", "float:right"),
+        ("div", "float:none"),
+        ("div", "aspect-ratio:2"),
+        ("div", "aspect-ratio:auto 3/2"),
+        ("div", "aspect-ratio:auto"),
+        ("div", "contain:size;aspect-ratio:2"),
+        ("div", "contain:size;width:50px;aspect-ratio:auto 2"),
+        ("div", "contain:inline-size;aspect-ratio:2"),
+        ("img", "width:30px"),
+        ("img", "width:30px;height:20px"),
+        ("img", "width:auto;height:auto"),
+        (
+            "div",
+            "writing-mode:vertical-rl;border-left:4px solid;border-right:6px solid",
+        ),
+        ("div", "writing-mode:vertical-lr;width:50px;aspect-ratio:2"),
+        (
+            "div",
+            "width:min-content;border-left:4px solid;border-right:6px solid",
+        ),
+        (
+            "div",
+            "width:max-content;border-left:4px solid;border-right:6px solid",
+        ),
+        (
+            "div",
+            "width:fit-content;border-left:4px solid;border-right:6px solid",
+        ),
+        (
+            "div",
+            "display:inline;width:fit-content;border-left:4px solid",
+        ),
+        (
+            "div",
+            "display:inline-block;width:max-content;border-left:4px solid",
+        ),
+        (
+            "div",
+            "display:flex;width:max-content;border-left:4px solid",
+        ),
+        (
+            "div",
+            "display:table;width:min-content;border-left:4px solid",
+        ),
+        (
+            "img",
+            "width:min-content;border-left:4px solid;border-right:6px solid",
+        ),
+        (
+            "img",
+            "width:max-content;border-left:4px solid;border-right:6px solid",
+        ),
+        (
+            "img",
+            "writing-mode:vertical-rl;inline-size:max-content;aspect-ratio:2",
+        ),
+        (
+            "img",
+            "writing-mode:vertical-rl;inline-size:max-content;contain:size;aspect-ratio:2",
+        ),
+        (
+            "div",
+            "writing-mode:vertical-rl;inline-size:max-content;contain:size;aspect-ratio:2",
+        ),
+        ("div", "contain:size;width:min-content;aspect-ratio:2"),
+        (
+            "div",
+            "contain:size;width:fit-content;height:fit-content;aspect-ratio:2",
+        ),
+        (
+            "div",
+            "display:inline-block;contain:size;width:max-content;aspect-ratio:2",
+        ),
+        (
+            "div",
+            "writing-mode:vertical-rl;contain:size;height:min-content;aspect-ratio:2",
+        ),
+        (
+            "div",
+            "writing-mode:vertical-rl;contain:size;width:100px;height:fit-content;aspect-ratio:2",
+        ),
+        (
+            "div",
+            "writing-mode:vertical-rl;height:max-content;border-top:4px solid",
+        ),
+    ];
+    for (tag, css) in cases {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px"),
+        );
+        let boxed = doc.append_element(
+            Some(parent),
+            tag,
+            Style::default(),
+            Some(format!("display:block;{css}").as_str()),
+        );
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+        apply_computed_to_style_in_session(&mut tree, &cascade).expect("styles");
+        let view = tree.native_style(boxed, ReadRole::CoreContainer);
+        let authored = AuthoredBox::new(&tree, &cascade, boxed);
+        let ctx = format!("{tag} {{{css}}}");
 
-#[test]
-fn right_alignment_checks_the_width_bounds_across_the_paginated_flow() {
-    let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;direction:rtl"),
-    );
-    let child = doc.append_element(
-        Some(html),
-        "div",
-        Style::default(),
-        Some("display:block;min-height:5px"),
-    );
-    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    // An auto-width box fills the width of its parent in either direction.
-    assert!(!is_right_aligned_in_parent(&doc, child));
-    // On transposed axes its physical `min-height` bounds the width the
-    // flow is across, so it can be narrower than its parent.
-    on_transposed_axes(&mut doc);
-    assert!(is_right_aligned_in_parent(&doc, child));
-}
-
-#[test]
-fn paragraph_eligibility_checks_the_sizes_along_the_paginated_axes() {
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let plain = doc.append_element(
-        Some(html),
-        "p",
-        Style::default(),
-        Some("display:block;min-width:30px"),
-    );
-    let tall = doc.append_element(
-        Some(html),
-        "p",
-        Style::default(),
-        Some("display:block;height:20px"),
-    );
-    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    assert!(can_balance_paragraph_box(&doc, plain));
-    assert!(!can_balance_paragraph_box(&doc, tall));
-    // On transposed axes the physical `min-width` bounds the paginator's
-    // height and the physical `height` is across its flow.
-    on_transposed_axes(&mut doc);
-    assert!(!can_balance_paragraph_box(&doc, plain));
-    assert!(can_balance_paragraph_box(&doc, tall));
+        assert_eq!(
+            authored.is_border_box(),
+            CoreStyle::box_sizing(&view) == taffy::BoxSizing::BorderBox,
+            "box-sizing of {ctx}"
+        );
+        assert_eq!(
+            authored.is_floated(),
+            BlockItemStyle::float(&view).is_floated(),
+            "float of {ctx}"
+        );
+        assert_eq!(
+            authored.is_replaced(),
+            CoreStyle::is_replaced(&view),
+            "replaced of {ctx}"
+        );
+        assert_eq!(
+            authored.has_preferred_aspect_ratio(),
+            CoreStyle::aspect_ratio(&view).is_some(),
+            "aspect ratio of {ctx}"
+        );
+        for basis in [0.0, 37.5, 200.0, f32::INFINITY] {
+            let padding = CoreStyle::padding(&view);
+            let border = CoreStyle::border(&view);
+            let edges = multicol_resolve_inset(&tree, padding.left, basis)
+                + multicol_resolve_inset(&tree, padding.right, basis)
+                + multicol_resolve_inset(&tree, border.left, basis)
+                + multicol_resolve_inset(&tree, border.right, basis);
+            assert!(
+                close(authored.horizontal_edges(basis), edges),
+                "horizontal edges of {ctx} against {basis}"
+            );
+            assert!(
+                close_option(
+                    authored.min_width(basis),
+                    multicol_definite_dimension(
+                        &tree,
+                        CoreStyle::min_size(&view).width.into(),
+                        Some(basis)
+                    )
+                ),
+                "min-width of {ctx} against {basis}"
+            );
+            assert!(
+                close_option(
+                    authored.max_width(basis),
+                    multicol_definite_dimension(
+                        &tree,
+                        CoreStyle::max_size(&view).width.into(),
+                        Some(basis)
+                    )
+                ),
+                "max-width of {ctx} against {basis}"
+            );
+        }
+    }
 }

@@ -4,14 +4,27 @@ use super::*;
 use crate::layout::context::LayoutSession;
 use taffy::util::MaybeResolve;
 
-pub(crate) fn is_spanner(tree: &Document, child: usize) -> bool {
-    let node = &tree.layout_node_with_style(child).unwrap();
+/// Whether `child` is a `column-span: all` block that is not a float, read
+/// through the style views of a layout session.
+pub(crate) fn is_spanner(tree: &LayoutSession<'_>, child: usize) -> bool {
+    spans_all_columns(layout_node(tree, child)) && !is_floated(tree, child)
+}
+
+/// [`is_spanner`] for callers that read the computed values: the box
+/// preparation, which runs before the style views are ready, and code that
+/// runs after the layout session has ended. No layout pass overrides `float`,
+/// so both answer alike.
+pub(crate) fn is_spanner_in(doc: &Document, cascade: &CascadeResult, child: usize) -> bool {
+    spans_all_columns(layout_node(doc, child))
+        && !AuthoredBox::new(doc, cascade, child).is_floated()
+}
+
+fn spans_all_columns(node: &crate::node::Node) -> bool {
     node.column_span_all
         && node.is_in_document()
         && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
         && !node.is_display_none()
         && node.taffy_position() != TaffyPosition::Absolute
-        && !node.style.float.is_floated()
 }
 
 pub(super) fn retire_preliminary_fragments(tree: &mut LayoutSession<'_>, children: &[usize]) {
@@ -54,7 +67,7 @@ pub(super) fn layout(
             continue;
         }
         if children[start..end].iter().any(|&child| {
-            let node = &tree.layout_node_with_style(child).unwrap();
+            let node = layout_node(tree, child);
             node.kind() != NodeKind::Text
                 || node.unrounded_layout.size.height != 0.0
                 || node.ifc.is_some()
@@ -99,7 +112,7 @@ pub(super) fn layout(
             let stack = std::mem::take(&mut tree.context.fragmentation_stack);
             clear_column_state(tree, child);
             let fragment_start = tree.fragment_tree.fragments.len();
-            let margin = &tree.layout_node_with_style(child).unwrap().style.margin;
+            let margin = style_of(tree, child).margin();
             let inline_margin = [margin.left, margin.right]
                 .into_iter()
                 .filter_map(|value| {

@@ -89,7 +89,7 @@ fn spanning_pagination_propagates_an_exhausted_ancestor_growth_budget() {
     let mut work = ProjectionWork::new(&control, limit);
     let owner_y = current_abs_y(&probe, owner);
     let delta = paginate_spanning_columns(
-        &mut probe,
+        &mut crate::layout::context::LayoutSession::new(&mut probe),
         &mut edits,
         owner,
         owner_y,
@@ -202,4 +202,58 @@ fn spanning_source_fragment_limit_returns_a_layout_error() {
     ));
     assert!(document.fragment_tree.limit_exceeded);
     assert_eq!(document.fragment_tree.fragments.len(), 2);
+}
+
+#[test]
+fn a_multicol_owner_is_monolithic_when_pagination_is_transposed() {
+    let mut document = Document::new();
+    let html = document.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = document.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font:20px/20px Ahem"),
+    );
+    let owner = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;writing-mode:horizontal-tb;width:100px;column-count:2;\
+             column-gap:20px;orphans:1;widows:1",
+        ),
+    );
+    let paragraph = document.append_element(
+        Some(owner),
+        "p",
+        Style::default(),
+        Some("display:block;white-space:pre;margin:0"),
+    );
+    document.append_text(
+        paragraph,
+        std::iter::repeat_n("A", 200).collect::<Vec<_>>().join("\n"),
+    );
+    let heading = document.append_element(
+        Some(owner),
+        "div",
+        Style::default(),
+        Some("display:block;column-span:all"),
+    );
+    document.append_text(heading, "B");
+    let rules = raikiri_style::build_rule_tree(&document);
+    let cascade = raikiri_style::cascade(&document, &rules).unwrap();
+    with_ahem(&mut document);
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 60.0;
+    let slices = layout_pages(&mut document, &cascade, page).unwrap();
+    assert!(!slices.is_empty());
+    // The owner still holds the groups of its source layout.
+    assert_eq!(document.nodes[owner].multicol_groups.len(), 1);
 }
