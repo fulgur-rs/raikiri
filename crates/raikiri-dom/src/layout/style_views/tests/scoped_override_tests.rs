@@ -347,7 +347,7 @@ fn scoped_override_production_supports_legacy_session_and_nested_error() {
 }
 
 #[test]
-fn scoped_override_production_supports_block_without_query_wrapper() {
+fn scoped_override_production_supports_prepared_block_queries() {
     for child_style in [
         "width:31px;height:7px",
         "position:absolute;width:31px;height:7px",
@@ -355,10 +355,10 @@ fn scoped_override_production_supports_block_without_query_wrapper() {
         let (mut doc, cascade, child, _) = fixture_with_styles("display:block", child_style);
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-        assert!(!session.has_style_view(child));
+        assert!(session.has_style_view(child));
         let key = session.nodes.box_key(child).unwrap();
         session.with_overrides(vec![entry(key, 19.0)], |tree| {
-            assert!(!tree.has_style_view(child));
+            assert!(tree.has_style_view(child));
             assert_eq!(
                 tree.layout_style_for_key(child).unwrap().size.width,
                 Dimension::length(19.0)

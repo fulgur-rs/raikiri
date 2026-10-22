@@ -45,25 +45,7 @@ impl<'a> StyleViews<'a> {
     }
 
     fn prepare(&mut self, doc: &mut Document, scoped: &ScopedOverrides) {
-        use taffy::TraversePartialTree;
-        let mut keys = Vec::new();
-        for idx in doc.nodes.layout_keys() {
-            if doc.nodes[idx].kind() == NodeKind::Element
-                && matches!(
-                    doc.nodes[idx].taffy_display(),
-                    taffy::Display::Flex | taffy::Display::Grid
-                )
-            {
-                if keys.capacity() == 0 {
-                    keys.reserve(doc.nodes.len());
-                }
-                keys.push(idx);
-                // Taffy queries child style before excluding hidden or out-of-flow items.
-                keys.extend(doc.child_ids(taffy::NodeId::from(idx)).map(usize::from));
-            }
-        }
-        keys.sort_unstable();
-        keys.dedup();
+        let keys = doc.nodes.layout_keys().collect();
         self.prepare_keys(doc, keys, scoped);
     }
 
@@ -325,7 +307,48 @@ impl LayoutSession<'_> {
     }
 
     #[cfg(test)]
+    pub(crate) fn query_style(&self, idx: usize, role: checked::ReadRole) -> LayoutStyleView<'_> {
+        use checked::ReadRole;
+        use raikiri_layout_style::ClaimsPolicy;
+        let mut context = self
+            .style_views
+            .as_ref()
+            .and_then(|views| {
+                self.nodes
+                    .box_key(idx)
+                    .and_then(|key| views.boxes.get(&key))
+            })
+            .map_or_else(ViewContext::default, |prepared| prepared.context);
+        context.claims_policy = if matches!(role, ReadRole::CoreContainer) {
+            ClaimsPolicy::Prepared
+        } else {
+            ClaimsPolicy::Positioning
+        };
+        if matches!(role, ReadRole::BlockItem) {
+            context.block_item_basis = self
+                .context
+                .block_item_percent_bases
+                .last()
+                .filter(|&&(container, _)| {
+                    self.nodes[idx].taffy_position() != taffy::Position::Absolute
+                        && self.taffy_parent_of(idx) == Some(container)
+                })
+                .and_then(|&(_, basis)| basis);
+        }
+        self.style_view(idx).with_context(context)
+    }
+
+    #[cfg(test)]
     pub(crate) fn checked_style(
+        &self,
+        idx: usize,
+        role: checked::ReadRole,
+    ) -> checked::CheckedStyle<'_> {
+        self.checked_query(idx, role)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn checked_query(
         &self,
         idx: usize,
         role: checked::ReadRole,
@@ -338,19 +361,21 @@ impl LayoutSession<'_> {
                 .boxes
                 .get(&key)
                 .unwrap_or_else(|| panic!("missing prepared style for {key:?}"));
-            context.context = prepared.context;
             context.pass_entries = self.document.box_style_data.get(key).unwrap().pass.len();
             context.scope_depth = self.scoped_overrides.depth(key);
             context.was_scoped = prepared.was_scoped || self.scoped_overrides.was_scoped(key);
-            self.style_view(idx).for_flex_grid()
+            let view = self.query_style(idx, role);
+            context.context = view.context();
+            view
         });
+        let legacy = checked::legacy::LegacyQuery::for_role(self, idx, role);
         checked::CheckedStyle::new(
-            self.layout_style_for_key(idx)
-                .expect("style query has a retained style"),
+            legacy.style(),
             view,
             context,
             &self.document.style_view_comparisons,
         )
+        .with_legacy_query(legacy)
     }
 
     pub(crate) fn propagate_viewport_overflow(&mut self, cascade: &CascadeResult, body: usize) {

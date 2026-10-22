@@ -90,7 +90,7 @@ impl raikiri_traits::ReplacedResolver for BrokenImageFallback<'_> {
 #[derive(Default, Debug)]
 struct Totals {
     documents: usize,
-    roles: [usize; 4],
+    roles: [usize; 8],
     iterators: usize,
     calcs: usize,
     pass: usize,
@@ -248,9 +248,20 @@ fn flex_grid_baseline_getters_agree() {
     let ids: Vec<_> = include_str!("../../../../../expectations/raikiri-baseline.txt")
         .lines()
         .map(str::trim)
-        .filter(|id| id.starts_with("css/css-flexbox/") || id.starts_with("css/css-grid/"))
+        .filter(|id| {
+            id.starts_with("css/css-flexbox/")
+                || id.starts_with("css/css-grid/")
+                || id.starts_with("css/CSS2/normal-flow/")
+                || id.starts_with("css/CSS2/positioning/")
+                || id.starts_with("css/CSS2/abspos/")
+                || id.starts_with("css/CSS2/visuren/")
+                || id.starts_with("css/CSS2/visudet/")
+                || id.starts_with("css/CSS2/floats/")
+                || id.starts_with("css/CSS2/floats-clear/")
+                || id.starts_with("css/CSS2/margin-padding-clear/")
+        })
         .collect();
-    assert_eq!(ids.len(), 837, "baseline changed: review corpus coverage");
+    assert_eq!(ids.len(), 953, "baseline changed: review corpus coverage");
     let filter = std::env::var("RAIKIRI_STYLE_CORPUS_FILTER").ok();
     let mut pending: BTreeSet<_> = ids
         .iter()
@@ -294,7 +305,7 @@ fn flex_grid_baseline_getters_agree() {
             "review stale WPT resource exceptions"
         );
         assert!(totals.documents >= ids.len());
-        assert!(totals.roles.iter().all(|count| *count > 0));
+        assert!(totals.roles[..4].iter().all(|count| *count > 0));
         assert!(
             totals.iterators > 0
                 && totals.calcs > 0

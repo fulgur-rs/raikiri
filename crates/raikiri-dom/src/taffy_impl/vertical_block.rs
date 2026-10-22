@@ -251,7 +251,7 @@ fn is_vertical(tree: &Document, idx: usize) -> bool {
 impl LayoutSession<'_> {
     /// The transposed style of the container being laid out, when `idx` is
     /// that container.
-    pub(super) fn transposed_container_style(&self, idx: usize) -> Option<&Style> {
+    pub(crate) fn transposed_container_style(&self, idx: usize) -> Option<&Style> {
         self.context
             .transposed_blocks
             .last()
@@ -261,7 +261,7 @@ impl LayoutSession<'_> {
 
     /// The transposed style of `idx`, when it is a child of the container
     /// being laid out.
-    pub(super) fn transposed_child_style(&self, idx: usize) -> Option<&Style> {
+    pub(crate) fn transposed_child_style(&self, idx: usize) -> Option<&Style> {
         self.context
             .transposed_blocks
             .last()

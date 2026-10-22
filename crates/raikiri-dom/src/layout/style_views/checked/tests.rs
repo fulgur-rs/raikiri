@@ -237,7 +237,7 @@ fn actual_taffy_layout_reads_all_four_roles_in_scoped_and_pass_states() {
     crate::layout::page_pipeline::layout_single_page_checked(&mut doc, &cascade, page).unwrap();
     let stats = &doc.style_view_comparisons;
     assert!(
-        stats.getter_reads.iter().all(|count| count.get() > 0),
+        stats.getter_reads[..4].iter().all(|count| count.get() > 0),
         "{stats:?}"
     );
     assert!(stats.iterator_reads.get() > 0, "{stats:?}");

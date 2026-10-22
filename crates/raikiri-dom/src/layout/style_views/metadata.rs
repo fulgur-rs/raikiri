@@ -59,6 +59,14 @@ pub(in crate::layout) fn node_metadata(
         C::Text => StyleFlags::TEXT,
         C::Block => StyleFlags::EMPTY,
     });
+    let flags = if matches!(
+        node.display(),
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        flags.union(StyleFlags::OOF_TABLE)
+    } else {
+        flags
+    };
     StyleMetadata {
         flags,
         used_writing_mode: node.used_writing_mode,

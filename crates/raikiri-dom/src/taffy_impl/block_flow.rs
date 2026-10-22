@@ -4,6 +4,8 @@ mod children;
 pub(crate) mod context;
 mod positioned;
 mod sizing;
+#[cfg(test)]
+pub(crate) mod style_input;
 
 pub(crate) use positioned::aligned_static_position;
 

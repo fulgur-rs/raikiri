@@ -370,7 +370,7 @@ fn mismatched_recipe_provenance_cannot_publish_ready_foundations() {
 }
 
 #[test]
-fn all_live_boxes_have_document_foundations_without_expanding_query_targets() {
+fn all_live_boxes_share_document_foundations_and_query_targets() {
     let (mut doc, cascade, child, _) = fixture_with_styles("display:block", "width:31px");
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
@@ -386,7 +386,7 @@ fn all_live_boxes_have_document_foundations_without_expanding_query_targets() {
             assert!(matches!(record.base, LayoutBase::Source(source) if source == child));
         }
     }
-    assert!(!session.has_style_view(child));
+    assert!(session.has_style_view(child));
     session.record_pass_override(child, OwnedPropertyOverride::aspect_ratio(Some(2.0)));
     assert_eq!(
         session

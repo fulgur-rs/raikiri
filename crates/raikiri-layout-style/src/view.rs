@@ -76,6 +76,12 @@ impl<'a> LayoutStyleView<'a> {
         self
     }
 
+    /// The query-local context used by diagnostics and role-specific adapters.
+    #[inline]
+    pub const fn context(&self) -> ViewContext {
+        self.context
+    }
+
     /// Replace query-local context without preparing or allocating input.
     #[inline]
     pub const fn with_context(mut self, context: ViewContext) -> Self {
