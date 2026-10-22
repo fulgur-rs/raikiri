@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::ComputedLengthPercentageOrAuto;
 use std::cell::Cell;
 type Inspector = fn(&mut LayoutSession<'_>, usize);
 thread_local! { static INSPECTOR: Cell<Option<Inspector>> = const { Cell::new(None) }; }
@@ -21,18 +22,15 @@ pub(super) fn with_inspector<R>(inspect: Inspector, f: impl FnOnce() -> R) -> R 
 #[test]
 fn cell_scope_height_auto_preserves_authored_floor() {
     fn inspect(tree: &mut LayoutSession<'_>, idx: usize) {
-        assert!(
-            tree.layout_style_for_key(idx)
-                .unwrap()
-                .size
-                .height
-                .is_auto()
-        );
+        assert!(tree.table_style(idx).size().height.is_auto());
         assert!(
             tree.override_checkpoint() > 0,
             "cell measurement must use the typed scope"
         );
-        tree.layout_style_for_key_mut(idx).unwrap().size.width = Dimension::length(91.0);
+        tree.record_pass_override(
+            idx,
+            width_override(ComputedLengthPercentageOrAuto::Px(91.0)),
+        );
     }
     let (mut doc, cascade, child, _) = crate::layout::style_views::tests::fixture_with_styles(
         "display:table-row",
@@ -49,11 +47,11 @@ fn cell_scope_height_auto_preserves_authored_floor() {
     assert!(cell.natural_height <= height);
     assert!(cell.baseline.is_finite());
     assert_eq!(
-        tree.layout_style_for_key(child).unwrap().size.height,
+        tree.table_style(child).size().height,
         Dimension::length(80.0)
     );
     assert_eq!(
-        tree.layout_style_for_key(child).unwrap().size.width,
+        tree.table_style(child).size().width,
         Dimension::length(91.0)
     );
     assert_eq!(tree.override_checkpoint(), 0);
@@ -62,14 +60,11 @@ fn cell_scope_height_auto_preserves_authored_floor() {
 #[test]
 fn cell_scope_panic_restores_height_and_preserves_payload() {
     fn fail(tree: &mut LayoutSession<'_>, idx: usize) {
-        assert!(
-            tree.layout_style_for_key(idx)
-                .unwrap()
-                .size
-                .height
-                .is_auto()
+        assert!(tree.table_style(idx).size().height.is_auto());
+        tree.record_pass_override(
+            idx,
+            width_override(ComputedLengthPercentageOrAuto::Px(91.0)),
         );
-        tree.layout_style_for_key_mut(idx).unwrap().size.width = Dimension::length(91.0);
         panic!("cell measurement failure");
     }
     let (mut doc, cascade, child, _) = crate::layout::style_views::tests::fixture_with_styles(
@@ -91,11 +86,11 @@ fn cell_scope_panic_restores_height_and_preserves_payload() {
         Some(&"cell measurement failure")
     );
     assert_eq!(
-        tree.layout_style_for_key(child).unwrap().size.height,
+        tree.table_style(child).size().height,
         Dimension::length(80.0)
     );
     assert_eq!(
-        tree.layout_style_for_key(child).unwrap().size.width,
+        tree.table_style(child).size().width,
         Dimension::length(91.0)
     );
     assert_eq!(tree.override_checkpoint(), 0);

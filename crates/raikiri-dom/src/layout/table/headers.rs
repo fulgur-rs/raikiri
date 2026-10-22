@@ -48,7 +48,7 @@ impl HeaderRepeats {
         // without repetition into a limit failure.
         let mut copy_budget = document.fragment_tree.limit / 2;
         for &table in &document.nodes[body].children {
-            let node = &document.layout_node_with_style(table).unwrap();
+            let node = document.ifc_layout_node(table).unwrap();
             let cv = &cascade.computed[table];
             if node.is_display_none()
                 || node.display() != DisplayValue::Table
@@ -336,7 +336,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
         let mut cells = Vec::new();
         if document.nodes[part].display() == DisplayValue::TableRow {
             for &cell in &document.nodes[part].children {
-                let node = &document.layout_node_with_style(cell).unwrap();
+                let node = document.ifc_layout_node(cell).unwrap();
                 if node.display() == DisplayValue::TableCell && !node.is_display_none() {
                     let (x, y) = absolute_position(document, cell);
                     let size = node.unrounded_layout.size;

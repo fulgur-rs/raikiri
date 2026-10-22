@@ -1,4 +1,5 @@
 use super::*;
+use raikiri_style::ComputedLengthPercentageOrAuto;
 
 use super::super::{BORDER_RESOLUTIONS, GRID_BUILDS};
 
@@ -69,7 +70,10 @@ fn width_changes_recompute_borders_but_keep_the_grid() {
     GRID_BUILDS.with(|count| count.set(0));
     BORDER_RESOLUTIONS.with(|count| count.set(0));
     let mut session = LayoutSession::new(&mut doc);
-    session.layout_style_for_key_mut(table).unwrap().size.width = Dimension::percent(1.0);
+    session.record_pass_override(
+        table,
+        width_override(ComputedLengthPercentageOrAuto::Percent(100.0)),
+    );
     let mut input = column_probe_input();
     let mut widths = Vec::new();
     for basis in [100.0, 200.0, 100.0] {
@@ -93,13 +97,19 @@ fn size_probe_does_not_cache_cell_layout_or_temporary_widths() {
     let mut input = column_probe_input();
     input.run_mode = taffy::tree::RunMode::ComputeSize;
     let narrow = compute_table_layout_in_session(&mut session, table.into(), input);
-    session.layout_style_for_key_mut(first).unwrap().size.width = Dimension::length(100.0);
+    session.record_pass_override(
+        first,
+        width_override(ComputedLengthPercentageOrAuto::Px(100.0)),
+    );
     session.table_layout_node_mut(first).cache.clear();
     input.run_mode = taffy::tree::RunMode::PerformLayout;
     let wide = compute_table_layout_in_session(&mut session, table.into(), input);
     assert!(wide.size.width > narrow.size.width);
     assert_eq!(session.nodes[first].unrounded_layout.size.width, 100.0);
-    session.layout_style_for_key_mut(first).unwrap().size.width = Dimension::length(20.0);
+    session.record_pass_override(
+        first,
+        width_override(ComputedLengthPercentageOrAuto::Px(20.0)),
+    );
     session.table_layout_node_mut(first).cache.clear();
     let restored = compute_table_layout_in_session(&mut session, table.into(), input);
     assert_eq!(restored.size, narrow.size);
@@ -256,14 +266,193 @@ fn cell_measurement_unwind_restores_authored_height() {
     let (mut doc, table, first) = fixture(1, 1);
     let mut session = LayoutSession::new(&mut doc);
     let mut grid = super::super::cache::table_grid(&mut session, table).unwrap();
-    let height = session.layout_style_for_key(first).unwrap().size.height;
+    let height = session.table_style(first).size().height;
     session.nodes[first].children.push(usize::MAX - 1);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         super::super::measure_cell(&mut session, &mut grid.cells[0], 20.0);
     }));
     assert!(result.is_err());
-    assert_eq!(
-        session.layout_style_for_key(first).unwrap().size.height,
-        height
+    assert_eq!(session.table_style(first).size().height, height);
+}
+
+/// A table with a rowspan, a colspan, block and flex descendants and a nested
+/// table, so a cache miss can change the geometry of every kind of box.
+///
+/// Returns the document, its cascade, the table, a block child and a flex item.
+fn descendant_fixture() -> (Document, raikiri_style::CascadeResult, usize, usize, usize) {
+    let mut doc = Document::new();
+    let table = append_grid_part(
+        &mut doc,
+        0,
+        "table",
+        DisplayValue::Table,
+        "display:table;width:200px;border-collapse:collapse;border:3px solid red",
     );
+    for css in ["display:table-column;width:60px", "display:table-column"] {
+        append_grid_part(&mut doc, table, "col", DisplayValue::TableColumn, css);
+    }
+    let cell_css = "display:table-cell;border:2px solid blue;padding:3px";
+    let first_row = append_grid_part(
+        &mut doc,
+        table,
+        "tr",
+        DisplayValue::TableRow,
+        "display:table-row;height:40px",
+    );
+    let tall = append_grid_part(&mut doc, first_row, "td", DisplayValue::TableCell, cell_css);
+    doc.set_element_attribute(tall, "rowspan", "2").unwrap();
+    let block = doc.append_element(
+        Some(tall),
+        "div",
+        Style::default(),
+        Some("display:block;width:50%;height:12px;margin:2px"),
+    );
+    let flex = doc.append_element(
+        Some(tall),
+        "div",
+        Style::default(),
+        Some("display:flex;width:100%;height:10px"),
+    );
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:6px;flex-grow:1"),
+    );
+    doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;width:10px;height:6px"),
+    );
+    append_grid_part(
+        &mut doc,
+        first_row,
+        "td",
+        DisplayValue::TableCell,
+        "display:table-cell;border:4px solid green;height:25px",
+    );
+    let second_row = append_grid_part(
+        &mut doc,
+        table,
+        "tr",
+        DisplayValue::TableRow,
+        "display:table-row",
+    );
+    append_grid_part(
+        &mut doc,
+        second_row,
+        "td",
+        DisplayValue::TableCell,
+        "display:table-cell;border:1px solid black;height:15px",
+    );
+    let third_row = append_grid_part(
+        &mut doc,
+        table,
+        "tr",
+        DisplayValue::TableRow,
+        "display:table-row",
+    );
+    let wide = append_grid_part(&mut doc, third_row, "td", DisplayValue::TableCell, cell_css);
+    doc.set_element_attribute(wide, "colspan", "2").unwrap();
+    let nested = append_grid_part(
+        &mut doc,
+        wide,
+        "table",
+        DisplayValue::Table,
+        "display:table;border-collapse:collapse;border:1px solid black",
+    );
+    let nested_row = append_grid_part(
+        &mut doc,
+        nested,
+        "tr",
+        DisplayValue::TableRow,
+        "display:table-row",
+    );
+    append_grid_part(
+        &mut doc,
+        nested_row,
+        "td",
+        DisplayValue::TableCell,
+        "display:table-cell;width:30px;height:9px;border:2px solid black",
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    (doc, computed, table, block, item)
+}
+
+/// The geometry and collapsed paint of every box under `root`, in tree order.
+fn subtree_geometry(tree: &LayoutSession<'_>, root: usize) -> Vec<String> {
+    let mut geometry = Vec::new();
+    let mut pending = vec![root];
+    while let Some(idx) = pending.pop() {
+        let node = &tree.nodes[idx];
+        geometry.push(format!(
+            "{idx}: {:?} paint={:?}",
+            node.unrounded_layout, node.collapsed_border
+        ));
+        pending.extend(node.children.iter().rev().copied());
+    }
+    geometry
+}
+
+#[test]
+fn table_descendant_geometry_agrees_across_cold_warm_and_forced_miss() {
+    for views in [false, true] {
+        let (mut doc, cascade, table, block, item) = descendant_fixture();
+        let mut tree = if views {
+            LayoutSession::with_cascade(&mut doc, &cascade)
+        } else {
+            LayoutSession::new(&mut doc)
+        };
+        if views {
+            crate::layout::style_views::tests::prepare_all_layout_views(&mut tree);
+        }
+        let id = taffy::NodeId::from(table);
+        let input = column_probe_input();
+        GRID_BUILDS.with(|count| count.set(0));
+        let cold_output = tree.compute_child_layout_with_block_ctx(id, input, None);
+        let cold = subtree_geometry(&tree, table);
+        let cold_builds = GRID_BUILDS.with(|count| count.get());
+        assert!(
+            cold_builds >= 2,
+            "{views}: the outer and nested tables build grids"
+        );
+        assert!(
+            cold.len() > 15,
+            "{views}: cells, rows and descendants laid out"
+        );
+        assert_eq!(tree.nodes[block].unrounded_layout.size.height, 12.0);
+        assert_eq!(tree.nodes[item].unrounded_layout.size.height, 6.0);
+        assert!(tree.nodes[item].unrounded_layout.size.width > 20.0);
+
+        let warm_output = tree.compute_child_layout_with_block_ctx(id, input, None);
+        assert_eq!(
+            format!("{cold_output:?}"),
+            format!("{warm_output:?}"),
+            "{views}"
+        );
+        assert_eq!(subtree_geometry(&tree, table), cold, "{views}: warm");
+        assert_eq!(
+            GRID_BUILDS.with(|count| count.get()),
+            cold_builds,
+            "{views}: the warm pass hits the cache"
+        );
+
+        tree.layout_cache_context.invalidate();
+        tree.context.table_cache.clear();
+        let missed_output = tree.compute_child_layout_with_block_ctx(id, input, None);
+        assert_eq!(
+            format!("{cold_output:?}"),
+            format!("{missed_output:?}"),
+            "{views}"
+        );
+        assert_eq!(subtree_geometry(&tree, table), cold, "{views}: forced miss");
+        assert!(
+            GRID_BUILDS.with(|count| count.get()) >= 2 * cold_builds,
+            "{views}: the forced miss lays the tables out again"
+        );
+        assert_eq!(tree.override_checkpoint(), 0);
+    }
 }
