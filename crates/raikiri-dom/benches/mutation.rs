@@ -8,6 +8,7 @@ use raikiri_dom::Document;
 
 // Put the target after a populated sibling subtree so repeated parent lookup
 // must traverse both preceding nodes and the target's shrinking child list.
+// cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
 fn target_document(children: usize) -> (Document, usize, usize) {
     let mut doc = Document::new();
     let preceding = doc.append_element(Some(0), "aside", None::<&str>);

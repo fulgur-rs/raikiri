@@ -1,5 +1,4 @@
 use super::*;
-use crate::layout::test_support::style_css;
 use crate::node::arena::BoxKey;
 use std::cell::Cell;
 use taffy::{Dimension, FlexboxItemStyle};
@@ -279,13 +278,7 @@ fn scoped_override_production_supports_legacy_session_and_nested_error() {
     let child = doc.append_element(
         Some(0),
         "div",
-        Some(style_css(&LayoutStyle {
-            size: taffy::Size {
-                width: Dimension::length(31.0),
-                height: Dimension::auto(),
-            },
-            ..LayoutStyle::default()
-        })),
+        Some("display:flex;box-sizing:border-box;width:31px"),
     );
     let session_cascade = crate::layout::test_support::cascaded(&doc);
     let mut session = LayoutSession::bridged(&mut doc, &session_cascade);

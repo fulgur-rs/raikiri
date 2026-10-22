@@ -75,6 +75,8 @@ fn a_wrapper_with_a_box_of_its_own_keeps_it() {
         "border-top:1px solid",
         "margin-top:5px",
         "margin-left:5px",
+        "margin-left:5%",
+        "margin-left:calc(5px + 1%)",
         "width:50px",
         "height:10px",
         "min-height:10px",

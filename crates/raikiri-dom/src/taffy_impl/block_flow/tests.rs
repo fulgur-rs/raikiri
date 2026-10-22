@@ -1,10 +1,8 @@
 use crate::Document;
-use crate::LayoutStyle as Style;
-use crate::layout::test_support::{restyle, style_css, with_bridged_session};
+use crate::layout::test_support::{restyle, with_bridged_session};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use taffy::{
-    AvailableSpace, Dimension, Display, Float, LayoutInput, LengthPercentage, LengthPercentageAuto,
-    Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
+    AvailableSpace, Float, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 fn block_layout(
@@ -49,38 +47,17 @@ fn minimum_height_drops_the_last_child_margin_it_separates() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            display: Display::Block,
-            min_size: Size {
-                width: LengthPercentageAuto::auto(),
-                height: LengthPercentageAuto::length(80.0),
-            },
-            ..Style::default()
-        })),
+        Some("display:block;box-sizing:border-box;min-height:80px"),
     );
     tree.append_element(
         Some(child),
         "div",
-        Some(style_css(&Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::auto(),
-                height: Dimension::length(20.0),
-            },
-            margin: taffy::Rect {
-                bottom: LengthPercentageAuto::length(100.0),
-                ..Style::default().margin
-            },
-            ..Style::default()
-        })),
+        Some("display:block;box-sizing:border-box;height:20px;margin-bottom:100px"),
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     // The margin neither escapes the block nor adds to the height that
@@ -97,40 +74,18 @@ fn auto_height_encloses_a_float_before_end_padding() {
         (None, Some(60.0), 100.0),
     ] {
         let mut tree = Document::new();
-        let root = tree.append_element(
-            Some(0),
-            "div",
-            Some(style_css(&Style {
-                display: Display::FlowRoot,
-                box_sizing: taffy::BoxSizing::ContentBox,
-                size: Size {
-                    width: Dimension::auto(),
-                    height: height.map_or_else(Dimension::auto, Dimension::length),
-                },
-                max_size: Size {
-                    width: LengthPercentageAuto::auto(),
-                    height: max
-                        .map_or_else(LengthPercentageAuto::auto, LengthPercentageAuto::length),
-                },
-                padding: taffy::Rect {
-                    bottom: LengthPercentage::length(40.0),
-                    ..Style::default().padding
-                },
-                ..Style::default()
-            })),
-        );
+        let mut css = String::from("display:flow-root;box-sizing:content-box;padding-bottom:40px");
+        if let Some(height) = height {
+            css.push_str(&format!(";height:{height}px"));
+        }
+        if let Some(max) = max {
+            css.push_str(&format!(";max-height:{max}px"));
+        }
+        let root = tree.append_element(Some(0), "div", Some(css));
         tree.append_element(
             Some(root),
             "div",
-            Some(style_css(&Style {
-                display: Display::Block,
-                float: Float::Left,
-                size: Size {
-                    width: Dimension::length(20.0),
-                    height: Dimension::length(80.0),
-                },
-                ..Style::default()
-            })),
+            Some("display:block;box-sizing:border-box;width:20px;height:80px;float:left"),
         );
         let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
         assert_eq!(output.size.height, expected);
@@ -143,38 +98,17 @@ fn fixed_children_do_not_participate_in_block_flow() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let fixed = tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            position: taffy::Position::Fixed,
-            size: Size {
-                width: Dimension::length(20.0),
-                height: Dimension::length(30.0),
-            },
-            inset: taffy::Rect {
-                left: LengthPercentageAuto::length(10.0),
-                top: LengthPercentageAuto::length(15.0),
-                ..Style::default().inset
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;position:fixed;width:20px;height:30px;top:15px;left:10px"),
     );
     let sibling = tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            size: Size {
-                width: Dimension::length(40.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;width:40px;height:10px"),
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(output.size.height, 10.0);
@@ -224,28 +158,12 @@ fn absolute_child_overflow_is_reported_without_growing_the_block() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            position: taffy::Position::Relative,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box;position:relative"),
     );
     tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            position: taffy::Position::Absolute,
-            size: Size {
-                width: Dimension::length(40.0),
-                height: Dimension::length(30.0),
-            },
-            inset: taffy::Rect {
-                left: LengthPercentageAuto::length(210.0),
-                top: LengthPercentageAuto::length(15.0),
-                ..Style::default().inset
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;position:absolute;width:40px;height:30px;top:15px;left:210px"),
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(
@@ -263,34 +181,27 @@ fn block(tree: &mut Document, parent: usize, width: f32, height: f32) -> usize {
     tree.append_element(
         Some(parent),
         "div",
-        Some(style_css(&Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(width),
-                height: Dimension::length(height),
-            },
-            ..Style::default()
-        })),
+        Some(format!(
+            "display:block;box-sizing:border-box;width:{width}px;height:{height}px"
+        )),
     )
 }
 
 #[test]
 fn float_avoiding_blocks_align_within_the_available_slot() {
     for (direction, left_auto, right_auto, expected) in [
-        (taffy::Direction::Rtl, false, false, 160.0),
-        (taffy::Direction::Ltr, true, true, 105.0),
-        (taffy::Direction::Ltr, true, false, 160.0),
-        (taffy::Direction::Ltr, false, true, 50.0),
+        ("rtl", false, false, 160.0),
+        ("ltr", true, true, 105.0),
+        ("ltr", true, false, 160.0),
+        ("ltr", false, true, 50.0),
     ] {
         let mut tree = Document::new();
         let root = tree.append_element(
             Some(0),
             "div",
-            Some(style_css(&Style {
-                display: Display::FlowRoot,
-                direction,
-                ..Style::default()
-            })),
+            Some(format!(
+                "display:flow-root;box-sizing:border-box;direction:{direction}"
+            )),
         );
         let float = block(&mut tree, root, 50.0, 20.0);
         restyle(&mut tree, float, "float:left");
@@ -317,22 +228,12 @@ fn fit_content_children_keep_the_finite_available_width() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            size: Size {
-                width: Dimension::fit_content(),
-                height: Dimension::auto(),
-            },
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box;width:fit-content"),
     );
     for _ in 0..2 {
         let float = block(&mut tree, child, 100.0, 10.0);
@@ -357,27 +258,12 @@ fn intrinsic_width_children_use_their_final_width_for_auto_margins() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            size: Size {
-                width: Dimension::max_content(),
-                height: Dimension::auto(),
-            },
-            margin: taffy::Rect {
-                left: LengthPercentageAuto::auto(),
-                right: LengthPercentageAuto::auto(),
-                ..Style::default().margin
-            },
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box;width:max-content;margin-right:auto;margin-left:auto"),
     );
     block(&mut tree, child, 50.0, 10.0);
     block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -411,23 +297,14 @@ fn nested_out_of_flow_grids_preserve_the_outer_grid_area() {
 
 #[test]
 fn block_distribution_alignment_uses_the_single_subject_fallback() {
-    for alignment in [
-        taffy::AlignContent::SPACE_AROUND,
-        taffy::AlignContent::SPACE_EVENLY,
-    ] {
+    for alignment in ["space-around", "space-evenly"] {
         let mut tree = Document::new();
         let root = tree.append_element(
             Some(0),
             "div",
-            Some(style_css(&Style {
-                display: Display::FlowRoot,
-                size: Size {
-                    width: Dimension::auto(),
-                    height: Dimension::length(100.0),
-                },
-                align_content: alignment,
-                ..Style::default()
-            })),
+            Some(format!(
+                "display:flow-root;box-sizing:border-box;height:100px;align-content:{alignment}"
+            )),
         );
         let child = block(&mut tree, root, 40.0, 20.0);
         block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -441,15 +318,7 @@ fn block_alignment_moves_scrollable_overflow_with_the_children() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            size: Size {
-                width: Dimension::auto(),
-                height: Dimension::length(100.0),
-            },
-            align_content: taffy::AlignContent::END,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box;height:100px;align-content:end"),
     );
     let child = block(&mut tree, root, 40.0, 20.0);
     restyle(&mut tree, child, "display:flow-root");
@@ -465,27 +334,12 @@ fn block_alignment_moves_the_exported_baseline() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            size: Size {
-                width: Dimension::auto(),
-                height: Dimension::length(100.0),
-            },
-            align_content: taffy::AlignContent::END,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box;height:100px;align-content:end"),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            display: Display::Flex,
-            size: Size {
-                width: Dimension::length(40.0),
-                height: Dimension::length(20.0),
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;width:40px;height:20px"),
     );
     block(&mut tree, child, 40.0, 20.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -495,80 +349,53 @@ fn block_alignment_moves_the_exported_baseline() {
 /// A block `root` holding a 20px-tall flex container whose only item is
 /// `item_height` tall and shifted by `item_margin_top`, with `overflow` set on
 /// the container.
-fn baseline_probe(
-    overflow: taffy::Overflow,
-    item_height: f32,
-    item_margin_top: f32,
-) -> taffy::LayoutOutput {
+fn baseline_probe(overflow: &str, item_height: f32, item_margin_top: f32) -> taffy::LayoutOutput {
     let mut tree = Document::new();
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let child = tree.append_element(
         Some(root),
         "div",
-        Some(style_css(&Style {
-            display: Display::Flex,
-            overflow: taffy::Point {
-                x: overflow,
-                y: overflow,
-            },
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::length(20.0),
-            },
-            ..Style::default()
-        })),
+        Some(format!(
+            "display:flex;box-sizing:border-box;width:100px;height:20px;overflow:{overflow}"
+        )),
     );
     tree.append_element(
         Some(child),
         "div",
-        Some(style_css(&Style {
-            display: Display::Block,
-            size: Size {
-                width: Dimension::length(20.0),
-                height: Dimension::length(item_height),
-            },
-            margin: taffy::Rect {
-                left: LengthPercentageAuto::length(0.0),
-                right: LengthPercentageAuto::length(0.0),
-                top: LengthPercentageAuto::length(item_margin_top),
-                bottom: LengthPercentageAuto::length(0.0),
-            },
-            ..Style::default()
-        })),
+        Some(format!(
+            "display:block;box-sizing:border-box;width:20px;height:{item_height}px;margin:{item_margin_top}px 0 0 0"
+        )),
     );
     block_layout(&mut tree, NodeId::from(root), inputs(), None)
 }
 
 #[test]
 fn a_scroll_containers_baselines_are_clamped_to_its_border_box() {
-    let output = baseline_probe(taffy::Overflow::Hidden, 80.0, 0.0);
+    let output = baseline_probe("hidden", 80.0, 0.0);
     assert_eq!(output.baselines.first, Some(20.0));
     assert_eq!(output.baselines.last, Some(20.0));
 }
 
 #[test]
 fn a_scroll_containers_baselines_are_clamped_above_its_border_box() {
-    let output = baseline_probe(taffy::Overflow::Scroll, 20.0, -100.0);
+    let output = baseline_probe("scroll", 20.0, -100.0);
     assert_eq!(output.baselines.first, Some(0.0));
     assert_eq!(output.baselines.last, Some(0.0));
 }
 
 #[test]
 fn a_scroll_container_keeps_a_baseline_inside_its_border_box() {
-    let output = baseline_probe(taffy::Overflow::Hidden, 10.0, 0.0);
+    let output = baseline_probe("hidden", 10.0, 0.0);
     assert_eq!(output.baselines.first, Some(10.0));
 }
 
 #[test]
 fn a_box_that_is_not_a_scroll_container_keeps_a_baseline_below_its_border_box() {
-    let output = baseline_probe(taffy::Overflow::Visible, 80.0, 0.0);
+    let output = baseline_probe("visible", 80.0, 0.0);
     assert_eq!(output.baselines.first, Some(80.0));
     assert_eq!(output.baselines.last, Some(80.0));
 }
@@ -580,10 +407,7 @@ fn containment_limits_descendant_overflow_to_the_child_border_box() {
         let root = tree.append_element(
             Some(0),
             "div",
-            Some(style_css(&Style {
-                display: Display::FlowRoot,
-                ..Style::default()
-            })),
+            Some("display:flow-root;box-sizing:border-box"),
         );
         let child = block(&mut tree, root, 100.0, 10.0);
         restyle(&mut tree, child, contain_css);
@@ -601,11 +425,7 @@ fn a_known_width_transfers_through_the_block_aspect_ratio() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            aspect_ratio: Some(2.0),
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box;aspect-ratio:2"),
     );
     block(&mut tree, root, 20.0, 10.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -618,15 +438,14 @@ fn a_known_width_transfers_through_the_block_aspect_ratio() {
     );
 }
 
-fn ratio_box(tree: &mut Document, style: Style) -> usize {
+/// A flow-root box with a 2:1 `aspect-ratio` and the `extra` declarations.
+fn ratio_box(tree: &mut Document, extra: &str) -> usize {
     tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            aspect_ratio: Some(2.0),
-            ..style
-        })),
+        Some(format!(
+            "display:flow-root;box-sizing:border-box;aspect-ratio:2;{extra}"
+        )),
     )
 }
 
@@ -639,16 +458,7 @@ fn laid_out_size(tree: &mut Document, root: usize, known_width: Option<f32>) -> 
 #[test]
 fn a_height_taken_from_the_aspect_ratio_grows_to_fit_the_content() {
     let mut tree = Document::new();
-    let root = ratio_box(
-        &mut tree,
-        Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::auto(),
-            },
-            ..Style::default()
-        },
-    );
+    let root = ratio_box(&mut tree, "width:100px");
     block(&mut tree, root, 20.0, 100.0);
     assert_eq!(
         laid_out_size(&mut tree, root, None),
@@ -662,7 +472,7 @@ fn a_height_taken_from_the_aspect_ratio_grows_to_fit_the_content() {
 #[test]
 fn a_stretched_width_gives_a_ratio_height_that_the_content_can_raise() {
     let mut tree = Document::new();
-    let root = ratio_box(&mut tree, Style::default());
+    let root = ratio_box(&mut tree, "");
     block(&mut tree, root, 20.0, 150.0);
     assert_eq!(
         laid_out_size(&mut tree, root, Some(200.0)),
@@ -673,15 +483,8 @@ fn a_stretched_width_gives_a_ratio_height_that_the_content_can_raise() {
     );
 }
 
-fn padded_ratio_box(tree: &mut Document, box_sizing: taffy::BoxSizing) -> usize {
-    ratio_box(
-        tree,
-        Style {
-            box_sizing,
-            padding: taffy::Rect::length(10.0),
-            ..Style::default()
-        },
-    )
+fn padded_ratio_box(tree: &mut Document, box_sizing: &str) -> usize {
+    ratio_box(tree, &format!("box-sizing:{box_sizing};padding:10px"))
 }
 
 #[test]
@@ -689,7 +492,7 @@ fn a_known_border_box_width_gives_a_content_box_ratio_height() {
     // The 100px width includes 20px of padding, so the 80px content box is
     // 40px tall by 2:1, and the padding adds 20px to that.
     let mut tree = Document::new();
-    let root = padded_ratio_box(&mut tree, taffy::BoxSizing::ContentBox);
+    let root = padded_ratio_box(&mut tree, "content-box");
     assert_eq!(
         laid_out_size(&mut tree, root, Some(100.0)),
         Size {
@@ -702,7 +505,7 @@ fn a_known_border_box_width_gives_a_content_box_ratio_height() {
 #[test]
 fn a_known_border_box_width_gives_a_border_box_ratio_height() {
     let mut tree = Document::new();
-    let root = padded_ratio_box(&mut tree, taffy::BoxSizing::BorderBox);
+    let root = padded_ratio_box(&mut tree, "border-box");
     assert_eq!(
         laid_out_size(&mut tree, root, Some(100.0)),
         Size {
@@ -715,20 +518,7 @@ fn a_known_border_box_width_gives_a_border_box_ratio_height() {
 #[test]
 fn the_maximum_height_still_caps_a_height_the_content_raised() {
     let mut tree = Document::new();
-    let root = ratio_box(
-        &mut tree,
-        Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::auto(),
-            },
-            max_size: Size {
-                width: taffy::LengthPercentageAuto::auto(),
-                height: taffy::LengthPercentageAuto::length(80.0),
-            },
-            ..Style::default()
-        },
-    );
+    let root = ratio_box(&mut tree, "width:100px;max-height:80px");
     block(&mut tree, root, 20.0, 100.0);
     assert_eq!(laid_out_size(&mut tree, root, None).height, 80.0);
 }
@@ -736,20 +526,7 @@ fn the_maximum_height_still_caps_a_height_the_content_raised() {
 #[test]
 fn a_scroll_container_keeps_the_height_the_aspect_ratio_gives() {
     let mut tree = Document::new();
-    let root = ratio_box(
-        &mut tree,
-        Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::auto(),
-            },
-            overflow: taffy::Point {
-                x: taffy::Overflow::Hidden,
-                y: taffy::Overflow::Hidden,
-            },
-            ..Style::default()
-        },
-    );
+    let root = ratio_box(&mut tree, "width:100px;overflow:hidden");
     block(&mut tree, root, 20.0, 100.0);
     assert_eq!(laid_out_size(&mut tree, root, None).height, 50.0);
 }
@@ -757,20 +534,7 @@ fn a_scroll_container_keeps_the_height_the_aspect_ratio_gives() {
 #[test]
 fn a_zero_minimum_height_keeps_the_height_the_aspect_ratio_gives() {
     let mut tree = Document::new();
-    let root = ratio_box(
-        &mut tree,
-        Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::auto(),
-            },
-            min_size: Size {
-                width: taffy::LengthPercentageAuto::auto(),
-                height: taffy::LengthPercentageAuto::length(0.0),
-            },
-            ..Style::default()
-        },
-    );
+    let root = ratio_box(&mut tree, "width:100px;min-height:0px");
     block(&mut tree, root, 20.0, 100.0);
     assert_eq!(laid_out_size(&mut tree, root, None).height, 50.0);
 }
@@ -778,16 +542,7 @@ fn a_zero_minimum_height_keeps_the_height_the_aspect_ratio_gives() {
 #[test]
 fn an_authored_height_is_not_raised_by_the_content() {
     let mut tree = Document::new();
-    let root = ratio_box(
-        &mut tree,
-        Style {
-            size: Size {
-                width: Dimension::auto(),
-                height: Dimension::length(50.0),
-            },
-            ..Style::default()
-        },
-    );
+    let root = ratio_box(&mut tree, "height:50px");
     block(&mut tree, root, 20.0, 100.0);
     assert_eq!(laid_out_size(&mut tree, root, None).height, 50.0);
 }
@@ -795,16 +550,7 @@ fn an_authored_height_is_not_raised_by_the_content() {
 #[test]
 fn a_width_taken_from_the_aspect_ratio_grows_to_the_min_content_width() {
     let mut tree = Document::new();
-    let root = ratio_box(
-        &mut tree,
-        Style {
-            size: Size {
-                width: Dimension::auto(),
-                height: Dimension::length(50.0),
-            },
-            ..Style::default()
-        },
-    );
+    let root = ratio_box(&mut tree, "height:50px");
     block(&mut tree, root, 300.0, 10.0);
     assert_eq!(
         laid_out_size(&mut tree, root, None),
@@ -821,23 +567,7 @@ fn scrollable_overflow_keeps_the_end_padding_after_content() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            size: Size {
-                width: Dimension::auto(),
-                height: Dimension::length(50.0),
-            },
-            overflow: taffy::Point {
-                x: taffy::Overflow::Scroll,
-                y: taffy::Overflow::Scroll,
-            },
-            padding: taffy::Rect {
-                right: LengthPercentage::length(20.0),
-                bottom: LengthPercentage::length(20.0),
-                ..Style::default().padding
-            },
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box;height:50px;padding-right:20px;padding-bottom:20px;overflow-x:scroll;overflow-y:scroll"),
     );
     block(&mut tree, root, 300.0, 100.0);
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
@@ -849,10 +579,7 @@ fn plain(tree: &mut Document, parent: usize) -> usize {
     tree.append_element(
         Some(parent),
         "div",
-        Some(style_css(&Style {
-            display: Display::Block,
-            ..Style::default()
-        })),
+        Some("display:block;box-sizing:border-box"),
     )
 }
 
@@ -862,10 +589,7 @@ fn a_formatting_context_pushed_below_an_adjoining_float_separates_its_margin() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let outer = plain(&mut tree, root);
     let holder = plain(&mut tree, outer);
@@ -889,10 +613,7 @@ fn a_formatting_context_beside_an_adjoining_float_keeps_its_margin() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let outer = plain(&mut tree, root);
     let holder = plain(&mut tree, outer);
@@ -916,10 +637,7 @@ fn a_formatting_context_clearing_an_adjoining_float_starts_below_it() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let outer = plain(&mut tree, root);
     let float = block(&mut tree, outer, 100.0, 50.0);
@@ -939,14 +657,7 @@ fn a_formatting_context_clearing_an_adjoining_float_starts_below_it() {
 #[test]
 fn clearance_under_an_unresolved_origin_excludes_the_escaping_margin() {
     let mut tree = Document::new();
-    let root = tree.append_element(
-        Some(0),
-        "div",
-        Some(style_css(&Style {
-            display: Display::Block,
-            ..Style::default()
-        })),
-    );
+    let root = tree.append_element(Some(0), "div", Some("display:block;box-sizing:border-box"));
     let float = block(&mut tree, root, 50.0, 100.0);
     restyle(&mut tree, float, "float:left");
     let padded = plain(&mut tree, root);
@@ -1023,10 +734,7 @@ fn a_last_child_margin_escapes_when_min_height_equals_the_content() {
     let root = tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     );
     let parent = plain(&mut tree, root);
     restyle(&mut tree, parent, "min-height:20px");
@@ -1042,10 +750,7 @@ fn flow_root_container(tree: &mut Document) -> usize {
     tree.append_element(
         Some(0),
         "div",
-        Some(style_css(&Style {
-            display: Display::FlowRoot,
-            ..Style::default()
-        })),
+        Some("display:flow-root;box-sizing:border-box"),
     )
 }
 

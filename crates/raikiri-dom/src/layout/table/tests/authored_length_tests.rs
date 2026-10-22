@@ -1,5 +1,4 @@
 use super::*;
-use crate::layout::test_support::style_css;
 
 #[test]
 fn authored_length_checks_visit_each_cell_once() {
@@ -48,25 +47,13 @@ fn later_definite_cell_keeps_spanning_excess_off_its_column() {
     let definite = doc.append_element(
         Some(0),
         "td",
-        Some(style_css(&Style {
-            size: Size {
-                width: Dimension::length(20.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;width:20px;height:10px"),
     );
     let span = doc.append_element(Some(0), "td", None::<&str>);
     doc.append_element(
         Some(span),
         "div",
-        Some(style_css(&Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;width:100px;height:10px"),
     );
     doc.mark_in_document_flags();
     let grid = super::super::TableGrid {

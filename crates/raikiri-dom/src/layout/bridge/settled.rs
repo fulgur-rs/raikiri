@@ -137,10 +137,10 @@ pub(super) fn is_stretched_by_keyword_width(
     if !keyword_width || lays_out_vertically(cascade, idx) {
         return false;
     }
-    let Some(parent) = doc.taffy_parent_of(idx) else {
-        return false;
-    };
-    let Some(container) = container_laid_out_as(doc, cascade, parent, taffy::Display::Flex) else {
+    let Some(container) = doc
+        .taffy_parent_of(idx)
+        .and_then(|parent| container_laid_out_as(doc, cascade, parent, taffy::Display::Flex))
+    else {
         return false;
     };
     matches!(

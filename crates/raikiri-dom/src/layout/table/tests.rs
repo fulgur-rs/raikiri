@@ -1,7 +1,5 @@
-use crate::LayoutStyle as Style;
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
-use crate::layout::test_support::style_css;
 use raikiri_style::property::{
     Border, BorderColor, BorderStyle, CssColor, DisplayValue, Length, Sides,
 };
@@ -2988,13 +2986,7 @@ fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets()
     doc.append_element(
         Some(span_cell),
         "div",
-        Some(style_css(&Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;width:100px;height:10px"),
     );
     let c0 = doc.append_element(Some(html), "td", None::<&str>);
     let c1 = doc.append_element(Some(html), "td", None::<&str>);
@@ -3048,13 +3040,7 @@ fn resolve_column_widths_definite_avail_nonfit_keeps_colspan_minimum() {
     doc.append_element(
         Some(span_cell),
         "div",
-        Some(style_css(&Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;width:100px;height:10px"),
     );
     let c0 = doc.append_element(Some(html), "td", None::<&str>);
     let c1 = doc.append_element(Some(html), "td", None::<&str>);

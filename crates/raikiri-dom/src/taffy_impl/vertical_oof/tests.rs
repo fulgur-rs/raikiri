@@ -1,7 +1,5 @@
 use crate::Document;
-use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
-use crate::layout::test_support::style_css;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
 use taffy::{AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode};
 
@@ -146,10 +144,7 @@ fn only_an_absolute_child_of_the_vertical_containing_block_gets_its_inline_size(
     let absolute = doc.append_element(
         Some(container),
         "div",
-        Some(style_css(&Style {
-            position: taffy::Position::Absolute,
-            ..Style::default()
-        })),
+        Some("display:flex;box-sizing:border-box;position:absolute"),
     );
     let in_flow = doc.append_element(Some(container), "div", None::<&str>);
     let session_cascade = crate::layout::test_support::cascaded(&doc);
