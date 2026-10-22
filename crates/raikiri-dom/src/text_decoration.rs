@@ -589,7 +589,7 @@ fn paragraph_may_be_decorated(document: &Document, cascade: &CascadeResult, root
         .into_iter()
         .collect();
     while let Some(id) = pending.pop() {
-        let node = &document.layout_node_with_style(id).unwrap();
+        let node = &document.nodes[id];
         let cv = cascade.computed.get(id);
         if id != source
             && (node.is_ifc_root() || cv.is_some_and(|cv| cv.display == DisplayValue::None))

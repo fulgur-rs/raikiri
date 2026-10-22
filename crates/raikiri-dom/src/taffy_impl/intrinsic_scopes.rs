@@ -86,10 +86,7 @@ pub(super) fn with_flex_item_basis_bounds<R>(
 ) -> R {
     tree.sync_layout_cache_mutations();
     let is_row = matches!(
-        tree.layout_node_with_style(usize::from(node_id))
-            .unwrap()
-            .style
-            .flex_direction,
+        taffy::FlexboxContainerStyle::flex_direction(&tree.physical_style(usize::from(node_id))),
         taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
     );
     let children: Vec<NodeId> = if is_row {
@@ -102,29 +99,38 @@ pub(super) fn with_flex_item_basis_bounds<R>(
             let child_idx = usize::from(child);
             #[cfg(test)]
             super::tests::intrinsic_scope_tests::before_child_bounds(tree, child_idx);
-            let style = &tree.layout_node_with_style(child_idx).unwrap().style;
+            let style = tree.physical_style(child_idx);
             if style.box_generation_mode() == BoxGenerationMode::None
-                || style.position == TaffyPosition::Absolute
+                || style.position() == TaffyPosition::Absolute
             {
                 continue;
             }
-            let Some(basis) = crate::layout::resolve_dimension(style.flex_basis, None)
-                .filter(|basis| basis.is_finite())
+            let Some(basis) =
+                crate::layout::resolve_dimension(taffy::FlexboxItemStyle::flex_basis(&style), None)
+                    .filter(|basis| basis.is_finite())
             else {
                 continue;
             };
-            let (width, min, max) = (style.size.width, style.min_size.width, style.max_size.width);
+            let (width, min, max) = (
+                style.size().width,
+                style.min_size().width,
+                style.max_size().width,
+            );
+            let margin = style.margin();
             // A percentage of the container's width, which the probe has not got,
             // bounds nothing, and is no margin either.
             let min_length = crate::layout::resolve_length_percentage_auto(min, None);
             let max_length = crate::layout::resolve_length_percentage_auto(max, None);
-            let margins: f32 = [style.margin.left, style.margin.right]
+            let margins: f32 = [margin.left, margin.right]
                 .into_iter()
                 .map(|margin| {
                     crate::layout::resolve_length_percentage_auto(margin, None).unwrap_or(0.0)
                 })
                 .sum();
-            let (cannot_shrink, cannot_grow) = (style.flex_shrink == 0.0, style.flex_grow == 0.0);
+            let (cannot_shrink, cannot_grow) = (
+                taffy::FlexboxItemStyle::flex_shrink(&style) == 0.0,
+                taffy::FlexboxItemStyle::flex_grow(&style) == 0.0,
+            );
             let preferred = crate::layout::resolve_dimension(width, None);
             // The flex base size floors the contribution, and then the item's own
             // bounds clamp it, the minimum over the maximum.

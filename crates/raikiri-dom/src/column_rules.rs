@@ -119,7 +119,7 @@ pub(crate) fn prepare(
         .collect();
     let mut stack = vec![(document.root, None)];
     while let Some((node_id, parent_owner)) = stack.pop() {
-        let node = &document.layout_node_with_style(node_id).unwrap();
+        let node = &document.nodes[node_id];
         if !node.is_in_document() || node.is_display_none() {
             continue;
         }

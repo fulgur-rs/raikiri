@@ -11,6 +11,7 @@ use raikiri_traits::NodeKind;
 
 #[cfg(test)]
 pub(crate) mod checked;
+pub(crate) mod finished;
 pub(crate) mod frozen;
 pub(super) mod metadata;
 mod overrides;
@@ -27,6 +28,9 @@ pub(crate) enum ReadRole {
     BlockContainer,
     BlockItem,
     Oof,
+    /// The box's own style with no role context: no transposed block view,
+    /// no containing-block claims and no block-item percentage basis.
+    Physical,
 }
 
 #[cfg(not(test))]
@@ -403,6 +407,13 @@ impl LayoutSession<'_> {
         {
             self.query_style(idx, role)
         }
+    }
+
+    /// The box's own style with no role context: the read that replaces a
+    /// direct look into the retained style.
+    #[inline]
+    pub(crate) fn physical_style(&self, idx: usize) -> NativeStyle<'_> {
+        self.native_style(idx, ReadRole::Physical)
     }
 
     pub(crate) fn query_style(&self, idx: usize, role: ReadRole) -> LayoutStyleView<'_> {

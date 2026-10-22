@@ -62,6 +62,7 @@ fn block_view_compares_each_new_role_and_bridge_alignment_at_read() {
         ReadRole::BlockContainer,
         ReadRole::BlockItem,
         ReadRole::Oof,
+        ReadRole::Physical,
     ] {
         let query = tree.checked_query(child, role);
         read_core(&query);
@@ -81,6 +82,10 @@ fn block_view_compares_each_new_role_and_bridge_alignment_at_read() {
                 assert_eq!(BI::justify_self(&query), None);
                 assert_eq!(BI::align_content(&query), taffy::AlignContent::NORMAL);
                 let _ = (BI::is_table(&query), BI::float(&query), BI::clear(&query));
+            }
+            ReadRole::Physical => {
+                assert!(!query.is_containing_block().fixed);
+                let _ = (BI::float(&query), BI::clear(&query));
             }
             ReadRole::Oof => {
                 assert!(!query.is_containing_block().fixed);

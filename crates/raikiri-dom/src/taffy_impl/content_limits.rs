@@ -18,9 +18,9 @@ use crate::taffy_impl::{fit_content_room, resolve_calc};
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::PositionValue;
 use taffy::{
-    AvailableSpace, BoxSizing, Cache, Dimension, ExpandedDimension, LayoutInput, LayoutOutput,
-    LengthPercentageAuto, Line, MaybeResolve, NodeId, RequestedAxis, ResolveOrZero, RunMode, Size,
-    SizingMode,
+    AvailableSpace, BoxSizing, Cache, CoreStyle, Dimension, ExpandedDimension, LayoutInput,
+    LayoutOutput, LengthPercentageAuto, Line, MaybeResolve, NodeId, RequestedAxis, ResolveOrZero,
+    RunMode, Size, SizingMode,
 };
 
 /// The `min-*` and `max-*` sizes of a box that are intrinsic sizing keywords
@@ -377,11 +377,12 @@ pub(crate) fn with_oof_content_limits<R>(
                     .copied()
                     .filter(|idx| constrained_inputs.contains_key(idx))
                     .filter(|&idx| {
-                        let style = tree.layout_node_with_style(idx).unwrap().style;
-                        !style.min_size.width.is_auto()
-                            || !style.min_size.height.is_auto()
-                            || !style.max_size.width.is_auto()
-                            || !style.max_size.height.is_auto()
+                        let style = tree.physical_style(idx);
+                        let (min, max) = (style.min_size(), style.max_size());
+                        !min.width.is_auto()
+                            || !min.height.is_auto()
+                            || !max.width.is_auto()
+                            || !max.height.is_auto()
                     })
                     .collect::<Vec<_>>();
                 let raw_inputs = if raw_targets.is_empty() {
@@ -496,16 +497,16 @@ fn clamp_known_width_to_style(
     parent_width: Option<f32>,
     known: f32,
 ) -> f32 {
-    let style = tree.layout_node_with_style(idx).unwrap().style;
+    let style = tree.physical_style(idx);
     let adjustment = box_sizing_adjustment(tree, idx, parent_width.unwrap_or(0.0));
     let minimum = style
-        .min_size
+        .min_size()
         .width
         .maybe_resolve(parent_width, resolve_calc)
         .map(|width| width + adjustment)
         .unwrap_or(0.0);
     let maximum = style
-        .max_size
+        .max_size()
         .width
         .maybe_resolve(parent_width, resolve_calc)
         .map(|width| width + adjustment)
@@ -523,16 +524,16 @@ fn clamp_known_height_to_style(
     parent_width: Option<f32>,
     known: f32,
 ) -> f32 {
-    let style = tree.layout_node_with_style(idx).unwrap().style;
+    let style = tree.physical_style(idx);
     let adjustment = box_sizing_height_adjustment(tree, idx, parent_width.unwrap_or(0.0));
     let minimum = style
-        .min_size
+        .min_size()
         .height
         .maybe_resolve(parent_height, resolve_calc)
         .map(|height| height + adjustment)
         .unwrap_or(0.0);
     let maximum = style
-        .max_size
+        .max_size()
         .height
         .maybe_resolve(parent_height, resolve_calc)
         .map(|height| height + adjustment)
@@ -833,11 +834,9 @@ fn grid_item_area_bases(
     };
     let children = super::TaffyChildIter::new_for_session(tree, node_id)
         .filter(|&child| {
-            let style = tree
-                .layout_node_with_style(usize::from(child))
-                .unwrap()
-                .style;
-            style.display != taffy::Display::None && style.position != taffy::Position::Absolute
+            let node = &tree.nodes[usize::from(child)];
+            node.taffy_display() != taffy::Display::None
+                && node.taffy_position() != taffy::Position::Absolute
         })
         .collect::<Vec<_>>();
     children
@@ -957,30 +956,26 @@ impl MeasureKey {
         bounds: Bounds,
         percentage_height_basis: Option<f32>,
     ) -> Self {
-        let style = tree
-            .layout_style_for_key(node)
-            .expect("measure has a retained style");
+        let style = tree.physical_style(node);
+        let (size, min_size, max_size) = (style.size(), style.min_size(), style.max_size());
+        let (padding, border) = (style.padding(), style.border());
         let flex_grid = is_flex_grid_container(tree, node);
         // Key only the cross-axis sizes that the probe deliberately preserves.
         let cross_sizes = if width && flex_grid {
             [None; 3]
         } else if width {
             [
-                Some(MeasureLength::new(style.size.height.into_raw())),
-                Some(MeasureLength::new(style.min_size.height.into_raw())),
-                Some(MeasureLength::new(style.max_size.height.into_raw())),
+                Some(MeasureLength::new(size.height.into_raw())),
+                Some(MeasureLength::new(min_size.height.into_raw())),
+                Some(MeasureLength::new(max_size.height.into_raw())),
             ]
         } else if flex_grid {
-            [
-                Some(MeasureLength::new(style.size.width.into_raw())),
-                None,
-                None,
-            ]
+            [Some(MeasureLength::new(size.width.into_raw())), None, None]
         } else {
             [
-                Some(MeasureLength::new(style.size.width.into_raw())),
-                Some(MeasureLength::new(style.min_size.width.into_raw())),
-                Some(MeasureLength::new(style.max_size.width.into_raw())),
+                Some(MeasureLength::new(size.width.into_raw())),
+                Some(MeasureLength::new(min_size.width.into_raw())),
+                Some(MeasureLength::new(max_size.width.into_raw())),
             ]
         };
         let edge_basis = if tree.nodes[node].formatting_context == FormattingContext::Inline {
@@ -1003,14 +998,14 @@ impl MeasureKey {
             edge_basis: bits(edge_basis),
             percentage_height_basis: bits(percentage_height_basis),
             insets: [
-                style.padding.top,
-                style.padding.right,
-                style.padding.bottom,
-                style.padding.left,
-                style.border.top,
-                style.border.right,
-                style.border.bottom,
-                style.border.left,
+                padding.top,
+                padding.right,
+                padding.bottom,
+                padding.left,
+                border.top,
+                border.right,
+                border.bottom,
+                border.left,
             ]
             .map(|edge| MeasureLength::new(edge.into_raw())),
             cross_sizes,
@@ -1089,12 +1084,7 @@ fn replaced_keyword_bounds(
     let Some(natural) = super::leaf_intrinsic_size(&tree.nodes[idx]) else {
         return (Bounds::default(), Bounds::default());
     };
-    let Some(mut style) = tree
-        .layout_node_with_style(idx)
-        .map(|node| node.style.clone())
-    else {
-        return (Bounds::default(), Bounds::default()); // cov:ignore: every source node retains a layout style for its lifetime; this guards malformed arena state.
-    };
+    let mut style = super::block_flow::style_input::physical(tree, idx);
     if style.aspect_ratio.is_none() {
         super::apply_local_sizing(
             &mut style,
@@ -1296,13 +1286,13 @@ fn content_percentage_height_basis(
     idx: usize,
     inputs: &LayoutInput,
 ) -> Option<f32> {
-    let style = tree.layout_node_with_style(idx)?.style;
+    let style = tree.physical_style(idx);
     let parent_width = inputs.parent_size.width.unwrap_or(0.0);
     let edges = (style
-        .padding
+        .padding()
         .resolve_or_zero(Some(parent_width), resolve_calc)
         + style
-            .border
+            .border()
             .resolve_or_zero(Some(parent_width), resolve_calc))
     .sum_axes()
     .height;
@@ -1310,18 +1300,18 @@ fn content_percentage_height_basis(
         return Some((height - edges).max(0.0));
     }
 
-    let box_sizing_adjustment = if style.box_sizing == BoxSizing::ContentBox {
+    let box_sizing_adjustment = if style.box_sizing() == BoxSizing::ContentBox {
         edges
     } else {
         0.0
     };
     let preferred = style
-        .size
+        .size()
         .height
         .maybe_resolve(inputs.parent_size.height, resolve_calc)?
         + box_sizing_adjustment;
     let minimum = style
-        .min_size
+        .min_size()
         .height
         .maybe_resolve(inputs.parent_size.height, resolve_calc)
         .map(|height| height + box_sizing_adjustment)
@@ -1337,7 +1327,7 @@ fn stretch_fit_width(tree: &LayoutSession<'_>, idx: usize, inputs: &LayoutInput,
     let Some(basis) = inputs.parent_size.width else {
         return room.max(0.0);
     };
-    let margin = &tree.layout_node_with_style(idx).unwrap().style.margin;
+    let margin = tree.physical_style(idx).margin();
     let side =
         |side: LengthPercentageAuto| side.resolve_to_option(basis, resolve_calc).unwrap_or(0.0);
     (basis - side(margin.left) - side(margin.right))

@@ -44,7 +44,7 @@ impl ReadContext {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ComparisonStats {
-    pub(crate) getter_reads: [Cell<usize>; 8],
+    pub(crate) getter_reads: [Cell<usize>; 9],
     pub(crate) iterator_reads: Cell<usize>,
     pub(crate) calc_comparisons: Cell<usize>,
     pub(crate) pass_reads: Cell<usize>,

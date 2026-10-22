@@ -89,17 +89,14 @@ pub(crate) fn prepare(
         },
         ..Style::default()
     };
+    let facts = recipe_facts(document, cascade);
     let mut node = Node::new_element("".into(), style.clone(), None);
     if let Some(root) = root_element(document) {
         node.children.push(root);
         let principal = principal_element(document, cascade, root);
         node.used_writing_mode = document.nodes[principal].used_writing_mode;
-        style.direction = document
-            .layout_style_for_key(principal)
-            .expect("principal element has a style")
-            .direction;
+        style.direction = facts.direction;
     }
-    let facts = recipe_facts(document, cascade);
     let key = document.set_initial_containing_block(node, style);
     let recipe = super::box_style_data::recipes::initial_containing_block(width, height, facts);
     document

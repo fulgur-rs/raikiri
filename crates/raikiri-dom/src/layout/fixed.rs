@@ -12,7 +12,9 @@ use crate::layout::context::LayoutSession;
 use crate::node::{BoxPropertiesRef, FormattingContext};
 use raikiri_style::property::WillChange;
 use taffy::util::MaybeResolve;
-use taffy::{AlignContentKeyword, AlignItemsKeyword, AlignmentSafety};
+use taffy::{
+    AlignContentKeyword, AlignItemsKeyword, AlignmentSafety, CoreStyle, FlexboxContainerStyle,
+};
 
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.
@@ -42,7 +44,7 @@ pub(super) fn generates_inline_box_with_properties(
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     // spec: https://www.w3.org/TR/css-display-3/#transformations
     // Out-of-flow boxes and flex and grid items are blockified.
-    let node = &document.layout_node_with_style(id).unwrap();
+    let node = &document.nodes[id];
     let tag = node.tag_name().unwrap_or("");
     properties.display().is_inline_flow()
         && !super::ifc::assign::is_layout_root(document, id)
@@ -221,11 +223,7 @@ pub(crate) fn correct_root_oof_auto_margins(
     area_size: Size<f32>,
 ) {
     let vertical = document.nodes[root].used_writing_mode.is_vertical();
-    let direction = document
-        .layout_node_with_style(root)
-        .unwrap()
-        .style
-        .direction;
+    let direction = document.physical_style(root).direction();
     let candidates: Vec<_> = document
         .oof_coordinates
         .iter()
@@ -233,28 +231,25 @@ pub(crate) fn correct_root_oof_auto_margins(
         .collect();
     for node in candidates {
         let (left, right, top, bottom, auto_left, auto_right, auto_top, auto_bottom) = {
-            let style = &document.layout_node_with_style(node).unwrap().style;
+            let style = document.physical_style(node);
+            let (inset, margin) = (style.inset(), style.margin());
             (
-                style
-                    .inset
+                inset
                     .left
                     .maybe_resolve(Some(area_size.width), crate::taffy_impl::resolve_calc),
-                style
-                    .inset
+                inset
                     .right
                     .maybe_resolve(Some(area_size.width), crate::taffy_impl::resolve_calc),
-                style
-                    .inset
+                inset
                     .top
                     .maybe_resolve(Some(area_size.height), crate::taffy_impl::resolve_calc),
-                style
-                    .inset
+                inset
                     .bottom
                     .maybe_resolve(Some(area_size.height), crate::taffy_impl::resolve_calc),
-                style.margin.left.is_auto(),
-                style.margin.right.is_auto(),
-                style.margin.top.is_auto(),
-                style.margin.bottom.is_auto(),
+                margin.left.is_auto(),
+                margin.right.is_auto(),
+                margin.top.is_auto(),
+                margin.bottom.is_auto(),
             )
         };
         let layout = &mut document.nodes[node].unrounded_layout;
@@ -305,7 +300,7 @@ pub(crate) fn correct_root_flex_static_positions(document: &mut LayoutSession<'_
         })
         .collect();
     for (node, owner, static_owner) in candidates {
-        let style = &document.layout_node_with_style(node).unwrap().style;
+        let inset = document.physical_style(node).inset();
         let mut layout = document.nodes[node].unrounded_layout;
         let margin_box = Size {
             width: layout.size.width + layout.margin.left + layout.margin.right,
@@ -318,13 +313,13 @@ pub(crate) fn correct_root_flex_static_positions(document: &mut LayoutSession<'_
         let owner_origin = document.layout_origin_of(owner).unwrap_or(Point::ZERO);
         let static_layout = document.nodes[static_owner].unrounded_layout;
         let insets = static_layout.padding + static_layout.border;
-        if style.inset.left.is_auto() && style.inset.right.is_auto() {
+        if inset.left.is_auto() && inset.right.is_auto() {
             let free = space.width - margin_box.width;
             layout.location.x =
                 static_origin.x + insets.left + free * alignment.width + layout.margin.left
                     - owner_origin.x;
         }
-        if style.inset.top.is_auto() && style.inset.bottom.is_auto() {
+        if inset.top.is_auto() && inset.bottom.is_auto() {
             let free = space.height - margin_box.height;
             layout.location.y =
                 static_origin.y + insets.top + free * alignment.height + layout.margin.top
@@ -339,15 +334,15 @@ pub(crate) fn correct_root_flex_static_positions(document: &mut LayoutSession<'_
 /// the free space before the box (0 at the start edge, 1 at the end edge and
 /// 0.5 centered) and the space the box is aligned in.
 fn static_position_alignment(
-    tree: &Document,
+    tree: &LayoutSession<'_>,
     id: usize,
     margin_box: Size<f32>,
 ) -> (Size<f32>, Size<f32>) {
     let Some(parent) = tree.taffy_parent_of(id) else {
         return (Size::ZERO, Size::ZERO); // cov:ignore: a placed box has a parent
     };
-    let parent_style = &tree.layout_node_with_style(parent).unwrap().style;
-    let rtl = parent_style.direction == TaffyDirection::Rtl;
+    let parent_style = tree.physical_style(parent);
+    let rtl = parent_style.direction() == TaffyDirection::Rtl;
     // CSS 2.1 §10.3.7: in a right-to-left static containing block the
     // static position is the box's right edge.
     let block = Size {
@@ -355,7 +350,7 @@ fn static_position_alignment(
         height: 0.0,
     };
     if tree.nodes[parent].formatting_context == FormattingContext::Grid {
-        let child_style = &tree.layout_node_with_style(id).unwrap().style;
+        let child_style = tree.physical_style(id);
         let layout = tree.nodes[parent].unrounded_layout;
         let insets = (layout.padding + layout.border).sum_axes();
         let space = Size {
@@ -367,8 +362,8 @@ fn static_position_alignment(
             height: margin_box.height > space.height,
         };
         if let Some(alignment) = crate::taffy_impl::auto_grid_abspos_static_alignment(
-            child_style,
-            parent_style,
+            &child_style,
+            &parent_style,
             overflows,
         ) {
             return (alignment, space);
@@ -383,7 +378,7 @@ fn static_position_alignment(
     // child of a flex container is that of the sole flex item, aligned by
     // the container's justify-content and the child's align-self.
     // spec: https://www.w3.org/TR/css-flexbox-1/#abspos-items
-    let (is_row, reverse) = match parent_style.flex_direction {
+    let (is_row, reverse) = match FlexboxContainerStyle::flex_direction(&parent_style) {
         TaffyFlexDirection::Row => (true, false),
         TaffyFlexDirection::RowReverse => (true, true),
         TaffyFlexDirection::Column => (false, false),
@@ -392,7 +387,9 @@ fn static_position_alignment(
     let main_is_rtl = is_row && rtl;
     let cross_is_rtl = !is_row && rtl;
     let main_reversed = reverse ^ main_is_rtl;
-    let cross_reversed = (parent_style.flex_wrap == TaffyFlexWrap::WrapReverse) ^ cross_is_rtl;
+    let cross_reversed = (FlexboxContainerStyle::flex_wrap(&parent_style)
+        == TaffyFlexWrap::WrapReverse)
+        ^ cross_is_rtl;
     let flex = |end: bool, reversed: bool| if end ^ reversed { 1.0 } else { 0.0 };
     let layout = tree.nodes[parent].unrounded_layout;
     let insets = (layout.padding + layout.border).sum_axes();
@@ -411,7 +408,7 @@ fn static_position_alignment(
     // position does; only the cross axis falls back to start for an
     // overflowing `safe` alignment.
     // spec: https://www.w3.org/TR/css-flexbox-1/#justify-content-property
-    let justify = parent_style.justify_content;
+    let justify = FlexboxContainerStyle::justify_content(&parent_style);
     // `start` and `end` follow the writing mode; `flex-start`, `flex-end`
     // and the fallbacks of the distributed values follow the flex direction.
     let main = match justify.keyword() {
@@ -426,14 +423,14 @@ fn static_position_alignment(
         | AlignContentKeyword::Stretch
         | AlignContentKeyword::SpaceBetween => flex(false, main_reversed),
     };
-    let style = &tree.layout_node_with_style(id).unwrap().style;
+    let style = tree.physical_style(id);
     let align = style
-        .align_self
-        .or(Some(parent_style.align_items))
+        .bridge_align_self()
+        .or(Some(FlexboxContainerStyle::align_items(&parent_style)))
         .unwrap_or(TaffyAlignItems::STRETCH);
     // `self-start` and `self-end` follow the box's own direction where the
     // cross axis is its inline axis.
-    let flip = !is_row && style.direction != parent_style.direction;
+    let flip = !is_row && style.direction() != parent_style.direction();
     let keyword = if align.safety == AlignmentSafety::Safe && cross_size > cross_space {
         AlignItemsKeyword::Start
     } else {

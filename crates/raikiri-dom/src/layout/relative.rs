@@ -83,15 +83,10 @@ fn relative_insets_with_box_tree(
     // vertical axes, whose inline axis runs from bottom to top; the writing
     // mode below already says so.
     let rtl = source.is_some_and(|block| {
-        let flipped = used_mode == WritingMode::SidewaysLr
-            && crate::layout::bridge::uses_vertical_axes(cascade, block);
-        (document
-            .layout_node_with_style(block)
-            .unwrap()
-            .style
-            .direction
-            == taffy::Direction::Rtl)
-            != flipped
+        let vertical_axes = crate::layout::bridge::uses_vertical_axes(cascade, block);
+        let flipped = used_mode == WritingMode::SidewaysLr && vertical_axes;
+        let direction = super::bridge::direction_for_axes(&cascade.computed[block], vertical_axes);
+        (direction == taffy::Direction::Rtl) != flipped
     });
     let mode = match used_mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
@@ -289,7 +284,7 @@ fn is_table_part(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> boo
 
 /// Whether the box is a non-atomic inline in the selected box tree.
 fn is_non_atomic_inline(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> bool {
-    let node = &document.layout_node_with_style(node_id).unwrap();
+    let node = &document.nodes[node_id];
     node.kind() == NodeKind::Element
         && !super::ifc::assign::is_layout_root(document, node_id)
         && boxes.properties(node_id).is_some_and(|properties| {

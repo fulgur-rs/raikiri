@@ -49,10 +49,10 @@ impl LayoutContainingBlock for LayoutSession<'_> {
             for child in children.iter().copied().map(usize::from) {
                 let static_owner = self.taffy_parent_of(child).unwrap_or(owner);
                 let (follow_static_x, follow_static_y) = {
-                    let style = self.layout_node_with_style(child).unwrap().style;
+                    let inset = self.physical_style(child).inset();
                     (
-                        style.inset.left.is_auto() && style.inset.right.is_auto(),
-                        style.inset.top.is_auto() && style.inset.bottom.is_auto(),
+                        inset.left.is_auto() && inset.right.is_auto(),
+                        inset.top.is_auto() && inset.bottom.is_auto(),
                     )
                 };
                 self.oof_coordinates.insert(
@@ -109,12 +109,9 @@ pub(crate) fn layout_container_candidates(
         .copied()
         .map(|mut candidate| {
             let node = usize::from(candidate.node);
-            let style_is_fixed = tree
-                .layout_node_with_style(node)
-                .is_some_and(|node| node.style.position == taffy::Position::Fixed);
             let css_is_fixed =
                 tree.nodes[node].position() == &raikiri_style::property::PositionValue::Fixed;
-            if tree.nodes[node].fixed_position || css_is_fixed || style_is_fixed {
+            if tree.nodes[node].fixed_position || css_is_fixed {
                 candidate.position = taffy::Position::Fixed;
             }
             candidate

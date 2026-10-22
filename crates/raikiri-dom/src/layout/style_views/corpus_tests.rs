@@ -90,7 +90,7 @@ impl raikiri_traits::ReplacedResolver for BrokenImageFallback<'_> {
 #[derive(Default, Debug)]
 struct Totals {
     documents: usize,
-    roles: [usize; 8],
+    roles: [usize; 9],
     iterators: usize,
     calcs: usize,
     pass: usize,

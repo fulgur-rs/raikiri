@@ -32,7 +32,16 @@ fn cell_scope_height_auto_preserves_authored_floor() {
             tree.override_checkpoint() > 0,
             "cell measurement must use the typed scope"
         );
-        tree.layout_style_for_key_mut(idx).unwrap().size.width = Dimension::length(91.0);
+        // A pass override reaches the retained style and the style view alike.
+        tree.record_pass_override(
+            idx,
+            raikiri_layout_style::OwnedPropertyOverride::length(
+                raikiri_layout_style::LengthProperty::Width,
+                raikiri_style::ComputedLengthPercentageOrAuto::Px(91.0),
+                false,
+            )
+            .unwrap(),
+        );
     }
     let (mut doc, cascade, child, _) = crate::layout::style_views::tests::fixture_with_styles(
         "display:table-row",

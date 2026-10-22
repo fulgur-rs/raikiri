@@ -350,6 +350,9 @@ pub(crate) fn rebreak_roots(
     let Some(mut state) = doc.ifc.take() else {
         return;
     };
+    // The new session has bound no styles yet, and the recorded boxes read
+    // them.
+    doc.prepare_style_views();
     let roots: Vec<usize> = (0..doc.nodes.len())
         .filter(|&id| doc.nodes[id].ifc.is_some())
         .collect();
@@ -422,7 +425,7 @@ pub(crate) fn rebreak_roots(
 fn first_text_node(doc: &Document, root: usize) -> Option<usize> {
     let mut stack: Vec<usize> = doc.nodes[root].children.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
-        let node = &doc.layout_node_with_style(id).unwrap();
+        let node = &doc.nodes[id];
         if !node.is_in_document() {
             continue;
         }
