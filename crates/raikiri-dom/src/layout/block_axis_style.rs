@@ -10,7 +10,7 @@
 //! gives them without anything having to be swapped in the document's own
 //! styles: retained styles stay on physical axes while pagination runs.
 
-use taffy::{Dimension, LengthPercentageAuto, Overflow, Point};
+use taffy::{Dimension, LengthPercentageAuto, Overflow, Point, Rect};
 
 use crate::Document;
 
@@ -23,8 +23,10 @@ pub(crate) struct BlockAxisStyle {
     pub(crate) height: Dimension,
     pub(crate) min_height: LengthPercentageAuto,
     pub(crate) max_height: LengthPercentageAuto,
-    pub(crate) margin_top: LengthPercentageAuto,
-    pub(crate) margin_bottom: LengthPercentageAuto,
+    /// The minimum and maximum size across the flow.
+    pub(crate) min_width: LengthPercentageAuto,
+    pub(crate) max_width: LengthPercentageAuto,
+    pub(crate) margin: Rect<LengthPercentageAuto>,
     pub(crate) inset_top: LengthPercentageAuto,
     pub(crate) inset_bottom: LengthPercentageAuto,
     /// Exchanged with the other axis on transposed axes.
@@ -40,8 +42,9 @@ impl BlockAxisStyle {
             height: style.size.height,
             min_height: style.min_size.height,
             max_height: style.max_size.height,
-            margin_top: style.margin.top,
-            margin_bottom: style.margin.bottom,
+            min_width: style.min_size.width,
+            max_width: style.max_size.width,
+            margin: style.margin,
             inset_top: style.inset.top,
             inset_bottom: style.inset.bottom,
             overflow: style.overflow,
@@ -53,14 +56,15 @@ impl BlockAxisStyle {
     pub(crate) fn of_view(view: &raikiri_layout_style::LayoutStyleView<'_>) -> Self {
         use taffy::CoreStyle;
         let size = view.size();
-        let margin = view.margin();
         let inset = view.inset();
+        let (min_size, max_size) = (view.min_size(), view.max_size());
         Self {
             height: size.height,
-            min_height: view.min_size().height,
-            max_height: view.max_size().height,
-            margin_top: margin.top,
-            margin_bottom: margin.bottom,
+            min_height: min_size.height,
+            max_height: max_size.height,
+            min_width: min_size.width,
+            max_width: max_size.width,
+            margin: view.margin(),
             inset_top: inset.top,
             inset_bottom: inset.bottom,
             overflow: view.overflow(),

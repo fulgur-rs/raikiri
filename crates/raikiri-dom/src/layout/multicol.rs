@@ -938,10 +938,11 @@ fn is_right_aligned_in_parent(tree: &Document, child: usize) -> bool {
         tree.layout_node_with_style(parent).unwrap().style.direction == TaffyDirection::Rtl
     });
     let node = &tree.layout_node_with_style(child).unwrap();
+    let block_axis = tree.block_axis_style(child);
     rtl_parent
         && !(node.multicol_auto_width
-            && node.style.min_size.width.is_auto()
-            && node.style.max_size.width.is_auto())
+            && block_axis.min_width.is_auto()
+            && block_axis.max_width.is_auto())
 }
 
 fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {

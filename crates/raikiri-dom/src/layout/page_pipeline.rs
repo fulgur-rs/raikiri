@@ -6182,11 +6182,11 @@ fn break_margins(
 ) -> (f32, f32) {
     let block_axis = document.block_axis_style(node_id);
     let computed = &cascade.computed[node_id];
-    let margin_top = used_style_length_percentage_auto(block_axis.margin_top, content_width)
+    let margin_top = used_style_length_percentage_auto(block_axis.margin.top, content_width)
         .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
         .unwrap_or(0.0);
     let trailing_margin = if is_floating_box_for_pagination(document, cascade, node_id) {
-        used_style_length_percentage_auto(block_axis.margin_bottom, content_width)
+        used_style_length_percentage_auto(block_axis.margin.bottom, content_width)
             .or_else(|| {
                 used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
             })

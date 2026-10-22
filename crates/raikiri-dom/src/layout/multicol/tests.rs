@@ -4906,3 +4906,79 @@ fn a_block_that_fills_the_column_takes_its_ratio_height_from_the_column_width() 
         vec![(0, 0.0, 0.0, 25.0), (1, 100.0, 0.0, 25.0)]
     );
 }
+
+/// Put `doc` on the transposed axes of a vertical root the way pagination
+/// does: the facts of every box the paginator reads along its flow are its
+/// physical ones with the axes exchanged, top and bottom being the physical
+/// left and right.
+fn on_transposed_axes(doc: &mut Document) {
+    let styles = (0..doc.nodes.len())
+        .map(|key| {
+            let mut style = crate::layout::block_axis_style::BlockAxisStyle::of_retained(
+                doc.layout_style_for_key(key).unwrap(),
+            );
+            let physical = style;
+            style.margin = Rect {
+                top: physical.margin.left,
+                right: physical.margin.top,
+                bottom: physical.margin.right,
+                left: physical.margin.bottom,
+            };
+            style.min_width = physical.min_height;
+            style.max_width = physical.max_height;
+            style
+        })
+        .collect();
+    doc.pagination_block_styles = styles;
+}
+
+#[test]
+fn spanner_cut_checks_read_margins_along_the_paginated_axes() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let owner = doc.append_element(
+        Some(html),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2"),
+    );
+    let spanner = doc.append_element(
+        Some(owner),
+        "div",
+        Style::default(),
+        Some("display:block;column-span:all;margin-top:10px"),
+    );
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    // A block margin is plain along the flow...
+    assert!(lineless::is_plain_block_holding_lines(&doc, spanner));
+    // ...but the physical top margin of a box in a vertical root lies across
+    // the flow, which a page may not end inside.
+    on_transposed_axes(&mut doc);
+    assert!(!lineless::is_plain_block_holding_lines(&doc, spanner));
+}
+
+#[test]
+fn right_alignment_checks_the_width_bounds_across_the_paginated_flow() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;direction:rtl"),
+    );
+    let child = doc.append_element(
+        Some(html),
+        "div",
+        Style::default(),
+        Some("display:block;min-height:5px"),
+    );
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    // An auto-width box fills the width of its parent in either direction.
+    assert!(!is_right_aligned_in_parent(&doc, child));
+    // On transposed axes its physical `min-height` bounds the width the
+    // flow is across, so it can be narrower than its parent.
+    on_transposed_axes(&mut doc);
+    assert!(is_right_aligned_in_parent(&doc, child));
+}
