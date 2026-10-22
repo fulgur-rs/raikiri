@@ -1,5 +1,4 @@
 use crate::Document;
-use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
 use taffy::{AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode};
@@ -11,26 +10,22 @@ fn column_rects(root_css: &str, column_css: &str) -> Vec<(f32, f32, f32, f32)> {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some(format!("display:block;{root_css}").as_str()),
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;position:relative"),
     );
     let column = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some(format!("display:block;{column_css}").as_str()),
     );
     let mut paragraphs = Vec::new();
     for text in ["aa bb", "cc dd"] {
-        let paragraph =
-            doc.append_element(Some(column), "div", Style::default(), Some("display:block"));
+        let paragraph = doc.append_element(Some(column), "div", Some("display:block"));
         doc.append_text(paragraph, text);
         paragraphs.push(paragraph);
     }
@@ -99,18 +94,16 @@ fn horizontal_absolute_box_is_unchanged() {
 #[test]
 fn vertical_absolute_box_without_inline_content_starts_at_the_block_start_edge() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl;width:30px;height:35px;position:relative"),
     );
     let absolute = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;width:15px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -126,18 +119,11 @@ fn sideways_absolute_text_uses_the_vertical_block_start_edge() {
     // `sideways-lr` starts its inline axis at the bottom.
     for (mode, expected) in [("sideways-rl", (15.0, 0.0)), ("sideways-lr", (0.0, 15.0))] {
         let mut doc = Document::new();
-        let body = doc.append_element(
-            Some(0),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
-        let parent = doc.append_element(Some(body), "div", Style::default(),
-            Some(format!("display:block;position:relative;writing-mode:{mode};width:30px;height:35px;font:10px Ahem")));
+        let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
+        let parent = doc.append_element(Some(body), "div", Some(format!("display:block;position:relative;writing-mode:{mode};width:30px;height:35px;font:10px Ahem")));
         let child = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;position:absolute;width:15px;height:20px"),
         );
         doc.append_text(child, "x");
@@ -154,18 +140,15 @@ fn sideways_absolute_text_uses_the_vertical_block_start_edge() {
 #[test]
 fn only_an_absolute_child_of_the_vertical_containing_block_gets_its_inline_size() {
     let mut doc = Document::new();
-    let container = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let container = doc.append_element(Some(0), "div", None::<&str>);
     let absolute = doc.append_element(
         Some(container),
         "div",
-        Style {
-            position: taffy::Position::Absolute,
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:flex;box-sizing:border-box;position:absolute"),
     );
-    let in_flow = doc.append_element(Some(container), "div", Style::default(), None::<&str>);
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let in_flow = doc.append_element(Some(container), "div", None::<&str>);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade);
     session
         .context
         .vertical_oof_containing_blocks
@@ -184,26 +167,24 @@ fn only_an_absolute_child_of_the_vertical_containing_block_gets_its_inline_size(
 #[test]
 fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let container = doc.append_element(
         Some(html),
         "div",
-        Style::default(),
         Some("display:block;position:relative;writing-mode:vertical-rl"),
     );
     let absolute = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;writing-mode:vertical-rl;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     doc.append_text(absolute, "aa bb cc dd ee ff gg hh ii jj kk ll");
     doc.mark_in_document_flags();
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     // Model the vertical block as a descendant of a multicol container.
-    doc.nodes[html].multicol = Some(crate::fragment::MulticolStyle {
+    session.nodes[html].multicol = Some(crate::fragment::MulticolStyle {
         rtl: false,
         count: Some(2),
         width: None,
@@ -215,7 +196,6 @@ fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
         orphans: 2,
         widows: 2,
     });
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
     assert_eq!(
         session.nodes[container].formatting_context,
         crate::node::FormattingContext::Block
@@ -266,16 +246,10 @@ fn automatic_vertical_containing_block_measurement_restores_its_stack_entry() {
 /// container and the child.
 fn aligned_document(container_css: &str, child_css: &str) -> (Document, usize, usize) {
     let mut doc = Document::new();
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!(
             "display:block;position:relative;width:100px;height:100px;{container_css}"
         )),
@@ -283,7 +257,6 @@ fn aligned_document(container_css: &str, child_css: &str) -> (Document, usize, u
     let child = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some(format!(
             "display:block;position:absolute;width:50px;height:50px;{child_css}"
         )),
@@ -526,23 +499,16 @@ fn the_overflow_of_a_moved_box_is_that_of_its_new_position() {
 #[test]
 fn the_overflow_of_a_box_moved_in_a_container_with_lines_is_that_of_its_new_position() {
     let mut doc = Document::new();
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:relative;writing-mode:vertical-rl;width:100px;height:100px;font:10px Ahem"),
     );
     doc.append_text(container, "x");
     let child = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some(
             "display:block;position:absolute;width:150px;height:50px;left:0;right:0;align-self:end",
         ),
@@ -575,28 +541,20 @@ fn a_box_wider_than_its_inset_modified_block_stays_inside_the_containing_block()
 #[test]
 fn a_box_hoisted_from_a_descendant_is_aligned_in_its_containing_block() {
     let mut doc = Document::new();
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:relative;width:100px;height:100px;writing-mode:vertical-rl"),
     );
     let block = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;width:75px;height:50px"),
     );
     let child = doc.append_element(
         Some(block),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;width:50px;height:50px;left:0;right:0;align-self:start"),
     );
     doc.mark_in_document_flags();
@@ -624,16 +582,10 @@ fn percentage_insets_resolve_against_the_positioning_area() {
 fn the_lines_of_a_vertical_container_do_not_change_how_its_boxes_are_aligned() {
     for (mode, expected) in [("vertical-rl", (50.0, 50.0)), ("vertical-lr", (0.0, 50.0))] {
         let mut doc = Document::new();
-        let body = doc.append_element(
-            Some(0),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
+        let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
         let container = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!(
                 "display:block;position:relative;writing-mode:{mode};width:100px;height:100px;font:10px Ahem"
             )),
@@ -642,7 +594,6 @@ fn the_lines_of_a_vertical_container_do_not_change_how_its_boxes_are_aligned() {
         let child = doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some("display:block;position:absolute;width:50px;height:50px;left:0;right:0;top:0;bottom:0;align-self:start;justify-self:end"),
         );
         doc.mark_in_document_flags();

@@ -66,13 +66,11 @@ fn local_sizing_overrides_keep_explicit_none_calc_and_signed_zero_without_leakin
 #[test]
 fn local_sizing_overrides_do_not_publish_session_or_sibling_changes() {
     let (mut doc, cascade, child, sibling) = crate::layout::style_views::tests::fixture();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let tree = LayoutSession::bridged(&mut doc, &cascade);
     let epoch = tree.layout_cache_context.epoch();
-    let original = tree.layout_style_for_key(child).unwrap().size;
-    let sibling_size = tree.layout_style_for_key(sibling).unwrap().size;
-    let mut local = tree.layout_style_for_key(child).unwrap().clone();
+    let original = tree.style_view(child).size();
+    let sibling_size = tree.style_view(sibling).size();
+    let mut local = crate::taffy_impl::block_flow::style_input::physical(&tree, child);
     apply_local_sizing(
         &mut local,
         &[
@@ -82,12 +80,8 @@ fn local_sizing_overrides_do_not_publish_session_or_sibling_changes() {
     );
     assert!(local.size.width.is_auto());
     assert_eq!(local.aspect_ratio, Some(4.0));
-    assert_eq!(tree.layout_style_for_key(child).unwrap().size, original);
     assert_eq!(tree.style_view(child).size(), original);
-    assert_eq!(
-        tree.layout_style_for_key(sibling).unwrap().size,
-        sibling_size
-    );
+    assert_eq!(tree.style_view(sibling).size(), sibling_size);
     assert_eq!(tree.layout_cache_context.epoch(), epoch);
     assert_eq!(tree.override_checkpoint(), 0);
 }

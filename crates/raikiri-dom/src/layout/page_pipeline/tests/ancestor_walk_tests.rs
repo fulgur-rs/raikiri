@@ -4,9 +4,9 @@ use crate::layout::ifc::test_support::block_fixture;
 #[test]
 fn defensive_ancestor_position_skips_inline_frames_and_stops_at_root() {
     let mut doc = Document::new();
-    let root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let inline = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(inline), "div", Style::default(), None::<&str>);
+    let root = doc.append_element(Some(0), "div", None::<&str>);
+    let inline = doc.append_element(Some(root), "span", None::<&str>);
+    let child = doc.append_element(Some(inline), "div", None::<&str>);
     doc.nodes[0].unrounded_layout.location.y = 1.0;
     doc.nodes[root].unrounded_layout.location.y = 11.0;
     doc.nodes[inline].unrounded_layout.location.y = 13.0;
@@ -22,8 +22,8 @@ fn defensive_ancestor_position_skips_inline_frames_and_stops_at_root() {
 #[test]
 fn defensive_ancestor_position_bounds_a_cycle() {
     let mut doc = Document::new();
-    let a = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let b = doc.append_element(Some(a), "div", Style::default(), None::<&str>);
+    let a = doc.append_element(Some(0), "div", None::<&str>);
+    let b = doc.append_element(Some(a), "div", None::<&str>);
     doc.nodes[a].parent = Some(b);
     doc.nodes[a].unrounded_layout.location.y = 2.0;
     doc.nodes[b].unrounded_layout.location.y = 3.0;
@@ -34,14 +34,9 @@ fn defensive_ancestor_position_bounds_a_cycle() {
 fn a_candidate_parent_skips_contents_and_noncontributing_inline_layout_frames() {
     let mut ids = [0; 3];
     let mut fixture = block_fixture("", |doc, root| {
-        ids[0] = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
-        ids[1] = doc.append_element(
-            Some(ids[0]),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        ids[2] = doc.append_element(Some(ids[1]), "div", Style::default(), Some("display:block"));
+        ids[0] = doc.append_element(Some(root), "span", Some("display:inline"));
+        ids[1] = doc.append_element(Some(ids[0]), "div", Some("display:contents"));
+        ids[2] = doc.append_element(Some(ids[1]), "div", Some("display:block"));
     });
     fixture.doc.nodes[fixture.root]
         .flags
@@ -61,13 +56,8 @@ fn spanning_growth_fixture(
 ) -> (crate::layout::ifc::test_support::Fixture, usize, usize) {
     let mut owner = 0;
     let mut fixture = block_fixture("height:30px", |doc, root| {
-        owner = doc.append_element(Some(root), "div", Style::default(), Some(owner_css));
-        doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        owner = doc.append_element(Some(root), "div", Some(owner_css));
+        doc.append_element(Some(root), "div", Some("display:block;height:10px"));
     });
     let outer = fixture.doc.parent_of(fixture.root).unwrap();
     fixture.doc.nodes[fixture.root].unrounded_layout.size.height = 30.0;
@@ -82,8 +72,9 @@ fn spanning_growth_error_does_not_grow_the_current_or_later_ancestor() {
     let mut work = ProjectionWork::new(&control, 0);
     let mut edits = FragmentEdits::new(&fixture.doc.fragment_tree);
     let mut siblings = sibling_shifts::SiblingShifts::default();
+    let session_cascade = crate::layout::test_support::cascaded(&fixture.doc);
     let result = grow_spanning_column_ancestors(
-        &mut crate::layout::context::LayoutSession::new(&mut fixture.doc),
+        &mut crate::layout::context::LayoutSession::bridged(&mut fixture.doc, &session_cascade),
         owner,
         40.0,
         outer,
@@ -114,8 +105,9 @@ fn out_of_flow_spanning_owners_stop_before_charging_or_growing_ancestors() {
         let mut work = ProjectionWork::new(&control, 0);
         let mut edits = FragmentEdits::new(&fixture.doc.fragment_tree);
         let mut siblings = sibling_shifts::SiblingShifts::default();
+        let session_cascade = crate::layout::test_support::cascaded(&fixture.doc);
         grow_spanning_column_ancestors(
-            &mut crate::layout::context::LayoutSession::new(&mut fixture.doc),
+            &mut crate::layout::context::LayoutSession::bridged(&mut fixture.doc, &session_cascade),
             owner,
             40.0,
             outer,
@@ -139,8 +131,9 @@ fn spanning_growth_stops_at_a_fixed_height_parent() {
     let mut work = ProjectionWork::new(&control, 10);
     let mut edits = FragmentEdits::new(&fixture.doc.fragment_tree);
     let mut siblings = sibling_shifts::SiblingShifts::default();
+    let session_cascade = crate::layout::test_support::cascaded(&fixture.doc);
     grow_spanning_column_ancestors(
-        &mut crate::layout::context::LayoutSession::new(&mut fixture.doc),
+        &mut crate::layout::context::LayoutSession::bridged(&mut fixture.doc, &session_cascade),
         owner,
         40.0,
         outer,
@@ -171,49 +164,18 @@ fn sibling_adjacency_stops_at_a_node_without_a_parent() {
 fn growth_through_two_contents_ancestors_keeps_the_moved_child() {
     let mut ids = [0; 7];
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        ids[0] = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-        ids[1] = doc.append_element(
-            Some(ids[0]),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        ids[2] = doc.append_element(
-            Some(ids[1]),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        ids[0] = doc.append_element(Some(body), "div", Some("display:block"));
+        ids[1] = doc.append_element(Some(ids[0]), "div", Some("display:contents"));
+        ids[2] = doc.append_element(Some(ids[1]), "div", Some("display:contents"));
         ids[3] = doc.append_element(
             Some(ids[2]),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-before:page"),
         );
-        ids[4] = doc.append_element(
-            Some(ids[2]),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
-        ids[5] = doc.append_element(
-            Some(ids[0]),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
-        ids[6] = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        ids[4] = doc.append_element(Some(ids[2]), "div", Some("display:block;height:20px"));
+        ids[5] = doc.append_element(Some(ids[0]), "div", Some("display:block;height:10px"));
+        ids[6] = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     });
     assert_eq!(doc.parent_of(ids[3]), Some(ids[2]));
     assert_eq!(
@@ -232,36 +194,15 @@ fn growth_through_two_contents_ancestors_keeps_the_moved_child() {
 fn a_fixed_height_ancestor_keeps_its_height_when_the_following_flow_moves() {
     let mut ids = [0; 3];
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        ids[0] = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:100px"),
-        );
-        let contents = doc.append_element(
-            Some(ids[0]),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        ids[0] = doc.append_element(Some(body), "div", Some("display:block;height:100px"));
+        let contents = doc.append_element(Some(ids[0]), "div", Some("display:contents"));
         ids[1] = doc.append_element(
             Some(contents),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-before:page"),
         );
-        ids[2] = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        ids[2] = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     });
     assert_eq!(doc.nodes[ids[0]].unrounded_layout.size.height, 100.0);
     assert_eq!(
@@ -274,19 +215,9 @@ fn a_fixed_height_ancestor_keeps_its_height_when_the_following_flow_moves() {
 fn contents_parent_offsets_exclude_the_child_and_visited_parent() {
     let mut ids = [0; 3];
     let mut fixture = block_fixture("", |doc, root| {
-        ids[0] = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        ids[1] = doc.append_element(
-            Some(ids[0]),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        ids[2] = doc.append_element(Some(ids[1]), "div", Style::default(), Some("display:block"));
+        ids[0] = doc.append_element(Some(root), "div", Some("display:contents"));
+        ids[1] = doc.append_element(Some(ids[0]), "div", Some("display:contents"));
+        ids[2] = doc.append_element(Some(ids[1]), "div", Some("display:block"));
     });
     fixture.doc.nodes[fixture.root].unrounded_layout.location.y = 100.0;
     fixture.doc.nodes[ids[0]].unrounded_layout.location.y = 11.0;
@@ -302,13 +233,8 @@ fn contents_parent_offsets_exclude_the_child_and_visited_parent() {
 fn resolved_no_column_cache_hit_stops_before_parent_lookup_and_path_compression() {
     let mut ids = [0; 2];
     let fixture = block_fixture("display:flex;flex-direction:column", |doc, root| {
-        ids[0] = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        ids[1] = doc.append_element(Some(ids[0]), "div", Style::default(), Some("display:block"));
+        ids[0] = doc.append_element(Some(root), "div", Some("display:contents"));
+        ids[1] = doc.append_element(Some(ids[0]), "div", Some("display:block"));
     });
     let mut columns = ColumnContexts::new(fixture.doc.node_count());
     columns.cache[ids[1]] = Some(None);
@@ -330,25 +256,10 @@ fn resolved_no_column_cache_hit_stops_before_parent_lookup_and_path_compression(
 fn row_leads_use_the_nearest_table_without_registering_its_boundary() {
     let mut ids = [0; 3];
     let fixture = block_fixture("", |doc, root| {
-        ids[0] = doc.append_element(Some(root), "table", Style::default(), Some("display:table"));
-        ids[1] = doc.append_element(
-            Some(ids[0]),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
-        ids[2] = doc.append_element(
-            Some(ids[1]),
-            "tr",
-            Style::default(),
-            Some("display:table-row"),
-        );
-        doc.append_element(
-            Some(ids[2]),
-            "td",
-            Style::default(),
-            Some("display:table-cell"),
-        );
+        ids[0] = doc.append_element(Some(root), "table", Some("display:table"));
+        ids[1] = doc.append_element(Some(ids[0]), "tbody", Some("display:table-row-group"));
+        ids[2] = doc.append_element(Some(ids[1]), "tr", Some("display:table-row"));
+        doc.append_element(Some(ids[2]), "td", Some("display:table-cell"));
     });
     let candidate = |node_id, raw_y, is_table_row| PageCandidate {
         node_id,

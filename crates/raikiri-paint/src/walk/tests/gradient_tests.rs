@@ -3,12 +3,7 @@ use super::*;
 /// The computed values of a `div` with `style`.
 fn computed_for(style: &str) -> ComputedValues {
     let mut document = Document::new();
-    let id = document.append_element(
-        Some(document.root_index()),
-        "div",
-        raikiri_dom::LayoutStyle::default(),
-        Some(style),
-    );
+    let id = document.append_element(Some(document.root_index()), "div", Some(style));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     cascade.computed[id].clone()

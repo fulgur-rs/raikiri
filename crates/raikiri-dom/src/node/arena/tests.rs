@@ -1,7 +1,7 @@
 use super::*;
 
 fn element(tag: &str) -> Node {
-    Node::new_element(tag.into(), crate::LayoutStyle::default(), None)
+    Node::new_element(tag.into(), None)
 }
 
 fn arena() -> NodeArena {

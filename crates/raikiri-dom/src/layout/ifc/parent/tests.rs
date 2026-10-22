@@ -34,7 +34,7 @@ fn a_box_under_inline_elements_is_located_from_the_root() {
 #[test]
 fn a_cyclic_oof_owner_chain_falls_back_to_its_initial_coordinate() {
     let mut doc = Document::new();
-    let node = doc.append_element(Some(0), "div", crate::LayoutStyle::default(), None::<&str>);
+    let node = doc.append_element(Some(0), "div", None::<&str>);
     let local = Point { x: 7.0, y: 11.0 };
     doc.nodes[node].unrounded_layout.location = local;
     doc.oof_coordinates.insert(

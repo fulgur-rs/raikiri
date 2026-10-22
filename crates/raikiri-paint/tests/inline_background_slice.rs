@@ -1,7 +1,6 @@
 //! Background images of inline boxes split across lines.
 
 use anyrender::Scene;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
@@ -51,17 +50,16 @@ fn paint_in(block_style: &str, span_style: &str) -> Vec<u8> {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!("display:block;{block_style};font:10px/20px Ahem;color:transparent").as_str()),
     );
-    let span = doc.append_element(Some(root), "span", Style::default(), Some(span_style));
+    let span = doc.append_element(Some(root), "span", Some(span_style));
     doc.append_text(span, "AAAA");
-    doc.append_element(Some(span), "br", Style::default(), None::<&str>);
+    doc.append_element(Some(span), "br", None::<&str>);
     doc.append_text(span, "AAAA");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();

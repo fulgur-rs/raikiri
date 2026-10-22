@@ -22,8 +22,8 @@ fn make_fragment_with_two_children(doc: &mut Document) -> (usize, usize, usize) 
     let frag = doc.nodes.len();
     doc.nodes.push(Node::new_document_fragment());
     // The fragment’s children are two detached Elements.
-    let c0 = doc.append_element(Some(frag), "span", Style::default(), None::<&str>);
-    let c1 = doc.append_element(Some(frag), "div", Style::default(), None::<&str>);
+    let c0 = doc.append_element(Some(frag), "span", None::<&str>);
+    let c1 = doc.append_element(Some(frag), "div", None::<&str>);
     (frag, c0, c1)
 }
 
@@ -33,9 +33,9 @@ fn attach_child_extends_parent_with_fragment_children_in_order() {
     // fragment child: node's children → parent's children, in tree order.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
     // Start with one existing child of the parent.
-    let pre_existing = doc.append_element(Some(parent), "pre", Style::default(), None::<&str>);
+    let pre_existing = doc.append_element(Some(parent), "pre", None::<&str>);
 
     let (frag, c0, c1) = make_fragment_with_two_children(&mut doc);
     doc.attach_child(parent, frag);
@@ -54,7 +54,7 @@ fn attach_child_empties_fragments_children_after_move() {
     // The old push behavior would retain fragment.children; this test checks the move.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
     let (frag, _c0, _c1) = make_fragment_with_two_children(&mut doc);
 
     // Precondition: the fragment itself has two children.
@@ -78,7 +78,7 @@ fn attach_child_does_not_push_the_fragment_node_itself() {
     // children, not parent → fragment).
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
     let (frag, _c0, _c1) = make_fragment_with_two_children(&mut doc);
 
     doc.attach_child(parent, frag);
@@ -96,8 +96,8 @@ fn attach_child_with_empty_fragment_is_noop_on_parent_children() {
     // drain().collect() returns an empty Vec and extend does nothing.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
-    let existing = doc.append_element(Some(parent), "p", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
+    let existing = doc.append_element(Some(parent), "p", None::<&str>);
 
     // Empty fragment.
     let empty_frag = doc.nodes.len();
@@ -119,9 +119,9 @@ fn attach_child_non_fragment_keeps_existing_push_semantics() {
     // must cause no collateral damage.
     let mut doc = Document::new();
     let root = doc.root_index();
-    let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(root), "body", None::<&str>);
     // Element child, detached.
-    let elem = doc.append_element(None, "span", Style::default(), None::<&str>);
+    let elem = doc.append_element(None, "span", None::<&str>);
     doc.attach_child(parent, elem);
     assert_eq!(doc.nodes[parent].children, vec![elem]);
     // Comment child, detached.

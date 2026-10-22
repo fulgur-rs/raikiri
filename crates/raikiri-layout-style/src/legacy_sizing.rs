@@ -94,6 +94,28 @@ impl OwnedPropertyOverride {
         apply_sizing(kind, style)
     }
 
+    /// Whether [`Self::apply_legacy_sizing`] accepts this entry.
+    pub fn is_legacy_sizing(&self) -> bool {
+        use LengthProperty::*;
+        match self.as_borrowed().0 {
+            OverrideKind::Length(property, _) => matches!(
+                property,
+                Width
+                    | Height
+                    | MinWidth
+                    | MinHeight
+                    | MaxWidth
+                    | MaxHeight
+                    | BorderTop
+                    | BorderRight
+                    | BorderBottom
+                    | BorderLeft
+            ),
+            OverrideKind::FlexShrink(_) | OverrideKind::AspectRatio(_) => true,
+            _ => false,
+        }
+    }
+
     /// Apply one physical sizing override for legacy layout consumers.
     ///
     /// This compatibility layer can be removed when those consumers query views.

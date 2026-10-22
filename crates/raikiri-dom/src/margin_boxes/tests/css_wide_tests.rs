@@ -2,13 +2,8 @@ use super::*;
 
 fn margin_spec(css: &str) -> MarginBoxSpec {
     let mut doc = engine_document();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("color:green;font-size:40px"),
-    );
-    let style = doc.append_element(Some(html), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("color:green;font-size:40px"));
+    let style = doc.append_element(Some(html), "style", None::<&str>);
     doc.append_text(style, css);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();

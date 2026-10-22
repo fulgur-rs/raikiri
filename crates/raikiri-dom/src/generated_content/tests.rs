@@ -1,6 +1,5 @@
 use super::*;
 
-use crate::LayoutStyle as Style;
 use raikiri_style::{PseudoElem, StyleNodeId, build_rule_tree, cascade};
 use raikiri_traits::Symbol;
 
@@ -57,22 +56,12 @@ fn generated_image_ids_round_trip_and_stay_apart_from_other_ids() {
 #[test]
 fn generated_pieces_keep_images_in_place_and_text_drops_them() {
     let mut document = Document::new();
-    let style = document.append_element(
-        Some(document.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
     document.append_text(
         style,
         "div::before { content: 'A' url(a.png) url(b.png) 'B' } div::after { color: red }",
     );
-    let element = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
+    let element = document.append_element(Some(document.root_index()), "div", None::<&str>);
     document.mark_in_document_flags();
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade succeeds");
@@ -135,22 +124,12 @@ fn generated_pieces_keep_images_in_place_and_text_drops_them() {
 #[test]
 fn pseudo_counter_view_matches_directive_application_without_cloning_the_map() {
     let mut document = Document::new();
-    let style = document.append_element(
-        Some(document.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
     document.append_text(
         style,
         "div::before { content: counters(existing, \".\"); counter-reset: existing 6 reset_only 4; counter-increment: existing 3 increment_only 2; counter-set: existing 11 set_only 9 }",
     );
-    let element = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
+    let element = document.append_element(Some(document.root_index()), "div", None::<&str>);
     document.mark_in_document_flags();
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade succeeds");

@@ -1,13 +1,12 @@
 //! Rows and row groups outside any table, which an anonymous table wraps
 //! (CSS 2.1 §17.2.1 rule 3, CSS Tables 3 §3.9).
 
-use crate::LayoutStyle as Style;
 use crate::document::Document;
 use crate::layout::test_support::absolute_rect;
 use raikiri_style::{build_rule_tree, cascade};
 
 fn div(doc: &mut Document, parent: usize, css: &str) -> usize {
-    doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    doc.append_element(Some(parent), "div", Some(css))
 }
 
 /// `html > body(display:block; body_css)`, with `build` filling the body,
@@ -15,11 +14,10 @@ fn div(doc: &mut Document, parent: usize, css: &str) -> usize {
 fn laid_out(body_css: &str, build: impl FnOnce(&mut Document, usize)) -> Document {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(&format!("display:block;margin:0;width:200px;{body_css}")),
     );
     build(&mut doc, body);
@@ -168,11 +166,10 @@ fn preserved_white_space_beside_rows_keeps_them_blocks() {
 fn an_empty_row_group_keeps_its_place_across_layout_passes() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:200px"),
     );
     div(&mut doc, body, "display:block;height:50px");
@@ -200,13 +197,12 @@ fn multicol_and_generated_content_parents_keep_rows_blocks() {
         ("body::before{content:'X';display:block}", ""),
     ] {
         let mut doc = Document::new();
-        let style = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        let style = doc.append_element(Some(0), "style", Some("display:none"));
         doc.append_text(style, sheet);
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some(&format!("display:block;{body_css}")),
         );
         let row = div(&mut doc, body, "display:table-row");

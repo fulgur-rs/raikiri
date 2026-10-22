@@ -1,5 +1,4 @@
 use super::*;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -21,15 +20,14 @@ fn inside_text_marker_group_lookup_has_a_work_bound() {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let ol = doc.append_element(
         Some(body),
         "ol",
-        Style::default(),
         Some("display:block;list-style:decimal-leading-zero inside;font:10px/20px Ahem"),
     );
-    let li = doc.append_element(Some(ol), "li", Style::default(), Some("display:list-item"));
+    let li = doc.append_element(Some(ol), "li", Some("display:list-item"));
     doc.append_text(li, "Filler Text");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -77,17 +75,16 @@ fn nested_first_letter_group_lookup_has_a_document_wide_work_bound() {
             )
             .unwrap(),
         );
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let style = doc.append_element(Some(html), "style", Some("display:none"));
         doc.append_text(style, format!("div::first-letter{{color:red}} {opacity}"));
         let mut root = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;width:100px;font:10px/40px Ahem"),
         );
         for _ in 0..64 {
-            root = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+            root = doc.append_element(Some(root), "div", Some("display:block"));
         }
         doc.append_text(root, "X");
         doc.mark_in_document_flags();

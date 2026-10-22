@@ -1,12 +1,6 @@
 use super::*;
-use crate::LayoutStyle as Style;
+use crate::layout::test_support::{cascaded, with_bridged_session, with_resumed_session};
 use crate::node::FormattingContext;
-
-/// A session over `doc` without a cascade, whose style queries read the
-/// styles the fixture bridged.
-fn session(doc: &mut Document) -> LayoutSession<'_> {
-    LayoutSession::new(doc)
-}
 
 /// Bridge the computed styles of `doc`, as layout does before it queries them.
 fn bridged(doc: &mut Document) -> raikiri_style::CascadeResult {
@@ -22,12 +16,11 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
     // `parent_css` and `child_css`.
     let laid_out = |parent_css: &str, child_css: &str| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(
                 format!("display:block;width:100px;column-count:2;column-gap:20px;{parent_css}")
                     .as_str(),
@@ -36,7 +29,6 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
         let child = doc.append_element(
             Some(parent),
             "p",
-            Style::default(),
             Some(format!("display:block;margin:0;{child_css}").as_str()),
         );
         doc.append_text(child, "text");
@@ -45,7 +37,9 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
     };
     let balances = |parent_css: &str, child_css: &str| {
         let (mut doc, child) = laid_out(parent_css, child_css);
-        can_balance_single_paragraph(&session(&mut doc), child)
+        with_resumed_session(&mut doc, |session| {
+            can_balance_single_paragraph(session, child)
+        })
     };
     assert!(balances("", ""));
     // A height, a minimum height or a maximum height on the paragraph keeps
@@ -56,13 +50,19 @@ fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
 
     let (mut doc, child) = laid_out("", "");
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Avoid;
-    assert!(!can_balance_single_paragraph(&session(&mut doc), child));
+    assert!(!with_resumed_session(&mut doc, |session| {
+        can_balance_single_paragraph(session, child)
+    }));
     doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Auto;
     doc.nodes[child].unrounded_layout.padding.top = 4.0;
-    assert!(!can_balance_single_paragraph(&session(&mut doc), child));
+    assert!(!with_resumed_session(&mut doc, |session| {
+        can_balance_single_paragraph(session, child)
+    }));
     doc.nodes[child].unrounded_layout.padding.top = 0.0;
     doc.nodes[child].unrounded_layout.border.bottom = 4.0;
-    assert!(!can_balance_single_paragraph(&session(&mut doc), child));
+    assert!(!with_resumed_session(&mut doc, |session| {
+        can_balance_single_paragraph(session, child)
+    }));
     doc.nodes[child].unrounded_layout.border.bottom = 0.0;
     // The container's own padding, border and direction are no concern of
     // its paragraph.
@@ -181,18 +181,22 @@ fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_c
 #[test]
 fn multicol_subtree_has_float_skips_hidden_descendants() {
     let mut doc = Document::new();
-    let root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
-    doc.append_element(Some(hidden), "div", Style::default(), Some("float:left"));
+    let root = doc.append_element(Some(0), "div", None::<&str>);
+    let hidden = doc.append_element(Some(root), "div", None::<&str>);
+    doc.append_element(Some(hidden), "div", Some("float:left"));
     bridged(&mut doc);
     doc.set_display(hidden, raikiri_style::property::DisplayValue::None);
     doc.nodes[hidden].formatting_context = FormattingContext::None;
 
-    assert!(!multicol_subtree_has_float(&session(&mut doc), root));
+    assert!(!with_resumed_session(&mut doc, |session| {
+        multicol_subtree_has_float(session, root)
+    }));
 
     doc.set_display(hidden, raikiri_style::property::DisplayValue::Block);
     doc.nodes[hidden].formatting_context = FormattingContext::Block;
-    assert!(multicol_subtree_has_float(&session(&mut doc), root));
+    assert!(with_resumed_session(&mut doc, |session| {
+        multicol_subtree_has_float(session, root)
+    }));
 }
 
 #[test]
@@ -203,20 +207,19 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     let block = "display:block;height:20px";
     let float = "display:block;float:right;width:20px;height:20px";
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let mut container = |children: &[&str], text: Option<&str>| {
         let container = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;column-count:2;width:100px;height:40px;font:20px/20px Ahem"),
         );
         if let Some(text) = text {
             doc.append_text(container, text);
         }
         for css in children {
-            doc.append_element(Some(container), "div", Style::default(), Some(*css));
+            doc.append_element(Some(container), "div", Some(*css));
         }
         container
     };
@@ -234,19 +237,13 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     let nested_margin = container(&[block, float], None);
     let hidden = container(&[block, float], None);
     let wrapper = doc.nodes[nested].children[0];
-    doc.append_element(Some(wrapper), "div", Style::default(), Some(float));
+    doc.append_element(Some(wrapper), "div", Some(float));
     let wrapper = doc.nodes[nested_margin].children[0];
-    doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("display:block;margin-top:20px"),
-    );
+    doc.append_element(Some(wrapper), "div", Some("display:block;margin-top:20px"));
     let wrapper = doc.nodes[hidden].children[0];
     doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:none;float:left;margin-top:20px"),
     );
     doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
@@ -258,54 +255,55 @@ fn only_a_lone_trailing_float_of_a_block_container_ends_with_its_only_float() {
     page.height = 400.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
-    assert!(!multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        empty
-    ));
-    assert!(multicol_ends_with_its_only_float(&session(&mut doc), alone));
-    assert!(multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        trailing
-    ));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, empty)
+    }));
+    assert!(with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, alone)
+    }));
+    assert!(with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, trailing)
+    }));
     // Content after the float wraps beside it, and a second float shares its
     // line, also when that float is inside an earlier child.
-    assert!(!multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        leading
-    ));
-    assert!(!multicol_ends_with_its_only_float(&session(&mut doc), two));
-    assert!(!multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        nested
-    ));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, leading)
+    }));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, two)
+    }));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, nested)
+    }));
     // Adjoining margins collapse on the block layout, also through a wrapper.
-    assert!(!multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        margin
-    ));
-    assert!(!multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        nested_margin
-    ));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, margin)
+    }));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, nested_margin)
+    }));
     // Hidden content takes no part in either.
-    assert!(multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        hidden
-    ));
+    assert!(with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, hidden)
+    }));
     // Lines of the container's own are laid out beside the float.
     assert!(doc.nodes[inline].ifc.is_some());
-    assert!(!multicol_ends_with_its_only_float(
-        &session(&mut doc),
-        inline
-    ));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        multicol_ends_with_its_only_float(session, inline)
+    }));
 }
 
 #[test]
 fn flex_float_chain_is_not_a_scope_without_a_multicol_ancestor() {
     let mut doc = Document::new();
-    let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let node = doc.append_element(Some(0), "div", None::<&str>);
 
-    assert!(!FlexFloatChain::of_ancestors(&session(&mut doc), node).is_scope());
+    assert!(
+        !with_bridged_session(&mut doc, |session| FlexFloatChain::of_ancestors(
+            session, node
+        ))
+        .is_scope()
+    );
 }
 
 // The chain carried down a traversal must agree with walking every node's
@@ -351,18 +349,6 @@ fn flex_float_chain_matches_an_ancestor_walk() {
         }
         false
     }
-    let multicol = |horizontal| crate::fragment::MulticolStyle {
-        rtl: false,
-        count: Some(2),
-        width: None,
-        column_fill: ColumnFillValue::Balance,
-        gap: 0.0,
-        gap_percent: None,
-        height_definite: false,
-        horizontal,
-        orphans: 1,
-        widows: 1,
-    };
     for mut arrangement in 0..KINDS.len().pow(4) {
         let mut kinds = Vec::new();
         for _ in 0..4 {
@@ -377,25 +363,17 @@ fn flex_float_chain_matches_an_ancestor_walk() {
                 Kind::RowFlex => "display:flex",
                 Kind::ColumnFlex => "display:flex;flex-direction:column",
                 Kind::Float => "float:left",
-                _ => "display:block",
+                Kind::Vertical => "display:block;writing-mode:vertical-rl",
+                Kind::HorizontalMulticol => "display:block;column-count:2",
+                Kind::VerticalMulticol => "display:block;writing-mode:vertical-rl;column-count:2",
+                Kind::Plain => "display:block",
             };
-            let node = doc.append_element(Some(parent), "div", Style::default(), Some(css));
+            let node = doc.append_element(Some(parent), "div", Some(css));
             nodes.push(node);
             parent = node;
         }
-        bridged(&mut doc);
-        for (&node, kind) in nodes.iter().zip(&kinds) {
-            match kind {
-                Kind::Vertical => {
-                    doc.nodes[node].authored_writing_mode =
-                        Some(raikiri_style::property::WritingMode::VerticalRl)
-                }
-                Kind::HorizontalMulticol => doc.nodes[node].multicol = Some(multicol(true)),
-                Kind::VerticalMulticol => doc.nodes[node].multicol = Some(multicol(false)),
-                _ => {}
-            }
-        }
-        let tree = session(&mut doc);
+        let cascade = cascaded(&doc);
+        let tree = LayoutSession::bridged(&mut doc, &cascade);
         let mut carried = FlexFloatChain::of_ancestors(&tree, 0);
         for (depth, &node) in nodes.iter().enumerate() {
             carried = carried.below(&tree, node);
@@ -414,31 +392,20 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let sized = doc.append_element(Some(body), "div", Style::default(), Some("width:400px"));
-    let half = doc.append_element(Some(sized), "div", Style::default(), Some("width:50%"));
-    let auto = doc.append_element(Some(half), "div", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let sized = doc.append_element(Some(body), "div", Some("width:400px"));
+    let half = doc.append_element(Some(sized), "div", Some("width:50%"));
+    let auto = doc.append_element(Some(half), "div", None::<&str>);
     let intrinsic = doc.append_element(
         Some(auto),
         "div",
-        Style::default(),
         Some("width:min-content;position:absolute"),
     );
-    let flex = doc.append_element(
-        Some(intrinsic),
-        "div",
-        Style::default(),
-        Some("display:flex"),
-    );
-    let vertical = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("writing-mode:vertical-rl"),
-    );
-    let leaf = doc.append_element(Some(vertical), "div", Style::default(), None::<&str>);
-    let late_parent = doc.append_element(Some(body), "div", Style::default(), Some("width:30px"));
+    let flex = doc.append_element(Some(intrinsic), "div", Some("display:flex"));
+    let vertical = doc.append_element(Some(flex), "div", Some("writing-mode:vertical-rl"));
+    let leaf = doc.append_element(Some(vertical), "div", None::<&str>);
+    let late_parent = doc.append_element(Some(body), "div", Some("width:30px"));
     // Reparent under a later arena index and keep both DOM edge representations consistent.
     doc.detach_from_parent(half);
     doc.attach_child(late_parent, half);
@@ -467,23 +434,21 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
 #[test]
 fn avoid_page_min_block_child_can_continue_across_columns() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:40px;column-count:2;column-gap:0"),
     );
     let child = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:20px;break-inside:avoid-page"),
     );
     for _ in 0..8 {
         doc.append_text(child, "line");
-        doc.append_element(Some(child), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(child), "br", None::<&str>);
     }
 
     layout_nested_flex_float_fixture(&mut doc);
@@ -504,13 +469,14 @@ fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
     let node = doc.append_element(
         Some(0),
         "div",
-        Style::default(),
         Some("box-sizing:border-box;max-height:100px"),
     );
     bridged(&mut doc);
 
     assert_eq!(
-        multicol_max_fragmentainer_height(&session(&mut doc), node, 120.0, None, None),
+        with_bridged_session(&mut doc, |session| multicol_max_fragmentainer_height(
+            session, node, 120.0, None, None
+        )),
         Some(100.0),
     );
 }
@@ -519,15 +485,19 @@ fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
 fn multicol_min_constrained_child_requires_all_constraints() {
     let constrained = |child_css: &str| {
         let mut doc = Document::new();
-        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-        let child = doc.append_element(Some(parent), "div", Style::default(), Some(child_css));
-        bridged(&mut doc);
-        doc.nodes[child].has_logical_min_block_size = true;
-        multicol_has_min_constrained_child(&session(&mut doc), parent)
+        let parent = doc.append_element(Some(0), "div", None::<&str>);
+        doc.append_element(Some(parent), "div", Some(child_css));
+        with_bridged_session(&mut doc, |session| {
+            multicol_has_min_constrained_child(session, parent)
+        })
     };
 
-    assert!(constrained("min-height:40px"));
-    assert!(!constrained("min-height:auto"));
+    // The logical minimum counts once it wins over the physical one and the
+    // box avoids breaks inside it.
+    assert!(constrained("min-block-size:40px;break-inside:avoid"));
+    assert!(!constrained("min-block-size:auto;break-inside:avoid"));
+    assert!(!constrained("min-block-size:40px"));
+    assert!(!constrained("min-height:40px;break-inside:avoid"));
 }
 
 #[test]
@@ -535,12 +505,11 @@ fn authored_containing_width_uses_the_cascade_resolved_ch_width() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:4ch;font-size:25px;font-family:monospace"),
     );
     let text = doc.append_text(container, "test");
@@ -549,8 +518,10 @@ fn authored_containing_width_uses_the_cascade_resolved_ch_width() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cascade).expect("styles");
 
-    let taffy_width = style_dimension_length(style_of(&session(&mut doc), container).size().width)
-        .expect("cascade-resolved ch width should be a finite length");
+    let taffy_width = with_bridged_session(&mut doc, |session| {
+        style_dimension_length(style_of(session, container).size().width)
+    })
+    .expect("cascade-resolved ch width should be a finite length");
     assert_eq!(
         AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
         Some(taffy_width),
@@ -562,12 +533,11 @@ fn authored_containing_width_uses_content_box_for_border_box_ancestor() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:250px;box-sizing:border-box;border:3px solid"),
     );
     let text = doc.append_text(container, "generated text");
@@ -586,18 +556,12 @@ fn content_widths_resolve_a_cascade_ch_calc_with_a_percentage() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let container = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:200px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let container = doc.append_element(Some(body), "div", Some("display:block;width:200px"));
     let sized = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;width:calc(50% + 2ch);font-family:Ahem;font-size:10px"),
     );
     let text = doc.append_text(sized, "x");
@@ -620,26 +584,15 @@ fn content_widths_skip_a_cascade_ch_width_on_display_contents() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let container = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:800px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let container = doc.append_element(Some(body), "div", Some("display:block;width:800px"));
     let contents = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:contents;width:calc(50% + 2ch);font-family:Ahem;font-size:10px"),
     );
-    let half = doc.append_element(
-        Some(contents),
-        "div",
-        Style::default(),
-        Some("display:block;width:50%"),
-    );
+    let half = doc.append_element(Some(contents), "div", Some("display:block;width:50%"));
     let text = doc.append_text(half, "x");
     doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     let rules = build_rule_tree(&doc);
@@ -660,20 +613,10 @@ fn authored_containing_width_preserves_percentage_fallback_behavior() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let container = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:200px"),
-    );
-    let percentage = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;width:50%"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let container = doc.append_element(Some(body), "div", Some("display:block;width:200px"));
+    let percentage = doc.append_element(Some(container), "div", Some("display:block;width:50%"));
     let text = doc.append_text(percentage, "percentage");
     let auto_text = doc.append_text(body, "auto");
     let rules = build_rule_tree(&doc);
@@ -695,12 +638,11 @@ fn compute_multicol_layout_moves_break_avoid_min_height_children_to_the_next_col
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px;height:60px"),
     );
     // Children that hold no lines are cut at the column edges, minimum
@@ -708,13 +650,11 @@ fn compute_multicol_layout_moves_break_avoid_min_height_children_to_the_next_col
     let a = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
     let b = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
 
@@ -742,24 +682,21 @@ fn compute_multicol_layout_spaces_min_height_children_when_slicing_fails() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px;height:60px"),
     );
     let a = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
     let b = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
     // A rounded box taller than a column would be cut, and painting cannot
@@ -767,7 +704,6 @@ fn compute_multicol_layout_spaces_min_height_children_when_slicing_fails() {
     doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;height:70px;border:2px solid;border-radius:2px"),
     );
 
@@ -794,18 +730,16 @@ fn manual_column_block_position_provenance_resets_on_relayout() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;width:200px;height:60px"),
     );
     let child = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid;position:relative;top:12px"),
     );
     let rules = build_rule_tree(&doc);
@@ -825,19 +759,17 @@ fn balanced_auto_multicol_updates_its_container_fragment_height() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;column-count:2;column-gap:0;background:green"),
     );
     for (height, extra) in [(25, ""), (50, ""), (25, ";break-before:avoid"), (50, "")] {
         doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some(&format!("display:block;height:{height}px{extra}")),
         );
     }
@@ -865,24 +797,21 @@ fn compute_multicol_layout_clamps_auto_height_to_the_largest_min_constrained_chi
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px"),
     );
     let a = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
     let _b = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
 
@@ -999,18 +928,16 @@ fn relayout_nested_multicol_children_column_places_a_block_sibling_of_an_empty_d
     // the container's auto height alone while the node still participates
     // in `relayout_nested_multicol_children`'s child list.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px"),
     );
     let a = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         // A scroll container is monolithic, so it is not sliced into the
         // columns and keeps the strategy this test covers.
         Some("display:block;height:30px;overflow:hidden"),
@@ -1048,14 +975,12 @@ fn vertical_fallback_multicol_preserves_logical_minimum_block_extent() {
             let html = doc.append_element(
                 Some(0),
                 "html",
-                Style::default(),
                 Some(format!("writing-mode:{writing_mode}")),
             );
-            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", None::<&str>);
             let container = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(format!(
                     "display:block;column-count:3;inline-size:500px;{container_size}"
                 )),
@@ -1065,7 +990,6 @@ fn vertical_fallback_multicol_preserves_logical_minimum_block_extent() {
                     doc.append_element(
                         Some(container),
                         "div",
-                        Style::default(),
                         Some("display:block;min-block-size:40px;break-inside:avoid"),
                     )
                 })
@@ -1102,23 +1026,16 @@ fn vertical_fallback_preserves_explicit_physical_min_height() {
         "min-height:80px",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(
-            Some(0),
-            "html",
-            Style::default(),
-            Some("writing-mode:vertical-rl"),
-        );
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", Some("writing-mode:vertical-rl"));
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:200px;height:160px;column-count:1"),
         );
         let child = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some(format!("display:block;{minimum}")),
         );
         let rules = build_rule_tree(&doc);
@@ -1221,30 +1138,23 @@ fn relayout_nested_flex_float_records_column_local_geometry() {
 #[test]
 fn nested_flex_float_continues_text_past_declared_columns() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:40px;column-count:2;column-gap:0"),
     );
     let flex = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:row"),
     );
-    let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
-    doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("float:left;width:1px;height:1px"),
-    );
+    let item = doc.append_element(Some(flex), "div", None::<&str>);
+    doc.append_element(Some(item), "div", Some("float:left;width:1px;height:1px"));
     for _ in 0..12 {
         doc.append_text(item, "line");
-        doc.append_element(Some(item), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(item), "br", None::<&str>);
     }
 
     layout_nested_flex_float_fixture(&mut doc);
@@ -1265,33 +1175,25 @@ fn nested_flex_float_continues_text_past_declared_columns() {
 #[test]
 fn tiny_fragmentainers_bound_nested_float_fragments() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;columns:2;max-height:0.001px"),
     );
     let flex = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:row"),
     );
     let item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("font-size:0;line-height:0;margin-top:30px"),
     );
-    let float = doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("float:left;width:1px;height:2px"),
-    );
-    doc.append_element(Some(item), "br", Style::default(), None::<&str>);
+    let float = doc.append_element(Some(item), "div", Some("float:left;width:1px;height:2px"));
+    doc.append_element(Some(item), "br", None::<&str>);
 
     layout_nested_flex_float_fixture(&mut doc);
     let count = doc
@@ -1330,30 +1232,23 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
 #[test]
 fn tiny_fragmentainers_keep_every_line_in_a_fragment() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;columns:2;max-height:0.001px"),
     );
     let flex = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:row"),
     );
-    let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
-    doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("float:left;width:1px;height:2px"),
-    );
+    let item = doc.append_element(Some(flex), "div", None::<&str>);
+    doc.append_element(Some(item), "div", Some("float:left;width:1px;height:2px"));
     for _ in 0..12 {
         doc.append_text(item, "line");
-        doc.append_element(Some(item), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(item), "br", None::<&str>);
     }
 
     layout_nested_flex_float_fixture(&mut doc);
@@ -1381,23 +1276,21 @@ fn tiny_fragmentainers_keep_every_line_in_a_fragment() {
 #[test]
 fn direct_nested_text_root_records_each_column_range() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;columns:2;column-gap:0;max-height:40px"),
     );
     let paragraph = doc.append_element(
         Some(multicol),
         "p",
-        Style::default(),
         Some("display:block;margin:0;font-size:10px;line-height:10px"),
     );
     for _ in 0..8 {
         doc.append_text(paragraph, "line");
-        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(paragraph), "br", None::<&str>);
     }
 
     layout_nested_flex_float_fixture(&mut doc);
@@ -1418,30 +1311,27 @@ fn direct_nested_text_root_records_each_column_range() {
 #[test]
 fn multicol_block_children_with_lines_get_text_ranges() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;columns:2;column-gap:0;height:20px"),
     );
     let first = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:block;height:30px;font-size:10px;line-height:10px"),
     );
     doc.append_text(first, "one");
-    doc.append_element(Some(first), "br", Style::default(), None::<&str>);
+    doc.append_element(Some(first), "br", None::<&str>);
     let second = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:block;font-size:10px;line-height:10px"),
     );
     doc.append_text(second, "two");
-    doc.append_element(Some(second), "br", Style::default(), None::<&str>);
+    doc.append_element(Some(second), "br", None::<&str>);
 
     layout_nested_flex_float_fixture(&mut doc);
     assert_ne!(doc.nodes[multicol].taffy_display(), Display::Flex);
@@ -1551,34 +1441,22 @@ fn constrained_chain_budget_rejects_before_installing_partial_origins() {
     use raikiri_traits::{LayoutError, PageBox};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font:20px/20px sans-serif"),
     );
     let mc = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px;column-count:2;column-gap:20px;orphans:1;widows:1"),
     );
-    let wrapper = doc.append_element(
-        Some(mc),
-        "div",
-        Style::default(),
-        Some("display:block;width:80px"),
-    );
-    let paragraph = doc.append_element(
-        Some(wrapper),
-        "p",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let wrapper = doc.append_element(Some(mc), "div", Some("display:block;width:80px"));
+    let paragraph = doc.append_element(Some(wrapper), "p", Some("display:block;margin:0"));
     for (index, letter) in ["A", "B", "C", "D"].into_iter().enumerate() {
         if index > 0 {
-            doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+            doc.append_element(Some(paragraph), "br", None::<&str>);
         }
         doc.append_text(paragraph, letter);
     }
@@ -1610,31 +1488,23 @@ fn nested_multicol_child_stops_when_the_shared_fragment_budget_is_exhausted() {
     let mut saw_limit_error = false;
     for limit in [1, 2, 3, 4, 5, 6, 8, 12, 16, 24, 32, 64] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let outer = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:300px;columns:2;max-height:80px"),
         );
         let inner = doc.append_element(
             Some(outer),
             "div",
-            Style::default(),
             Some("display:block;width:200px;columns:2;max-height:80px"),
         );
-        let flex = doc.append_element(
-            Some(inner),
-            "div",
-            Style::default(),
-            Some("display:flex;flex-direction:row"),
-        );
-        let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+        let flex = doc.append_element(Some(inner), "div", Some("display:flex;flex-direction:row"));
+        let item = doc.append_element(Some(flex), "div", None::<&str>);
         doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some("float:left;width:100px;height:500px"),
         );
         doc.fragment_tree.limit = limit;
@@ -1668,21 +1538,18 @@ fn nested_float_fragment_budget_accumulates_across_items() {
         let sibling = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:300px;columns:100px auto;max-height:160px"),
         );
         siblings.push(sibling);
         let flex = doc.append_element(
             Some(sibling),
             "div",
-            Style::default(),
             Some("display:flex;flex-direction:row"),
         );
-        let item = doc.append_element(Some(flex), "div", Style::default(), None::<&str>);
+        let item = doc.append_element(Some(flex), "div", None::<&str>);
         doc.append_element(
             Some(item),
             "div",
-            Style::default(),
             Some("float:left;width:100px;height:500px"),
         );
     }
@@ -1795,8 +1662,8 @@ fn nested_flex_float_fixture(
     let mut doc = Document::new();
     let html_style =
         (writing_mode != "horizontal-tb").then(|| format!("writing-mode:{writing_mode}"));
-    let html = doc.append_element(Some(0), "html", Style::default(), html_style.as_deref());
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", html_style.as_deref());
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol_writing_mode = if writing_mode == "horizontal-tb" {
         String::new()
     } else {
@@ -1805,7 +1672,6 @@ fn nested_flex_float_fixture(
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!(
             "display:block;width:300px;columns:100px auto;max-height:{max_height}px;border:3px solid pink{multicol_writing_mode}"
         )),
@@ -1813,32 +1679,27 @@ fn nested_flex_float_fixture(
     let flex = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some(format!("display:flex;flex-direction:{flex_direction}")),
     );
     let flex_item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("border:4px solid teal;outline:4px solid blue"),
     );
     doc.append_element(
         Some(flex_item),
         "div",
-        Style::default(),
         Some("float:left;border:3px solid black;height:500px;width:100px;background:yellow"),
     );
-    doc.append_element(Some(flex_item), "br", Style::default(), None::<&str>);
+    doc.append_element(Some(flex_item), "br", None::<&str>);
     let second_float = doc.append_element(
         Some(flex_item),
         "div",
-        Style::default(),
         Some("float:left;background:cyan;width:100px"),
     );
     doc.append_element(
         Some(second_float),
         "div",
-        Style::default(),
         Some("height:30px;width:30px;background:purple;display:inline-block"),
     );
     (doc, multicol, second_float)
@@ -1876,17 +1737,11 @@ fn max_height_multicol_fragment_does_not_expand_to_float_overflow() {
 
 fn break_flow_positions(edge: &str, before: bool, height: u32) -> Vec<(f32, f32, f32)> {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let columns = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(&format!(
             "display:block;columns:2;column-fill:auto;column-gap:0;width:100px;height:{height}px"
         )),
@@ -1901,7 +1756,6 @@ fn break_flow_positions(edge: &str, before: bool, height: u32) -> Vec<(f32, f32,
         boxes.push(doc.append_element(
             Some(columns),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;height:50px;break-inside:avoid;{edge}"
             )),
@@ -1990,12 +1844,12 @@ fn column_forces_a_boundary_even_when_the_current_column_has_room() {
 
 fn lineless_fixture(container_css: &str, children_css: &[&str]) -> (Document, usize, Vec<usize>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let parent = doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(container_css));
     let children = children_css
         .iter()
-        .map(|css| doc.append_element(Some(parent), "div", Style::default(), Some(*css)))
+        .map(|css| doc.append_element(Some(parent), "div", Some(*css)))
         .collect();
     layout_nested_flex_float_fixture(&mut doc);
     (doc, parent, children)
@@ -2003,20 +1857,18 @@ fn lineless_fixture(container_css: &str, children_css: &[&str]) -> (Document, us
 
 fn wrapped_lineless_fixture(wrapper_css: &str) -> (Document, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:4;column-gap:0"),
     );
     let wrapper_style = format!("display:block;{wrapper_css}");
-    let wrapper = doc.append_element(Some(parent), "div", Style::default(), Some(&wrapper_style));
+    let wrapper = doc.append_element(Some(parent), "div", Some(&wrapper_style));
     let child = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;width:25px;height:120px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
@@ -2025,30 +1877,18 @@ fn wrapped_lineless_fixture(wrapper_css: &str) -> (Document, usize, usize) {
 
 fn nested_wrapped_lineless_fixture() -> (Document, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:4;column-gap:0"),
     );
-    let wrapper = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:flow-root"),
-    );
-    let spanner = doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("display:block;column-span:all"),
-    );
+    let wrapper = doc.append_element(Some(parent), "div", Some("display:flow-root"));
+    let spanner = doc.append_element(Some(wrapper), "div", Some("display:block;column-span:all"));
     let child = doc.append_element(
         Some(spanner),
         "div",
-        Style::default(),
         Some("display:block;width:25px;height:400px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
@@ -2194,7 +2034,10 @@ fn auto_height_columns_balance_lineless_blocks_inside_nested_wrappers() {
     let (mut doc, parent, child) = nested_wrapped_lineless_fixture();
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
     assert!(
-        lineless::supported_with_wrappers(&session(&mut doc), parent).is_some(),
+        with_bridged_session(&mut doc, |session| lineless::supported_with_wrappers(
+            session, parent
+        ))
+        .is_some(),
         "a span below flow-root is regular column content"
     );
     let fragments = fragment_rects(&doc, child);
@@ -2215,31 +2058,27 @@ fn auto_height_columns_balance_lineless_blocks_inside_nested_wrappers() {
 #[test]
 fn auto_balance_preserves_spanners_in_the_multicol_formatting_context() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:4;column-gap:0"),
     );
-    let wrapper = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
-    let spanner = doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("display:block;column-span:all"),
-    );
+    let wrapper = doc.append_element(Some(parent), "div", Some("display:block"));
+    let spanner = doc.append_element(Some(wrapper), "div", Some("display:block;column-span:all"));
     doc.append_element(
         Some(spanner),
         "div",
-        Style::default(),
         Some("display:block;width:25px;height:400px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
 
     assert!(
-        lineless::supported_with_wrappers(&session(&mut doc), parent).is_none(),
+        with_bridged_session(&mut doc, |session| lineless::supported_with_wrappers(
+            session, parent
+        ))
+        .is_none(),
         "a spanner in the multicol formatting context must keep the spanning path active"
     );
 }
@@ -2248,20 +2087,19 @@ fn auto_balance_preserves_spanners_in_the_multicol_formatting_context() {
 fn wrappers_keep_empty_spanners_out_of_the_stream() {
     let spanners = |wrapper_css: &str| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:100px;columns:3"),
         );
-        let wrapper = doc.append_element(Some(parent), "div", Style::default(), Some(wrapper_css));
+        let wrapper = doc.append_element(Some(parent), "div", Some(wrapper_css));
         for css in [
             "display:block;column-span:all;height:10px;margin-bottom:50px",
             "display:block;column-span:all;height:10px;margin-top:80px",
         ] {
-            doc.append_element(Some(wrapper), "div", Style::default(), Some(css));
+            doc.append_element(Some(wrapper), "div", Some(css));
         }
         layout_nested_flex_float_fixture(&mut doc);
         (doc, parent)
@@ -2274,44 +2112,41 @@ fn wrappers_keep_empty_spanners_out_of_the_stream() {
     assert!(
         doc.children_through_contents(parent)
             .into_iter()
-            .all(|child| spanning::is_spanner(&session(&mut doc), child))
+            .all(
+                |child| with_bridged_session(&mut doc, |session| spanning::is_spanner(
+                    session, child
+                ))
+            )
     );
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
 
     // Below a flow root they are ordinary blocks of the columns.
     let (mut doc, parent) = spanners("display:flow-root");
-    assert!(lineless::supported_with_wrappers(&session(&mut doc), parent).is_some());
+    assert!(
+        with_bridged_session(&mut doc, |session| lineless::supported_with_wrappers(
+            session, parent
+        ))
+        .is_some()
+    );
 }
 
 #[test]
 fn auto_balance_applies_wrapper_edge_trimming_only_to_boundary_leaves() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:2;column-gap:0"),
     );
-    let outer = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;padding-top:2px"),
-    );
-    let inner = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:flow-root"),
-    );
+    let outer = doc.append_element(Some(parent), "div", Some("display:block;padding-top:2px"));
+    let inner = doc.append_element(Some(outer), "div", Some("display:flow-root"));
     let children: Vec<_> = (0..2)
         .map(|_| {
             doc.append_element(
                 Some(inner),
                 "div",
-                Style::default(),
                 Some("display:block;width:25px;height:20px"),
             )
         })
@@ -2333,42 +2168,45 @@ fn auto_balance_applies_wrapper_edge_trimming_only_to_boundary_leaves() {
 #[test]
 fn containers_with_content_or_replaced_children_keep_other_strategies() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:2"),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:100px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:100px"));
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&session(&mut doc), parent, true).is_some());
+    assert!(
+        with_bridged_session(&mut doc, |session| lineless::supported(
+            session, parent, true
+        ))
+        .is_some()
+    );
     doc.append_text(child, "text");
-    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
+    assert!(
+        with_bridged_session(&mut doc, |session| lineless::supported(
+            session, parent, true
+        ))
+        .is_none()
+    );
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:2"),
     );
-    doc.append_element(
-        Some(parent),
-        "input",
-        Style::default(),
-        Some("display:block;height:100px"),
-    );
+    doc.append_element(Some(parent), "input", Some("display:block;height:100px"));
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
+    assert!(
+        with_bridged_session(&mut doc, |session| lineless::supported(
+            session, parent, true
+        ))
+        .is_none()
+    );
 }
 
 #[test]
@@ -2378,7 +2216,10 @@ fn only_a_relative_leaf_block_keeps_its_insets_in_the_stream() {
             "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
             &[child],
         );
-        lineless::supported(&session(&mut doc), parent, true).is_some()
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported(session, parent, true)
+        })
+        .is_some()
     };
     assert!(supported(
         "display:block;height:50px;position:relative;left:5px"
@@ -2407,7 +2248,10 @@ fn a_relative_containing_block_with_insets_keeps_other_strategies() {
             DEFINITE_COLUMNS,
             &[(block, &["position:absolute;top:0;width:10px;height:20px"])],
         );
-        lineless::supported(&session(&mut doc), parent, true).is_some()
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported(session, parent, true)
+        })
+        .is_some()
     };
     assert!(supported("display:block;position:relative;height:50px"));
     assert!(!supported(
@@ -2431,32 +2275,30 @@ fn a_block_with_size_containment_is_not_sliced() {
         "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
         &["display:block;height:400px;contain:size"],
     );
-    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
+    assert!(
+        with_bridged_session(&mut doc, |session| lineless::supported(
+            session, parent, true
+        ))
+        .is_none()
+    );
 }
 
 #[test]
 fn a_nested_multicol_slices_a_block_without_lines_into_its_columns() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
     );
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some("display:block;height:100px;columns:2;column-gap:0;column-fill:auto"),
     );
-    let child = doc.append_element(
-        Some(inner),
-        "div",
-        Style::default(),
-        Some("display:block;height:200px"),
-    );
+    let child = doc.append_element(Some(inner), "div", Some("display:block;height:200px"));
     layout_nested_flex_float_fixture(&mut doc);
     let pieces = fragment_rects(&doc, child);
     assert_eq!(
@@ -2474,26 +2316,19 @@ fn a_nested_multicol_taller_than_the_outer_column_continues_in_the_next_one() {
     // with a 200px row in the outer overflow column, whose own overflow
     // column takes the rest of the box (CSS Multi-column 1, 8.2).
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:300px;column-count:1"),
     );
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some("display:block;height:500px;column-count:1"),
     );
-    let child = doc.append_element(
-        Some(inner),
-        "div",
-        Style::default(),
-        Some("display:block;height:600px"),
-    );
+    let child = doc.append_element(Some(inner), "div", Some("display:block;height:600px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(
         fragment_rects(&doc, child),
@@ -2529,28 +2364,21 @@ fn a_nested_multicol_taller_than_the_outer_column_continues_in_the_next_one() {
 /// in the outer columns, from the first.
 fn continued_nested_multicol(inner_css: &str) -> (Document, usize, usize, Vec<f32>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:300px;column-count:1"),
     );
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some(&format!(
             "display:block;height:500px;column-count:1;padding:10px 0;{inner_css}"
         )),
     );
-    let child = doc.append_element(
-        Some(inner),
-        "div",
-        Style::default(),
-        Some("display:block;height:500px"),
-    );
+    let child = doc.append_element(Some(inner), "div", Some("display:block;height:500px"));
     layout_nested_flex_float_fixture(&mut doc);
     // The container's own record numbers its first box 0 of 3 and holds the
     // outer column's share, so the later records are the boxes of the rows.
@@ -2590,27 +2418,25 @@ fn a_cloned_nested_multicol_fills_its_rows_with_paragraph_lines_between_its_padd
     // Twenty 10px lines in a container with 10px of padding on each side
     // fill 80px of a 100px outer column, so the rows hold 8, 8 and 4 lines.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:300px;height:100px;columns:3;column-gap:0;column-fill:auto"),
     );
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some(
             "display:block;columns:1;padding:10px 0;box-decoration-break:clone;\
              font-size:10px;line-height:10px",
         ),
     );
-    let paragraph = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(Some(inner), "div", Some("display:block"));
     for _ in 0..20 {
         doc.append_text(paragraph, "a");
-        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(paragraph), "br", None::<&str>);
     }
     layout_nested_flex_float_fixture(&mut doc);
     let ranges: Vec<_> = doc.nodes[paragraph]
@@ -2653,12 +2479,11 @@ fn styled_nested_paragraph_document(
     lines: usize,
 ) -> (Document, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(&format!(
             "display:block;width:{}px;height:100px;columns:{columns};column-gap:0;\
              column-fill:auto",
@@ -2669,14 +2494,12 @@ fn styled_nested_paragraph_document(
         doc.append_element(
             Some(outer),
             "div",
-            Style::default(),
             Some(&format!("display:block;height:{lead}px")),
         );
     }
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some(&format!(
             "display:block;columns:1;font-size:10px;line-height:10px;{inner_css}"
         )),
@@ -2684,12 +2507,11 @@ fn styled_nested_paragraph_document(
     let paragraph = doc.append_element(
         Some(inner),
         "div",
-        Style::default(),
         Some(&format!("display:block;{paragraph_css}")),
     );
     for _ in 0..lines {
         doc.append_text(paragraph, "a");
-        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(paragraph), "br", None::<&str>);
     }
     (doc, inner, paragraph)
 }
@@ -2908,32 +2730,20 @@ fn a_cloned_nested_multicol_whose_padding_leaves_a_row_no_room_is_not_continued_
 #[test]
 fn content_past_the_last_column_of_a_definite_height_multicol_overflows_inline() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:100px;column-count:1"),
     );
-    doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:block;height:100px"),
-    );
+    doc.append_element(Some(outer), "div", Some("display:block;height:100px"));
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some("display:block;height:50px;column-count:1"),
     );
-    doc.append_element(
-        Some(inner),
-        "div",
-        Style::default(),
-        Some("display:block;height:50px"),
-    );
+    doc.append_element(Some(inner), "div", Some("display:block;height:50px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(
         doc.nodes[inner].unrounded_layout.location,
@@ -2946,32 +2756,20 @@ fn a_nested_multicol_moves_to_the_next_outer_column_rather_than_cutting_a_box() 
     // The break before the nested container is preferred to cutting its box
     // at the end of the first outer column (CSS Fragmentation 3, 4.4).
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
     );
-    doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:block;height:60px"),
-    );
+    doc.append_element(Some(outer), "div", Some("display:block;height:60px"));
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some("display:block;columns:2;column-gap:0"),
     );
-    doc.append_element(
-        Some(inner),
-        "div",
-        Style::default(),
-        Some("display:block;height:100px"),
-    );
+    doc.append_element(Some(inner), "div", Some("display:block;height:100px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(
         doc.nodes[inner].unrounded_layout.location,
@@ -3051,19 +2849,13 @@ fn block_end_padding_taller_than_a_column_does_not_stall_the_columns() {
 #[test]
 fn the_padding_of_a_block_in_a_wrapper_resolves_against_the_wrapper() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let parent = doc.append_element(Some(body), "div", Style::default(), Some(DEFINITE_COLUMNS));
-    let wrapper = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;padding:0 20px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(DEFINITE_COLUMNS));
+    let wrapper = doc.append_element(Some(parent), "div", Some("display:block;padding:0 20px"));
     let leaf = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;height:105px;padding-bottom:50%"),
     );
     layout_nested_flex_float_fixture(&mut doc);
@@ -3116,21 +2908,15 @@ fn auto_filled_blocks_without_lines_report_the_fragment_budget() {
     use raikiri_traits::{LayoutError, PageBox};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:2;column-fill:auto"),
     );
     for _ in 0..16 {
-        doc.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        doc.append_element(Some(parent), "div", Some("display:block;height:10px"));
     }
     doc.fragment_tree.limit = 8;
     let rules = build_rule_tree(&doc);
@@ -3206,27 +2992,25 @@ fn a_minimum_height_makes_definite_columns_of_blocks_without_lines_taller() {
 #[test]
 fn an_inherited_vertical_writing_mode_keeps_blocks_without_lines_whole() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("margin:0;writing-mode:vertical-rl"),
     );
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto"),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:200px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
+    assert!(
+        with_bridged_session(&mut doc, |session| lineless::supported(
+            session, parent, true
+        ))
+        .is_none()
+    );
     assert!(fragment_rects(&doc, child).len() <= 1);
 }
 
@@ -3244,26 +3028,15 @@ fn blocks_without_lines_fill_the_used_height_of_the_container() {
     );
     // A flex item stretched by its container keeps the stretched height.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let flex = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:flex;height:200px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let flex = doc.append_element(Some(body), "div", Some("display:flex;height:200px"));
     let parent = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;width:100px;columns:2;column-gap:0"),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:200px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
     assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
@@ -3275,18 +3048,16 @@ fn a_decorated_block_too_long_for_the_budget_falls_back_whole() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:1px;columns:2;column-gap:0;column-fill:auto"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display:block;height:100000px;background-image:linear-gradient(red,blue)"),
     );
     doc.fragment_tree.limit = 64;
@@ -3311,16 +3082,15 @@ fn a_decorated_block_that_stays_whole_does_not_hide_an_exhausted_budget() {
         ["display:block;height:63px", DECORATED],
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:100px;height:1px;columns:2;column-gap:0;column-fill:auto"),
         );
         for child in children {
-            doc.append_element(Some(parent), "div", Style::default(), Some(child));
+            doc.append_element(Some(parent), "div", Some(child));
         }
         doc.fragment_tree.limit = 64;
         let rules = build_rule_tree(&doc);
@@ -3341,26 +3111,19 @@ fn a_decorated_block_that_stays_whole_does_not_hide_an_exhausted_budget() {
 #[test]
 fn a_grid_stretched_multicol_keeps_its_area_height() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-rows:200px;grid-template-columns:100px"),
     );
     let parent = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("display:block;columns:2;column-gap:0"),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:200px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
     assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
@@ -3403,26 +3166,19 @@ fn a_maximum_height_only_bounds_balanced_columns_of_blocks_without_lines() {
 #[test]
 fn a_column_flex_item_keeps_its_flexed_height() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column;height:200px"),
     );
     let parent = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;flex:1;width:100px;columns:2;column-gap:0"),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:200px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:200px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
     assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
@@ -3431,26 +3187,19 @@ fn a_column_flex_item_keeps_its_flexed_height() {
 #[test]
 fn a_shrunk_column_flex_item_keeps_its_flexed_height() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column;height:100px"),
     );
     let parent = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;min-height:0;width:100px;columns:2;column-gap:0"),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:300px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:300px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
     assert_eq!(
@@ -3466,30 +3215,23 @@ fn a_shrunk_column_flex_item_keeps_its_flexed_height() {
 #[test]
 fn a_shrunk_column_flex_item_bounds_its_columns_inside_its_padding() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column;height:100px"),
     );
     // The looser maximum height leaves the flexed height in charge.
     let parent = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some(
             "display:block;min-height:0;max-height:90px;padding:10px 0;width:100px;\
              columns:2;column-gap:0",
         ),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:300px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:300px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
     let heights: Vec<f32> = fragment_rects(&doc, child)
@@ -3503,12 +3245,11 @@ fn a_shrunk_column_flex_item_bounds_its_columns_inside_its_padding() {
 fn blocks_without_lines_skip_children_that_generate_no_box() {
     let lineless_children = |children: &[&str], text: Option<&str>| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:100px;columns:2;column-gap:0"),
         );
         doc.append_comment(Some(parent), "skipped");
@@ -3517,11 +3258,13 @@ fn blocks_without_lines_skip_children_that_generate_no_box() {
         }
         let ids: Vec<usize> = children
             .iter()
-            .map(|style| doc.append_element(Some(parent), "div", Style::default(), Some(*style)))
+            .map(|style| doc.append_element(Some(parent), "div", Some(*style)))
             .collect();
         layout_nested_flex_float_fixture(&mut doc);
         (
-            super::lineless::supported(&session(&mut doc), parent, true),
+            with_bridged_session(&mut doc, |session| {
+                super::lineless::supported(session, parent, true)
+            }),
             ids,
         )
     };
@@ -3546,20 +3289,14 @@ fn blocks_without_lines_skip_children_that_generate_no_box() {
 #[test]
 fn a_zero_height_multicol_keeps_its_blocks_without_lines_unsliced() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;columns:2;column-gap:0"),
     );
-    let child = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let child = doc.append_element(Some(parent), "div", Some("display:block;height:10px"));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 0.0);
     assert!(fragment_rects(&doc, child).len() <= 1);
@@ -3571,18 +3308,16 @@ fn compute_multicol_layout_keeps_foundational_child_layouts_when_slicing_fails()
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px;height:60px"),
     );
     doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;min-block-size:40px;break-inside:avoid"),
     );
     // A rounded box taller than a column would be cut, and painting cannot
@@ -3591,13 +3326,11 @@ fn compute_multicol_layout_keeps_foundational_child_layouts_when_slicing_fails()
     doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;height:70px;border:2px solid;border-radius:2px"),
     );
     let half = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;width:50%;height:10px"),
     );
 
@@ -3618,20 +3351,10 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
-    let contents = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:contents;width:80px"),
-    );
-    let half = doc.append_element(Some(contents), "div", Style::default(), Some("width:50%"));
-    let intrinsic = doc.append_element(
-        Some(half),
-        "div",
-        Style::default(),
-        Some("display:block;width:min-content"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("width:400px"));
+    let contents = doc.append_element(Some(body), "div", Some("display:contents;width:80px"));
+    let half = doc.append_element(Some(contents), "div", Some("width:50%"));
+    let intrinsic = doc.append_element(Some(half), "div", Some("display:block;width:min-content"));
     let text = doc.append_text(intrinsic, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
@@ -3650,26 +3373,15 @@ fn ancestor_width_table_treats_max_and_fit_content_as_intrinsic() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
-    let max = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:max-content"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("width:400px"));
+    let max = doc.append_element(Some(body), "div", Some("display:block;width:max-content"));
     let max_text = doc.append_text(max, "test");
-    let fit = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:fit-content"),
-    );
+    let fit = doc.append_element(Some(body), "div", Some("display:block;width:fit-content"));
     let fit_text = doc.append_text(fit, "test");
     // The limit of the function does not make the width an authored one.
     let limited = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:fit-content(50px)"),
     );
     let limited_text = doc.append_text(limited, "test");
@@ -3691,13 +3403,12 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_contents_element() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
+    let body = doc.append_element(Some(0), "body", Some("width:400px"));
     let mut texts = Vec::new();
     for keyword in ["min-content", "max-content", "fit-content"] {
         let contents = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:contents;width:{keyword}")),
         );
         texts.push((contents, doc.append_text(contents, "test")));
@@ -3718,7 +3429,7 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_non_replaced_inline() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
+    let body = doc.append_element(Some(0), "body", Some("width:400px"));
     let mut boxes = Vec::new();
     // `width` does not apply to an inline box, but it does once the box is
     // blockified, atomic or floated.
@@ -3729,14 +3440,9 @@ fn ancestor_width_table_ignores_a_keyword_width_on_a_non_replaced_inline() {
         ("display:inline;position:absolute", true),
     ] {
         for keyword in ["min-content", "max-content", "fit-content"] {
-            let outer = doc.append_element(
-                Some(body),
-                "span",
-                Style::default(),
-                Some(&format!("{css};width:{keyword}")),
-            );
-            let block =
-                doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
+            let outer =
+                doc.append_element(Some(body), "span", Some(&format!("{css};width:{keyword}")));
+            let block = doc.append_element(Some(outer), "div", Some("display:block"));
             let text = doc.append_text(block, "test");
             boxes.push((css, keyword, applies, outer, text));
         }
@@ -3756,20 +3462,10 @@ fn ancestor_width_table_counts_a_keyword_width_on_a_flex_item() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:flex;width:400px"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:flex;width:400px"));
     // A flex item is sized by its keyword like any other box, so its text
     // takes the width the keyword gives.
-    let item = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:max-content"),
-    );
+    let item = doc.append_element(Some(body), "div", Some("display:block;width:max-content"));
     let text = doc.append_text(item, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
@@ -3784,19 +3480,9 @@ fn ancestor_width_table_ignores_a_keyword_width_the_layout_does_not_use() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:flex;width:400px"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:flex;width:400px"));
     // A replaced element takes its natural size, as if the width were `auto`.
-    let image = doc.append_element(
-        Some(body),
-        "img",
-        Style::default(),
-        Some("display:block;width:max-content"),
-    );
+    let image = doc.append_element(Some(body), "img", Some("display:block;width:max-content"));
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
     let widths = AncestorFacts::new(&doc, &cascade, 800.0);
@@ -3809,16 +3495,10 @@ fn ancestor_width_table_counts_a_keyword_width_on_a_multicol_container() {
 
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:flex;width:400px"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:flex;width:400px"));
     let columns = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;width:max-content"),
     );
     let text = doc.append_text(columns, "test");
@@ -3834,10 +3514,10 @@ fn ancestor_width_table_uses_cascade_resolved_ch_and_percentage_inputs() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let body = doc.append_element(Some(0), "body", Style::default(), None::<&str>);
-    let half = doc.append_element(Some(body), "div", Style::default(), Some("width:50%"));
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let half = doc.append_element(Some(body), "div", Some("width:50%"));
     let text = doc.append_text(half, "percentage");
-    let ch = doc.append_element(Some(body), "div", Style::default(), Some("width:4ch"));
+    let ch = doc.append_element(Some(body), "div", Some("width:4ch"));
     let ch_text = doc.append_text(ch, "ch");
     doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -3846,8 +3526,12 @@ fn ancestor_width_table_uses_cascade_resolved_ch_and_percentage_inputs() {
         cascade.computed[ch].width,
         ComputedLengthPercentageOrAuto::Px(64.0)
     );
-    let resolved_ch = style_dimension_length(style_of(&session(&mut doc), ch).size().width)
-        .expect("cascade-resolved ch width should be a finite length");
+    let resolved_ch = style_dimension_length(
+        crate::layout::test_support::bridged_style(&mut doc, &cascade, ch)
+            .size
+            .width,
+    )
+    .expect("cascade-resolved ch width should be a finite length");
     assert_eq!(resolved_ch, 64.0);
     for page_width in [800.0, 400.0, 800.0] {
         let rebreak = AncestorFacts::new(&doc, &cascade, page_width);
@@ -3877,11 +3561,11 @@ fn parent_lookup_matches_arena_edges_through_detached_and_fragment_mutations() {
     }
 
     let mut doc = Document::new();
-    let body = doc.append_element(Some(0), "body", Style::default(), None::<&str>);
-    let branch = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(branch), "div", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(0), "body", None::<&str>);
+    let branch = doc.append_element(Some(body), "div", None::<&str>);
+    let child = doc.append_element(Some(branch), "div", None::<&str>);
     let text = doc.append_text(child, "detached text");
-    let late_parent = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let late_parent = doc.append_element(Some(body), "div", None::<&str>);
     doc.detach_from_parent(branch);
     doc.mark_in_document_flags();
     assert!(!doc.nodes[branch].is_in_document());
@@ -3892,9 +3576,9 @@ fn parent_lookup_matches_arena_edges_through_detached_and_fragment_mutations() {
 
     doc.attach_child(late_parent, branch);
     assert_parents(&doc);
-    let template = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
+    let template = doc.append_element(Some(body), "template", None::<&str>);
     let fragment = doc.allocate_template_fragment_root(template);
-    let fragment_child = doc.append_element(Some(fragment), "div", Style::default(), None::<&str>);
+    let fragment_child = doc.append_element(Some(fragment), "div", None::<&str>);
     doc.append_text(fragment_child, "template text");
     doc.mark_in_document_flags();
     assert_eq!(doc.parent_of(fragment), None);
@@ -3921,36 +3605,25 @@ fn a_paragraph_continued_in_a_later_column_starts_at_its_top() {
     // the second one a line short: the third column still starts with the
     // fifth line at its top.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;width:300px;columns:3;column-gap:0;column-fill:auto;height:50px;\
              orphans:3;widows:3;font-size:10px;line-height:10px",
         ),
     );
-    let first = doc.append_element(
-        Some(multicol),
-        "div",
-        Style::default(),
-        Some("display:block"),
-    );
+    let first = doc.append_element(Some(multicol), "div", Some("display:block"));
     for _ in 0..3 {
         doc.append_text(first, "a");
-        doc.append_element(Some(first), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(first), "br", None::<&str>);
     }
-    let second = doc.append_element(
-        Some(multicol),
-        "div",
-        Style::default(),
-        Some("display:block"),
-    );
+    let second = doc.append_element(Some(multicol), "div", Some("display:block"));
     for _ in 0..7 {
         doc.append_text(second, "b");
-        doc.append_element(Some(second), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(second), "br", None::<&str>);
     }
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
@@ -4001,36 +3674,29 @@ fn a_paragraph_continued_in_a_later_column_starts_at_its_top() {
 #[test]
 fn a_nested_column_container_keeps_its_own_fragment_height() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;width:300px;columns:3;column-gap:0;column-fill:auto;height:80px;\
              font-size:10px;line-height:10px",
         ),
     );
-    let first = doc.append_element(
-        Some(multicol),
-        "div",
-        Style::default(),
-        Some("display:block"),
-    );
+    let first = doc.append_element(Some(multicol), "div", Some("display:block"));
     for _ in 0..2 {
         doc.append_text(first, "a");
-        doc.append_element(Some(first), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(first), "br", None::<&str>);
     }
     let nested = doc.append_element(
         Some(multicol),
         "div",
-        Style::default(),
         Some("display:block;columns:2;column-gap:0;height:20px"),
     );
     for _ in 0..4 {
         doc.append_text(nested, "b");
-        doc.append_element(Some(nested), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(nested), "br", None::<&str>);
     }
     layout_nested_flex_float_fixture(&mut doc);
 
@@ -4048,26 +3714,19 @@ fn a_nested_column_container_keeps_its_own_fragment_height() {
 fn a_nested_multicol_whose_last_row_and_bottom_padding_overflow_the_outer_column_is_not_continued_in_rows()
  {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
     );
     let inner = doc.append_element(
         Some(outer),
         "div",
-        Style::default(),
         Some("display:block;columns:2;column-gap:0;padding-bottom:10px"),
     );
-    doc.append_element(
-        Some(inner),
-        "div",
-        Style::default(),
-        Some("display:block;height:400px"),
-    );
+    doc.append_element(Some(inner), "div", Some("display:block;height:400px"));
     layout_nested_flex_float_fixture(&mut doc);
     // The last row fills the outer column, so its bottom padding has no room.
     assert!(doc.nodes[inner].multicol_rows.is_empty());
@@ -4084,16 +3743,16 @@ fn absolute_fixture(
     children: &[(&str, &[&str])],
 ) -> (Document, usize, Vec<(usize, Vec<usize>)>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let parent = doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(container_css));
     let ids = children
         .iter()
         .map(|(css, boxes)| {
-            let child = doc.append_element(Some(parent), "div", Style::default(), Some(*css));
+            let child = doc.append_element(Some(parent), "div", Some(*css));
             let boxes = boxes
                 .iter()
-                .map(|css| doc.append_element(Some(child), "div", Style::default(), Some(*css)))
+                .map(|css| doc.append_element(Some(child), "div", Some(*css)))
                 .collect();
             (child, boxes)
         })
@@ -4188,7 +3847,7 @@ fn an_absolute_box_breaks_where_its_overflow_below_its_border_ends() {
     );
     let absolute = ids[0].1[0];
     // The child sits below the border, so the box reaches 105px down.
-    doc.append_element(Some(absolute), "div", Style::default(), Some("height:95px"));
+    doc.append_element(Some(absolute), "div", Some("height:95px"));
     layout_nested_flex_float_fixture(&mut doc);
     let columns: Vec<usize> = fragment_rects(&doc, absolute)
         .into_iter()
@@ -4211,7 +3870,6 @@ fn an_absolute_box_starts_where_its_overflow_above_it_starts() {
     doc.append_element(
         Some(absolute),
         "div",
-        Style::default(),
         Some("position:relative;top:-30px;height:10px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
@@ -4300,7 +3958,10 @@ fn a_cut_containing_block_holds_absolute_pieces_in_the_columns_after_its_own() {
 fn only_a_positioned_block_breaks_the_absolute_boxes_it_contains() {
     let supported = |block: &str, absolute: &str, out_of_flow: bool| {
         let (mut doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &[absolute])]);
-        lineless::supported(&session(&mut doc), parent, out_of_flow).is_some()
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported(session, parent, out_of_flow)
+        })
+        .is_some()
     };
     let absolute = "position:absolute;top:0;width:10px;height:20px";
     let block = "display:block;position:relative;height:50px";
@@ -4391,7 +4052,10 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
                 ],
             )],
         );
-        lineless::supported(&session(&mut doc), parent, out_of_flow).is_some()
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported(session, parent, out_of_flow)
+        })
+        .is_some()
     };
     let block = "display:block;position:relative";
     assert!(supported(block, true));
@@ -4435,13 +4099,13 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
             ],
         )],
     );
-    doc.append_element(
-        Some(ids[0].1[0]),
-        "div",
-        Style::default(),
-        Some("height:10px"),
+    doc.append_element(Some(ids[0].1[0]), "div", Some("height:10px"));
+    assert!(
+        with_bridged_session(&mut doc, |session| lineless::supported(
+            session, parent, true
+        ))
+        .is_none()
     );
-    assert!(lineless::supported(&session(&mut doc), parent, true).is_none());
 }
 
 #[test]
@@ -4453,7 +4117,9 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
             .map(|css| (css, &[] as &[&str]))
             .collect();
         let (mut doc, _, ids) = absolute_fixture(outer, &children);
-        lineless::starts_the_outer_columns(&session(&mut doc), ids.last().unwrap().0)
+        with_bridged_session(&mut doc, |session| {
+            lineless::starts_the_outer_columns(session, ids.last().unwrap().0)
+        })
     };
     let nested = "display:block;columns:2;height:50px";
     assert!(starts(DEFINITE_COLUMNS, None, nested));
@@ -4472,13 +4138,15 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
     // So does text before it, which collapsible white space is not.
     let text_before_in = |outer: &str, text: &str| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-        let parent = doc.append_element(Some(body), "div", Style::default(), Some(outer));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(Some(body), "div", Some(outer));
         doc.append_text(parent, text);
-        let nested = doc.append_element(Some(parent), "div", Style::default(), Some(nested));
+        let nested = doc.append_element(Some(parent), "div", Some(nested));
         layout_nested_flex_float_fixture(&mut doc);
-        lineless::starts_the_outer_columns(&session(&mut doc), nested)
+        with_bridged_session(&mut doc, |session| {
+            lineless::starts_the_outer_columns(session, nested)
+        })
     };
     let text_before = |text: &str| text_before_in(DEFINITE_COLUMNS, text);
     assert!(!text_before("text"));
@@ -4493,32 +4161,30 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
     assert!(!starts("display:block;height:100px", None, nested));
     // The root has no parent.
     let mut doc = Document::new();
-    assert!(!lineless::starts_the_outer_columns(&session(&mut doc), 0));
+    assert!(!with_bridged_session(&mut doc, |session| {
+        lineless::starts_the_outer_columns(session, 0)
+    }));
 }
 
 #[test]
 fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     let paragraphs = |child_style: &str| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px"),
         );
-        let first = doc.append_element(
-            Some(parent),
-            "p",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
+        let first = doc.append_element(Some(parent), "p", Some("display:block;margin:0"));
         doc.append_text(first, "A");
-        let second = doc.append_element(Some(parent), "p", Style::default(), Some(child_style));
+        let second = doc.append_element(Some(parent), "p", Some(child_style));
         doc.append_text(second, "B");
         layout_nested_flex_float_fixture(&mut doc);
-        multicol_has_only_paragraph_children(&session(&mut doc), parent)
+        with_bridged_session(&mut doc, |session| {
+            multicol_has_only_paragraph_children(session, parent)
+        })
     };
     assert!(paragraphs("display:block;margin:0"));
     // A single paragraph keeps the existing path.
@@ -4590,7 +4256,10 @@ fn a_containing_block_with_no_block_size_is_sliced_for_the_absolute_boxes_it_hol
     let supported = |block: &str, absolute: Option<&str>, out_of_flow: bool| {
         let boxes: Vec<&str> = absolute.into_iter().collect();
         let (mut doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &boxes)]);
-        lineless::supported(&session(&mut doc), parent, out_of_flow).is_some()
+        with_bridged_session(&mut doc, |session| {
+            lineless::supported(session, parent, out_of_flow)
+        })
+        .is_some()
     };
     let absolute = "position:absolute;top:0;width:10px;height:20px";
     let block = "display:block;position:relative";
@@ -4617,18 +4286,16 @@ fn a_relative_column_child_is_placed_without_its_inset() {
     // the location layout gives it is the column's own.
     for inset in ["left:5px", "right:5px", "left:10%", "left:5px;top:3px"] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let container = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px;column-fill:auto"),
         );
         let child = doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some(format!("display:block;position:relative;{inset}").as_str()),
         );
         doc.append_text(child, "A B C");
@@ -4656,22 +4323,19 @@ fn a_relative_column_child_that_holds_boxes_is_placed_without_its_inset() {
         "display:block;column-count:2;column-gap:10px",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
         let container = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;column-count:2;column-gap:20px;width:100px;height:40px;column-fill:auto"),
         );
         let child = doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some(format!("{inner_style};position:relative;left:5px").as_str()),
         );
-        let paragraph =
-            doc.append_element(Some(child), "p", Style::default(), Some("display:block"));
+        let paragraph = doc.append_element(Some(child), "p", Some("display:block"));
         doc.append_text(paragraph, "A B C");
 
         let rules = build_rule_tree(&doc);
@@ -4696,20 +4360,14 @@ fn authored_auto_block_width_accounts_for_box_sizing_and_decorations() {
         "box-sizing:border-box;padding:0 10px;border-left:5px solid;border-right:5px solid",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("margin:0;width:100px"),
-        );
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0;width:100px"));
         let block = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!("display:block;width:auto;{css}").as_str()),
         );
-        doc.append_element(Some(block), "div", Style::default(), Some("height:1px"));
+        doc.append_element(Some(block), "div", Some("height:1px"));
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
         let mut page = PageBox::new();
@@ -4727,26 +4385,19 @@ fn authored_auto_block_width_propagates_content_width_to_auto_descendants() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:100px"),
     );
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:auto;padding:0 10px"),
     );
-    let inner = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:block;width:auto"),
-    );
-    doc.append_element(Some(inner), "div", Style::default(), Some("height:1px"));
+    let inner = doc.append_element(Some(outer), "div", Some("display:block;width:auto"));
+    doc.append_element(Some(inner), "div", Some("height:1px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -4765,26 +4416,19 @@ fn authored_auto_block_width_min_width_is_preserved_for_auto_descendants() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:100px"),
     );
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:auto;min-width:100px;padding:0 10px"),
     );
-    let inner = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:block;width:auto"),
-    );
-    doc.append_element(Some(inner), "div", Style::default(), Some("height:1px"));
+    let inner = doc.append_element(Some(outer), "div", Some("display:block;width:auto"));
+    doc.append_element(Some(inner), "div", Some("height:1px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -4803,26 +4447,19 @@ fn authored_auto_block_width_max_width_is_propagated_to_auto_descendants() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:100px"),
     );
     let outer = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:auto;max-width:50px;padding:0 10px"),
     );
-    let inner = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:block;width:auto"),
-    );
-    doc.append_element(Some(inner), "div", Style::default(), Some("height:1px"));
+    let inner = doc.append_element(Some(outer), "div", Some("display:block;width:auto"));
+    doc.append_element(Some(inner), "div", Some("height:1px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -4845,17 +4482,15 @@ fn authored_auto_block_width_constraints_follow_border_box_sizing() {
         ("max-width:80px", 80.0, 60.0),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", None::<&str>);
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:0;width:100px"),
         );
         let outer = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(
                 format!(
                     "display:block;width:auto;box-sizing:border-box;padding:0 10px;{constraint}"
@@ -4863,13 +4498,8 @@ fn authored_auto_block_width_constraints_follow_border_box_sizing() {
                 .as_str(),
             ),
         );
-        let inner = doc.append_element(
-            Some(outer),
-            "div",
-            Style::default(),
-            Some("display:block;width:auto"),
-        );
-        doc.append_element(Some(inner), "div", Style::default(), Some("height:1px"));
+        let inner = doc.append_element(Some(outer), "div", Some("display:block;width:auto"));
+        doc.append_element(Some(inner), "div", Some("height:1px"));
 
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -5061,25 +4691,19 @@ fn authored_box_reads_what_the_style_view_reads() {
     ];
     for (tag, css) in cases {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-        let parent = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;width:200px"),
-        );
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let parent = doc.append_element(Some(body), "div", Some("display:block;width:200px"));
         let boxed = doc.append_element(
             Some(parent),
             tag,
-            Style::default(),
             Some(format!("display:block;{css}").as_str()),
         );
         let rules = raikiri_style::build_rule_tree(&doc);
         let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut tree, &cascade).expect("styles");
-        let view = tree.native_style(boxed, ReadRole::CoreContainer);
+        let view = tree.query_style(boxed, ReadRole::CoreContainer);
         let authored = AuthoredBox::new(&tree, &cascade, boxed);
         let ctx = format!("{tag} {{{css}}}");
 

@@ -12,16 +12,10 @@ fn table_after_spacer(
 ) -> (Document, Vec<usize>) {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some(&format!(
                 "display:table;width:100px;border-spacing:2px;{table_css}"
             )),
@@ -30,14 +24,12 @@ fn table_after_spacer(
             doc.append_element(
                 Some(table),
                 "caption",
-                Style::default(),
                 Some(&format!("display:table-caption;height:20px;{caption_css}")),
             );
         }
         let group = doc.append_element(
             Some(table),
             "tbody",
-            Style::default(),
             Some(&format!("display:table-row-group;{group_css}")),
         );
         ids.push(table);
@@ -45,12 +37,7 @@ fn table_after_spacer(
         for &height in rows {
             ids.push(append_row(doc, group, "", height).0);
         }
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     (doc, ids)
 }
@@ -129,31 +116,15 @@ fn a_caption_above_the_grid_keeps_the_table_top_on_its_page() {
 fn a_row_group_with_content_outside_its_rows_keeps_its_top() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         // The block takes an anonymous row and cell owned by the group.
-        doc.append_element(
-            Some(group),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
+        doc.append_element(Some(group), "div", Some("display:block;height:20px"));
         let row = append_row(doc, group, "", 30.0).0;
         ids.extend([table, group, row]);
     });
@@ -169,16 +140,10 @@ fn a_row_group_with_content_outside_its_rows_keeps_its_top() {
 fn a_collapsed_table_grows_over_its_own_moved_row() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-collapse:collapse"),
         );
         // Rows directly in the table, without a row group.
@@ -199,24 +164,13 @@ fn a_collapsed_table_grows_over_its_own_moved_row() {
 fn a_short_table_moves_with_its_first_row_after_a_forced_break() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:10px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px;border:3px solid"),
         );
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         ids.extend([table, group]);
         ids.push(append_row(doc, group, "break-before:page", 20.0).0);
         ids.push(append_row(doc, group, "", 10.0).0);
@@ -251,26 +205,15 @@ fn an_absolutely_positioned_caption_does_not_hold_the_table_top() {
 fn a_later_row_group_starts_with_its_row_moved_by_an_earlier_one() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
         ids.push(table);
         for rows in [&[20.0, 30.0][..], &[10.0]] {
-            let group = doc.append_element(
-                Some(table),
-                "tbody",
-                Style::default(),
-                Some("display:table-row-group"),
-            );
+            let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
             ids.push(group);
             for &height in rows {
                 ids.push(append_row(doc, group, "", height).0);
@@ -292,29 +235,17 @@ fn a_later_row_group_starts_with_its_row_moved_by_an_earlier_one() {
 fn a_table_encloses_a_moved_row_without_cells() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         append_row(doc, group, "", 20.0);
         let empty = doc.append_element(
             Some(group),
             "tr",
-            Style::default(),
             Some("display:table-row;height:20px;break-before:page"),
         );
         ids.extend([table, group, empty]);
@@ -331,29 +262,17 @@ fn a_table_encloses_a_moved_row_without_cells() {
 fn a_table_with_a_spanning_cell_keeps_its_row_tracks() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         let first = append_row(doc, group, "", 20.0).0;
         let spanning = doc.append_element(
             Some(first),
             "td",
-            Style::default(),
             Some("display:table-cell;padding:0;height:10px"),
         );
         doc.set_element_attribute(spanning, "rowspan", "2").unwrap();
@@ -374,31 +293,15 @@ fn a_table_with_a_spanning_cell_keeps_its_row_tracks() {
 fn a_direct_row_with_content_outside_cells_takes_the_table_top_along() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px;border:3px solid"),
         );
         // The block takes an anonymous cell owned by the row.
-        let row = doc.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display:table-row"),
-        );
-        doc.append_element(
-            Some(row),
-            "div",
-            Style::default(),
-            Some("display:block;height:50px"),
-        );
+        let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+        doc.append_element(Some(row), "div", Some("display:block;height:50px"));
         ids.extend([table, row]);
     });
     let [table, row] = ids[..] else {
@@ -412,32 +315,16 @@ fn a_direct_row_with_content_outside_cells_takes_the_table_top_along() {
 fn a_later_row_group_of_a_table_with_a_repeated_header_follows_its_row() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:30px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:30px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let head = doc.append_element(
-            Some(table),
-            "thead",
-            Style::default(),
-            Some("display:table-header-group"),
-        );
+        let head = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
         append_row(doc, head, "", 10.0);
         for rows in [&[20.0, 40.0][..], &[10.0]] {
-            let group = doc.append_element(
-                Some(table),
-                "tbody",
-                Style::default(),
-                Some("display:table-row-group"),
-            );
+            let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
             ids.push(group);
             for &height in rows {
                 ids.push(append_row(doc, group, "", height).0);
@@ -457,38 +344,17 @@ fn a_later_row_group_of_a_table_with_a_repeated_header_follows_its_row() {
 fn a_footer_written_before_the_body_moves_without_the_body_rows() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let footer = doc.append_element(
-            Some(table),
-            "tfoot",
-            Style::default(),
-            Some("display:table-footer-group"),
-        );
+        let footer = doc.append_element(Some(table), "tfoot", Some("display:table-footer-group"));
         let footer_row = append_row(doc, footer, "", 20.0).0;
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         let body_row = append_row(doc, group, "", 20.0).0;
-        let after = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        let after = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
         ids.extend([table, footer_row, body_row, after]);
     });
     let [table, footer_row, body_row, after] = ids[..] else {
@@ -506,37 +372,16 @@ fn a_footer_written_before_the_body_moves_without_the_body_rows() {
 fn a_footer_inside_a_contents_wrapper_moves_without_the_body_rows() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        let wrapper = doc.append_element(
-            Some(table),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        let footer = doc.append_element(
-            Some(wrapper),
-            "tfoot",
-            Style::default(),
-            Some("display:table-footer-group"),
-        );
+        let wrapper = doc.append_element(Some(table), "div", Some("display:contents"));
+        let footer = doc.append_element(Some(wrapper), "tfoot", Some("display:table-footer-group"));
         let footer_row = append_row(doc, footer, "", 20.0).0;
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         let body_row = append_row(doc, group, "", 20.0).0;
         ids.extend([footer_row, body_row]);
     });

@@ -9,17 +9,16 @@ use crate::layout::test_support::{
 };
 use crate::taffy_impl::block_flow::context::BlockFormattingContext;
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
-use taffy::{Clear, CollapsibleMarginSet, FloatDirection, Size, Style};
+use taffy::{Clear, CollapsibleMarginSet, FloatDirection, Size};
 
 type BoxRect = (f32, f32, f32, f32);
 
 fn layout_vertical_mixed_ifc(writing_mode: &str, clear: &str) -> (BoxRect, BoxRect, BoxRect) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(
             format!(
                 "display:block;margin:0;writing-mode:{writing_mode};width:100px;height:40px;\
@@ -31,33 +30,28 @@ fn layout_vertical_mixed_ifc(writing_mode: &str, clear: &str) -> (BoxRect, BoxRe
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flow-root;width:100px;height:40px"),
     );
     let float = doc.append_element(
         Some(root),
         "div",
-        Style::default(),
         Some("display:block;float:left;width:10px;height:20px"),
     );
     let wrapper = doc.append_element(
         Some(root),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:40px"),
     );
     doc.append_text(wrapper, "a");
     let cleared = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some(format!("display:block;clear:{clear};width:20px;height:20px").as_str()),
     );
     doc.append_text(wrapper, "b");
     let orthogonal = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:horizontal-tb;width:10px;height:10px"),
     );
 
@@ -82,25 +76,21 @@ fn vertical_block_child_fixture() -> (Document, usize, usize, usize) {
             children.push(doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;width:0;height:0;margin-right:30px;margin-left:20px"),
             ));
             children.push(doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;clear:both;width:20px;height:20px;margin-right:5px"),
             ));
             let nested = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;width:40px;height:40px"),
             );
             doc.append_element(
                 Some(nested),
                 "div",
-                Style::default(),
                 Some("display:block;width:10px;height:10px;margin-right:30px"),
             );
             doc.append_text(nested, "x");
@@ -155,13 +145,11 @@ fn table_children_do_not_share_the_root_bfc() {
             table = doc.append_element(
                 Some(root),
                 "table",
-                Style::default(),
                 Some("display:table;width:20px;height:20px"),
             );
             ordinary = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;width:20px;height:20px"),
             );
         },
@@ -169,7 +157,7 @@ fn table_children_do_not_share_the_root_bfc() {
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
 
-    let session = LayoutSession::new(&mut doc);
+    let session = LayoutSession::bridged(&mut doc, &cascade);
     assert!(super::super::in_the_roots_formatting_context(
         &session, ordinary
     ));
@@ -192,14 +180,12 @@ fn layout_vertical_aligned_block_ifc(
                 doc.append_element(
                     Some(root),
                     "div",
-                    Style::default(),
                     Some("display:block;float:left;width:10px;height:20px"),
                 );
             }
             wrapper = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some(&format!(
                     "display:block;align-content:{align_content};width:100px;height:40px"
                 )),
@@ -208,7 +194,6 @@ fn layout_vertical_aligned_block_ifc(
             cleared = doc.append_element(
                 Some(wrapper),
                 "div",
-                Style::default(),
                 Some("display:block;clear:both;width:20px;height:20px"),
             );
             doc.append_text(wrapper, "b");
@@ -259,20 +244,17 @@ fn layout_vertical_auto_width_ifc_with_float(direction: &str) -> (BoxRect, BoxRe
             let wrapper = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;width:auto;height:auto"),
             );
             float = doc.append_element(
                 Some(wrapper),
                 "div",
-                Style::default(),
                 Some("display:block;float:left;width:10px;height:10px"),
             );
             doc.append_text(wrapper, "a");
             cleared = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;clear:both;width:10px;height:10px"),
             );
         },
@@ -306,13 +288,13 @@ fn vertical_independent_bfc_child_avoids_ancestor_float() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:flow-root;width:100px;height:40px"),
             );
         },
     );
     let geometry = vertical_geometry();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut bfc = BlockFormattingContext::new();
     let mut ctx = bfc.root_block_context();
     ctx.set_width(geometry.width);
@@ -348,7 +330,7 @@ fn layout_vertical_rtl_independent_bfc_child(margins: &str) -> BoxRect {
     let (mut doc, _cascade, _root) = ahem_paragraph_with(
         "writing-mode:vertical-rl;direction:rtl;width:100px;height:40px",
         |doc, root| {
-            child = doc.append_element(Some(root), "div", Style::default(), Some(&child_style));
+            child = doc.append_element(Some(root), "div", Some(&child_style));
         },
     );
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
@@ -360,7 +342,8 @@ fn layout_vertical_rtl_independent_bfc_child(margins: &str) -> BoxRect {
         },
         taffy::Rect::ZERO,
     );
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut bfc = BlockFormattingContext::new();
     let mut ctx = bfc.root_block_context();
     ctx.set_width(geometry.width);
@@ -413,7 +396,6 @@ fn vertical_independent_bfc_slot_probes_height_and_rtl_auto_margins() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:flow-root;width:5px;height:10px;direction:rtl;margin-bottom:auto"),
             );
         },
@@ -426,7 +408,8 @@ fn vertical_independent_bfc_slot_probes_height_and_rtl_auto_margins() {
         },
         taffy::Rect::ZERO,
     );
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut bfc = BlockFormattingContext::new();
     let mut ctx = bfc.root_block_context();
     ctx.set_width(geometry.width);
@@ -476,13 +459,13 @@ fn vertical_shared_block_clearance_uses_the_pending_margin() {
             child = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;width:100px;height:40px;clear:both"),
             );
         },
     );
     let geometry = vertical_geometry();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut bfc = BlockFormattingContext::new();
     let mut ctx = bfc.root_block_context();
     ctx.set_width(geometry.width);
@@ -522,8 +505,7 @@ fn vertical_inline_boxes_use_the_physical_top_inset() {
         let root_style = asymmetric_vertical_root_style(writing_mode, block_start_inset);
         let mut inline = 0;
         let (mut doc, cascade, root) = ahem_paragraph_with(&root_style, |doc, root| {
-            inline =
-                doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+            inline = doc.append_element(Some(root), "span", Some("display:inline"));
             doc.append_text(inline, "a");
         });
         doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
@@ -585,7 +567,6 @@ fn vertical_ifc_float_uses_logical_extents_and_physical_placement() {
                 float = doc.append_element(
                     Some(root),
                     "div",
-                    Style::default(),
                     Some(&format!(
                         "display:block;float:right;width:10px;height:20px;margin-top:2px;\
                          {block_start_margin}"
@@ -624,19 +605,18 @@ fn vertical_clear_does_not_use_a_descendant_float_as_its_clearance() {
             clear = doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;clear:both;width:20px;height:20px"),
             );
             doc.append_element(
                 Some(clear),
                 "div",
-                Style::default(),
                 Some("display:block;float:left;width:10px;height:10px"),
             );
         },
     );
     let geometry = vertical_geometry();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut bfc = BlockFormattingContext::new();
     let mut ctx = bfc.root_block_context();
     ctx.set_width(geometry.width);
@@ -663,7 +643,8 @@ fn vertical_clear_does_not_use_a_descendant_float_as_its_clearance() {
 fn vertical_empty_block_collapses_its_margins_through() {
     let (mut doc, empty, _, _) = vertical_block_child_fixture();
     let geometry = vertical_geometry();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut bfc = BlockFormattingContext::new();
     let mut ctx = bfc.root_block_context();
     ctx.set_width(geometry.width);
@@ -691,7 +672,8 @@ fn vertical_empty_block_collapses_its_margins_through() {
 fn vertical_clearance_keeps_an_unresolved_parent_margin() {
     let (mut doc, _, clear, _) = vertical_block_child_fixture();
     let geometry = vertical_geometry();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut bfc = BlockFormattingContext::new();
     let mut ctx = bfc.root_block_context();
     ctx.set_width(geometry.width);
@@ -745,7 +727,8 @@ fn vertical_clearance_keeps_an_unresolved_parent_margin() {
 fn vertical_block_retries_when_a_collapsing_child_margin_moves_it() {
     let (mut doc, _, _, nested) = vertical_block_child_fixture();
     let geometry = vertical_geometry();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     assert!(super::super::in_the_roots_formatting_context(
         &session, nested
     ));

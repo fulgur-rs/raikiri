@@ -4,7 +4,7 @@ use std::rc::Rc;
 use super::*;
 
 // Layout sessions own these entries. Bridging computed styles and changing
-// pagination axes clear them before retained styles or anonymous keys change.
+// pagination axes clear them before prepared styles or anonymous keys change.
 // Border preparation depends on authored border inputs, collapse/visibility,
 // writing mode, topology, parent width and the table border. Temporary size
 // probes do not change those inputs. External temporary table-border changes

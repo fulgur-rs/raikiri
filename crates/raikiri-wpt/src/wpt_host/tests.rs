@@ -1206,7 +1206,7 @@ fn flush_resolves_against_a_base_element_added_after_the_parse() {
                 .is_some_and(|node| node.tag_name() == Some("head"))
         })
         .unwrap();
-    let base = document.append_element(Some(head), "base", Default::default(), None::<&str>);
+    let base = document.append_element(Some(head), "base", None::<&str>);
     document
         .set_element_attribute(base, "href", "../../resources/")
         .unwrap();

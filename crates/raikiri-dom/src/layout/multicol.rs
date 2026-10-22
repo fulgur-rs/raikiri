@@ -10,16 +10,17 @@ use authored::AuthoredBox;
 
 use super::*;
 use crate::layout::context::LayoutSession;
-use crate::layout::style_views::{NativeStyle, ReadRole};
+use crate::layout::style_views::ReadRole;
 use crate::node::FormattingContext;
+use raikiri_layout_style::LayoutStyleView;
 use taffy::{BlockItemStyle, CoreStyle, FlexboxContainerStyle, FlexboxItemStyle, MaybeResolve};
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
 /// The style `idx` lays out with: its computed values with the overrides the
 /// layout passes have applied.
-fn style_of<'a>(tree: &'a LayoutSession<'_>, idx: usize) -> NativeStyle<'a> {
-    tree.native_style(idx, ReadRole::CoreContainer)
+fn style_of<'a>(tree: &'a LayoutSession<'_>, idx: usize) -> LayoutStyleView<'a> {
+    tree.query_style(idx, ReadRole::CoreContainer)
 }
 
 /// The node or generated box that `idx` names.
@@ -38,7 +39,7 @@ fn is_floated(tree: &LayoutSession<'_>, idx: usize) -> bool {
 /// when the container's content box is `width` wide. A sticky box is moved
 /// alike, but its offset is not one that a painter applies again, so it has
 /// none here. This is the left-to-right offset that block flow gives a child.
-fn relative_inline_offset(style: &NativeStyle<'_>, width: f32) -> f32 {
+fn relative_inline_offset(style: &LayoutStyleView<'_>, width: f32) -> f32 {
     if style.position() != TaffyPosition::Relative {
         return 0.0;
     }
@@ -567,7 +568,7 @@ fn column_child_input(
 /// The left and right margins of a box that are not auto, with percentages
 /// and `calc()` resolved against the column width.
 fn column_definite_margins(
-    style: &NativeStyle<'_>,
+    style: &LayoutStyleView<'_>,
     column_width: f32,
 ) -> (Option<f32>, Option<f32>) {
     let margin = style.margin();
@@ -582,7 +583,7 @@ fn column_definite_margins(
 /// and the other margin leave (CSS 2, 10.3.3), except on a float, where they
 /// are zero.
 fn column_horizontal_margins(
-    style: &NativeStyle<'_>,
+    style: &LayoutStyleView<'_>,
     column_width: f32,
     child_width: f32,
 ) -> (f32, f32) {

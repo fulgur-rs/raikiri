@@ -1,9 +1,9 @@
 use super::*;
-use crate::layout::style_views::NativeStyle;
+use raikiri_layout_style::LayoutStyleView;
 use std::cell::Cell;
 
 /// A reduction that only carries the box's size, counting its runs.
-fn counted_size(reads: &Cell<usize>) -> impl Fn(NativeStyle<'_>) -> LayoutStyle + Copy {
+fn counted_size(reads: &Cell<usize>) -> impl Fn(LayoutStyleView<'_>) -> LayoutStyle + Copy {
     move |style| {
         reads.set(reads.get() + 1);
         LayoutStyle {
@@ -93,17 +93,6 @@ fn a_percentage_basis_hides_the_kept_reduction_while_edges_are_recorded() {
     assert_eq!(reads.get(), 2);
     tree.end_edge_recording(child, previous);
 
-    tree.reduced_physical_style(child, reduce);
-    assert_eq!(reads.get(), 2);
-}
-
-#[test]
-fn a_session_without_styles_reads_the_reduction_every_time() {
-    let (mut doc, _, child, _) = fixture();
-    let tree = LayoutSession::new(&mut doc);
-    let reads = Cell::new(0);
-    let reduce = counted_size(&reads);
-    tree.reduced_physical_style(child, reduce);
     tree.reduced_physical_style(child, reduce);
     assert_eq!(reads.get(), 2);
 }

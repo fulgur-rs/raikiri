@@ -22,8 +22,9 @@ use self::block_flow::{compute_block_flow, context::BlockContext};
 use crate::document::Document;
 use crate::layout::context::LayoutSession;
 use crate::layout::ifc::geometry::IfcAxes;
-use crate::layout::style_views::{NativeStyle, ReadRole};
+use crate::layout::style_views::ReadRole;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
+use raikiri_layout_style::LayoutStyleView;
 use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
 use raikiri_style::property::DisplayValue;
 
@@ -91,7 +92,7 @@ pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
 /// basis to resolve.
 #[allow(unsafe_code)]
 pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
-    // SAFETY: The retained style owner keeps this common payload alive during inspection.
+    // SAFETY: The document keeps this common payload alive during inspection.
     let calc = unsafe { &*val.cast::<raikiri_layout_style::AlignedCalc>() };
     calc.expression().percent != 0.0
 }
@@ -597,12 +598,12 @@ impl CacheTree for LayoutSession<'_> {
 impl LayoutPartialTree for LayoutSession<'_> {
     type CustomIdent = smol_str::SmolStr;
     type CoreContainerStyle<'a>
-        = NativeStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
 
     fn get_core_container_style(&self, node_id: NodeId) -> Self::CoreContainerStyle<'_> {
-        self.native_style(usize::from(node_id), ReadRole::CoreContainer)
+        self.query_style(usize::from(node_id), ReadRole::CoreContainer)
     }
 
     /// The **only** path by which taffy writes layout into the arena.
@@ -3005,8 +3006,8 @@ fn grid_layout(tree: &mut LayoutSession<'_>, node_id: NodeId, inputs: LayoutInpu
 /// aligns as `start` (CSS Box Alignment 3 §4.4).
 // spec: https://www.w3.org/TR/css-align-3/#overflow-values
 pub(crate) fn auto_grid_abspos_static_alignment(
-    child: &NativeStyle<'_>,
-    parent: &NativeStyle<'_>,
+    child: &LayoutStyleView<'_>,
+    parent: &LayoutStyleView<'_>,
     overflows: Size<bool>,
 ) -> Option<Size<f32>> {
     use taffy::{
@@ -3375,20 +3376,20 @@ impl LayoutSession<'_> {
 
 impl LayoutBlockContainer for LayoutSession<'_> {
     type BlockContainerStyle<'a>
-        = NativeStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
     type BlockItemStyle<'a>
-        = NativeStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
 
     fn get_block_container_style(&self, node_id: NodeId) -> Self::BlockContainerStyle<'_> {
-        self.native_style(usize::from(node_id), ReadRole::BlockContainer)
+        self.query_style(usize::from(node_id), ReadRole::BlockContainer)
     }
 
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
-        self.native_style(usize::from(child_node_id), ReadRole::BlockItem)
+        self.query_style(usize::from(child_node_id), ReadRole::BlockItem)
     }
 }
 
@@ -3400,7 +3401,7 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(test)]
     type FlexboxContainerStyle<'a>
-        = crate::layout::style_views::checked::CheckedStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(not(test))]
@@ -3410,16 +3411,16 @@ impl LayoutFlexboxContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(test)]
     type FlexboxItemStyle<'a>
-        = crate::layout::style_views::checked::CheckedStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
 
     fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
-        self.native_style(usize::from(node_id), ReadRole::FlexContainer)
+        self.query_style(usize::from(node_id), ReadRole::FlexContainer)
     }
 
     fn get_flexbox_child_style(&self, child_node_id: NodeId) -> Self::FlexboxItemStyle<'_> {
-        self.native_style(usize::from(child_node_id), ReadRole::FlexItem)
+        self.query_style(usize::from(child_node_id), ReadRole::FlexItem)
     }
 }
 
@@ -3431,7 +3432,7 @@ impl LayoutGridContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(test)]
     type GridContainerStyle<'a>
-        = crate::layout::style_views::checked::CheckedStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
     #[cfg(not(test))]
@@ -3441,16 +3442,16 @@ impl LayoutGridContainer for LayoutSession<'_> {
         Self: 'a;
     #[cfg(test)]
     type GridItemStyle<'a>
-        = crate::layout::style_views::checked::CheckedStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
 
     fn get_grid_container_style(&self, node_id: NodeId) -> Self::GridContainerStyle<'_> {
-        self.native_style(usize::from(node_id), ReadRole::GridContainer)
+        self.query_style(usize::from(node_id), ReadRole::GridContainer)
     }
 
     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
-        self.native_style(usize::from(child_node_id), ReadRole::GridItem)
+        self.query_style(usize::from(child_node_id), ReadRole::GridItem)
     }
 
     fn set_detailed_grid_info(
@@ -3651,25 +3652,25 @@ fn row_sizing_functions(
 
 // SAFETY: with taffy calc support enabled, taffy length types hold
 // a raw pointer to a caller-owned calc payload through a compact tagged
-// representation. Raw pointers are not Send, making `Style` not Send and
-// thus `Document` not Send without this impl.
+// representation. Raw pointers are not Send, making the length types that a
+// node's content limits and the block-axis snapshots of a transposed
+// pagination store not Send, and thus `Document` not Send without this impl.
 //
 // Invariant, self-contained arena approach:
-// Every calc pointer in a retained style points to an immutable payload held
+// Every calc pointer a Document stores points to an immutable payload held
 // by the same Document's `BoxStyleStore`. Its Arc owners keep pointees
 // stable across vector growth and `Document::clone()`, so moving the Document
 // to another thread preserves pointer validity.
-// The bridge retains new payloads before publishing their pointers in the
-// style map. It keeps old payloads through errors and unwinds, then drains
-// the previous prefix only after a complete successful rebuild.
+// The bridge retains new payloads before publishing their pointers. It keeps
+// old payloads through errors and unwinds, then drains the previous prefix
+// only after a complete successful rebuild.
 //
 // Enforcement at the boundary:
-// The public element constructor sanitizes any externally supplied style
-// before storage, replacing foreign calc handles with safe keyword
-// fallbacks. Cross-document copies go through the same constructor, so the
-// target never adopts the source arena's pointers. The bridge rebuilds
-// owned handles from computed values before each layout pass, so valid
-// styles without calc pass through untouched.
+// No public API takes a style that carries calc handles: elements are
+// created from inline style text and the bridge builds every handle itself
+// from computed values before each layout pass. Cross-document copies copy
+// the nodes and rebuild their handles on the next pass, so the target never
+// adopts the source arena's pointers.
 //
 // Do not implement Sync: the planned parallel layout path uses an owned
 // deep copy or a read-only borrow of style data. No path reads a shared

@@ -112,8 +112,9 @@ fn new_session_does_not_relabel_old_cache() {
     );
     doc.layout_cache_context.invalidate();
     let epoch = doc.layout_cache_context.epoch();
-    let session = LayoutSession::new(&mut doc);
-    assert_eq!(session.layout_cache_context.epoch(), epoch);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let session = LayoutSession::with_cascade(&mut doc, &session_cascade);
+    assert!(session.layout_cache_context.epoch() > epoch);
     assert!(!session.layout_cache_context.can_read(node));
 }
 
@@ -295,7 +296,8 @@ fn layout_input(width: f32) -> taffy::LayoutInput {
 fn first_store_in_new_epoch_clears_every_old_input() {
     use taffy::CacheTree;
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let id = taffy::NodeId::from(0usize);
     let a = layout_input(10.0);
     let b = layout_input(20.0);
@@ -314,7 +316,8 @@ fn first_store_in_new_epoch_clears_every_old_input() {
 fn stale_outer_store_keeps_valid_same_node_inner_cache() {
     use taffy::CacheTree;
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let id = taffy::NodeId::from(0usize);
     let a = layout_input(10.0);
     let b = layout_input(20.0);
@@ -332,7 +335,8 @@ fn stale_outer_store_keeps_valid_same_node_inner_cache() {
 #[test]
 fn cache_frame_leaves_after_hit_error_and_unwind() {
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let result: Result<(), ()> = tree.with_cache_frame(0, ViewContext::default(), |_| Err(()));
     assert!(result.is_err());
     assert!(tree.layout_cache_context.active_frame.is_none());
@@ -347,7 +351,8 @@ fn cache_frame_leaves_after_hit_error_and_unwind() {
 fn pending_document_mutation_rejects_parent_cache_before_child_read() {
     use taffy::CacheTree;
     let mut doc = Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let input = layout_input(10.0);
     let id = taffy::NodeId::from(0usize);
     tree.with_cache_frame(0, ViewContext::default(), |tree| {
@@ -379,10 +384,12 @@ fn nested_frame_tokens_preserve_unbounded_reentrant_order() {
 fn later_session_does_not_reuse_unfinished_child_walk() {
     let mut doc = Document::new();
     {
-        let tree = LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let tree = LayoutSession::bridged(&mut doc, &session_cascade);
         tree.node_state(0).unwrap().taffy_child_walks = Some(vec![taffy::NodeId::from(0usize)]);
     }
-    let tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let tree = LayoutSession::bridged(&mut doc, &session_cascade);
     assert!(tree.node_state(0).unwrap().taffy_child_walks.is_none());
 }
 

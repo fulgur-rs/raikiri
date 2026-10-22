@@ -77,7 +77,6 @@ fn all_page_text_preparation_visits_a_long_paragraph_linearly() {
                             let span = doc.append_element(
                                 Some(root),
                                 "span",
-                                crate::LayoutStyle::default(),
                                 Some(if flavor == 2 {
                                     "opacity:.5"
                                 } else if index % 2 == 0 {
@@ -160,17 +159,11 @@ fn opacity_groups_with_atomic_boxes_use_shared_box_membership() {
             "width:20px;line-height:10px",
             |doc, root| {
                 for _ in 0..spans {
-                    let span = doc.append_element(
-                        Some(root),
-                        "span",
-                        crate::LayoutStyle::default(),
-                        Some("opacity:.5"),
-                    );
+                    let span = doc.append_element(Some(root), "span", Some("opacity:.5"));
                     doc.append_text(span, "X ");
                     doc.append_element(
                         Some(span),
                         "i",
-                        crate::LayoutStyle::default(),
                         Some("display:inline-block;width:1px;height:1px"),
                     );
                 }

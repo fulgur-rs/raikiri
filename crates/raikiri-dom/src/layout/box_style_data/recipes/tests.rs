@@ -179,11 +179,8 @@ fn neutral_values_share_only_equal_directions() {
 
 #[test]
 fn hidden_box_facts_suppress_box_generation() {
-    let style = LayoutStyle {
-        display: taffy::Display::None,
-        ..LayoutStyle::default()
-    };
-    let node = crate::node::Node::new_element("div".into(), style, None);
+    let mut node = crate::node::Node::new_element("div".into(), None);
+    node.set_display(raikiri_style::property::DisplayValue::None);
     let recipe = contents(BoxFacts::for_node(&node, taffy::Direction::Rtl));
     let prepared = PreparedStyle::prepare(&recipe.values, recipe.metadata);
     let view = LayoutStyleView::new(&prepared, ViewContext::default(), &[], &[]);
@@ -196,15 +193,9 @@ fn icb_publication_registers_document_owned_recipe_without_extending_source_valu
     let html = doc.append_element(
         Some(0),
         "html",
-        LayoutStyle::default(),
         Some("display:block;direction:rtl;writing-mode:vertical-rl"),
     );
-    doc.append_element(
-        Some(html),
-        "body",
-        LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     let mut page = raikiri_traits::PageBox::new();
     page.width = 80.0;
@@ -215,7 +206,6 @@ fn icb_publication_registers_document_owned_recipe_without_extending_source_valu
         page,
     )
     .unwrap();
-    let key = doc.nodes.initial_containing_block_key().unwrap();
     let record = doc
         .box_style_data
         .get(crate::node::arena::BoxKey::InitialContainingBlock)
@@ -232,37 +222,16 @@ fn icb_publication_registers_document_owned_recipe_without_extending_source_valu
     };
     assert_eq!(values.width, L::Px(80.0));
     assert_eq!(values.height, L::Px(120.0));
-    assert_legacy(
-        &Recipe {
-            kind: RecipeKind::InitialContainingBlock {
-                width: 80.0,
-                height: 120.0,
-            },
-            values: values.clone(),
-            metadata: record.metadata,
-        },
-        doc.layout_style_for_key(key).unwrap(),
-    );
     assert_eq!(cascade.computed.len(), doc.node_count());
 }
 
 #[test]
 fn anonymous_publication_uses_the_lowering_owner_for_each_recipe() {
     let mut doc = crate::Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let owner = doc.append_element(Some(body), "div", LayoutStyle::default(), Some("display:block;direction:rtl;border-collapse:collapse;border-spacing:7px 13px;caption-side:bottom;width:300px"));
-    let row = doc.append_element(Some(owner), "div", LayoutStyle::default(), Some("display:table-row;direction:ltr;border-collapse:separate;border-spacing:17px 19px;caption-side:top;width:777px"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let owner = doc.append_element(Some(body), "div", Some("display:block;direction:rtl;border-collapse:collapse;border-spacing:7px 13px;caption-side:bottom;width:300px"));
+    let row = doc.append_element(Some(owner), "div", Some("display:table-row;direction:ltr;border-collapse:separate;border-spacing:17px 19px;caption-side:top;width:777px"));
     doc.append_text(row, "A");
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(
@@ -310,14 +279,6 @@ fn anonymous_publication_uses_the_lowering_owner_for_each_recipe() {
             doc.nodes[source].used_writing_mode
         );
         assert_eq!(values.width, L::Auto);
-        assert_legacy(
-            &Recipe {
-                kind,
-                values: values.clone(),
-                metadata: record.metadata,
-            },
-            doc.layout_style_for_key(key).unwrap(),
-        );
     }
     assert_eq!(cascade.computed.len(), doc.node_count());
 }
@@ -326,23 +287,12 @@ fn anonymous_publication_uses_the_lowering_owner_for_each_recipe() {
 fn contents_and_lifted_spanner_publish_distinct_source_recipe_origins() {
     for lifted in [false, true] {
         let mut doc = crate::Document::new();
-        let html = doc.append_element(
-            Some(0),
-            "html",
-            LayoutStyle::default(),
-            Some("display:block"),
-        );
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            LayoutStyle::default(),
-            Some("display:block;margin:0"),
-        );
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
         let parent = if lifted {
             doc.append_element(
                 Some(body),
                 "div",
-                LayoutStyle::default(),
                 Some("display:block;column-count:2;width:120px;direction:rtl"),
             )
         } else {
@@ -353,11 +303,10 @@ fn contents_and_lifted_spanner_publish_distinct_source_recipe_origins() {
         } else {
             "display:contents;direction:rtl;position:absolute;width:777px;contain:size"
         };
-        let source = doc.append_element(Some(parent), "div", LayoutStyle::default(), Some(css));
+        let source = doc.append_element(Some(parent), "div", Some(css));
         doc.append_element(
             Some(source),
             "div",
-            LayoutStyle::default(),
             Some("display:block;column-span:all;height:20px"),
         );
         let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
@@ -393,14 +342,6 @@ fn contents_and_lifted_spanner_publish_distinct_source_recipe_origins() {
             panic!("neutralized source owns synthetic values")
         };
         assert_eq!(values.width, L::Auto);
-        assert_legacy(
-            &Recipe {
-                kind,
-                values: values.clone(),
-                metadata: record.metadata,
-            },
-            doc.layout_style(source).unwrap(),
-        );
         assert_eq!(cascade.computed.len(), doc.node_count());
     }
 }
@@ -408,16 +349,10 @@ fn contents_and_lifted_spanner_publish_distinct_source_recipe_origins() {
 #[test]
 fn neutral_source_publication_covers_document_text_comment_and_fragment() {
     let mut doc = crate::Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        LayoutStyle::default(),
         Some("display:block;margin:0;direction:rtl"),
     );
     let text = doc.append_text(body, "A");
@@ -436,16 +371,9 @@ fn neutral_source_publication_covers_document_text_comment_and_fragment() {
             .get(crate::node::arena::BoxKey::Source(source))
             .expect("every non-element source has neutral recipe data");
         assert_eq!(record.recipe, Some(RecipeKind::NeutralSource));
-        let super::super::LayoutBase::Synthetic(values) = &record.base else {
-            panic!("neutral source owns synthetic values")
-        };
-        assert_legacy(
-            &Recipe {
-                kind: RecipeKind::NeutralSource,
-                values: values.clone(),
-                metadata: record.metadata,
-            },
-            doc.layout_style(source).unwrap(),
+        assert!(
+            matches!(&record.base, super::super::LayoutBase::Synthetic(_)),
+            "neutral source owns synthetic values"
         );
     }
     assert_eq!(cascade.computed.len(), doc.node_count());
@@ -454,18 +382,8 @@ fn neutral_source_publication_covers_document_text_comment_and_fragment() {
 #[test]
 fn icb_dimensions_republish_without_reusing_an_old_pass() {
     let mut doc = crate::Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        LayoutStyle::default(),
-        Some("display:block"),
-    );
-    doc.append_element(
-        Some(html),
-        "body",
-        LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     let mut page = raikiri_traits::PageBox::new();
     page.width = 80.0;
@@ -499,22 +417,11 @@ fn icb_dimensions_republish_without_reusing_an_old_pass() {
 fn restoring_a_source_box_discards_contents_and_spanner_recipes() {
     for lifted in [false, true] {
         let mut doc = crate::Document::new();
-        let html = doc.append_element(
-            Some(0),
-            "html",
-            LayoutStyle::default(),
-            Some("display:block"),
-        );
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            LayoutStyle::default(),
-            Some("display:block;margin:0"),
-        );
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
         let parent = doc.append_element(
             Some(body),
             "div",
-            LayoutStyle::default(),
             Some(if lifted {
                 "display:block;column-count:2;width:120px"
             } else {
@@ -524,7 +431,6 @@ fn restoring_a_source_box_discards_contents_and_spanner_recipes() {
         let source = doc.append_element(
             Some(parent),
             "div",
-            LayoutStyle::default(),
             Some(if lifted {
                 "display:block"
             } else {
@@ -534,7 +440,6 @@ fn restoring_a_source_box_discards_contents_and_spanner_recipes() {
         doc.append_element(
             Some(source),
             "div",
-            LayoutStyle::default(),
             Some("display:block;column-span:all;height:20px"),
         );
         let first = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
@@ -572,11 +477,15 @@ fn restoring_a_source_box_discards_contents_and_spanner_recipes() {
                 .expect("ordinary source foundation is restored");
             assert!(record.recipe.is_none());
             // A projected block width is valid in the new pass, but the old ratio is not.
-            let mut projection = LayoutStyle::default();
-            for entry in &record.pass {
-                entry.apply_to_style(&mut projection);
-            }
-            assert_eq!(projection.aspect_ratio, None);
+            assert_eq!(
+                crate::layout::test_support::with_pass_view(
+                    &doc,
+                    key,
+                    &raikiri_style::ComputedValues::initial(),
+                    |view| CoreStyle::aspect_ratio(view),
+                ),
+                None
+            );
             assert!(matches!(record.base, super::super::LayoutBase::Source(id) if id == source));
         }
         assert_eq!(second.computed.len(), doc.node_count());

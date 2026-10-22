@@ -21,7 +21,6 @@
 //!   get automatic synchronization only during parsing and must explicitly
 //!   call `mark_in_document_flags()` after post-parse mutations.
 
-use crate::LayoutStyle as Style;
 use smol_str::SmolStr;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -168,165 +167,6 @@ fn push_xml_escaped(output: &mut String, value: &str, attribute: bool) {
     }
 }
 
-/// Strip foreign calc handles from an externally supplied style.
-///
-/// With the `calc` feature enabled, taffy length types hold a raw pointer
-/// through a compact tagged representation. The safe constructor for those
-/// handles takes a plain pointer, so any caller can build a style that
-/// points outside the document arena. Storing such a style would break the
-/// ownership premise behind the `Send` impl, which requires every calc
-/// pointer in the arena to point into the same document's stable payload
-/// storage. The layout bridge rebuilds owned handles from computed values
-/// before each layout pass, so discarding foreign handles here changes no
-/// valid behavior: styles without calc pass through untouched.
-///
-/// Each calc-capable scalar that holds a foreign handle is replaced with a
-/// safe keyword fallback. `Dimension` and `LengthPercentageAuto` fall back
-/// to `auto`, `LengthPercentage` to zero length, and grid track functions
-/// to `auto`. Grid template repetitions keep their count and line names
-/// and only have their track functions sanitized.
-///
-/// The exhaustive field check below pins coverage against future taffy
-/// fields. If taffy adds a style field, this function fails to compile
-/// until the new field is classified here.
-fn sanitize_external_style(mut style: Style) -> Style {
-    fn sanitize_dimension(value: taffy::Dimension) -> taffy::Dimension {
-        if value.into_raw().has_calc() {
-            taffy::Dimension::auto()
-        } else {
-            value
-        }
-    }
-    fn sanitize_length_percentage_auto(
-        value: taffy::LengthPercentageAuto,
-    ) -> taffy::LengthPercentageAuto {
-        if value.into_raw().has_calc() {
-            taffy::LengthPercentageAuto::auto()
-        } else {
-            value
-        }
-    }
-    fn sanitize_length_percentage(value: taffy::LengthPercentage) -> taffy::LengthPercentage {
-        if value.into_raw().has_calc() {
-            taffy::LengthPercentage::length(0.0)
-        } else {
-            value
-        }
-    }
-    fn sanitize_track(value: taffy::TrackSizingFunction) -> taffy::TrackSizingFunction {
-        let min = if value.min.into_raw().has_calc() {
-            taffy::MinTrackSizingFunction::auto()
-        } else {
-            value.min
-        };
-        let max = if value.max.into_raw().has_calc() {
-            taffy::MaxTrackSizingFunction::auto()
-        } else {
-            value.max
-        };
-        taffy::TrackSizingFunction { min, max }
-    }
-
-    {
-        let Style {
-            dummy: _,
-            display: _,
-            item_is_table: _,
-            item_is_replaced: _,
-            item_is_compressible_replaced: _,
-            box_sizing: _,
-            direction: _,
-            overflow: _,
-            scrollbar_width: _,
-            contain: _,
-            float: _,
-            clear: _,
-            position: _,
-            inset: _,
-            size: _,
-            min_size: _,
-            max_size: _,
-            aspect_ratio: _,
-            margin: _,
-            padding: _,
-            border: _,
-            align_items: _,
-            align_self: _,
-            justify_items: _,
-            justify_self: _,
-            align_content: _,
-            justify_content: _,
-            gap: _,
-            text_align: _,
-            flex_direction: _,
-            flex_wrap: _,
-            flex_basis: _,
-            flex_grow: _,
-            flex_shrink: _,
-            grid_template_rows: _,
-            grid_template_columns: _,
-            grid_auto_rows: _,
-            grid_auto_columns: _,
-            grid_auto_flow: _,
-            grid_template_areas: _,
-            grid_template_column_names: _,
-            grid_template_row_names: _,
-            grid_row: _,
-            grid_column: _,
-        } = &style;
-    }
-
-    style.size.width = sanitize_dimension(style.size.width);
-    style.size.height = sanitize_dimension(style.size.height);
-    style.min_size.width = sanitize_length_percentage_auto(style.min_size.width);
-    style.min_size.height = sanitize_length_percentage_auto(style.min_size.height);
-    style.max_size.width = sanitize_length_percentage_auto(style.max_size.width);
-    style.max_size.height = sanitize_length_percentage_auto(style.max_size.height);
-    style.inset.left = sanitize_length_percentage_auto(style.inset.left);
-    style.inset.right = sanitize_length_percentage_auto(style.inset.right);
-    style.inset.top = sanitize_length_percentage_auto(style.inset.top);
-    style.inset.bottom = sanitize_length_percentage_auto(style.inset.bottom);
-    style.margin.left = sanitize_length_percentage_auto(style.margin.left);
-    style.margin.right = sanitize_length_percentage_auto(style.margin.right);
-    style.margin.top = sanitize_length_percentage_auto(style.margin.top);
-    style.margin.bottom = sanitize_length_percentage_auto(style.margin.bottom);
-    style.padding.left = sanitize_length_percentage(style.padding.left);
-    style.padding.right = sanitize_length_percentage(style.padding.right);
-    style.padding.top = sanitize_length_percentage(style.padding.top);
-    style.padding.bottom = sanitize_length_percentage(style.padding.bottom);
-    style.border.left = sanitize_length_percentage(style.border.left);
-    style.border.right = sanitize_length_percentage(style.border.right);
-    style.border.top = sanitize_length_percentage(style.border.top);
-    style.border.bottom = sanitize_length_percentage(style.border.bottom);
-    style.gap.width = sanitize_length_percentage(style.gap.width);
-    style.gap.height = sanitize_length_percentage(style.gap.height);
-    style.flex_basis = sanitize_dimension(style.flex_basis);
-    for component in style
-        .grid_template_rows
-        .iter_mut()
-        .chain(style.grid_template_columns.iter_mut())
-    {
-        match component {
-            taffy::GridTemplateComponent::Single(track) => {
-                *track = sanitize_track(*track);
-            }
-            taffy::GridTemplateComponent::Repeat(repetition) => {
-                for track in repetition.tracks.iter_mut() {
-                    *track = sanitize_track(*track);
-                }
-            }
-        }
-    }
-    for track in style
-        .grid_auto_rows
-        .iter_mut()
-        .chain(style.grid_auto_columns.iter_mut())
-    {
-        *track = sanitize_track(*track);
-    }
-    style
-}
-
 fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
     namespace.is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI)
         && [
@@ -378,14 +218,11 @@ pub struct Document {
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
-    pub(crate) retained_layout_styles: crate::layout::retained_styles::RetainedLayoutStyles,
     /// The style facts pagination reads, by layout key, while it runs on
     /// transposed axes (see `LayoutSession::block_axis`); empty otherwise.
     pub(crate) pagination_block_styles: Vec<crate::layout::block_axis_style::BlockAxisStyle>,
     pub(crate) box_style_data: crate::layout::box_style_data::BoxStyleStore,
     pub(crate) layout_cache_context: crate::layout::cache_context::LayoutCacheContext,
-    #[cfg(test)]
-    pub(crate) style_view_comparisons: crate::layout::style_views::checked::ComparisonStats,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
@@ -504,23 +341,6 @@ pub struct Document {
     /// the relative `url()` values left in computed values, such as those
     /// of a `style` attribute.
     base_url: Option<url::Url>,
-}
-
-pub(crate) struct LayoutNodeRef<'a> {
-    pub(crate) style: &'a Style,
-    node: &'a Node,
-}
-
-impl std::ops::Deref for LayoutNodeRef<'_> {
-    type Target = Node;
-
-    fn deref(&self) -> &Self::Target {
-        self.node
-    }
-}
-
-pub(crate) struct LayoutNodeMut<'a> {
-    pub(crate) style: &'a mut Style,
 }
 
 impl Document {
@@ -664,19 +484,13 @@ impl Document {
     pub fn new() -> Self {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
-        let mut retained_layout_styles =
-            crate::layout::retained_styles::RetainedLayoutStyles::default();
-        retained_layout_styles.insert(crate::node::arena::BoxKey::Source(0), Style::default());
         Self {
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
-            retained_layout_styles,
             pagination_block_styles: Vec::new(),
             box_style_data: Default::default(),
             layout_cache_context: Default::default(),
-            #[cfg(test)]
-            style_view_comparisons: Default::default(),
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
             focused: None,
@@ -716,7 +530,7 @@ impl Document {
         if !is_valid_element_local_name(tag) {
             return Err(format!("invalid HTML element name: {tag:?}"));
         }
-        Ok(self.append_element(None, tag, Style::default(), None::<&str>))
+        Ok(self.append_element(None, tag, None::<&str>))
     }
 
     /// Add an Element node to the arena. If `parent` is `Some(idx)`, append it
@@ -738,25 +552,18 @@ impl Document {
     ///
     /// Returns: the arena index of the added node.
     ///
-    /// Foreign calc handles in `style` are replaced with safe keyword
-    /// fallbacks before storage, so the arena never holds a pointer it
-    /// does not own. Styles without calc pass through untouched, and the
-    /// layout bridge rebuilds owned calc handles from computed values
-    /// before each layout pass.
+    /// The node carries no layout style of its own: layout reads the
+    /// computed values the cascade produces from the tag, the attributes and
+    /// `inline_style`.
     pub fn append_element(
         &mut self,
         parent: Option<usize>,
         tag: impl Into<SmolStr>,
-        style: Style,
         inline_style: Option<impl Into<SmolStr>>,
     ) -> usize {
-        let mut style = sanitize_external_style(style);
         let id = self.nodes.len();
-        let node = Node::new_element(tag.into(), style.clone(), inline_style.map(Into::into));
-        node.refresh_box_style(&mut style);
-        self.nodes.push(node);
-        self.retained_layout_styles
-            .insert(crate::node::arena::BoxKey::Source(id), style);
+        self.nodes
+            .push(Node::new_element(tag.into(), inline_style.map(Into::into)));
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -773,8 +580,6 @@ impl Document {
     pub fn append_text(&mut self, parent: usize, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_text(text.into()));
-        self.retained_layout_styles
-            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         self.nodes[parent].children.push(id);
         self.nodes[id].parent = Some(parent);
         self.invalidate_layout_cache();
@@ -862,8 +667,6 @@ impl Document {
     pub fn append_comment(&mut self, parent: Option<usize>, text: impl Into<SmolStr>) -> usize {
         let id = self.nodes.len();
         self.nodes.push(Node::new_comment(text.into()));
-        self.retained_layout_styles
-            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -893,8 +696,6 @@ impl Document {
         let id = self.nodes.len();
         self.nodes
             .push(Node::new_processing_instruction(target.into(), data.into()));
-        self.retained_layout_styles
-            .insert(crate::node::arena::BoxKey::Source(id), Style::default());
         if let Some(p) = parent {
             self.nodes[p].children.push(id);
             self.nodes[id].parent = Some(p);
@@ -1546,10 +1347,6 @@ impl Document {
         if !text.is_empty() {
             let text_id = self.nodes.len();
             self.nodes.push(Node::new_text(text));
-            self.retained_layout_styles.insert(
-                crate::node::arena::BoxKey::Source(text_id),
-                Style::default(),
-            );
             self.nodes[id].children.push(text_id);
             if let Some(node) = self.nodes.get_mut(text_id) {
                 node.parent = Some(id);
@@ -1612,7 +1409,7 @@ impl Document {
             .collect();
 
         while let Some((source_id, target_parent)) = pending.pop() {
-            let source_node = &source_document.layout_node_with_style(source_id).unwrap();
+            let source_node = &source_document.nodes[source_id];
             let source_children = source_node.children.clone();
 
             match &source_node.data {
@@ -1620,7 +1417,6 @@ impl Document {
                     let new_id = self.append_element(
                         Some(target_parent),
                         element.tag_name.clone(),
-                        source_node.style.clone(),
                         element.inline_style.clone(),
                     );
                     self.set_element_namespace_info(
@@ -1972,10 +1768,6 @@ impl Document {
         // mark_in_document_flags clear the default IS_IN_DOCUMENT bit in step 1.
         let frag_root = self.nodes.len();
         self.nodes.push(Node::new_document_fragment());
-        self.retained_layout_styles.insert(
-            crate::node::arena::BoxKey::Source(frag_root),
-            Style::default(),
-        );
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         // Step 2: Store the fragment root index in the template element's
@@ -2068,12 +1860,9 @@ impl Document {
             later_fragments: _,
             flags_dirty: _,
             stylesheets,
-            retained_layout_styles: _,
             pagination_block_styles: _,
             box_style_data: _,
             layout_cache_context: _,
-            #[cfg(test)]
-                style_view_comparisons: _,
             fragment_tree: _,
             column_rules: _,
             quirks_mode,
@@ -2112,12 +1901,6 @@ impl Document {
 
         let mut document = Document::new();
         document.nodes = copied.into();
-        document.retained_layout_styles.retain_source_styles();
-        for id in 1..document.nodes.len() {
-            document
-                .retained_layout_styles
-                .insert(crate::node::arena::BoxKey::Source(id), Style::default());
-        }
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
@@ -2938,75 +2721,23 @@ impl Document {
         Ok(Some(output))
     }
 
-    /// Return the post-computed Taffy style for a node.
-    ///
-    /// Layout mutates this style with finite used `ch` lengths before Taffy
-    /// runs. Paint-side consumers can therefore observe the same used values
-    /// without re-probing fonts or falling back to `ComputedValues`.
-    pub fn layout_style(&self, id: usize) -> Option<&Style> {
-        self.nodes.get(id)?;
-        self.layout_style_for_key(id)
-    }
-
-    pub(crate) fn layout_style_for_key(&self, key: usize) -> Option<&Style> {
-        self.retained_layout_styles.get(self.nodes.box_key(key)?)
-    }
-
-    pub(crate) fn layout_style_for_key_mut(&mut self, key: usize) -> Option<&mut Style> {
-        let box_key = self.nodes.box_key(key)?;
-        self.retained_layout_styles.get_mut(box_key)
-    }
-
-    pub(crate) fn layout_node_with_style(&self, key: usize) -> Option<LayoutNodeRef<'_>> {
-        let box_key = self.nodes.box_key(key)?;
-        Some(LayoutNodeRef {
-            node: self.nodes.layout_node(key)?,
-            style: self.retained_layout_styles.get(box_key)?,
-        })
-    }
-
-    pub(crate) fn layout_node_with_style_mut(&mut self, key: usize) -> Option<LayoutNodeMut<'_>> {
-        let box_key = self.nodes.box_key(key)?;
-        let retained_layout_styles = &mut self.retained_layout_styles;
-        Some(LayoutNodeMut {
-            style: retained_layout_styles.get_mut(box_key)?,
-        })
-    }
-
-    pub(crate) fn set_initial_containing_block(&mut self, node: Node, mut style: Style) -> usize {
+    pub(crate) fn set_initial_containing_block(&mut self, node: Node) -> usize {
         self.box_style_data
             .invalidate_key(crate::node::arena::BoxKey::InitialContainingBlock);
         self.layout_cache_context.publish_metadata();
-        node.refresh_box_style(&mut style);
-        let key = self.nodes.set_initial_containing_block(node);
-        self.retained_layout_styles
-            .insert(crate::node::arena::BoxKey::InitialContainingBlock, style);
-        key
+        self.nodes.set_initial_containing_block(node)
     }
 
-    pub(crate) fn set_anonymous_tables(&mut self, boxes: Vec<(Node, Style)>) {
+    pub(crate) fn set_anonymous_tables(&mut self, boxes: Vec<Node>) {
         self.box_style_data.invalidate_anonymous_tables();
         self.layout_cache_context.publish_metadata();
-        let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
-        self.nodes.set_anonymous_tables(nodes);
-        self.retained_layout_styles
-            .retain_source_and_initial_containing_block();
-        for (index, style) in styles.into_iter().enumerate() {
-            self.retained_layout_styles
-                .insert(crate::node::arena::BoxKey::AnonymousTable(index), style);
-        }
+        self.nodes.set_anonymous_tables(boxes);
     }
 
-    pub(crate) fn set_anonymous_cells(&mut self, boxes: Vec<(Node, Style)>) {
+    pub(crate) fn set_anonymous_cells(&mut self, boxes: Vec<Node>) {
         self.box_style_data.invalidate_anonymous_cells();
         self.layout_cache_context.publish_metadata();
-        let (nodes, styles): (Vec<_>, Vec<_>) = boxes.into_iter().unzip();
-        self.nodes.set_anonymous_cells(nodes);
-        self.retained_layout_styles.retain_without_cells();
-        for (index, style) in styles.into_iter().enumerate() {
-            self.retained_layout_styles
-                .insert(crate::node::arena::BoxKey::AnonymousCell(index), style);
-        }
+        self.nodes.set_anonymous_cells(boxes);
     }
 
     pub(crate) fn set_box_properties(
@@ -3019,17 +2750,7 @@ impl Document {
             let box_key = self.nodes.box_key(key).expect("box key has a node");
             self.box_style_data.invalidate_key(box_key);
         }
-        let Self {
-            nodes,
-            retained_layout_styles,
-            ..
-        } = self;
-        let box_key = nodes.box_key(key).expect("box key has a node");
-        let style = retained_layout_styles
-            .get_mut(box_key)
-            .expect("box key has a retained style");
-        nodes[key].set_box_properties(display, position);
-        nodes[key].refresh_box_style(style);
+        self.nodes[key].set_box_properties(display, position);
     }
 
     #[cfg(test)]

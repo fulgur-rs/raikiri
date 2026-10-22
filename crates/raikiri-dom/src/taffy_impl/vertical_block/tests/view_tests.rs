@@ -1,9 +1,9 @@
 use super::super::*;
 use crate::layout::{
     context::LayoutSession,
-    style_views::{checked::ReadRole, tests::fixture_with_styles},
+    style_views::{ReadRole, tests::fixture_with_styles},
 };
-use taffy::CoreStyle;
+use taffy::{CoreStyle, LengthPercentage};
 
 fn frame(
     tree: &mut LayoutSession<'_>,
@@ -17,14 +17,6 @@ fn frame(
         right_to_left,
         block_space: None,
         children: vec![child],
-        container_style: transpose_style(
-            tree.layout_style_for_key(container).unwrap(),
-            right_to_left,
-        ),
-        child_styles: HashMap::from([(
-            child,
-            transpose_style(tree.layout_style_for_key(child).unwrap(), right_to_left),
-        )]),
         container_view: None,
         child_views: HashMap::default(),
         placed: Vec::new(),
@@ -38,12 +30,10 @@ fn opposite_frames_keep_independent_view_geometry() {
         "display:block;width:31px;height:7px;border-top:1px solid;border-right:2px solid;border-bottom:3px solid;border-left:4px solid",
     );
     let parent = doc.nodes[child].parent.unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let outer = frame(&mut tree, parent, child, true);
     with_transposed_frame(&mut tree, outer, |tree| {
-        let query = tree.checked_query(child, ReadRole::BlockItem);
+        let query = tree.query_style(child, ReadRole::BlockItem);
         assert_eq!(
             query.size(),
             Size {
@@ -55,7 +45,7 @@ fn opposite_frames_keep_independent_view_geometry() {
         let inner = frame(tree, parent, child, false);
         with_transposed_frame(tree, inner, |tree| {
             assert_eq!(
-                tree.checked_query(child, ReadRole::BlockItem).border().top,
+                tree.query_style(child, ReadRole::BlockItem).border().top,
                 LengthPercentage::length(4.0)
             );
             let key = tree.nodes.box_key(child).unwrap();
@@ -67,28 +57,24 @@ fn opposite_frames_keep_independent_view_geometry() {
                 )],
                 |tree| {
                     assert_eq!(
-                        tree.checked_query(child, ReadRole::BlockItem)
-                            .border()
-                            .bottom,
+                        tree.query_style(child, ReadRole::BlockItem).border().bottom,
                         LengthPercentage::length(9.0)
                     );
                     let inner = tree.context.transposed_blocks.pop().unwrap();
                     assert_eq!(
-                        tree.checked_query(child, ReadRole::BlockItem).border().top,
+                        tree.query_style(child, ReadRole::BlockItem).border().top,
                         LengthPercentage::length(9.0)
                     );
                     tree.context.transposed_blocks.push(inner);
                 },
             );
             assert_eq!(
-                tree.checked_query(child, ReadRole::BlockItem)
-                    .border()
-                    .bottom,
+                tree.query_style(child, ReadRole::BlockItem).border().bottom,
                 LengthPercentage::length(2.0)
             );
         });
         assert_eq!(
-            tree.checked_query(child, ReadRole::BlockItem).border().top,
+            tree.query_style(child, ReadRole::BlockItem).border().top,
             LengthPercentage::length(2.0)
         );
     });
@@ -105,14 +91,12 @@ fn a_physical_read_ignores_the_frame_that_transposes_the_block_item_read() {
         "display:block;width:31px;height:7px;margin-left:5px;margin-top:9px",
     );
     let parent = doc.nodes[child].parent.unwrap();
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let physical_before = tree.physical_style(child).size();
     let block = frame(&mut tree, parent, child, true);
     with_transposed_frame(&mut tree, block, |tree| {
         assert_eq!(
-            tree.checked_query(child, ReadRole::BlockItem).size(),
+            tree.query_style(child, ReadRole::BlockItem).size(),
             Size {
                 width: taffy::Dimension::length(7.0),
                 height: taffy::Dimension::length(31.0)
@@ -146,13 +130,7 @@ fn frame_snapshot_ignores_later_pass_and_metadata() {
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:block", "display:block;width:31px;height:7px");
     let parent = doc.nodes[child].parent.unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-    tree.layout_style_for_key_mut(child)
-        .unwrap()
-        .scrollbar_width = 20.0;
-    tree.layout_style_for_key_mut(child).unwrap().text_align = taffy::TextAlign::LegacyRight;
-    tree.prepare_style_views();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let block = frame(&mut tree, parent, child, true);
     with_transposed_frame(&mut tree, block, |tree| {
         tree.record_pass_override(
@@ -160,30 +138,12 @@ fn frame_snapshot_ignores_later_pass_and_metadata() {
             OwnedPropertyOverride::length(LengthProperty::Width, L::Px(99.0), true).unwrap(),
         );
         tree.nodes[child].claims_fixed_oof = true;
-        tree.layout_style_for_key_mut(child)
-            .unwrap()
-            .scrollbar_width = 30.0;
-        tree.layout_style_for_key_mut(child).unwrap().text_align = taffy::TextAlign::LegacyCenter;
         tree.prepare_style_views();
-        let live = tree.checked_query(child, ReadRole::CoreContainer);
+        let live = tree.query_style(child, ReadRole::CoreContainer);
         assert_eq!(live.size().width, taffy::Dimension::length(99.0));
         assert!(live.is_containing_block().fixed);
-        assert_eq!(live.scrollbar_width(), 30.0);
         assert_eq!(
-            taffy::BlockContainerStyle::text_align(&live),
-            taffy::TextAlign::LegacyCenter
-        );
-        assert_eq!(
-            taffy::BlockContainerStyle::text_align(&tree.checked_query(child, ReadRole::BlockItem)),
-            taffy::TextAlign::LegacyRight
-        );
-        assert_eq!(
-            tree.checked_query(child, ReadRole::BlockItem)
-                .scrollbar_width(),
-            20.0
-        );
-        assert_eq!(
-            tree.checked_query(child, ReadRole::BlockItem).size().height,
+            tree.query_style(child, ReadRole::BlockItem).size().height,
             taffy::Dimension::length(31.0)
         );
         let frozen = tree.context.transposed_blocks.last().unwrap().child_views[&child].view();
@@ -206,8 +166,7 @@ fn late_override_preserves_unrelated_frame_property() {
         "display:block;width:31px;height:7px;padding:10%",
     );
     let parent = doc.nodes[child].parent.unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let block = frame(&mut tree, parent, child, true);
     with_transposed_frame(&mut tree, block, |tree| {
         resolve_child_padding(tree, 100.0);
@@ -219,18 +178,16 @@ fn late_override_preserves_unrelated_frame_property() {
             )],
             |tree| {
                 assert_eq!(
-                    tree.checked_query(child, ReadRole::BlockItem).size().height,
+                    tree.query_style(child, ReadRole::BlockItem).size().height,
                     taffy::Dimension::length(20.0)
                 );
                 let block = tree.context.transposed_blocks.last_mut().unwrap();
-                block.child_styles.get_mut(&child).unwrap().size.width =
-                    taffy::Dimension::length(91.0);
                 OwnedPropertyOverride::length(LengthProperty::Height, L::Px(91.0), true)
                     .unwrap()
                     .install(&mut block.child_views.get_mut(&child).unwrap().late);
             },
         );
-        let query = tree.checked_query(child, ReadRole::BlockItem);
+        let query = tree.query_style(child, ReadRole::BlockItem);
         assert_eq!(
             query.size(),
             Size {
@@ -247,7 +204,7 @@ fn frame_setup_failure_restores_original_payload() {
     fn fail_after_one(tree: &LayoutSession<'_>, index: usize, count: usize) {
         if count == 1 {
             assert_eq!(
-                tree.checked_query(index, ReadRole::BlockItem).size().height,
+                tree.query_style(index, ReadRole::BlockItem).size().height,
                 taffy::Dimension::length(11.0)
             );
             std::panic::panic_any(719_u64);
@@ -256,8 +213,7 @@ fn frame_setup_failure_restores_original_payload() {
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:block", "display:block;width:31px;height:7px");
     let parent = doc.nodes[child].parent.unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let block = frame(&mut tree, parent, child, true);
     let key = tree.nodes.box_key(child).unwrap();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -290,7 +246,7 @@ fn frame_setup_failure_restores_original_payload() {
                 });
             }));
             assert_eq!(
-                tree.checked_query(child, ReadRole::BlockItem).size().height,
+                tree.query_style(child, ReadRole::BlockItem).size().height,
                 taffy::Dimension::length(31.0)
             );
             std::panic::resume_unwind(result.unwrap_err());
@@ -313,15 +269,12 @@ fn frame_captures_edge_basis_without_reapplying_it_to_late_borders() {
         "display:block;width:31px;padding:10%;border:2px solid",
     );
     let parent = doc.nodes[child].parent.unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     tree.with_resolved_edges(child, 200.0, false, |tree| {
         let block = frame(tree, parent, child, true);
         with_transposed_frame(tree, block, |tree| {
             assert_eq!(
-                tree.checked_query(child, ReadRole::BlockItem)
-                    .padding()
-                    .left,
+                tree.query_style(child, ReadRole::BlockItem).padding().left,
                 LengthPercentage::length(20.0)
             );
             let key = tree.nodes.box_key(child).unwrap();
@@ -337,13 +290,13 @@ fn frame_captures_edge_basis_without_reapplying_it_to_late_borders() {
                 )],
                 |tree| {
                     assert_eq!(
-                        tree.checked_query(child, ReadRole::BlockItem).border().top,
+                        tree.query_style(child, ReadRole::BlockItem).border().top,
                         LengthPercentage::percent(0.1)
                     );
                 },
             );
             assert_eq!(
-                tree.checked_query(child, ReadRole::BlockItem).border().top,
+                tree.query_style(child, ReadRole::BlockItem).border().top,
                 LengthPercentage::length(2.0)
             );
         });
@@ -358,8 +311,7 @@ fn frame_baked_edges_preserve_duplicate_override_precedence() {
             "display:block;width:31px;height:7px;border:2px solid",
         );
         let parent = doc.nodes[child].parent.unwrap();
-        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-        crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         let key = tree.nodes.box_key(child).unwrap();
         let outer =
             OwnedPropertyOverride::length(LengthProperty::BorderRight, L::Px(3.0), true).unwrap();
@@ -389,32 +341,26 @@ fn frame_baked_edges_preserve_duplicate_override_precedence() {
                                 LengthPercentage::length(20.0),
                             );
                             assert_eq!(
-                                tree.checked_query(child, ReadRole::BlockItem).border().top,
+                                tree.query_style(child, ReadRole::BlockItem).border().top,
                                 LengthPercentage::length(20.0),
                             );
                         });
                     });
                     assert_eq!(
-                        tree.checked_query(child, ReadRole::BlockItem)
-                            .border()
-                            .right,
+                        tree.query_style(child, ReadRole::BlockItem).border().right,
                         LengthPercentage::percent(0.1),
                     );
                 },
             );
             assert_eq!(
-                tree.checked_query(child, ReadRole::BlockItem)
-                    .border()
-                    .right,
+                tree.query_style(child, ReadRole::BlockItem).border().right,
                 LengthPercentage::length(3.0),
             );
         });
         assert_eq!(tree.override_checkpoint(), 0);
         assert!(tree.context.transposed_blocks.is_empty());
         assert_eq!(
-            tree.checked_query(child, ReadRole::BlockItem)
-                .border()
-                .right,
+            tree.query_style(child, ReadRole::BlockItem).border().right,
             LengthPercentage::length(if pass_override { 3.0 } else { 2.0 }),
         );
     }
@@ -428,8 +374,7 @@ fn materialized_calc_survives_frame_and_bridge_retirement() {
         let (mut doc, cascade, child, _) =
             fixture_with_styles("display:block", "display:block;width:31px;height:7px");
         let parent = doc.nodes[child].parent.unwrap();
-        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-        crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         tree.record_pass_override(
             child,
             OwnedPropertyOverride::length(
@@ -501,15 +446,14 @@ fn frame_capture_keeps_publication_and_foundation_stamps() {
         "display:block;width:calc(1px + 10%);height:7px",
     );
     let parent = doc.nodes[child].parent.unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let publication = tree.layout_cache_context.publication_epoch();
     let stamp = tree.box_style_data.stamp();
     let dirty = tree.document.layout_dirty;
     for _ in 0..3 {
         let block = frame(&mut tree, parent, child, true);
         let (_, block) = with_transposed_frame(&mut tree, block, |tree| {
-            let _ = tree.checked_query(child, ReadRole::BlockItem).size();
+            let _ = tree.query_style(child, ReadRole::BlockItem).size();
         });
         drop(block);
         assert_eq!(tree.layout_cache_context.publication_epoch(), publication);
@@ -526,8 +470,7 @@ fn materialized_late_calc_survives_scope_frame_and_bridge_retirement() {
         let (mut doc, cascade, child, _) =
             fixture_with_styles("display:block", "display:block;width:31px;height:7px");
         let parent = doc.nodes[child].parent.unwrap();
-        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-        crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+        let mut tree = LayoutSession::bridged(&mut doc, &cascade);
         let entry = OwnedPropertyOverride::length(
             LengthProperty::Width,
             L::Calc(raikiri_style::property::CalcLengthPercentage {
@@ -574,8 +517,7 @@ fn frozen_sizing_undo_rejects_reused_frame_generation() {
     let (mut doc, cascade, child, _) =
         fixture_with_styles("display:block", "display:block;width:31px;height:7px");
     let parent = doc.nodes[child].parent.unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    crate::layout::apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let mut blocks = vec![frame(&mut tree, parent, child, true)];
     prepare_frame_views(&mut tree, &mut blocks[0]);
     let mut index = TransposedStyleIndex::default();
@@ -610,9 +552,7 @@ fn a_physical_read_of_a_vertical_box_keeps_the_physical_axes() {
         "display:block;writing-mode:vertical-rl;width:31px;height:7px;\
          margin-left:5px;margin-top:9px;padding-right:3px;border-bottom:2px solid",
     );
-    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    tree.prepare_style_views();
+    let tree = LayoutSession::bridged(&mut doc, &cascade);
     let physical = tree.physical_style(child);
     assert_eq!(
         physical.size(),

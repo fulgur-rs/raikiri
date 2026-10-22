@@ -6,7 +6,8 @@
 
 use crate::document::OofCoordinate;
 use crate::layout::context::LayoutSession;
-use crate::layout::style_views::{NativeStyle, ReadRole};
+use crate::layout::style_views::ReadRole;
+use raikiri_layout_style::LayoutStyleView;
 use taffy::CoreStyle;
 use taffy::{
     DetailedLayoutInfo, LayoutContainingBlock, LayoutOutput, LayoutPartialTree, NodeId,
@@ -15,12 +16,12 @@ use taffy::{
 
 impl LayoutContainingBlock for LayoutSession<'_> {
     type OofItemStyle<'a>
-        = NativeStyle<'a>
+        = LayoutStyleView<'a>
     where
         Self: 'a;
 
     fn get_oof_item_style(&self, node: NodeId) -> Self::OofItemStyle<'_> {
-        self.native_style(usize::from(node), ReadRole::Oof)
+        self.query_style(usize::from(node), ReadRole::Oof)
     }
 
     fn clear_hoisted_children(&mut self, node: NodeId) {

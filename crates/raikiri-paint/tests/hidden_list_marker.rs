@@ -2,7 +2,6 @@
 //! marker that is visible by its own style paints in a hidden item.
 
 use anyrender::Scene;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
@@ -43,9 +42,9 @@ fn painted_pixels(item_style: &str, css: &str) -> usize {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         format!(
@@ -54,9 +53,9 @@ fn painted_pixels(item_style: &str, css: &str) -> usize {
              li {{ display: list-item; font: 10px/20px Ahem; color: black; {item_style} }} {css}"
         ),
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let ul = doc.append_element(Some(body), "ul", Style::default(), None::<&str>);
-    let li = doc.append_element(Some(ul), "li", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let ul = doc.append_element(Some(body), "ul", None::<&str>);
+    let li = doc.append_element(Some(ul), "li", None::<&str>);
     doc.append_text(li, "x");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();

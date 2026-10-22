@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
 
 fn engine_document() -> Document {
@@ -51,11 +50,11 @@ fn small_page() -> PageBox {
 
 fn page_cascade_fixture(css: &str) -> (Document, CascadeResult) {
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(style, css);
-    doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(Some(html), "body", Some("display:block"));
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     (doc, cascade)
@@ -74,12 +73,7 @@ fn layout_page(doc: &Document, cascade: &CascadeResult, page_box: PageBox) -> Ve
 #[test]
 fn margin_box_font_uses_root_computed_family() {
     let mut document = Document::new();
-    let style = document.append_element(
-        Some(document.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
     document.append_text(style, "@page { @top-left { content: 'x'; } }");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -139,13 +133,8 @@ fn margin_box_font_size_resolves_keywords_and_calc() {
         ),
     ] {
         let mut document = Document::new();
-        let html = document.append_element(
-            Some(document.root_index()),
-            "html",
-            Style::default(),
-            None::<&str>,
-        );
-        let style = document.append_element(Some(html), "style", Style::default(), None::<&str>);
+        let html = document.append_element(Some(document.root_index()), "html", None::<&str>);
+        let style = document.append_element(Some(html), "style", None::<&str>);
         document.append_text(style, css);
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -426,10 +415,9 @@ fn margin_box_flow_inherits_from_root_and_page_and_allows_local_override() {
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some("display:block;writing-mode:vertical-rl;text-orientation:upright;direction:rtl"),
         );
-        let node = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+        let node = doc.append_element(Some(html), "style", Some("display:none"));
         doc.append_text(node, format!("@page {{ {page} @top-left {{ content:'ab';font-family:Ahem;font-size:10px;text-align:end; {local} }} }}"));
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).unwrap();

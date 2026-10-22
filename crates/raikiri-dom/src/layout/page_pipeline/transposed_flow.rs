@@ -12,9 +12,9 @@
 //!   top edge, with the inline axis across;
 //! - the computed values the paginator reads and the page geometry are
 //!   reflected the same way;
-//! - the style facts the paginator reads from a box's retained style are
-//!   read on those axes through `LayoutSession::block_axis`, from a style
-//!   view whose layout writing mode is the root's, so the retained styles
+//! - the style facts the paginator reads from a box's style are read on
+//!   those axes through `LayoutSession::block_axis`, from a style view whose
+//!   layout writing mode is the root's, so the styles of the boxes
 //!   themselves stay on physical axes;
 //! - after pagination, the boxes are mapped back to physical axes. A box
 //!   keeps its distance from the block-start edge of its parent, which for

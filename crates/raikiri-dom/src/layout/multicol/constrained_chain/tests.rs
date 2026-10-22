@@ -1,6 +1,5 @@
 use super::*;
-use crate::layout::context::LayoutSession;
-use crate::layout::test_support::{page_box_800x600, with_ahem};
+use crate::layout::test_support::{page_box_800x600, with_ahem, with_bridged_session};
 use raikiri_style::{build_rule_tree, cascade};
 
 fn layout(
@@ -11,14 +10,9 @@ fn layout(
     border_box: Size<f32>,
     origin: Point<f32>,
 ) -> Option<f32> {
-    let mut session = LayoutSession::new(tree);
-    super::layout(&mut session, parent, chain, context, border_box, origin)
-}
-
-/// A session over `doc` without a cascade, whose style queries read the
-/// styles the fixture laid out with.
-fn session(doc: &mut Document) -> LayoutSession<'_> {
-    LayoutSession::new(doc)
+    with_bridged_session(tree, |session| {
+        super::layout(session, parent, chain, context, border_box, origin)
+    })
 }
 
 fn fixture(depth: usize) -> (Document, usize, Vec<usize>) {
@@ -27,22 +21,15 @@ fn fixture(depth: usize) -> (Document, usize, Vec<usize>) {
 
 fn fixture_with_margin(depth: usize, margin: &str) -> (Document, usize, Vec<usize>) {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:20px/20px Ahem"),
     );
     let mc = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px;orphans:1;widows:1"),
     );
     let mut chain = Vec::new();
@@ -51,7 +38,6 @@ fn fixture_with_margin(depth: usize, margin: &str) -> (Document, usize, Vec<usiz
         parent = doc.append_element(
             Some(parent),
             "div",
-            crate::LayoutStyle::default(),
             Some(format!("display:block;width:80px;margin:{margin}").as_str()),
         );
         chain.push(parent);
@@ -67,9 +53,12 @@ fn fixture_with_margin(depth: usize, margin: &str) -> (Document, usize, Vec<usiz
 fn cyclic_chains_are_rejected_without_returning_an_incomplete_path() {
     let (mut doc, mc, chain) = fixture(2);
     let leaf = *chain.last().unwrap();
-    doc.nodes[leaf].ifc = None;
-    doc.nodes[leaf].children = vec![chain[0]];
-    assert!(supported(&session(&mut doc), mc).is_none());
+    // The cycle closes after the bridge walked the tree.
+    let cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
+    session.nodes[leaf].ifc = None;
+    session.nodes[leaf].children = vec![chain[0]];
+    assert!(supported(&session, mc).is_none());
 }
 
 #[test]
@@ -117,49 +106,26 @@ fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
 #[test]
 fn column_clips_keep_overhanging_ruby_annotations() {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        crate::LayoutStyle::default(),
         Some("display:block;margin:0;font:20px/20px Ahem"),
     );
     let mc = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px;orphans:1;widows:1"),
     );
-    let leaf = doc.append_element(
-        Some(mc),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block;width:80px;margin:0"),
-    );
+    let leaf = doc.append_element(Some(mc), "div", Some("display:block;width:80px;margin:0"));
     let ruby = doc.append_element(
         Some(leaf),
         "ruby",
-        crate::LayoutStyle::default(),
         Some("display:ruby;ruby-position:inter-character"),
     );
-    let base = doc.append_element(
-        Some(ruby),
-        "rb",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-base"),
-    );
+    let base = doc.append_element(Some(ruby), "rb", Some("display:ruby-base"));
     doc.append_text(base, "AAAA");
-    let annotation = doc.append_element(
-        Some(ruby),
-        "rt",
-        crate::LayoutStyle::default(),
-        Some("display:ruby-text"),
-    );
+    let annotation = doc.append_element(Some(ruby), "rt", Some("display:ruby-text"));
     doc.append_text(annotation, "XX");
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();

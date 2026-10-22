@@ -399,11 +399,9 @@ fn the_fragments_of_a_node_count_those_of_the_layouts_around_it() {
 #[test]
 fn only_the_boxes_that_clip_their_overflow_are_kept_as_clip_sources() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let block = |doc: &mut Document, css: &str| {
-        doc.append_element(Some(body), "div", Style::default(), Some(css))
-    };
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block = |doc: &mut Document, css: &str| doc.append_element(Some(body), "div", Some(css));
     let clipping = block(
         &mut doc,
         "display:block;overflow:hidden;width:50px;height:40px",

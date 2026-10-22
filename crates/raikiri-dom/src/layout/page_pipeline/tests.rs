@@ -1,6 +1,6 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
+use crate::layout::test_support::{bridged_display, bridged_style, with_pass_view};
 
 mod ancestor_walk_tests;
 mod avoid_followup_tests;
@@ -363,38 +363,16 @@ fn repeated_header_columns_shift_shared_overflow_and_break_clips_together() {
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display:table;width:100px;border-collapse:collapse"),
     );
-    let header = doc.append_element(
-        Some(table),
-        "thead",
-        Style::default(),
-        Some("display:table-header-group"),
-    );
-    let row = doc.append_element(
-        Some(header),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let cell = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell;padding:0"),
-    );
+    let header = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
+    let row = doc.append_element(Some(header), "tr", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "td", Some("display:table-cell;padding:0"));
     doc.append_child(cell, root).unwrap();
-    let body_row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let body_row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     doc.append_element(
         Some(body_row),
         "td",
-        Style::default(),
         Some("display:table-cell;height:200px;padding:0"),
     );
     doc.mark_in_document_flags();
@@ -901,15 +879,10 @@ fn page_layout_control_accepts_a_box_ending_on_a_fractional_page_boundary() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    document.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:0.3px"),
-    );
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    document.append_element(Some(body), "div", Some("display:block;height:0.3px"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade");
     let mut page_box = page_box_800x600();
@@ -940,10 +913,10 @@ fn page_layout_control_accepts_a_box_ending_on_a_repeated_fractional_boundary() 
     let boundary = page_origins.origin(21);
     let style = format!("display:block;height:{boundary}px");
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    document.append_element(Some(body), "div", Style::default(), Some(&style));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    document.append_element(Some(body), "div", Some(&style));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade");
     let mut page_box = page_box_800x600();
@@ -971,23 +944,17 @@ fn page_layout_control_accepts_a_page_height_box_after_fractional_forced_breaks(
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     for _ in 0..6 {
         document.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:0;break-after:page"),
         );
     }
-    document.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:0.1px"),
-    );
+    document.append_element(Some(body), "div", Some("display:block;height:0.1px"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade");
     let mut page_box = page_box_800x600();
@@ -1015,14 +982,13 @@ fn page_layout_discovery_returns_a_bounded_prefix() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     for _ in 0..5 {
         document.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:10px;break-before:page"),
         );
     }
@@ -1068,15 +1034,10 @@ fn page_layout_control_rejects_natural_overflow_beyond_4096_pages() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    document.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:3000000px"),
-    );
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    document.append_element(Some(body), "div", Some("display:block;height:3000000px"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade");
     let control = PageLayoutControl::new(Some(4_500));
@@ -1107,13 +1068,12 @@ fn page_layout_control_checks_percent_width_nodes() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let block = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:50%;height:1200px"),
     );
     document.append_text(block, "percentage width");
@@ -1142,17 +1102,11 @@ fn candidate_collection_recurses_through_inline_subtrees() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let paragraph =
-        document.append_element(Some(body), "p", Style::default(), Some("display:block"));
-    let span = document.append_element(
-        Some(paragraph),
-        "span",
-        Style::default(),
-        Some("display:inline"),
-    );
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "head", None::<&str>);
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let paragraph = document.append_element(Some(body), "p", Some("display:block"));
+    let span = document.append_element(Some(paragraph), "span", Some("display:inline"));
     document.append_text(span, "inline text");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade");
@@ -1206,15 +1160,10 @@ fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     // Equivalent to parsing (built manually instead; future umbrella integration handles raikiri-html).
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;color:red"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some("display:block;color:red"));
     let _text = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1285,7 +1234,6 @@ fn pagination_keeps_multicol_inline_text_in_its_column() {
                 let span = doc.append_element(
                     Some(root),
                     "span",
-                    Style::default(),
                     Some(&format!("display:inline;color:{color}")),
                 );
                 doc.append_text(span, text);
@@ -1315,16 +1263,10 @@ fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
     use raikiri_traits::PageBox;
 
     let mut direct_doc = Document::new();
-    let html = direct_doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;margin-top:auto"),
-    );
+    let html = direct_doc.append_element(Some(0), "html", Some("display:block;margin-top:auto"));
     let body = direct_doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;background-color:red"),
     );
     direct_doc.append_text(body, "direct body text");
@@ -1340,13 +1282,11 @@ fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
     );
 
     let mut block_doc = Document::new();
-    let html = block_doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body =
-        block_doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = block_doc.append_element(Some(0), "html", Some("display:block"));
+    let body = block_doc.append_element(Some(html), "body", Some("display:block"));
     block_doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;height:20px;margin-bottom:auto"),
     );
     let mut block_rules = build_rule_tree(&block_doc);
@@ -1368,38 +1308,17 @@ fn relayout_nested_multicol_children_packs_block_children_into_columns() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px"),
     );
-    let a = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;height:30px"),
-    );
-    let b = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;height:30px"),
-    );
-    let c = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;height:30px"),
-    );
-    let d = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;height:30px"),
-    );
+    let a = doc.append_element(Some(container), "div", Some("display:block;height:30px"));
+    let b = doc.append_element(Some(container), "div", Some("display:block;height:30px"));
+    let c = doc.append_element(Some(container), "div", Some("display:block;height:30px"));
+    let d = doc.append_element(Some(container), "div", Some("display:block;height:30px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -1446,36 +1365,18 @@ fn layout_pages_reuses_one_context_across_nested_multicol_placements() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let lead = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let lead = doc.append_element(Some(body), "div", Some("display:block;height:20px"));
     let multicol = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px"),
     );
     let children: Vec<_> = (0..4)
-        .map(|_| {
-            doc.append_element(
-                Some(multicol),
-                "div",
-                Style::default(),
-                Some("display:block;height:30px"),
-            )
-        })
+        .map(|_| doc.append_element(Some(multicol), "div", Some("display:block;height:30px")))
         .collect();
-    let tail = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:50px"),
-    );
+    let tail = doc.append_element(Some(body), "div", Some("display:block;height:50px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -1528,23 +1429,15 @@ fn auto_fill_keeps_auto_height_block_children_in_source_order() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px;column-fill:auto"),
     );
     let children: Vec<usize> = (0..4)
-        .map(|_| {
-            doc.append_element(
-                Some(container),
-                "div",
-                Style::default(),
-                Some("display:block;height:30px"),
-            )
-        })
+        .map(|_| doc.append_element(Some(container), "div", Some("display:block;height:30px")))
         .collect();
 
     let rules = build_rule_tree(&doc);
@@ -1585,38 +1478,21 @@ fn relayout_nested_multicol_children_honors_break_before_avoid() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px"),
     );
-    let a = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;height:30px"),
-    );
-    let b = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;height:30px"),
-    );
+    let a = doc.append_element(Some(container), "div", Some("display:block;height:30px"));
+    let b = doc.append_element(Some(container), "div", Some("display:block;height:30px"));
     let c = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("display:block;height:30px;break-before:avoid"),
     );
-    let d = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;height:30px"),
-    );
+    let d = doc.append_element(Some(container), "div", Some("display:block;height:30px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -1657,18 +1533,16 @@ fn text_indent_offsets_empty_inline_block_by_content_box_percentage() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let block = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;box-sizing:border-box;width:120px;padding-right:10px;text-indent:50%"),
     );
     let inline_block = doc.append_element(
         Some(block),
         "span",
-        Style::default(),
         Some("display:inline-block;width:10px;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -1701,18 +1575,16 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     }
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let parent = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;font-family:Ahem;font-size:16px;width:1ch;height:2ch;padding-top:1ch;padding-right:2ch;padding-bottom:1ch;padding-left:1ch;margin-top:1ch;margin-right:3ch;margin-bottom:1ch;margin-left:1ch"),
         );
     let child = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display:block;width:100%;height:1px"),
     );
     doc.set_font_collection(
@@ -1727,7 +1599,7 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     let child_layout = doc.nodes[child].unrounded_layout;
     assert!((parent_layout.size.width - 64.0).abs() < 0.01);
     assert!((parent_layout.size.height - 64.0).abs() < 0.01);
-    let used_style = &doc.layout_node_with_style(parent).unwrap().style;
+    let used_style = &bridged_style(&mut doc, &cascade, parent);
     assert_eq!(used_style.padding.top.into_raw().value(), 16.0);
     assert_eq!(used_style.padding.right.into_raw().value(), 32.0);
     assert_eq!(used_style.padding.bottom.into_raw().value(), 16.0);
@@ -1747,7 +1619,7 @@ fn layout_single_page_without_body_returns_error() {
 
     // Attach <p> directly (fragment equivalent).
     let mut doc = Document::new();
-    let _p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let _p = doc.append_element(Some(0), "p", None::<&str>);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();
 
@@ -1772,19 +1644,16 @@ fn layout_single_page_bridges_display_none() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:none"));
-    let p = doc.append_element(Some(body), "p", Style::default(), Some("color:red"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:none"));
+    let p = doc.append_element(Some(body), "p", Some("color:red"));
     let _text = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
-    assert_eq!(
-        doc.layout_node_with_style(body).unwrap().style.display,
-        Display::None
-    );
+    assert_eq!(bridged_display(&mut doc, &cr, body), Display::None);
 }
 
 #[test]
@@ -1798,37 +1667,17 @@ fn inline_block_width_auto_shrink_wraps_to_content() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     // Block sibling first so body keeps mixed children (no minimal
     // line-box rerouting) and lays the inline-blocks out as block
     // children with a definite available width.
-    let _p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-    let ib = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:inline-block"),
-    );
-    let _child = doc.append_element(
-        Some(ib),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
-    let ib_fixed = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:inline-block;width:300px"),
-    );
-    let _fixed_child = doc.append_element(
-        Some(ib_fixed),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let _p = doc.append_element(Some(body), "p", None::<&str>);
+    let ib = doc.append_element(Some(body), "div", Some("display:inline-block"));
+    let _child = doc.append_element(Some(ib), "div", Some("width:100px;height:20px"));
+    let ib_fixed = doc.append_element(Some(body), "div", Some("display:inline-block;width:300px"));
+    let _fixed_child = doc.append_element(Some(ib_fixed), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -1858,45 +1707,23 @@ fn flex_items_follow_order_modified_source_order() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;width:160px;height:20px"),
     );
-    let a = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:2;width:40px;height:20px"),
-    );
+    let a = doc.append_element(Some(flex), "div", Some("order:2;width:40px;height:20px"));
     let absolute = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("position:absolute;order:-100;width:10px;height:10px"),
     );
-    let b = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:-1;width:40px;height:20px"),
-    );
-    let c = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:2;width:40px;height:20px"),
-    );
-    let d = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("width:40px;height:20px"),
-    );
+    let b = doc.append_element(Some(flex), "div", Some("order:-1;width:40px;height:20px"));
+    let c = doc.append_element(Some(flex), "div", Some("order:2;width:40px;height:20px"));
+    let d = doc.append_element(Some(flex), "div", Some("width:40px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -1919,26 +1746,15 @@ fn relayout_invalidates_cache_when_order_modified_view_returns_to_dom_order() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;width:60px;height:20px"),
     );
-    let first = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:1;width:30px;height:20px"),
-    );
-    let second = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:0;width:30px;height:20px"),
-    );
+    let first = doc.append_element(Some(flex), "div", Some("order:1;width:30px;height:20px"));
+    let second = doc.append_element(Some(flex), "div", Some("order:0;width:30px;height:20px"));
 
     let rules = build_rule_tree(&doc);
     let cascade_result = cascade(&doc, &rules).expect("initial cascade Ok");
@@ -1974,22 +1790,12 @@ fn order_is_ignored_for_non_flex_grid_children() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let block = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let a = doc.append_element(
-        Some(block),
-        "div",
-        Style::default(),
-        Some("order:2;height:20px"),
-    );
-    let b = doc.append_element(
-        Some(block),
-        "div",
-        Style::default(),
-        Some("order:-1;height:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let block = doc.append_element(Some(body), "div", None::<&str>);
+    let a = doc.append_element(Some(block), "div", Some("order:2;height:20px"));
+    let b = doc.append_element(Some(block), "div", Some("order:-1;height:20px"));
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -2031,21 +1837,19 @@ fn nested_normal_flow_descendant_clears_ancestor_level_float() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let container = doc.append_element(Some(body), "div", Style::default(), Some("width:200px"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let container = doc.append_element(Some(body), "div", Some("width:200px"));
     let float_sibling = doc.append_element(
         Some(container),
         "div",
-        Style::default(),
         Some("float:left;width:60px;height:40px"),
     );
-    let wrapper = doc.append_element(Some(container), "div", Style::default(), None::<&str>);
+    let wrapper = doc.append_element(Some(container), "div", None::<&str>);
     let probe = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("clear:left;width:50px;height:10px"),
     );
 
@@ -2115,19 +1919,18 @@ fn grid_auto_placement_uses_order_modified_source_order() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;width:200px;grid-template-columns:100px 100px;grid-auto-rows:20px"),
     );
-    let a = doc.append_element(Some(grid), "div", Style::default(), Some("order:2"));
-    let b = doc.append_element(Some(grid), "div", Style::default(), Some("order:-1"));
-    let c = doc.append_element(Some(grid), "div", Style::default(), Some("order:2"));
-    let d = doc.append_element(Some(grid), "div", Style::default(), None::<&str>);
+    let a = doc.append_element(Some(grid), "div", Some("order:2"));
+    let b = doc.append_element(Some(grid), "div", Some("order:-1"));
+    let c = doc.append_element(Some(grid), "div", Some("order:2"));
+    let d = doc.append_element(Some(grid), "div", None::<&str>);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -2164,25 +1967,22 @@ fn grid_template_columns_named_line_after_repeat_resolves_to_the_correct_taffy_g
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid_container = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:[a] 100px repeat(2, [b] 50px) [z] 100px"),
     );
     let cell_first = doc.append_element(
         Some(grid_container),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:1;height:20px"),
     );
     let cell_z = doc.append_element(
         Some(grid_container),
         "div",
-        Style::default(),
         Some("grid-column:z;grid-row:1;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2210,18 +2010,16 @@ fn grid_auto_abspos_static_position_uses_all_parent_padding_sides() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;width:100px;height:100px;padding:10px"),
     );
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;width:20px;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2238,18 +2036,16 @@ fn grid_auto_abspos_last_baseline_falls_back_to_the_end_edge() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;width:100px;height:100px;padding:10px"),
     );
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some(
             "position:absolute;width:20px;height:20px;\
              align-self:last baseline;justify-self:last baseline",
@@ -2269,18 +2065,16 @@ fn grid_auto_abspos_last_baseline_keeps_an_oversized_box_at_the_start_edge() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;width:100px;height:100px;padding:10px"),
     );
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some(
             "position:absolute;width:120px;height:120px;\
              align-self:last baseline;justify-self:last baseline",
@@ -2304,12 +2098,11 @@ fn placed_grid_abspos_takes_last_baseline_from_the_container() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:grid;position:relative;grid:100px / 100px;width:100px;height:100px;\
              align-items:last baseline;justify-items:last baseline",
@@ -2318,7 +2111,6 @@ fn placed_grid_abspos_takes_last_baseline_from_the_container() {
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;grid-area:1 / 1 / 2 / 2;width:20px;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2335,18 +2127,16 @@ fn placed_grid_abspos_last_baseline_falls_back_to_self_end() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;position:relative;grid:100px / 100px;width:100px;height:100px"),
     );
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some(
             "position:absolute;grid-area:1 / 1 / 2 / 2;width:20px;height:20px;\
              direction:rtl;justify-self:last baseline",
@@ -2366,18 +2156,16 @@ fn grid_auto_abspos_last_baseline_in_an_rtl_box_falls_back_to_its_left_edge() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;width:100px;height:100px;padding:10px;"),
     );
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;width:20px;height:20px;direction:rtl;justify-self:last baseline"),
     );
     let rules = build_rule_tree(&doc);
@@ -2398,18 +2186,16 @@ fn grid_auto_abspos_last_baseline_overflowing_an_rtl_container_keeps_its_right_e
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;width:100px;height:100px;padding:10px;direction:rtl"),
     );
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;width:120px;height:20px;justify-self:last baseline"),
     );
     let rules = build_rule_tree(&doc);
@@ -2432,12 +2218,11 @@ fn abspos_with_both_insets_keeps_the_start_edge_under_a_last_baseline_container(
     // `auto` takes the container's `last baseline` only for a static
     // position; with both insets specified it behaves as `normal`.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:grid;position:relative;width:100px;height:100px;\
              align-items:last baseline;justify-items:last baseline",
@@ -2446,7 +2231,6 @@ fn abspos_with_both_insets_keeps_the_start_edge_under_a_last_baseline_container(
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;left:0;right:0;top:0;bottom:0;width:20px;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2463,12 +2247,11 @@ fn grid_auto_abspos_takes_last_baseline_from_the_container() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:grid;width:100px;height:100px;padding:10px;\
              align-items:last baseline;justify-items:last baseline",
@@ -2477,7 +2260,6 @@ fn grid_auto_abspos_takes_last_baseline_from_the_container() {
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;width:20px;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2497,33 +2279,21 @@ fn abspos_under_display_contents_takes_last_baseline_from_the_grid() {
     // abspos child's container and its `last baseline` reaches the child
     // through `auto`.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:grid;width:100px;height:100px;padding:10px;\
              align-items:last baseline;justify-items:last baseline",
         ),
     );
-    let wrapper = doc.append_element(
-        Some(grid),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let inner_wrapper = doc.append_element(
-        Some(wrapper),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let wrapper = doc.append_element(Some(grid), "span", Some("display:contents"));
+    let inner_wrapper = doc.append_element(Some(wrapper), "span", Some("display:contents"));
     let child = doc.append_element(
         Some(inner_wrapper),
         "div",
-        Style::default(),
         Some("position:absolute;width:20px;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2542,24 +2312,21 @@ fn abspos_under_display_contents_ignores_the_alignment_of_the_wrapper() {
     // Only the grid is the container: a `last baseline` on the wrapper that
     // makes no box does not reach the child, which stays at the start.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;width:100px;height:100px;padding:10px"),
     );
     let wrapper = doc.append_element(
         Some(grid),
         "span",
-        Style::default(),
         Some("display:contents;align-items:last baseline;justify-items:last baseline"),
     );
     let child = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("position:absolute;width:20px;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2599,19 +2366,13 @@ fn layout_page_fragments_preserves_forced_page_break() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let first = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let first = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     doc.append_text(first, "first");
     let second = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;break-before:page;height:10px"),
     );
     doc.append_text(second, "second");
@@ -2671,8 +2432,8 @@ fn page_fragment_projection_handles_empty_missing_body_and_invalid_slice_inputs(
     );
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
     let comment = document.append_comment(Some(body), "comment");
     document.nodes[comment].set_in_document(true);
     document.nodes[body].children.push(usize::MAX);
@@ -2737,18 +2498,13 @@ fn layout_page_fragments_classifies_replaced_and_skips_non_rendered_nodes() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let template = document.append_element(Some(body), "template", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
+    let template = document.append_element(Some(body), "template", None::<&str>);
     document.append_text(template, "not rendered");
     document.append_comment(Some(body), "comment");
-    document.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let image = document.append_element(
-        Some(body),
-        "img",
-        Style::default(),
-        Some("width:10px;height:10px"),
-    );
+    document.append_element(Some(body), "div", None::<&str>);
+    let image = document.append_element(Some(body), "img", Some("width:10px;height:10px"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
 
@@ -2811,23 +2567,20 @@ fn propagated_start_page_name_uses_resolved_grid_child_order() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:grid;grid-template-columns:100px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;order:1;page:a;height:10px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;order:0;page:b;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -2845,26 +2598,19 @@ fn layout_pages_uses_order_modified_flex_sequence_for_forced_breaks() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column;width:40px;height:20px"),
     );
     let break_later_in_visual_order = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("order:1;break-before:page;height:10px"),
     );
-    let first_in_visual_order = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:0;height:10px"),
-    );
+    let first_in_visual_order = doc.append_element(Some(flex), "div", Some("order:0;height:10px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -2901,26 +2647,15 @@ fn layout_pages_uses_order_modified_flex_last_item_for_overflow() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column;width:40px"),
     );
-    let visual_last = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:1;height:70px"),
-    );
-    let visual_first = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:0;height:40px"),
-    );
+    let visual_last = doc.append_element(Some(flex), "div", Some("order:1;height:70px"));
+    let visual_first = doc.append_element(Some(flex), "div", Some("order:0;height:40px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -2953,24 +2688,17 @@ fn layout_pages_uses_column_reverse_visual_order_for_forced_breaks() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column-reverse;width:40px;height:20px"),
     );
-    let visual_top = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:1;height:10px"),
-    );
+    let visual_top = doc.append_element(Some(flex), "div", Some("order:1;height:10px"));
     let visual_bottom_forced_break = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("order:0;break-before:page;height:10px"),
     );
 
@@ -3009,26 +2737,15 @@ fn layout_pages_keeps_column_reverse_visual_last_item_at_page_edge() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column-reverse;width:40px"),
     );
-    let visual_top = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:1;height:40px"),
-    );
-    let visual_bottom = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("order:0;height:70px"),
-    );
+    let visual_top = doc.append_element(Some(flex), "div", Some("order:1;height:40px"));
+    let visual_bottom = doc.append_element(Some(flex), "div", Some("order:0;height:70px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -3061,25 +2778,22 @@ fn layout_pages_orders_grid_rows_by_resolved_placement_before_forced_break() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
     );
     let row_two = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:2;order:0;break-before:page;height:60px"),
     );
     let _comment = doc.append_comment(Some(grid), "not a grid item");
     let row_one = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:1;order:1;height:60px"),
     );
 
@@ -3115,24 +2829,21 @@ fn layout_pages_processes_single_column_grid_in_placed_row_order() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
     );
     let first_row = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:1;order:1;height:60px"),
     );
     let second_row = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:2;order:0;height:60px"),
     );
 
@@ -3169,18 +2880,16 @@ fn layout_pages_coalesces_zero_height_named_boxes_at_same_position() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;page:first;height:0px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;page:last;height:0px"),
     );
 
@@ -3198,8 +2907,8 @@ fn layout_pages_joins_a_non_empty_named_box_to_a_preceding_zero_height_named_box
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let mut boxes = Vec::new();
     for style in [
         "display:block;page:a;height:10px",
@@ -3207,7 +2916,7 @@ fn layout_pages_joins_a_non_empty_named_box_to_a_preceding_zero_height_named_box
         "display:block;page:c;height:10px",
         "display:block;page:d;height:10px",
     ] {
-        boxes.push(doc.append_element(Some(body), "div", Style::default(), Some(style)));
+        boxes.push(doc.append_element(Some(body), "div", Some(style)));
     }
 
     let rules = build_rule_tree(&doc);
@@ -3235,15 +2944,15 @@ fn layout_pages_keeps_an_empty_box_at_a_full_page_end_on_that_page() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let mut boxes = Vec::new();
     for style in [
         "display:block;height:100px",
         "display:block;height:0px",
         "display:block;page:b;height:10px",
     ] {
-        boxes.push(doc.append_element(Some(body), "div", Style::default(), Some(style)));
+        boxes.push(doc.append_element(Some(body), "div", Some(style)));
     }
 
     let rules = build_rule_tree(&doc);
@@ -3276,12 +2985,12 @@ fn named_page_slices(body_style: &str, children: &[(&str, &[&str])]) -> Vec<Opti
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some(body_style));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some(body_style));
     for (style, grandchildren) in children {
-        let child = doc.append_element(Some(body), "div", Style::default(), Some(*style));
+        let child = doc.append_element(Some(body), "div", Some(*style));
         for grandchild in *grandchildren {
-            doc.append_element(Some(child), "div", Style::default(), Some(*grandchild));
+            doc.append_element(Some(child), "div", Some(*grandchild));
         }
     }
     let rules = build_rule_tree(&doc);
@@ -3325,40 +3034,18 @@ fn layout_pages_does_not_seed_transposed_pages_from_names_inside_a_table() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl"),
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let absolute = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:absolute"),
-    );
-    let table = doc.append_element(
-        Some(absolute),
-        "table",
-        Style::default(),
-        Some("display:table"),
-    );
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let absolute = doc.append_element(Some(body), "div", Some("position:absolute"));
+    let table = doc.append_element(Some(absolute), "table", Some("display:table"));
     let group = doc.append_element(
         Some(table),
         "tbody",
-        Style::default(),
         Some("display:table-row-group;page:inner"),
     );
-    let row = doc.append_element(
-        Some(group),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -3436,25 +3123,23 @@ fn layout_pages_does_not_treat_a_display_contents_writing_mode_wrapper_as_orthog
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let contents = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:contents;writing-mode:vertical-rl"),
     );
     let block = doc.append_element(
         Some(contents),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:horizontal-tb"),
     );
     for style in [
         "display:block;page:a;height:10px",
         "display:block;page:b;height:10px",
     ] {
-        doc.append_element(Some(block), "div", Style::default(), Some(style));
+        doc.append_element(Some(block), "div", Some(style));
     }
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -3475,10 +3160,10 @@ fn paginate_tree(rows: &[(usize, &str, &str)]) -> (Document, Vec<PageSlice>) {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let mut ids = vec![doc.append_element(Some(html), "body", Style::default(), None::<&str>)];
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let mut ids = vec![doc.append_element(Some(html), "body", None::<&str>)];
     for &(parent, tag, style) in rows {
-        let id = doc.append_element(Some(ids[parent]), tag, Style::default(), Some(style));
+        let id = doc.append_element(Some(ids[parent]), tag, Some(style));
         ids.push(id);
     }
     let rules = build_rule_tree(&doc);
@@ -3534,25 +3219,19 @@ fn layout_pages_keeps_page_names_inside_a_blockified_inline_block_flex_item() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    let item = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:inline-block"),
-    );
+    let item = doc.append_element(Some(flex), "div", Some("display:inline-block"));
     for style in [
         "display:block;page:a;height:10px",
         "display:block;page:b;height:10px",
     ] {
-        doc.append_element(Some(item), "div", Style::default(), Some(style));
+        doc.append_element(Some(item), "div", Some(style));
     }
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -3572,18 +3251,16 @@ fn layout_pages_keeps_the_margin_of_a_forced_break_box_after_a_margin_filled_pag
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;margin:25px 0;height:50px"),
     );
     let second = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;margin:25px 0;height:10px;break-before:page"),
     );
 
@@ -3612,24 +3289,17 @@ fn layout_pages_processes_mixed_auto_and_explicit_grid_rows_by_resolved_placemen
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
     );
-    let auto_row_one = doc.append_element(
-        Some(grid),
-        "div",
-        Style::default(),
-        Some("order:1;height:60px"),
-    );
+    let auto_row_one = doc.append_element(Some(grid), "div", Some("order:1;height:60px"));
     let explicit_row_two = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:2;order:0;height:60px"),
     );
 
@@ -3669,19 +3339,17 @@ fn layout_pages_orders_direct_grid_text_before_later_forced_break() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:100px;grid-template-rows:60px 60px"),
     );
     let first_row_text = doc.append_text(grid, "first row text");
     let later_row_forced_break = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:2;order:-1;break-before:page;height:60px"),
     );
 
@@ -3716,24 +3384,21 @@ fn layout_pages_orders_negative_explicit_grid_rows_by_placement() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
     );
     let first_row = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:-3;order:1;height:60px"),
     );
     let second_row = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:-2;order:0;height:60px"),
     );
 
@@ -3770,24 +3435,21 @@ fn layout_pages_uses_resolved_rows_for_reversed_grid_lines_and_order() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
     );
     let reversed_row_lines = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:2 / 1;height:60px"),
     );
     let later_row_forced_break = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:2 / 3;order:-1;break-before:page;height:60px"),
     );
 
@@ -3826,27 +3488,24 @@ fn layout_pages_orders_relative_grid_items_by_resolved_placement() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:40px;grid-template-rows:20px 20px"),
     );
     let relative_first_row = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:1;position:relative;top:60px;height:20px"),
     );
     let page_break_after_second_row = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("grid-column:1;grid-row:2;break-after:page;height:20px"),
     );
-    let following = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let following = doc.append_element(Some(body), "div", Some("height:10px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -3881,17 +3540,16 @@ fn layout_pages_places_footnote_at_page_bottom_without_flow_footprint() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let lead = doc.append_element(Some(body), "div", Style::default(), Some("height:20px"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let lead = doc.append_element(Some(body), "div", Some("height:20px"));
     let note = doc.append_element(
         Some(body),
         "aside",
-        Style::default(),
         Some("float:footnote;height:10px;width:50px"),
     );
     doc.append_text(note, "note");
-    let following = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+    let following = doc.append_element(Some(body), "div", Some("height:10px"));
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -3923,18 +3581,16 @@ fn direct_absolute_auto_width_shrink_to_fit_empty_with_margin() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let abs = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("position:absolute; margin-right:20px; border:10px solid black"),
     );
     let _auto_margin_abs = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("position:absolute; margin-left:auto; margin-right:auto"),
     );
     let rules = build_rule_tree(&doc);
@@ -3961,20 +3617,10 @@ fn direct_absolute_auto_width_shrink_to_fit_block_child() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let abs_pos = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:absolute; height:100px"),
-    );
-    let _child = doc.append_element(
-        Some(abs_pos),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let abs_pos = doc.append_element(Some(body), "div", Some("position:absolute; height:100px"));
+    let _child = doc.append_element(Some(abs_pos), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -3999,26 +3645,11 @@ fn nested_absolute_auto_width_matches_direct_body_shrink() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let outer = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:relative"),
-    );
-    let abs_pos = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("position:absolute; height:100px"),
-    );
-    let _child = doc.append_element(
-        Some(abs_pos),
-        "div",
-        Style::default(),
-        Some("width:100px;height:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let outer = doc.append_element(Some(body), "div", Some("position:relative"));
+    let abs_pos = doc.append_element(Some(outer), "div", Some("position:absolute; height:100px"));
+    let _child = doc.append_element(Some(abs_pos), "div", Some("width:100px;height:20px"));
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
 
@@ -4168,7 +3799,7 @@ fn first_baseline_includes_the_top_padding_and_border() {
     lay_out(&mut doc, &cascade);
     // Ask the root for its layout output again: the baselines are part of it.
     let output = {
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         taffy::LayoutPartialTree::compute_child_layout(
             &mut session,
             NodeId::from(root),
@@ -4234,7 +3865,7 @@ fn an_inline_block_baseline_follows_the_last_ifc_line() {
         ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;width:50px");
     lay_out(&mut doc, &cascade);
     let output = {
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         taffy::LayoutPartialTree::compute_child_layout(
             &mut session,
             NodeId::from(wrapper),
@@ -4462,7 +4093,6 @@ fn the_wrap_mode_around_an_atomic_inline_decides_whether_its_line_moves_below_a_
         doc.append_element(
             Some(span),
             "div",
-            Style::default(),
             Some("display:inline-block;width:80px;height:10px"),
         );
         doc.mark_in_document_flags();
@@ -4750,7 +4380,6 @@ fn a_float_wider_than_the_rest_of_its_line_waits_for_the_next_line() {
     let second = doc.append_element(
         Some(root),
         "div",
-        Style::default(),
         Some("display:block;float:left;width:60px;height:10px"),
     );
     doc.append_text(root, " bb");
@@ -4783,7 +4412,7 @@ fn a_paragraph_inside_a_float_of_a_root_is_measured() {
     // the float gets the height of its two lines.
     let (mut doc, cascade, float, root) =
         ahem_paragraph_with_float("aa", "float:left;width:30px", " bbbb", "");
-    let inner = doc.append_element(Some(float), "div", Style::default(), Some("display:block"));
+    let inner = doc.append_element(Some(float), "div", Some("display:block"));
     doc.append_text(inner, "ff gg");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -4975,12 +4604,7 @@ fn ahem_paragraph_with_floats(
         ahem_paragraph_with_float(before, first.0, first.1, root_css);
     let mut floats = vec![float];
     for (css, after) in more {
-        floats.push(doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some(&format!("display:block;{css}")),
-        ));
+        floats.push(doc.append_element(Some(root), "div", Some(&format!("display:block;{css}"))));
         if !after.is_empty() {
             doc.append_text(root, *after);
         }
@@ -5135,7 +4759,6 @@ fn atomics_whose_margin_boxes_add_up_to_the_line_share_it() {
     let second = doc.append_element(
         Some(root),
         "span",
-        Style::default(),
         Some("display:inline-block;width:calc(50% - 8.018px);height:10px;margin-inline:4.009px"),
     );
     doc.mark_in_document_flags();
@@ -5182,24 +4805,9 @@ fn an_inline_block_holding_a_paragraph_is_measured() {
     // siblings are blocks). The state of the engine must survive measuring it
     // from inside the outer paragraph.
     let (mut doc, _cascade, root) = ahem_paragraph("aa ", "width:100px");
-    let atomic_box = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline-block"),
-    );
-    let middle = doc.append_element(
-        Some(atomic_box),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let inner = doc.append_element(
-        Some(middle),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let atomic_box = doc.append_element(Some(root), "span", Some("display:inline-block"));
+    let middle = doc.append_element(Some(atomic_box), "div", Some("display:block"));
+    let inner = doc.append_element(Some(middle), "div", Some("display:block"));
     doc.append_text(inner, "bb cc");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -5225,7 +4833,6 @@ fn an_inline_block_baseline_counts_its_top_margin() {
     let atomic = doc.append_element(
         Some(root),
         "span",
-        crate::LayoutStyle::default(),
         Some("display:inline-block;width:20px;margin-top:3px"),
     );
     doc.append_text(atomic, "ii");
@@ -5254,7 +4861,6 @@ fn a_clipping_inline_block_sits_on_its_bottom_margin_edge() {
     let atomic = doc.append_element(
         Some(root),
         "span",
-        crate::LayoutStyle::default(),
         Some("display:inline-block;width:20px;height:10px;overflow:hidden"),
     );
     doc.append_text(atomic, "ii");
@@ -5287,12 +4893,7 @@ fn an_inline_block_with_text_sits_on_its_last_baseline() {
     // from its top) and it lines up with the surrounding text: same line
     // height, top at y=0.
     let (mut doc, _cascade, root) = ahem_paragraph("aa ", "width:100px");
-    let atomic = doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline-block;width:20px"),
-    );
+    let atomic = doc.append_element(Some(root), "span", Some("display:inline-block;width:20px"));
     doc.append_text(atomic, "ii");
     doc.append_text(root, " bb");
     doc.mark_in_document_flags();
@@ -5357,7 +4958,6 @@ fn an_atomic_beside_a_float_starts_after_it() {
     let atomic = doc.append_element(
         Some(root),
         "span",
-        crate::LayoutStyle::default(),
         Some("display:inline-block;width:30px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -5378,7 +4978,6 @@ fn an_image_is_placed_like_an_inline_block() {
     let image = doc.append_element(
         Some(root),
         "img",
-        crate::LayoutStyle::default(),
         Some("display:inline;width:10px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -5405,7 +5004,6 @@ fn paragraph_with_block(
     let block = doc.append_element(
         Some(root),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;{block_css}")),
     );
     doc.append_text(root, after);
@@ -5544,13 +5142,11 @@ fn dimensioned_empty_vertical_block_children_follow_the_block_axis() {
         let first = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:20px;height:30px"),
         );
         let second = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:20px;height:30px"),
         );
         doc.mark_in_document_flags();
@@ -5578,14 +5174,12 @@ fn vertical_rl_keeps_multiple_block_children_in_logical_source_order() {
     let first = doc.append_element(
         Some(root),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;width:12px;height:8px"),
     );
     doc.append_text(root, "bb");
     let second = doc.append_element(
         Some(root),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;width:14px;height:8px"),
     );
     doc.append_text(root, "cc");
@@ -5649,7 +5243,6 @@ fn vertical_block_children_collapse_adjoining_block_axis_margins() {
         let first = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:10px;height:20px;{first_margin}"
             )),
@@ -5658,7 +5251,6 @@ fn vertical_block_children_collapse_adjoining_block_axis_margins() {
         let second = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:10px;height:20px;{second_margin}"
             )),
@@ -5695,7 +5287,6 @@ fn vertical_block_child_margin_percentages_resolve_against_inline_size() {
         let block = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:10px;height:20px;{block_start_margin}"
             )),
@@ -5725,7 +5316,6 @@ fn vertical_block_child_percentage_edges_use_parent_inline_size() {
         let block = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;width:30px;height:49px;padding:10%;{block_start_side}:10%"
             )),
@@ -5766,7 +5356,6 @@ fn vertical_block_children_distribute_auto_inline_margins() {
         let block = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;width:10px;height:20px;margin-top:auto;margin-bottom:auto"),
         );
         doc.append_text(block, "a");
@@ -5788,7 +5377,6 @@ fn vertical_block_child_auto_inline_margin_is_zero_when_the_child_overflows() {
         let block = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;width:10px;height:40px;margin-top:auto"),
         );
         doc.append_text(block, "a");
@@ -5809,48 +5397,23 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
             ahem_paragraph("", "width:100px;height:50px;writing-mode:vertical-rl");
         let mut blocks = Vec::new();
         if nested {
-            let first = doc.append_element(
-                Some(root),
-                "div",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            let first = doc.append_element(Some(root), "div", Some("display:block"));
             doc.append_text(first, "aa");
             blocks.push(first);
 
-            let wrapper = doc.append_element(
-                Some(root),
-                "if-zh",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            let wrapper = doc.append_element(Some(root), "if-zh", Some("display:block"));
             for text in ["bb", "cc"] {
-                let child = doc.append_element(
-                    Some(wrapper),
-                    "div",
-                    crate::LayoutStyle::default(),
-                    Some("display:block"),
-                );
+                let child = doc.append_element(Some(wrapper), "div", Some("display:block"));
                 doc.append_text(child, text);
                 blocks.push(child);
             }
 
-            let last = doc.append_element(
-                Some(root),
-                "div",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            let last = doc.append_element(Some(root), "div", Some("display:block"));
             doc.append_text(last, "dd");
             blocks.push(last);
         } else {
             for text in ["aa", "bb", "cc", "dd"] {
-                let block = doc.append_element(
-                    Some(root),
-                    "div",
-                    crate::LayoutStyle::default(),
-                    Some("display:block"),
-                );
+                let block = doc.append_element(Some(root), "div", Some("display:block"));
                 doc.append_text(block, text);
                 blocks.push(block);
             }
@@ -5929,15 +5492,9 @@ fn a_float_anchored_right_before_a_block_child_is_placed_above_it() {
     let float = doc.append_element(
         Some(root),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;float:left;width:30px;height:10px"),
     );
-    let block = doc.append_element(
-        Some(root),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block;height:20px"),
-    );
+    let block = doc.append_element(Some(root), "div", Some("display:block;height:20px"));
     doc.append_text(root, "bb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -5974,7 +5531,6 @@ fn a_paragraph_that_contains_its_floats_contains_those_of_its_block_children() {
     doc.append_element(
         Some(block),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;float:left;width:30px;height:50px"),
     );
     doc.mark_in_document_flags();
@@ -5996,12 +5552,7 @@ fn a_paragraph_that_contains_its_floats_contains_those_of_its_block_children() {
 /// "aa ", a child of the given element css, then `after`.
 fn unsized_paragraph_with_child(child_css: &str, after: &str) -> (Document, CascadeResult, usize) {
     let (mut doc, _cascade, root) = ahem_paragraph("aa ", "");
-    doc.append_element(
-        Some(root),
-        "span",
-        crate::LayoutStyle::default(),
-        Some(child_css),
-    );
+    doc.append_element(Some(root), "span", Some(child_css));
     doc.append_text(root, after);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -6095,7 +5646,6 @@ fn a_right_float_inside_a_narrow_block_child_sits_at_the_block_edge() {
         let float = doc.append_element(
             Some(block),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;float:right;width:10px;height:10px"),
         );
         doc.mark_in_document_flags();
@@ -6151,7 +5701,6 @@ fn an_inline_element_has_its_pinned_border_box() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                crate::LayoutStyle::default(),
                 Some(format!("display:inline;{SPAN_EDGES}").as_str()),
             );
             doc.append_text(inner, "bb");
@@ -6180,12 +5729,8 @@ fn a_padded_root_places_the_inline_element_inside_its_content_box() {
             "width:200px;padding:0 5px 0 7px;box-sizing:content-box",
             |doc, root| {
                 doc.append_text(root, "aa");
-                let inner = doc.append_element(
-                    Some(root),
-                    "span",
-                    crate::LayoutStyle::default(),
-                    Some("display:inline;padding:0 3px"),
-                );
+                let inner =
+                    doc.append_element(Some(root), "span", Some("display:inline;padding:0 3px"));
                 doc.append_text(inner, "bb");
                 span_id = inner;
             },
@@ -6212,12 +5757,7 @@ fn a_root_with_a_top_border_places_the_inline_element_below_it() {
     let (mut doc, cascade, root) = ahem_paragraph_with(
         "width:200px;border-width:6px 0 0 0;border-style:solid;padding-top:1px",
         |doc, root| {
-            let inner = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:inline"),
-            );
+            let inner = doc.append_element(Some(root), "span", Some("display:inline"));
             doc.append_text(inner, "bb");
             span_id = inner;
         },
@@ -6240,7 +5780,6 @@ fn a_wrapping_inline_element_has_the_bounding_box_of_its_pieces() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            crate::LayoutStyle::default(),
             Some(format!("display:inline;{SPAN_EDGES}").as_str()),
         );
         doc.append_text(inner, "aaaa bbbb");
@@ -6258,19 +5797,9 @@ fn nested_inline_elements_accumulate_to_their_own_boxes() {
     let (mut outer_id, mut inner_id) = (0, 0);
     let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
         doc.append_text(root, "a");
-        let outer = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline;padding:0 1px"),
-        );
+        let outer = doc.append_element(Some(root), "span", Some("display:inline;padding:0 1px"));
         doc.append_text(outer, "b");
-        let inner = doc.append_element(
-            Some(outer),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline;padding:0 2px"),
-        );
+        let inner = doc.append_element(Some(outer), "span", Some("display:inline;padding:0 2px"));
         doc.append_text(inner, "c");
         outer_id = outer;
         inner_id = inner;
@@ -6288,12 +5817,7 @@ fn an_empty_inline_element_has_a_zero_width_box_on_its_line() {
     let mut span_id = 0;
     let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
         doc.append_text(root, "aa");
-        span_id = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline"),
-        );
+        span_id = doc.append_element(Some(root), "span", Some("display:inline"));
     });
     lay_out(&mut doc, &cascade);
     assert_eq!(absolute_rect(&doc, span_id), (20.0, 0.0, 0.0, 10.0));
@@ -6306,12 +5830,7 @@ fn an_inline_element_without_a_piece_gets_an_empty_layout() {
     let (mut doc, cascade, root) =
         ahem_paragraph_with("width:200px;padding:5px 0 0 7px", |doc, root| {
             doc.append_text(root, "aa");
-            span_id = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:none;padding:0 3px"),
-            );
+            span_id = doc.append_element(Some(root), "span", Some("display:none;padding:0 3px"));
             doc.append_text(span_id, "bb");
         });
     lay_out(&mut doc, &cascade);
@@ -6334,12 +5853,7 @@ fn a_second_layout_does_not_keep_the_stale_box_of_a_removed_element() {
     let mut span_id = 0;
     let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
         doc.append_text(root, "aa");
-        let inner = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline;padding:0 3px"),
-        );
+        let inner = doc.append_element(Some(root), "span", Some("display:inline;padding:0 3px"));
         doc.append_text(inner, "bb");
         span_id = inner;
     });
@@ -6362,12 +5876,7 @@ fn a_wide_padding_does_not_make_the_layout_check_zero_the_element() {
     // negative content box and zero the element.
     let mut span_id = 0;
     let (mut doc, cascade, _root) = ahem_paragraph_with("width:60px", |doc, root| {
-        let inner = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline;padding:0 40px"),
-        );
+        let inner = doc.append_element(Some(root), "span", Some("display:inline;padding:0 40px"));
         doc.append_text(inner, "a b");
         span_id = inner;
     });
@@ -6388,12 +5897,7 @@ fn relayout_records_the_boxes_again_for_the_new_lines() {
     let (mut doc, cascade, root) = ahem_paragraph_with(
         "padding-left:7px;border-width:3px 0 0 0;border-style:solid",
         |doc, root| {
-            let inner = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:inline"),
-            );
+            let inner = doc.append_element(Some(root), "span", Some("display:inline"));
             doc.append_text(inner, "aaaa bbbb");
             span_id = inner;
         },
@@ -6419,12 +5923,8 @@ fn pages_with_a_breaking_inline() -> (usize, bool) {
     // At 30px the span lands on the third line, 20px down the page.
     let (mut doc, cascade, root) = ahem_paragraph_with("width:30px", |doc, root| {
         doc.append_text(root, "aa aa ");
-        let inner = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline;break-before:page"),
-        );
+        let inner =
+            doc.append_element(Some(root), "span", Some("display:inline;break-before:page"));
         doc.append_text(inner, "bb");
         doc.append_text(root, " cc");
     });
@@ -6448,7 +5948,6 @@ fn a_relative_inline_element_is_located_with_its_offset() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            crate::LayoutStyle::default(),
             Some("display:inline;position:relative;left:5px;top:2px"),
         );
         doc.append_text(inner, "bb");
@@ -6470,7 +5969,6 @@ fn a_relative_inline_is_located() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                crate::LayoutStyle::default(),
                 Some("display:inline;position:relative;right:4px;bottom:3px"),
             );
             doc.append_text(inner, "bb");
@@ -6496,16 +5994,10 @@ fn a_child_of_a_relative_inline_moves_with_it() {
         let outer = doc.append_element(
             Some(root),
             "span",
-            crate::LayoutStyle::default(),
             Some("display:inline;position:relative;left:5px"),
         );
         doc.append_text(outer, "a");
-        let inner = doc.append_element(
-            Some(outer),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline"),
-        );
+        let inner = doc.append_element(Some(outer), "span", Some("display:inline"));
         doc.append_text(inner, "b");
         outer_id = outer;
         inner_id = inner;
@@ -6522,18 +6014,8 @@ fn an_element_inside_a_contents_element_is_located_from_the_nearest_box() {
     let (mut wrapper_id, mut inner_id) = (0, 0);
     let (mut doc, cascade, root) = ahem_paragraph_with("width:200px", |doc, root| {
         doc.append_text(root, "aa");
-        let wrapper = doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:contents"),
-        );
-        let inner = doc.append_element(
-            Some(wrapper),
-            "span",
-            crate::LayoutStyle::default(),
-            Some("display:inline;padding:0 3px"),
-        );
+        let wrapper = doc.append_element(Some(root), "span", Some("display:contents"));
+        let inner = doc.append_element(Some(wrapper), "span", Some("display:inline;padding:0 3px"));
         doc.append_text(inner, "bb");
         wrapper_id = wrapper;
         inner_id = inner;
@@ -6551,16 +6033,10 @@ fn a_block_inside_a_contents_child_of_a_paragraph_still_breaks_the_page() {
     let pages = |switch: bool| {
         let (mut doc, cascade, _root) = ahem_paragraph_with("width:200px", |doc, root| {
             doc.append_text(root, "aa");
-            let wrapper = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:contents"),
-            );
+            let wrapper = doc.append_element(Some(root), "span", Some("display:contents"));
             let block = doc.append_element(
                 Some(wrapper),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:block;break-before:page"),
             );
             doc.append_text(block, "bb");
@@ -6752,17 +6228,16 @@ fn a_list_item_becomes_an_ifc_root() {
 /// at 20px, with a line height of 1.
 fn flex_baseline_item_ys() -> (f32, f32) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;align-items:baseline;font-family:Ahem;line-height:1"),
     );
-    let small = doc.append_element(Some(flex), "div", Style::default(), Some("font-size:10px"));
+    let small = doc.append_element(Some(flex), "div", Some("font-size:10px"));
     doc.append_text(small, "aa");
-    let large = doc.append_element(Some(flex), "div", Style::default(), Some("font-size:20px"));
+    let large = doc.append_element(Some(flex), "div", Some("font-size:20px"));
     doc.append_text(large, "bb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -6809,16 +6284,15 @@ fn an_empty_inline_block_keeps_its_margin_box_baseline() {
 #[test]
 fn bare_text_next_to_an_element_item_gets_its_own_root() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     let bare = doc.append_text(flex, "aa");
-    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let item = doc.append_element(Some(flex), "div", Some("display:block"));
     doc.append_text(item, "bbbb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -6891,7 +6365,7 @@ fn a_text_node_root_answers_the_line_and_baseline_readers() {
 fn bare_text_baseline_item_ys() -> (f32, f32) {
     let (mut doc, _, flex) =
         ahem_paragraph_in_text_only("display:flex;align-items:baseline;line-height:1", "aa");
-    let large = doc.append_element(Some(flex), "div", Style::default(), Some("font-size:20px"));
+    let large = doc.append_element(Some(flex), "div", Some("font-size:20px"));
     doc.append_text(large, "bb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -6928,7 +6402,6 @@ fn a_flex_row_places_bare_text_after_its_sibling_item() {
     let item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;width:30px;height:10px"),
     );
     let text = doc.append_text(flex, "aaaa");
@@ -6964,7 +6437,6 @@ fn a_lone_empty_inline_block_is_indented_once() {
     let span = doc.append_element(
         Some(root),
         "span",
-        Style::default(),
         Some("display:inline-block;width:10px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -6987,7 +6459,6 @@ fn an_inline_block_root_with_side_margins_shrinks_to_its_content() {
         let inline_block = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline-block;margin:0 20px"),
         );
         doc.append_text(inline_block, "aaaa bbbb cccc");
@@ -7008,12 +6479,7 @@ fn an_inline_block_root_under_an_authored_width_shrinks_to_its_content() {
     // width is auto, so it shrinks to fit (CSS 2.1 10.3.9): 20px, beside
     // "aa" on the first line. It does not take the paragraph's 200px.
     let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
-    let inline_block = doc.append_element(
-        Some(root),
-        "span",
-        Style::default(),
-        Some("display:inline-block"),
-    );
+    let inline_block = doc.append_element(Some(root), "span", Some("display:inline-block"));
     doc.append_text(inline_block, "bb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -7152,8 +6618,7 @@ fn a_table_cell_with_mixed_block_and_inline_content_is_laid_out() {
         let (mut doc, cascade, [table, _, cell]) =
             crate::layout::test_support::ahem_table("", "", |doc, cell| {
                 doc.append_text(cell, "aaaa");
-                let block =
-                    doc.append_element(Some(cell), "div", Style::default(), Some("display:block"));
+                let block = doc.append_element(Some(cell), "div", Some("display:block"));
                 doc.append_text(block, "bbbb");
             });
         lay_out(&mut doc, &cascade);
@@ -7207,19 +6672,9 @@ fn paragraph_with_block_children(
     b_css: &str,
 ) -> (Document, CascadeResult, usize, [usize; 2]) {
     let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
-    let a = doc.append_element(
-        Some(root),
-        "div",
-        Style::default(),
-        Some(&format!("display:block;{a_css}")),
-    );
+    let a = doc.append_element(Some(root), "div", Some(&format!("display:block;{a_css}")));
     doc.append_text(a, "bb");
-    let b = doc.append_element(
-        Some(root),
-        "div",
-        Style::default(),
-        Some(&format!("display:block;{b_css}")),
-    );
+    let b = doc.append_element(Some(root), "div", Some(&format!("display:block;{b_css}")));
     doc.append_text(b, "cc");
     doc.append_text(root, "dddd");
     doc.mark_in_document_flags();
@@ -7276,20 +6731,10 @@ fn a_block_childs_inner_margin_collapses_through_it() {
     // margin: 30px between A's bottom and B's top.
     let gap = || {
         let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
-        let a = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
-        let p = doc.append_element(
-            Some(a),
-            "div",
-            Style::default(),
-            Some("display:block;margin-bottom:20px"),
-        );
+        let a = doc.append_element(Some(root), "div", Some("display:block"));
+        let p = doc.append_element(Some(a), "div", Some("display:block;margin-bottom:20px"));
         doc.append_text(p, "pp");
-        let b = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;margin-top:30px"),
-        );
+        let b = doc.append_element(Some(root), "div", Some("display:block;margin-top:30px"));
         doc.append_text(b, "cc");
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
@@ -7308,12 +6753,7 @@ fn a_block_childs_inner_margin_collapses_through_it() {
 /// with `css` that follows it.
 fn gap_between_line_and_block(css: &str) -> f32 {
     let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
-    let block = doc.append_element(
-        Some(root),
-        "div",
-        Style::default(),
-        Some(&format!("display:block;{css}")),
-    );
+    let block = doc.append_element(Some(root), "div", Some(&format!("display:block;{css}")));
     doc.append_text(block, "bb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -7345,12 +6785,7 @@ fn three_blocks(
         .into_iter()
         .enumerate()
     {
-        let block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some(&format!("display:block;{css}")),
-        );
+        let block = doc.append_element(Some(root), "div", Some(&format!("display:block;{css}")));
         if !text.is_empty() {
             doc.append_text(block, text);
         }
@@ -7445,12 +6880,7 @@ fn the_last_block_childs_bottom_margin_collapses_through_the_root() {
     // root's to collapse with whatever follows it.
     let height = || {
         let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
-        let block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;margin-bottom:12px"),
-        );
+        let block = doc.append_element(Some(root), "div", Some("display:block;margin-bottom:12px"));
         doc.append_text(block, "bb");
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
@@ -7469,12 +6899,7 @@ fn a_formatting_context_root_contains_its_last_block_childs_bottom_margin() {
     // bottom margin of its last block child stays inside it, 10 + 10 + 12.
     let height = || {
         let (mut doc, _cascade, root) = ahem_paragraph_in("display:flex", "", "aaaa");
-        let block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;margin-bottom:12px"),
-        );
+        let block = doc.append_element(Some(root), "div", Some("display:block;margin-bottom:12px"));
         doc.append_text(block, "bb");
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
@@ -7534,16 +6959,10 @@ fn every_authored_shape_lays_out_without_an_error() {
         "position:fixed;width:100px",
         |doc, root| {
             doc.append_text(root, "aa ");
-            doc.append_element(
-                Some(root),
-                "div",
-                Style::default(),
-                Some("display:block;break-before:page"),
-            );
+            doc.append_element(Some(root), "div", Some("display:block;break-before:page"));
             doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("position:absolute;width:10px;height:10px"),
             );
         },
@@ -7590,12 +7009,7 @@ fn degraded_size(css: &str, text: &str, on_root: bool) -> (f32, f32) {
         if on_root { text } else { "" },
     );
     if !on_root {
-        let span = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some(&format!("display:inline;{css}")),
-        );
+        let span = doc.append_element(Some(root), "span", Some(&format!("display:inline;{css}")));
         doc.append_text(span, text);
     }
     doc.mark_in_document_flags();
@@ -7632,7 +7046,6 @@ fn vertical_auto_inline_extent_includes_block_child_physical_height() {
         let child = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:20px;height:80px;margin-top:3px;margin-bottom:7px"),
         );
         doc.append_text(child, "bb");
@@ -7669,7 +7082,7 @@ fn degraded_forms_have_their_pinned_sizes() {
 /// height.
 fn paragraph_with_input(css: &str) -> (f32, f32) {
     let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aaaa");
-    let input = doc.append_element(Some(root), "input", Style::default(), Some(css));
+    let input = doc.append_element(Some(root), "input", Some(css));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -7712,7 +7125,6 @@ fn a_block_child_with_auto_side_margins_is_centred() {
         let block = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some(&format!("display:block;width:100px;{css}")),
         );
         doc.append_text(block, "bb");
@@ -7746,24 +7158,9 @@ fn an_inline_table_sits_on_the_line_like_an_inline_block() {
     // x = 20 on the first line (CSS 2.1 17.4: an inline-level table).
     let place = || {
         let (mut doc, _cascade, root) = ahem_paragraph_in("", "width:200px", "aa");
-        let table = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("display:inline-table"),
-        );
-        let row = doc.append_element(
-            Some(table),
-            "span",
-            Style::default(),
-            Some("display:table-row"),
-        );
-        let cell = doc.append_element(
-            Some(row),
-            "span",
-            Style::default(),
-            Some("display:table-cell"),
-        );
+        let table = doc.append_element(Some(root), "span", Some("display:inline-table"));
+        let row = doc.append_element(Some(table), "span", Some("display:table-row"));
+        let cell = doc.append_element(Some(row), "span", Some("display:table-cell"));
         doc.append_text(cell, "bb");
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
@@ -7786,7 +7183,6 @@ fn a_relatively_positioned_inline_block_is_offset_from_its_place_on_the_line() {
         let block = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(&format!(
                 "display:inline-block;width:10px;height:10px;{css}"
             )),
@@ -7821,7 +7217,6 @@ fn a_relatively_positioned_float_is_placed_like_a_float() {
         let float = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:block;float:left;width:10px;height:10px;position:relative;left:5px"),
         );
         doc.mark_in_document_flags();
@@ -7846,7 +7241,6 @@ fn an_atomic_in_a_right_to_left_paragraph_is_placed_from_the_right_edge() {
         let block = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline-block;width:10px;height:10px"),
         );
         doc.append_text(root, "bb");
@@ -7866,18 +7260,12 @@ fn an_atomic_in_a_right_to_left_paragraph_is_placed_from_the_right_edge() {
 /// sibling's y.
 fn root_then_sibling(root_css: &str) -> (f32, f32) {
     let (mut doc, _cascade, root) = ahem_paragraph_in("", root_css, "aaaa");
-    let block = doc.append_element(
-        Some(root),
-        "div",
-        Style::default(),
-        Some("display:block;margin-bottom:12px"),
-    );
+    let block = doc.append_element(Some(root), "div", Some("display:block;margin-bottom:12px"));
     doc.append_text(block, "bb");
     let parent = doc.parent_of(root).expect("parent");
     let sibling = doc.append_element(
         Some(parent),
         "div",
-        Style::default(),
         Some("display:block;margin-top:3px;height:10px"),
     );
     doc.mark_in_document_flags();
@@ -7928,7 +7316,7 @@ fn generated_paragraph(sheet: &str, root_css: &str) -> (Document, CascadeResult,
             &format!("line-height:10px;{root_css}"),
             |doc, root| {
                 doc.append_text(root, "aa ");
-                let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+                let span = doc.append_element(Some(root), "span", None::<&str>);
                 doc.set_element_attribute(span, "data-k", "zz")
                     .expect("attribute");
                 doc.append_text(span, "bb");
@@ -8355,18 +7743,8 @@ fn paragraph_with_block_child(inner: &str) -> (Document, CascadeResult, usize, u
     let mut block = 0;
     let (doc, cascade, root) = paragraph_of(|doc, root| {
         doc.append_text(root, "aa ");
-        block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some(&format!("display:block;{inner}")),
-        );
-        let first = doc.append_element(
-            Some(block),
-            "div",
-            Style::default(),
-            Some("display:block;margin-top:10px"),
-        );
+        block = doc.append_element(Some(root), "div", Some(&format!("display:block;{inner}")));
+        let first = doc.append_element(Some(block), "div", Some("display:block;margin-top:10px"));
         doc.append_text(first, "bb");
         doc.append_text(root, " cc");
     });
@@ -8446,16 +7824,10 @@ fn block_after_float(float_css: &str, css: &str) -> (f32, f32, f32, f32) {
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some(&format!("display:block;float:left;{float_css}")),
         );
         doc.append_text(root, "aa");
-        block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some(&format!("display:block;{css}")),
-        );
+        block = doc.append_element(Some(root), "div", Some(&format!("display:block;{css}")));
         doc.append_text(block, "bb");
     });
     lay_out(&mut doc, &cascade);
@@ -8480,17 +7852,11 @@ fn block_among_floats(floats: &[&str], css: &str) -> (f32, f32, f32, f32) {
             doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;float:left;{clear}{float_css}")),
             );
         }
         doc.append_text(root, "aa");
-        block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some(&format!("display:block;{css}")),
-        );
+        block = doc.append_element(Some(root), "div", Some(&format!("display:block;{css}")));
         doc.append_text(block, "bb");
     });
     lay_out(&mut doc, &cascade);
@@ -8605,7 +7971,7 @@ fn a_table_block_child_is_laid_out() {
         let mut table = 0;
         let (mut doc, cascade, root) = paragraph_of(|doc, root| {
             doc.append_text(root, "aa ");
-            table = doc.append_element(Some(root), "div", Style::default(), Some("display:table"));
+            table = doc.append_element(Some(root), "div", Some("display:table"));
             doc.append_text(table, "bb");
             doc.append_text(root, " cc");
         });
@@ -8643,16 +8009,10 @@ fn a_cleared_line_break_moves_the_next_line_below_the_float() {
             doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("display:block;float:left;width:20px;height:30px"),
             );
             doc.append_text(root, "aa");
-            doc.append_element(
-                Some(root),
-                "br",
-                Style::default(),
-                Some("display:inline;clear:left"),
-            );
+            doc.append_element(Some(root), "br", Some("display:inline;clear:left"));
             doc.append_text(root, "bb");
         });
         lay_out(&mut doc, &cascade);
@@ -8666,16 +8026,10 @@ fn a_cleared_line_break_moves_the_next_line_below_the_float() {
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:20px;height:30px"),
         );
         doc.append_text(root, "aa");
-        doc.append_element(
-            Some(root),
-            "br",
-            Style::default(),
-            Some("display:inline;clear:left"),
-        );
+        doc.append_element(Some(root), "br", Some("display:inline;clear:left"));
         doc.append_text(root, "bb");
     });
     lay_out(&mut doc, &cascade);
@@ -8689,22 +8043,15 @@ fn a_cleared_line_break_inside_an_inline_element_moves_the_next_line() {
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:20px;height:30px"),
         );
         let span = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;padding-right:2px;border-right:1px solid"),
         );
         doc.append_text(span, "aa");
-        doc.append_element(
-            Some(span),
-            "br",
-            Style::default(),
-            Some("display:inline;clear:left"),
-        );
+        doc.append_element(Some(span), "br", Some("display:inline;clear:left"));
         doc.append_text(span, "bb");
     });
     lay_out(&mut doc, &cascade);
@@ -8726,7 +8073,6 @@ fn logical_float_sides_and_clears_are_placed() {
                 float = doc.append_element(
                     Some(root),
                     "div",
-                    Style::default(),
                     Some(&format!("display:block;width:20px;height:20px;{css}")),
                 );
                 doc.append_text(root, "bb");
@@ -8757,14 +8103,9 @@ fn logical_float_sides_and_clears_are_placed() {
 /// `root > [span > ["aaaa", child(css)], " bbbb"]` in a 200px Ahem paragraph.
 fn paragraph_with_span_child(css: &str) -> (Document, CascadeResult, usize) {
     paragraph_of(|doc, root| {
-        let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        let span = doc.append_element(Some(root), "span", None::<&str>);
         doc.append_text(span, "aaaa");
-        doc.append_element(
-            Some(span),
-            "span",
-            Style::default(),
-            Some(&format!("display:block;{css}")),
-        );
+        doc.append_element(Some(span), "span", Some(&format!("display:block;{css}")));
         doc.append_text(root, " bbbb");
     })
 }
@@ -8807,7 +8148,7 @@ fn an_atomic_inside_a_span_has_the_same_absolute_position_as_without_the_span() 
         let mut atomic = 0;
         let (mut doc, cascade, root) = paragraph_of(|doc, root| {
             let parent = if nested {
-                doc.append_element(Some(root), "span", Style::default(), Some("padding-left:0"))
+                doc.append_element(Some(root), "span", Some("padding-left:0"))
             } else {
                 root
             };
@@ -8815,7 +8156,6 @@ fn an_atomic_inside_a_span_has_the_same_absolute_position_as_without_the_span() 
             atomic = doc.append_element(
                 Some(parent),
                 "span",
-                Style::default(),
                 Some("display:inline-block;width:20px;height:10px"),
             );
             doc.append_text(root, " bbbb");
@@ -8835,12 +8175,11 @@ fn an_atomic_inside_a_span_has_the_same_absolute_position_as_without_the_span() 
 #[test]
 fn a_float_inside_a_nested_span_displaces_the_next_lines() {
     let (mut doc, cascade, root) = paragraph_of(|doc, root| {
-        let outer = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
-        let inner = doc.append_element(Some(outer), "span", Style::default(), None::<&str>);
+        let outer = doc.append_element(Some(root), "span", None::<&str>);
+        let inner = doc.append_element(Some(outer), "span", None::<&str>);
         doc.append_element(
             Some(inner),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:120px;height:20px"),
         );
         doc.append_text(outer, "aaaa bbbb cccc");
@@ -8860,9 +8199,9 @@ fn a_block_inside_a_span_splits_the_paragraph() {
         let mut block = 0;
         let (mut doc, cascade, root) = paragraph_of(|doc, root| {
             doc.append_text(root, "aa ");
-            let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+            let span = doc.append_element(Some(root), "span", None::<&str>);
             doc.append_text(span, "bb");
-            block = doc.append_element(Some(span), "div", Style::default(), Some("display:block"));
+            block = doc.append_element(Some(span), "div", Some("display:block"));
             doc.append_text(block, "cc");
             doc.append_text(span, "dd");
             doc.append_text(root, " ee");
@@ -8896,7 +8235,6 @@ fn paragraph_with_absolute_child(css: &str) -> (Document, CascadeResult, usize, 
         span = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(&format!("position:absolute;width:10px;height:10px;{css}")),
         );
         doc.append_text(root, " bbbb");
@@ -8977,12 +8315,11 @@ fn child_of_inline_location(outer_css: &str, child_css: &str) -> (f32, f32) {
     let (mut doc, cascade, root) =
         ahem_paragraph_with("width:200px;position:relative", |doc, root| {
             doc.append_text(root, "aaaa ");
-            let outer = doc.append_element(Some(root), "span", Style::default(), Some(outer_css));
+            let outer = doc.append_element(Some(root), "span", Some(outer_css));
             doc.append_text(outer, "bb");
             child = doc.append_element(
                 Some(outer),
                 "span",
-                Style::default(),
                 Some(&format!("width:10px;height:10px;{child_css}")),
             );
         });
@@ -9068,31 +8405,20 @@ fn the_nearest_positioned_inline_is_the_containing_block() {
     let (mut doc, cascade, _root) =
         ahem_paragraph_with("width:200px;position:relative", |doc, root| {
             doc.append_text(root, "aaaa ");
-            let outer = doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some("display:inline;position:relative"),
-            );
+            let outer =
+                doc.append_element(Some(root), "span", Some("display:inline;position:relative"));
             doc.append_text(outer, "bb");
             // A static inline between the two does not contain the child.
-            let middle = doc.append_element(
-                Some(outer),
-                "span",
-                Style::default(),
-                Some("display:inline"),
-            );
+            let middle = doc.append_element(Some(outer), "span", Some("display:inline"));
             let inner = doc.append_element(
                 Some(middle),
                 "span",
-                Style::default(),
                 Some("display:inline;position:relative"),
             );
             doc.append_text(inner, "cccc");
             child = doc.append_element(
                 Some(inner),
                 "span",
-                Style::default(),
                 Some("position:absolute;width:10px;height:10px;left:50%"),
             );
         });
@@ -9103,24 +8429,14 @@ fn the_nearest_positioned_inline_is_the_containing_block() {
     let (mut doc, cascade, _root) =
         ahem_paragraph_with("width:200px;position:relative", |doc, root| {
             doc.append_text(root, "aaaa ");
-            let outer = doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some("display:inline;position:relative"),
-            );
+            let outer =
+                doc.append_element(Some(root), "span", Some("display:inline;position:relative"));
             doc.append_text(outer, "bb");
-            let middle = doc.append_element(
-                Some(outer),
-                "span",
-                Style::default(),
-                Some("display:inline"),
-            );
+            let middle = doc.append_element(Some(outer), "span", Some("display:inline"));
             doc.append_text(middle, "cccc");
             child = doc.append_element(
                 Some(middle),
                 "span",
-                Style::default(),
                 Some("position:absolute;width:10px;height:10px;left:50%"),
             );
         });
@@ -9136,17 +8452,12 @@ fn a_relative_inline_split_over_lines_contains_its_fragments() {
     let (mut doc, cascade, _root) =
         ahem_paragraph_with("width:100px;position:relative", |doc, root| {
             doc.append_text(root, "aaaa ");
-            let outer = doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some("display:inline;position:relative"),
-            );
+            let outer =
+                doc.append_element(Some(root), "span", Some("display:inline;position:relative"));
             doc.append_text(outer, "bbbb cccc");
             child = doc.append_element(
                 Some(outer),
                 "span",
-                Style::default(),
                 Some("position:absolute;width:10px;height:10px;left:50%;top:50%"),
             );
         });
@@ -9164,17 +8475,12 @@ fn a_relative_inline_in_a_vertical_paragraph_contains_the_box_physically() {
         "width:100px;height:200px;writing-mode:vertical-rl;position:relative",
         |doc, root| {
             doc.append_text(root, "aaaa ");
-            outer = doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some("display:inline;position:relative"),
-            );
+            outer =
+                doc.append_element(Some(root), "span", Some("display:inline;position:relative"));
             doc.append_text(outer, "bb");
             child = doc.append_element(
                 Some(outer),
                 "span",
-                Style::default(),
                 Some("position:absolute;width:10px;height:10px;left:50%;top:50%"),
             );
         },
@@ -9200,17 +8506,12 @@ fn a_fixed_box_in_a_relative_inline_keeps_the_page_area() {
     let (mut doc, cascade, _root) =
         ahem_paragraph_with("width:200px;position:relative", |doc, root| {
             doc.append_text(root, "aaaa ");
-            let outer = doc.append_element(
-                Some(root),
-                "span",
-                Style::default(),
-                Some("display:inline;position:relative"),
-            );
+            let outer =
+                doc.append_element(Some(root), "span", Some("display:inline;position:relative"));
             doc.append_text(outer, "bb");
             child = doc.append_element(
                 Some(outer),
                 "span",
-                Style::default(),
                 Some("position:fixed;width:10px;height:10px;left:50%"),
             );
         });
@@ -9451,9 +8752,7 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
         let (mut doc, cascade, root) = ch_ahem_paragraph("aa", &css);
         lay_out(&mut doc, &cascade);
         assert_eq!(
-            doc.layout_node_with_style(root)
-                .unwrap()
-                .style
+            bridged_style(&mut doc, &cascade, root)
                 .min_size
                 .width
                 .into_raw()
@@ -9462,9 +8761,7 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
             "{css}"
         );
         assert_eq!(
-            doc.layout_node_with_style(root)
-                .unwrap()
-                .style
+            bridged_style(&mut doc, &cascade, root)
                 .min_size
                 .height
                 .into_raw()
@@ -9482,7 +8779,6 @@ fn max_width_ch_uses_the_inherited_font_before_laying_out_children() {
         child = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;max-width:4ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"),
         );
         doc.append_text(child, "ABCABCABCABC");
@@ -9559,17 +8855,12 @@ fn a_fixed_paragraph_shrinks_against_the_page_not_its_parent() {
     let size = || {
         let mut fixed = 0;
         let (mut doc, cascade, _root) = paragraph_of(|doc, root| {
-            let abs = doc.append_element(
-                Some(root),
-                "div",
-                Style::default(),
-                Some("display:block;position:absolute"),
-            );
+            let abs =
+                doc.append_element(Some(root), "div", Some("display:block;position:absolute"));
             doc.append_text(abs, "aa");
             fixed = doc.append_element(
                 Some(abs),
                 "div",
-                Style::default(),
                 Some("display:block;position:fixed;bottom:0"),
             );
             doc.append_text(fixed, "aaaa bbbb cccc");
@@ -9598,7 +8889,6 @@ fn the_text_of_an_absolutely_positioned_inline_is_its_own_paragraph() {
         span = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("position:absolute;left:0;top:20px"),
         );
         doc.append_text(span, "abspos");
@@ -9618,9 +8908,9 @@ fn the_text_of_an_absolutely_positioned_inline_is_its_own_paragraph() {
 /// the number of lines of the text.
 fn inline_body(html_css: Option<&str>, body_css: &str) -> (bool, bool, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), html_css);
+    let html = doc.append_element(Some(0), "html", html_css);
     let css = format!("font-family:Ahem;font-size:10px;line-height:10px;{body_css}");
-    let body = doc.append_element(Some(html), "body", Style::default(), Some(css.as_str()));
+    let body = doc.append_element(Some(html), "body", Some(css.as_str()));
     let text = doc.append_text(body, "aaaa bbbb");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -9660,13 +8950,8 @@ fn page_sibling_positions(
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let mut boxes = Vec::new();
     for (index, height) in heights.iter().enumerate() {
         let edge = match index {
@@ -9677,7 +8962,6 @@ fn page_sibling_positions(
         boxes.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;width:100px;height:{height}px;{inside};{edge}"
             )),
@@ -9711,29 +8995,21 @@ fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:60px"),
     );
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(&format!("display:block;width:100px;{wrapper_css}")),
     );
     let avoiding = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some(&format!(
             "display:block;width:100px;height:60px;{avoid_css}"
         )),
@@ -9819,38 +9095,25 @@ fn avoiding_block_in_wrapper(
 ) -> (f32, f32, f32) {
     let (mut wrapper, mut avoiding, mut after) = (0, 0, 0);
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let outer = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:block;{outer_css}")),
         );
         wrapper = doc.append_element(
             Some(outer),
             "div",
-            Style::default(),
             Some(&format!("display:block;{wrapper_css}")),
         );
         avoiding = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some(&format!(
                 "width:40px;height:60px;break-inside:avoid;{avoid_css}"
             )),
         );
-        after = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        after = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     });
     (
         page_flow_y(&doc, avoiding),
@@ -9863,18 +9126,12 @@ fn avoiding_block_in_wrapper(
 fn a_moved_box_after_a_wrappers_text_still_lengthens_it() {
     let (mut wrapper, mut avoiding) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:50px"),
-        );
-        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_element(Some(body), "div", Some("display:block;height:50px"));
+        wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         doc.append_text(wrapper, " ");
         avoiding = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -9890,23 +9147,12 @@ fn a_moved_box_after_a_wrappers_text_still_lengthens_it() {
 fn a_moved_box_inside_a_contents_element_lengthens_the_box_around_it() {
     let (mut wrapper, mut avoiding) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:50px"),
-        );
-        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-        let contents = doc.append_element(
-            Some(wrapper),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:50px"));
+        wrapper = doc.append_element(Some(body), "div", Some("display:block"));
+        let contents = doc.append_element(Some(wrapper), "span", Some("display:contents"));
         avoiding = doc.append_element(
             Some(contents),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -9933,33 +9179,21 @@ fn an_avoiding_block_in_a_multi_column_body_grid_stays_in_its_column() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:grid;grid-template-columns:50px 50px;margin:0"),
     );
-    let item = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(item),
-        "div",
-        Style::default(),
-        Some("display:block;height:60px"),
-    );
+    let item = doc.append_element(Some(body), "div", Some("display:block"));
+    doc.append_element(Some(item), "div", Some("display:block;height:60px"));
     let avoiding = doc.append_element(
         Some(item),
         "div",
-        Style::default(),
         Some("display:block;height:60px;break-inside:avoid"),
     );
-    let other = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    doc.append_element(
-        Some(other),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let other = doc.append_element(Some(body), "div", Some("display:block"));
+    doc.append_element(Some(other), "div", Some("display:block;height:10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
@@ -9977,34 +9211,21 @@ fn an_avoiding_block_in_a_multi_column_body_grid_stays_in_its_column() {
 fn wrapper_with_avoiding_children(wrapper_css: &str) -> (f32, f32, f32) {
     let (mut wrapper, mut avoiding, mut last) = (0, 0, 0);
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:30px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:30px"));
         wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:block;{wrapper_css}")),
         );
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:20px"));
         avoiding = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
         last = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:10px;break-inside:avoid"),
         );
     });
@@ -10048,17 +9269,12 @@ fn a_wrappers_max_height_follows_its_box_sizing() {
 fn a_float_moved_by_an_earlier_float_can_move_again_to_avoid_a_break() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;break-inside:avoid",
             "float:left;clear:left;width:40px;height:50px;break-inside:avoid",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -10135,7 +9351,6 @@ fn running_elements_are_removed_from_the_normal_flow() {
         let root = doc.append_element(
             Some(0),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;position:{position};position:running(header);break-before:page"
             )),
@@ -10170,12 +9385,7 @@ fn running_elements_are_removed_from_the_normal_flow() {
 fn a_parallel_float_preserves_the_connected_normal_flow_run() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
     let mut normal = Vec::new();
     for css in [
         "height:60px",
@@ -10186,7 +9396,6 @@ fn a_parallel_float_preserves_the_connected_normal_flow_run() {
         let id = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:block;width:100px;{css}")),
         );
         if !css.starts_with("float") {
@@ -10280,8 +9489,8 @@ fn column_breaks_do_not_force_a_page_boundary() {
 #[test]
 fn always_uses_the_nearest_column_context_but_page_stays_page_specific() {
     let mut doc = Document::new();
-    let columns = doc.append_element(Some(0), "div", Style::default(), Some("columns:2"));
-    let child = doc.append_element(Some(columns), "div", Style::default(), None::<&str>);
+    let columns = doc.append_element(Some(0), "div", Some("columns:2"));
+    let child = doc.append_element(Some(columns), "div", None::<&str>);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -10298,12 +9507,7 @@ fn review_avoided_sibling_runs_use_the_destination_page_height() {
         ([100.0, 50.0], 60, [0.0, 60.0, 100.0]),
     ] {
         let mut doc = Document::new();
-        let body = doc.append_element(
-            Some(0),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
+        let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
         let mut ids = Vec::new();
         for css in [
             format!("height:{prefix}px"),
@@ -10313,7 +9517,6 @@ fn review_avoided_sibling_runs_use_the_destination_page_height() {
             ids.push(doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;width:100px;{css}")),
             ));
         }
@@ -10419,12 +9622,7 @@ fn review_forced_page_edge_still_overrides_same_named_avoidance() {
 #[test]
 fn review_a_changed_explicit_page_name_still_breaks_the_avoided_run() {
     let mut doc = Document::new();
-    let body = doc.append_element(
-        Some(0),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = doc.append_element(Some(0), "body", Some("display:block;margin:0"));
     let ids: Vec<_> = [
         "height:60px;page:first",
         "height:30px;page:first",
@@ -10435,7 +9633,6 @@ fn review_a_changed_explicit_page_name_still_breaks_the_avoided_run() {
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;width:100px;break-inside:avoid;{css}"
             )),
@@ -10459,17 +9656,15 @@ fn review_a_changed_explicit_page_name_still_breaks_the_avoided_run() {
 
 fn review_body_boundary_document(body_css: &str) -> (Document, usize, Vec<usize>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some(&format!("display:block;margin:0;{body_css}")),
     );
     let first = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;flex-shrink:0;width:100px;height:60px"),
     );
     (doc, body, vec![first])
@@ -10495,7 +9690,6 @@ fn review_ignored_flex_item_float_keeps_page_avoidance_connected() {
     ids.push(doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:block;flex-shrink:0;float:left;width:100px;height:30px;break-after:avoid-page",
         ),
@@ -10503,7 +9697,6 @@ fn review_ignored_flex_item_float_keeps_page_avoidance_connected() {
     ids.push(doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;flex-shrink:0;width:100px;height:30px;break-inside:avoid"),
     ));
     assert_eq!(
@@ -10515,22 +9708,15 @@ fn review_ignored_flex_item_float_keeps_page_avoidance_connected() {
 #[test]
 fn review_contents_boxes_are_effective_body_siblings_for_avoidance() {
     let (mut doc, body, mut ids) = review_body_boundary_document("");
-    let wrapper = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
     ids.push(doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:30px;break-inside:avoid"),
     ));
     ids.push(doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:30px;break-before:avoid;break-inside:avoid"),
     ));
     assert_eq!(
@@ -10550,13 +9736,11 @@ fn review_plain_child_edges_propagate_page_avoidance_to_body_siblings() {
             let wrapper = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;width:100px;break-inside:avoid"),
             );
             doc.append_element(
                 Some(wrapper),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;width:100px;height:30px;{edge}")),
             );
             ids.push(wrapper);
@@ -10616,15 +9800,13 @@ fn review_page_child_edges_respect_context_and_text_barriers() {
         ),
     ] {
         let (mut doc, body, _) = review_body_boundary_document("");
-        let wrapper =
-            doc.append_element(Some(body), "article", Style::default(), Some(wrapper_css));
+        let wrapper = doc.append_element(Some(body), "article", Some(wrapper_css));
         if !text.is_empty() {
             doc.append_text(wrapper, text);
         }
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some(&format!("display:block;height:20px;{child_css}")),
         );
         if !text.is_empty() {
@@ -10647,50 +9829,32 @@ fn review_page_child_edges_respect_context_and_text_barriers() {
 #[test]
 fn review_page_child_edges_elide_contents_and_skip_parallel_children() {
     let (mut doc, body, _) = review_body_boundary_document("");
-    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
     for css in ["display:none", "position:absolute", "float:left"] {
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some(&format!("height:1px;{css}")),
-        );
+        doc.append_element(Some(wrapper), "div", Some(&format!("height:1px;{css}")));
     }
     let empty = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:contents;break-before:page;break-after:page"),
     );
     doc.append_text(empty, " \n ");
-    doc.append_element(Some(empty), "div", Style::default(), Some("display:none"));
-    let contents = doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    doc.append_element(Some(empty), "div", Some("display:none"));
+    let contents = doc.append_element(Some(wrapper), "div", Some("display:contents"));
     doc.append_text(contents, " \n ");
     doc.append_element(
         Some(contents),
         "div",
-        Style::default(),
         Some("display:block;height:20px;break-before:avoid-page;break-after:avoid-page"),
     );
-    doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("display:none;height:1px"),
-    );
+    doc.append_element(Some(wrapper), "div", Some("display:none;height:1px"));
     let empty = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:contents;break-before:page;break-after:page"),
     );
     doc.append_text(empty, " \n ");
-    doc.append_element(Some(empty), "div", Style::default(), Some("display:none"));
+    doc.append_element(Some(empty), "div", Some("display:none"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -10707,12 +9871,10 @@ fn review_page_child_edges_elide_contents_and_skip_parallel_children() {
 fn review_page_generated_content_stops_child_edge_propagation() {
     for display in ["block", "contents"] {
         let (mut doc, body, _) = review_body_boundary_document("");
-        let wrapper =
-            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         let generated = doc.append_element(
             Some(wrapper),
             "article",
-            Style::default(),
             Some(&format!(
                 "display:{display};break-before:page;break-after:page"
             )),
@@ -10720,7 +9882,6 @@ fn review_page_generated_content_stops_child_edge_propagation() {
         doc.append_element(
             Some(generated),
             "div",
-            Style::default(),
             Some("display:block;height:20px;break-before:avoid-page;break-after:avoid-page"),
         );
         doc.mark_in_document_flags();
@@ -10745,26 +9906,15 @@ fn review_page_generated_content_stops_child_edge_propagation() {
 #[test]
 fn review_page_contents_edge_depth_exhaustion_is_an_opaque_boundary() {
     let (mut doc, body, _) = review_body_boundary_document("");
-    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
     let mut parent = wrapper;
     for _ in 0..129 {
-        parent = doc.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
+        parent = doc.append_element(Some(parent), "div", Some("display:contents"));
     }
-    doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;height:1px"),
-    );
+    doc.append_element(Some(parent), "div", Some("display:block;height:1px"));
     doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;height:1px;break-before:avoid-page"),
     );
     doc.mark_in_document_flags();
@@ -10786,20 +9936,13 @@ fn review_contents_nonempty_text_interrupts_avoided_body_sibling_runs() {
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:30px;break-after:avoid-page;break-inside:avoid"),
         ));
-        let contents = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
+        let contents = doc.append_element(Some(body), "div", Some("display:contents"));
         doc.append_text(contents, text);
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:30px;break-before:avoid-page;break-inside:avoid"),
         ));
         let positions = review_body_boundary_positions(doc, &ids);
@@ -11047,7 +10190,7 @@ fn projected_decoration_fixture(image_marker: bool) -> (Document, CascadeResult)
         |doc, root| {
             for (index, text) in ["A", "B", "C", "D"].into_iter().enumerate() {
                 if index > 0 {
-                    doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+                    doc.append_element(Some(root), "br", Some("display:inline"));
                 }
                 doc.append_text(root, text);
             }
@@ -11171,12 +10314,7 @@ fn column_generated_eligibility_charges_its_ancestor_walk_once() {
     let depth = 128;
     let mut last = parent;
     for _ in 0..depth {
-        last = doc.append_element(
-            Some(last),
-            "section",
-            Style::default(),
-            Some("display:block"),
-        );
+        last = doc.append_element(Some(last), "section", Some("display:block"));
         cascade.computed.resize(doc.nodes.len(), inherited.clone());
     }
     doc.nodes[last].children.push(root);
@@ -11297,7 +10435,7 @@ fn projected_content_image_fixture() -> (Document, CascadeResult) {
         |doc, root| {
             for (index, text) in ["A", "B", "C", "D"].into_iter().enumerate() {
                 if index > 0 {
-                    doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+                    doc.append_element(Some(root), "br", Some("display:inline"));
                 }
                 doc.append_text(root, text);
             }
@@ -11358,38 +10496,16 @@ fn repeated_header_copies_are_charged_to_the_projection_budget() {
     let table = doc.append_element(
         Some(body),
         "table",
-        Style::default(),
         Some("display:table;width:100px;border-collapse:collapse"),
     );
-    let header = doc.append_element(
-        Some(table),
-        "thead",
-        Style::default(),
-        Some("display:table-header-group"),
-    );
-    let row = doc.append_element(
-        Some(header),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let cell = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell;padding:0"),
-    );
+    let header = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
+    let row = doc.append_element(Some(header), "tr", Some("display:table-row"));
+    let cell = doc.append_element(Some(row), "td", Some("display:table-cell;padding:0"));
     doc.append_child(cell, root).unwrap();
-    let body_row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let body_row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     doc.append_element(
         Some(body_row),
         "td",
-        Style::default(),
         Some("display:table-cell;height:200px;padding:0"),
     );
     doc.mark_in_document_flags();
@@ -11441,20 +10557,14 @@ fn page_box_positions(styles: &[&str]) -> (Vec<f32>, usize) {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let boxes: Vec<_> = styles
         .iter()
         .map(|style| {
             doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;width:100px;{style}")),
             )
         })
@@ -11647,30 +10757,22 @@ fn a_margin_after_a_zero_height_forced_break_box_with_content_is_truncated() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
     doc.append_text(forced, "x");
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -11694,29 +10796,21 @@ fn a_margin_after_an_empty_forced_break_flow_root_is_truncated() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flow-root;width:100px;height:0;break-before:page"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -11740,29 +10834,21 @@ fn a_margin_after_an_empty_forced_break_contained_box_is_truncated() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;contain:layout;width:100px;height:0;break-before:page"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -11786,29 +10872,21 @@ fn a_margin_after_an_empty_forced_break_list_item_is_kept() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:list-item;list-style:none;width:100px;height:0;break-before:page"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -11831,35 +10909,22 @@ fn a_margin_after_a_forced_break_box_with_an_empty_overflow_hidden_child_is_trun
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    doc.append_element(
-        Some(forced),
-        "div",
-        Style::default(),
-        Some("display:block;overflow:hidden"),
-    );
+    doc.append_element(Some(forced), "div", Some("display:block;overflow:hidden"));
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -11883,30 +10948,22 @@ fn a_forced_break_box_with_only_an_empty_inline_child_keeps_the_margin_after_it(
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    doc.append_element(Some(forced), "span", Style::default(), None::<&str>);
+    doc.append_element(Some(forced), "span", None::<&str>);
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -11929,35 +10986,26 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_inline_block_is_truncat
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
     doc.append_element(
         Some(forced),
         "span",
-        Style::default(),
         Some("display:inline-block;width:10px;height:10px"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -11981,29 +11029,21 @@ fn a_margin_after_a_zero_height_forced_break_list_item_with_an_inside_marker_is_
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;display:list-item;list-style-position:inside;list-style-type:'X';height:0;break-before:page"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12027,31 +11067,23 @@ fn a_margin_after_a_zero_height_forced_break_box_with_before_content_is_truncate
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, "section::before { content: \"a\" }");
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12075,26 +11107,19 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_block_before_box_is_trun
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "section::before { content: \"\"; display: block; height: 10px }",
@@ -12102,7 +11127,6 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_block_before_box_is_trun
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12126,26 +11150,19 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_flow_root_before_box_is_
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "section::before { content: \"\"; display: flow-root }",
@@ -12153,7 +11170,6 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_flow_root_before_box_is_
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12177,31 +11193,23 @@ fn a_forced_break_box_with_an_empty_block_before_box_keeps_the_margin_after_it()
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, "section::before { content: \"\"; display: block }");
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12225,30 +11233,22 @@ fn a_forced_break_box_with_only_an_empty_block_child_keeps_the_margin_after_it()
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    doc.append_element(Some(forced), "div", Style::default(), Some("display:block"));
+    doc.append_element(Some(forced), "div", Some("display:block"));
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12272,35 +11272,26 @@ fn a_margin_after_a_forced_break_box_with_a_bordered_empty_child_is_truncated() 
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
     doc.append_element(
         Some(forced),
         "div",
-        Style::default(),
         Some("display:block;height:0;border-top:1px solid"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12323,30 +11314,22 @@ fn a_margin_after_a_zero_height_forced_break_box_with_preserved_white_space_is_t
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;white-space:pre;break-before:page"),
     );
     doc.append_text(forced, "   ");
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12370,30 +11353,22 @@ fn a_forced_break_box_with_only_collapsible_white_space_keeps_the_margin_after_i
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;break-before:page"),
     );
     doc.append_text(forced, "   ");
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12416,30 +11391,22 @@ fn a_forced_break_box_with_only_a_hidden_child_keeps_the_margin_after_it() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;break-before:page"),
     );
-    doc.append_element(Some(forced), "span", Style::default(), Some("display:none"));
+    doc.append_element(Some(forced), "span", Some("display:none"));
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12461,35 +11428,26 @@ fn a_forced_break_box_with_only_an_absolutely_positioned_child_keeps_the_margin_
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;break-before:page"),
     );
     doc.append_element(
         Some(forced),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;width:10px;height:10px"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12511,35 +11469,26 @@ fn a_forced_break_box_with_only_a_floated_child_keeps_the_margin_after_it() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;break-before:page"),
     );
     doc.append_element(
         Some(forced),
         "div",
-        Style::default(),
         Some("display:block;float:left;width:10px;height:10px"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -12561,24 +11510,9 @@ fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;margin-top:250px"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
-    let child = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin-top:250px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
+    let child = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
@@ -12601,24 +11535,9 @@ fn a_root_margin_crossing_a_scheduled_page_uses_that_page_origin() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;margin-top:250px"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:8px"),
-    );
-    let child = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin-top:250px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:8px"));
+    let child = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
@@ -12675,24 +11594,9 @@ fn a_body_margin_crossing_a_later_break_is_truncated() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;margin-top:250px"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:150px 0 0"),
-    );
-    let child = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin-top:250px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:150px 0 0"));
+    let child = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
@@ -12735,11 +11639,10 @@ fn paginated_ys(
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font:20px/30px Ahem"),
     );
     let ids = build(&mut doc, body);
@@ -12768,22 +11671,11 @@ fn paginated_ys(
 fn a_margin_after_a_contents_wrapper_is_truncated() {
     let ys = paginated_ys(
         |doc, body| {
-            let first = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:80px"),
-            );
-            let wrapper = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:80px"));
+            let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
             let wrapped = doc.append_element(
                 Some(wrapper),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:30px;height:20px"),
             );
             vec![first, wrapped]
@@ -12799,17 +11691,11 @@ fn text_between_blocks_is_not_a_margin() {
     // to the first one is not a margin crossing the break.
     let ys = paginated_ys(
         |doc, body| {
-            let first = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:60px"),
-            );
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:60px"));
             doc.append_text(body, "x");
             let last = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:20px;height:10px"),
             );
             vec![first, last]
@@ -12823,19 +11709,12 @@ fn text_between_blocks_is_not_a_margin() {
 fn inline_wrapped_text_between_blocks_is_not_a_margin() {
     let ys = paginated_ys(
         |doc, body| {
-            let first = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:60px"),
-            );
-            let span =
-                doc.append_element(Some(body), "span", Style::default(), Some("display:inline"));
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+            let span = doc.append_element(Some(body), "span", Some("display:inline"));
             doc.append_text(span, "x");
             let last = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:20px;height:10px"),
             );
             vec![first, last]
@@ -12853,24 +11732,9 @@ fn a_root_margin_within_a_taller_first_page_is_kept() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;margin-top:120px"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:40px 0 0"),
-    );
-    let child = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin-top:120px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:40px 0 0"));
+    let child = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
@@ -12959,36 +11823,23 @@ fn positioned_block_insets_and_auto_static_positions_remain_distinct() {
 fn positioned_text_follows_its_moved_containing_block_once() {
     let ys = paginated_ys(
         |doc, body| {
-            let first = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:80px"),
-            );
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:80px"));
             let wrapper = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:30px;height:20px"),
             );
             let relative = doc.append_element(
                 Some(wrapper),
                 "div",
-                Style::default(),
                 Some("display:block;position:relative;height:20px"),
             );
             let absolute = doc.append_element(
                 Some(relative),
                 "div",
-                Style::default(),
                 Some("position:absolute;top:5px;height:120px;width:100px;padding-top:3px"),
             );
-            let span = doc.append_element(
-                Some(absolute),
-                "span",
-                Style::default(),
-                Some("display:inline"),
-            );
+            let span = doc.append_element(Some(absolute), "span", Some("display:inline"));
             doc.append_text(span, "x");
             vec![first, wrapper, relative, absolute]
         },
@@ -13010,29 +11861,21 @@ fn positioned_inline_text_keeps_its_explicit_outer_anchor() {
         let positions = |margin: f32| {
             paginated_ys(
                 |doc, body| {
+                    doc.append_element(Some(body), "div", Some("display:block;height:80px"));
                     doc.append_element(
                         Some(body),
                         "div",
-                        Style::default(),
-                        Some("display:block;height:80px"),
-                    );
-                    doc.append_element(
-                        Some(body),
-                        "div",
-                        Style::default(),
                         Some(&format!("display:block;margin-top:{margin}px;height:20px")),
                     );
                     let absolute = doc.append_element(
                         Some(body),
                         "div",
-                        Style::default(),
                         Some(&format!("display:{display};position:absolute;top:5px;height:120px;width:100px;padding-top:3px")),
                     );
                     let text_parent = if nested_auto_box {
                         doc.append_element(
                             Some(absolute),
                             "div",
-                            Style::default(),
                             Some("position:absolute;top:auto;bottom:auto;height:120px;width:100px;padding-top:2px"),
                         )
                     } else {
@@ -13041,12 +11884,7 @@ fn positioned_inline_text_keeps_its_explicit_outer_anchor() {
                     let text_container = if anonymous_text {
                         text_parent
                     } else {
-                        doc.append_element(
-                            Some(text_parent),
-                            "span",
-                            Style::default(),
-                            Some("display:inline"),
-                        )
+                        doc.append_element(Some(text_parent), "span", Some("display:inline"))
                     };
                     let text = doc.append_text(text_container, "x");
                     vec![absolute, text_parent, text]
@@ -13067,33 +11905,16 @@ fn repeated_header_table_grows_over_anonymous_cells_on_later_pages() {
     let table = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:table;width:200px;border:5px solid"),
     );
-    let header = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:table-header-group"),
-    );
-    doc.append_element(
-        Some(header),
-        "div",
-        Style::default(),
-        Some("display:block;height:100px"),
-    );
+    let header = doc.append_element(Some(table), "div", Some("display:table-header-group"));
+    doc.append_element(Some(header), "div", Some("display:block;height:100px"));
     // Each row's block is wrapped in an anonymous cell.
     for height in [450, 100] {
-        let row = doc.append_element(
-            Some(table),
-            "div",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
         doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some(&format!("display:block;height:{height}px")),
         );
     }
@@ -13130,11 +11951,10 @@ fn paged_body_impl(
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;width:100px"),
     );
     build(&mut doc, body);
@@ -13159,12 +11979,7 @@ fn page_flow_y(doc: &Document, node: usize) -> f32 {
 fn an_avoiding_float_moves_alone_and_later_floats_stay_below_it() {
     let mut ids = Vec::new();
     let (doc, pages) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;break-inside:avoid",
             "float:left;clear:left;width:40px;height:20px",
@@ -13172,7 +11987,7 @@ fn an_avoiding_float_moves_alone_and_later_floats_stay_below_it() {
             "display:block;height:50px;break-inside:avoid",
             "float:left;width:40px;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -13188,18 +12003,13 @@ fn an_avoiding_float_moves_alone_and_later_floats_stay_below_it() {
 fn a_later_float_below_a_moved_float_keeps_its_place() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;break-inside:avoid",
             "display:block;height:150px",
             "float:left;clear:left;width:40px;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -13211,17 +12021,12 @@ fn a_later_float_below_a_moved_float_keeps_its_place() {
 fn a_clearing_float_stays_below_the_moved_floats_bottom_margin() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;margin-bottom:10px;break-inside:avoid",
             "float:left;clear:left;width:40px;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -13241,17 +12046,12 @@ fn a_clearing_block_stays_below_the_moved_floats_bottom() {
     ] {
         let mut ids = Vec::new();
         let (doc, _) = paged_body(|doc, body| {
-            doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:60px"),
-            );
+            doc.append_element(Some(body), "div", Some("display:block;height:60px"));
             for css in [
                 format!("float:{side};width:40px;height:60px;break-inside:avoid"),
                 format!("display:block;clear:{clear};height:10px"),
             ] {
-                ids.push(doc.append_element(Some(body), "div", Style::default(), Some(&css)));
+                ids.push(doc.append_element(Some(body), "div", Some(&css)));
             }
         });
         let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -13274,19 +12074,14 @@ fn a_clearing_block_stays_below_the_moved_floats_bottom() {
 fn an_opposite_side_float_moves_only_to_the_moved_floats_top() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;break-inside:avoid",
             "float:right;width:40px;height:10px",
             "display:block;height:80px",
             "float:right;width:40px;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -13299,16 +12094,10 @@ fn an_opposite_side_float_moves_only_to_the_moved_floats_top() {
 fn an_avoiding_float_at_the_top_of_a_page_stays_there() {
     let mut float = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:100px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:100px"));
         float = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:40px;height:150px;break-inside:avoid"),
         );
     });
@@ -13324,7 +12113,6 @@ fn avoiding_row_group(group_css: &str, rows: &[(f32, &str)], caption: Option<&st
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(if caption == Some("") {
                 "display:block;height:40px"
             } else {
@@ -13334,40 +12122,30 @@ fn avoiding_row_group(group_css: &str, rows: &[(f32, &str)], caption: Option<&st
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
         if let Some(caption_css) = caption {
             let caption = doc.append_element(
                 Some(table),
                 "caption",
-                Style::default(),
                 Some(&format!("display:table-caption;{caption_css}")),
             );
-            doc.append_element(
-                Some(caption),
-                "div",
-                Style::default(),
-                Some("display:block;height:20px"),
-            );
+            doc.append_element(Some(caption), "div", Some("display:block;height:20px"));
         }
         let group = doc.append_element(
             Some(table),
             "tbody",
-            Style::default(),
             Some(&format!("display:table-row-group;{group_css}")),
         );
         for (height, row_css) in rows {
             let row = doc.append_element(
                 Some(group),
                 "tr",
-                Style::default(),
                 Some(&format!("display:table-row;{row_css}")),
             );
             let cell = doc.append_element(
                 Some(row),
                 "td",
-                Style::default(),
                 Some(&format!("display:table-cell;padding:0;height:{height}px")),
             );
             first_cell.get_or_insert(cell);
@@ -13433,31 +12211,19 @@ fn an_avoiding_row_group_ends_at_a_forced_break_and_leaves_a_caption_behind() {
 fn an_avoiding_footer_before_the_body_takes_no_table_spacing() {
     let mut footer_cell = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
         let footer = doc.append_element(
             Some(table),
             "tfoot",
-            Style::default(),
             Some("display:table-footer-group;break-inside:avoid"),
         );
         footer_cell = append_row(doc, footer, "", 20.0).1;
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         append_row(doc, group, "", 20.0);
     });
     // The footer is laid out after the body, so the body row is the table's
@@ -13469,18 +12235,8 @@ fn an_avoiding_footer_before_the_body_takes_no_table_spacing() {
 fn rows_of_a_row_group_outside_a_table_still_move_to_the_next_page() {
     let mut second_cell = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let group = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let group = doc.append_element(Some(body), "div", Some("display:table-row-group"));
         append_row(doc, group, "", 30.0);
         second_cell = append_row(doc, group, "", 30.0).1;
     });
@@ -13495,13 +12251,11 @@ fn append_avoiding_table(doc: &mut Document, parent: usize) -> usize {
     let table = doc.append_element(
         Some(parent),
         "table",
-        Style::default(),
         Some("display:table;width:100px;border-spacing:2px"),
     );
     doc.append_element(
         Some(table),
         "tbody",
-        Style::default(),
         Some("display:table-row-group;break-inside:avoid"),
     )
 }
@@ -13510,13 +12264,11 @@ fn append_row(doc: &mut Document, group: usize, row_css: &str, height: f32) -> (
     let row = doc.append_element(
         Some(group),
         "tr",
-        Style::default(),
         Some(&format!("display:table-row;{row_css}")),
     );
     let cell = doc.append_element(
         Some(row),
         "td",
-        Style::default(),
         Some(&format!("display:table-cell;padding:0;height:{height}px")),
     );
     (row, cell)
@@ -13526,14 +12278,8 @@ fn append_row(doc: &mut Document, group: usize, row_css: &str, height: f32) -> (
 fn an_avoiding_row_group_of_a_wrapped_table_keeps_its_table_spacing() {
     let mut first_cell = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let wrapper =
-            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         let group = append_avoiding_table(doc, wrapper);
         first_cell = append_row(doc, group, "", 20.0).1;
         append_row(doc, group, "", 30.0);
@@ -13545,27 +12291,12 @@ fn an_avoiding_row_group_of_a_wrapped_table_keeps_its_table_spacing() {
 fn a_nested_table_does_not_hide_a_forced_break_after_its_row() {
     let mut first_cell = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let group = append_avoiding_table(doc, body);
         let (_, cell) = append_row(doc, group, "break-after:page", 0.0);
         first_cell = cell;
-        let inner = doc.append_element(
-            Some(cell),
-            "table",
-            Style::default(),
-            Some("display:table;width:50px"),
-        );
-        let inner_group = doc.append_element(
-            Some(inner),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let inner = doc.append_element(Some(cell), "table", Some("display:table;width:50px"));
+        let inner_group = doc.append_element(Some(inner), "tbody", Some("display:table-row-group"));
         append_row(doc, inner_group, "", 10.0);
         append_row(doc, group, "", 30.0);
     });
@@ -13582,24 +12313,13 @@ fn break_inside_avoid_does_not_move_an_inline_box() {
     for (display, expected) in [("inline", 60.0), ("block", 100.0)] {
         let mut inner = 0;
         let (doc, _) = paged_body(|doc, body| {
-            doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:60px"),
-            );
+            doc.append_element(Some(body), "div", Some("display:block;height:60px"));
             let avoiding = doc.append_element(
                 Some(body),
                 "span",
-                Style::default(),
                 Some(&format!("display:{display};break-inside:avoid")),
             );
-            inner = doc.append_element(
-                Some(avoiding),
-                "div",
-                Style::default(),
-                Some("display:block;height:60px"),
-            );
+            inner = doc.append_element(Some(avoiding), "div", Some("display:block;height:60px"));
         });
         assert_eq!(page_flow_y(&doc, inner), expected, "{display}");
     }
@@ -13609,31 +12329,19 @@ fn break_inside_avoid_does_not_move_an_inline_box() {
 fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
     let (mut wrapper, mut after) = (0, 0);
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;min-height:100px;font:10px/10px monospace"),
         );
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
         doc.append_text(wrapper, "x");
-        after = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        after = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     });
     // The block moves 40px, and the line after it now ends 110px into the
     // wrapper, past its `min-height`.
@@ -13645,34 +12353,13 @@ fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
 fn a_percentage_bound_resolves_against_a_percentage_height() {
     let mut wrapper = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let fixed = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:200px"),
-        );
-        let half = doc.append_element(
-            Some(fixed),
-            "div",
-            Style::default(),
-            Some("display:block;height:50%"),
-        );
-        wrapper = doc.append_element(
-            Some(half),
-            "div",
-            Style::default(),
-            Some("display:block;max-height:70%"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let fixed = doc.append_element(Some(body), "div", Some("display:block;height:200px"));
+        let half = doc.append_element(Some(fixed), "div", Some("display:block;height:50%"));
+        wrapper = doc.append_element(Some(half), "div", Some("display:block;max-height:70%"));
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -13698,23 +12385,17 @@ fn a_contained_negative_margin_shortens_the_grown_content() {
 fn leaving_two_bounded_shifts_returns_to_the_wrappers_page() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        let wrapper = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:50px"),
-        );
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block;height:50px"));
         for css in [
             "display:block;height:80px",
             "display:block;height:40px;break-inside:avoid",
             "display:block;height:90px;break-inside:avoid",
         ] {
-            ids.push(doc.append_element(Some(wrapper), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(wrapper), "div", Some(css)));
         }
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         ));
     });
@@ -13730,16 +12411,10 @@ fn leaving_two_bounded_shifts_returns_to_the_wrappers_page() {
 fn bounded_box_with_lines(outer_css: &str, text_before: bool, text_after: bool) -> f32 {
     let mut outer = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         outer = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:block;font:10px/10px monospace;{outer_css}"
             )),
@@ -13747,12 +12422,10 @@ fn bounded_box_with_lines(outer_css: &str, text_before: bool, text_after: bool) 
         if text_before {
             doc.append_text(outer, "x");
         }
-        let wrapper =
-            doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(outer), "div", Some("display:block"));
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
         if text_after {
@@ -13781,17 +12454,11 @@ fn the_lines_around_a_grown_box_bound_its_bounded_ancestor() {
 fn a_margin_after_collapsed_white_space_is_truncated() {
     let ys = paginated_ys(
         |doc, body| {
-            let first = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:80px"),
-            );
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:80px"));
             doc.append_text(body, "\n  ");
             let second = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:30px;height:20px"),
             );
             vec![first, second]
@@ -13805,22 +12472,11 @@ fn a_margin_after_collapsed_white_space_is_truncated() {
 fn a_margin_after_a_box_inside_a_contents_element_is_truncated() {
     let ys = paginated_ys(
         |doc, body| {
-            let wrapper = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:contents"),
-            );
-            let first = doc.append_element(
-                Some(wrapper),
-                "div",
-                Style::default(),
-                Some("display:block;height:80px"),
-            );
+            let wrapper = doc.append_element(Some(body), "div", Some("display:contents"));
+            let first = doc.append_element(Some(wrapper), "div", Some("display:block;height:80px"));
             let second = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:30px;height:20px"),
             );
             vec![first, second]
@@ -13834,22 +12490,12 @@ fn a_margin_after_a_box_inside_a_contents_element_is_truncated() {
 fn a_first_childs_margin_is_not_truncated_against_its_parents_sibling() {
     let ys = paginated_ys(
         |doc, body| {
-            let first = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:80px"),
-            );
-            let wrapper = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;padding-top:1px"),
-            );
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:80px"));
+            let wrapper =
+                doc.append_element(Some(body), "div", Some("display:block;padding-top:1px"));
             let nested = doc.append_element(
                 Some(wrapper),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:30px;height:20px"),
             );
             vec![first, wrapper, nested]
@@ -13864,18 +12510,13 @@ fn a_first_childs_margin_is_not_truncated_against_its_parents_sibling() {
 fn a_float_shifted_after_a_moved_float_holds_the_next_one_below_it() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;break-inside:avoid",
             "float:left;clear:left;width:40px;height:30px",
             "float:left;clear:left;width:40px;height:30px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -13886,34 +12527,13 @@ fn a_float_shifted_after_a_moved_float_holds_the_next_one_below_it() {
 fn a_percentage_bound_under_a_contents_element_resolves_against_its_box() {
     let mut wrapper = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let fixed = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:100px"),
-        );
-        let contents = doc.append_element(
-            Some(fixed),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        wrapper = doc.append_element(
-            Some(contents),
-            "div",
-            Style::default(),
-            Some("display:block;max-height:50%"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let fixed = doc.append_element(Some(body), "div", Some("display:block;height:100px"));
+        let contents = doc.append_element(Some(fixed), "div", Some("display:contents"));
+        wrapper = doc.append_element(Some(contents), "div", Some("display:block;max-height:50%"));
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -13925,14 +12545,9 @@ fn a_percentage_bound_under_a_contents_element_resolves_against_its_box() {
 fn floats_after_a_moved_float(floats: &[&str]) -> Vec<f32> {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in floats {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(*css)));
+            ids.push(doc.append_element(Some(body), "div", Some(*css)));
         }
     });
     ids.iter().map(|&id| page_flow_y(&doc, id)).collect()
@@ -13974,22 +12589,15 @@ fn bounded_wrapper_height(lead_px: f32, wrapper_css: &str, children: &[&str]) ->
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:block;height:{lead_px}px")),
         );
         wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:block;{wrapper_css}")),
         );
         for css in children {
-            doc.append_element(
-                Some(wrapper),
-                "div",
-                Style::default(),
-                Some(&format!("display:block;{css}")),
-            );
+            doc.append_element(Some(wrapper), "div", Some(&format!("display:block;{css}")));
         }
     });
     doc.nodes[wrapper].unrounded_layout.size.height
@@ -14032,17 +12640,11 @@ fn a_relative_offset_does_not_grow_a_bounded_box() {
 fn a_margin_after_a_comment_is_truncated() {
     let ys = paginated_ys(
         |doc, body| {
-            let first = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:80px"),
-            );
+            let first = doc.append_element(Some(body), "div", Some("display:block;height:80px"));
             doc.append_comment(Some(body), "note");
             let second = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;margin-top:30px;height:20px"),
             );
             vec![first, second]
@@ -14072,12 +12674,10 @@ fn a_smaller_follower_shift_keeps_the_moved_floats_floor() {
 fn a_nested_avoiding_box_taller_than_a_page_stays_at_the_page_top() {
     let mut child = 0;
     let (doc, _) = paged_body(|doc, body| {
-        let wrapper =
-            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         child = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:150px;break-inside:avoid"),
         );
     });
@@ -14089,34 +12689,17 @@ fn a_nested_avoiding_box_taller_than_a_page_stays_at_the_page_top() {
 fn a_calc_bound_resolves_against_a_definite_containing_block() {
     let mut wrapper = 0;
     let (doc, _) = paged_body(|doc, body| {
-        let container = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:200px"),
-        );
-        doc.append_element(
-            Some(container),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        let container = doc.append_element(Some(body), "div", Some("display:block;height:200px"));
+        doc.append_element(Some(container), "div", Some("display:block;height:60px"));
         wrapper = doc.append_element(
             Some(container),
             "div",
-            Style::default(),
             Some("display:block;max-height:calc(30% + 10px)"),
         );
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:10px"));
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
             Some("display:block;height:50px;break-inside:avoid"),
         );
     });
@@ -14129,28 +12712,16 @@ fn a_calc_bound_resolves_against_a_definite_containing_block() {
 fn a_float_in_another_formatting_context_ignores_a_moved_float() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:40px;height:60px;break-inside:avoid"),
         ));
-        let root = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:flow-root;width:50px"),
-        );
+        let root = doc.append_element(Some(body), "div", Some("display:flow-root;width:50px"));
         ids.push(doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("float:left;width:10px;height:20px;break-inside:avoid"),
         ));
     });
@@ -14164,32 +12735,20 @@ fn a_float_in_another_formatting_context_ignores_a_moved_float() {
 fn an_avoiding_header_group_that_is_not_repeated_moves_as_a_whole() {
     let mut cells = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:70px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:70px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:0"),
         );
         let head = doc.append_element(
             Some(table),
             "thead",
-            Style::default(),
             Some("display:table-header-group;break-inside:avoid"),
         );
         cells.push(append_row(doc, head, "", 20.0).1);
         cells.push(append_row(doc, head, "", 20.0).1);
-        let group = doc.append_element(
-            Some(table),
-            "tbody",
-            Style::default(),
-            Some("display:table-row-group"),
-        );
+        let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
         cells.push(append_row(doc, group, "", 20.0).1);
     });
     // The 40px header is too tall to repeat on 100px pages.
@@ -14201,34 +12760,21 @@ fn an_avoiding_header_group_that_is_not_repeated_moves_as_a_whole() {
 fn a_float_after_a_moved_float_in_another_context_keeps_the_first_floor() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:20px;height:60px;break-inside:avoid"),
         ));
-        let root = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:flow-root;width:50px"),
-        );
+        let root = doc.append_element(Some(body), "div", Some("display:flow-root;width:50px"));
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("float:left;width:10px;height:60px;break-inside:avoid"),
         );
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;clear:left;width:20px;height:20px"),
         ));
     });
@@ -14241,24 +12787,16 @@ fn a_float_after_a_moved_float_in_another_context_keeps_the_first_floor() {
 fn a_nested_float_follows_a_moved_float_in_its_context() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:20px;height:60px;break-inside:avoid"),
         ));
-        let wrapper =
-            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         ids.push(doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("float:left;clear:left;width:20px;height:20px"),
         ));
     });
@@ -14270,33 +12808,20 @@ fn a_nested_float_follows_a_moved_float_in_its_context() {
 fn a_nested_clearing_block_follows_a_moved_float_and_grows_its_parent() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:20px;height:60px;break-inside:avoid"),
         ));
-        let wrapper =
-            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         ids.push(wrapper);
         ids.push(doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;clear:left;height:20px"),
         ));
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     // The clearing block stays below the moved float's new bottom, and the
@@ -14309,40 +12834,22 @@ fn a_nested_clearing_block_follows_a_moved_float_and_grows_its_parent() {
 fn a_box_moving_inside_a_fixed_height_context_keeps_the_outer_float_floor() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:20px;height:60px;break-inside:avoid"),
         ));
-        let root = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:flow-root;height:30px"),
-        );
-        doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
+        let root = doc.append_element(Some(body), "div", Some("display:flow-root;height:30px"));
+        doc.append_element(Some(root), "div", Some("display:block;height:20px"));
         ids.push(doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;height:30px;break-inside:avoid"),
         ));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;clear:left;width:20px;height:20px"),
         ));
     });
@@ -14355,22 +12862,11 @@ fn a_sticky_offset_does_not_grow_the_ancestor_of_a_moved_box() {
     for position in ["relative", "sticky"] {
         let mut wrapper = 0;
         let (doc, _) = paged_body(|doc, body| {
-            doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:50px"),
-            );
-            wrapper = doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;min-height:100px"),
-            );
+            doc.append_element(Some(body), "div", Some("display:block;height:50px"));
+            wrapper = doc.append_element(Some(body), "div", Some("display:block;min-height:100px"));
             doc.append_element(
                 Some(wrapper),
                 "div",
-                Style::default(),
                 Some(&format!(
                     "display:block;position:{position};top:30px;height:60px;break-inside:avoid"
                 )),
@@ -14390,28 +12886,16 @@ fn a_sticky_offset_does_not_grow_the_ancestor_of_a_moved_box() {
 fn a_negative_bottom_margin_lowers_a_moved_float_floor() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:20px;height:60px;margin-bottom:-20px;break-inside:avoid"),
         ));
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:90px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:90px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;clear:left;height:10px"),
         ));
     });
@@ -14424,22 +12908,15 @@ fn a_negative_bottom_margin_lowers_a_moved_float_floor() {
 fn a_moved_float_keeps_no_truncated_top_margin_in_its_floor() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:40px;height:60px;margin-top:20px;break-inside:avoid"),
         ));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:right;width:20px;height:10px"),
         ));
     });
@@ -14454,28 +12931,20 @@ fn a_float_in_a_containment_context_ignores_a_moved_float() {
     for contain in ["layout", "paint"] {
         let mut ids = Vec::new();
         let (doc, _) = paged_body(|doc, body| {
-            doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:60px"),
-            );
+            doc.append_element(Some(body), "div", Some("display:block;height:60px"));
             ids.push(doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("float:left;width:40px;height:60px;break-inside:avoid"),
             ));
             let root = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;contain:{contain};width:50px")),
             );
             ids.push(doc.append_element(
                 Some(root),
                 "div",
-                Style::default(),
                 Some("float:left;width:10px;height:20px;break-inside:avoid"),
             ));
         });
@@ -14505,17 +12974,11 @@ fn a_relative_offset_does_not_move_a_box_that_fits_in_flow() {
     let mut wrapper = 0;
     let mut child = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
-        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
+        wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         child = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;position:relative;top:30px;height:60px;break-inside:avoid"),
         );
     });
@@ -14529,21 +12992,15 @@ fn a_moved_relative_box_keeps_its_offset() {
     for nested in [false, true] {
         let mut id = 0;
         let (doc, _) = paged_body(|doc, body| {
-            doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("display:block;height:60px"),
-            );
+            doc.append_element(Some(body), "div", Some("display:block;height:60px"));
             let parent = if nested {
-                doc.append_element(Some(body), "div", Style::default(), Some("display:block"))
+                doc.append_element(Some(body), "div", Some("display:block"))
             } else {
                 body
             };
             id = doc.append_element(
                 Some(parent),
                 "div",
-                Style::default(),
                 Some("display:block;position:relative;top:10px;height:60px;break-inside:avoid"),
             );
         });
@@ -14555,24 +13012,13 @@ fn a_moved_relative_box_keeps_its_offset() {
 fn a_logical_float_moves_like_an_in_flow_box() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;float:inline-start;width:40px;height:60px;break-inside:avoid"),
         ));
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     // Layout floats only `left` and `right`, so the box stays in flow and
     // the next block follows it.
@@ -14587,26 +13033,19 @@ fn an_empty_box_between_two_blocks_keeps_their_margin_adjoining() {
             let mut id = 0;
             let (doc, _) = paged_body(|doc, body| {
                 let parent = if nested {
-                    doc.append_element(Some(body), "div", Style::default(), Some("display:block"))
+                    doc.append_element(Some(body), "div", Some("display:block"))
                 } else {
                     body
                 };
                 doc.append_element(
                     Some(parent),
                     "div",
-                    Style::default(),
                     Some("display:block;height:80px;break-inside:avoid"),
                 );
-                doc.append_element(
-                    Some(parent),
-                    "div",
-                    Style::default(),
-                    Some(&format!("display:block;{empty}")),
-                );
+                doc.append_element(Some(parent), "div", Some(&format!("display:block;{empty}")));
                 id = doc.append_element(
                     Some(parent),
                     "div",
-                    Style::default(),
                     Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
                 );
             });
@@ -14627,23 +13066,16 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;float:right;width:10px;height:50px"),
     );
     let second = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;break-before:page;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -14658,7 +13090,9 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     assert!(!doc.box_style_data.get(key).unwrap().pass.is_empty());
     assert_eq!(cascade.computed[second].clear, ClearValue::None);
     assert_eq!(
-        doc.layout_node_with_style(second).unwrap().style.clear,
+        with_pass_view(&doc, key, &cascade.computed[second], |view| {
+            taffy::BlockItemStyle::clear(view)
+        }),
         taffy::Clear::Both
     );
 
@@ -14666,16 +13100,16 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     // float again and the cached paged layout is not reused.
     layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
     assert!(doc.forced_break_clearance.is_empty());
-    let mut projection = Style {
-        clear: taffy::Clear::Right,
-        ..Style::default()
-    };
-    for entry in &doc.box_style_data.get(key).unwrap().pass {
-        entry.apply_to_style(&mut projection);
-    }
-    assert_eq!(projection.clear, taffy::Clear::Right);
+    let mut authored = cascade.computed[second].clone();
+    authored.clear = ClearValue::Right;
     assert_eq!(
-        doc.layout_node_with_style(second).unwrap().style.clear,
+        with_pass_view(&doc, key, &authored, |view| taffy::BlockItemStyle::clear(
+            view
+        )),
+        taffy::Clear::Right
+    );
+    assert_eq!(
+        bridged_style(&mut doc, &cascade, second).clear,
         taffy::Clear::None
     );
     assert_eq!(doc.nodes[second].unrounded_layout.location.y, 0.0);
@@ -14686,21 +13120,15 @@ fn a_hidden_root_prints_one_page_without_laying_out_its_body() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:none"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:none"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let columns = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;column-count:2;width:100px"),
     );
     for _ in 0..4 {
-        doc.append_element(
-            Some(columns),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        doc.append_element(Some(columns), "div", Some("display:block;height:10px"));
     }
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -14726,9 +13154,9 @@ fn a_hidden_root_does_not_resolve_its_images() {
         }
     }
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:none"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let img = doc.append_element(Some(body), "img", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:none"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let img = doc.append_element(Some(body), "img", None::<&str>);
     doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -14759,21 +13187,15 @@ fn a_hidden_root_drops_the_projection_of_an_earlier_layout() {
 
     let build = |root_style: &str| {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some(root_style));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some(root_style));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
         let columns = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;column-count:2;width:100px"),
         );
         for _ in 0..4 {
-            doc.append_element(
-                Some(columns),
-                "div",
-                Style::default(),
-                Some("display:block;height:10px"),
-            );
+            doc.append_element(Some(columns), "div", Some("display:block;height:10px"));
         }
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -14808,17 +13230,12 @@ fn only_in_flow_generated_content_takes_the_parent_page() {
         ("", true),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-        let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let head = doc.append_element(Some(html), "head", None::<&str>);
+        let style = doc.append_element(Some(head), "style", None::<&str>);
         doc.append_text(style, format!("body::before {{ content: 'x'; {before} }}"));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-        let named = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;page:b;height:10px"),
-        );
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
+        let named = doc.append_element(Some(body), "div", Some("display:block;page:b;height:10px"));
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
         let mut page = PageBox::new();
@@ -14835,28 +13252,20 @@ fn only_in_flow_generated_content_takes_the_parent_page() {
 fn a_moved_float_keeps_its_floor_below_a_block_that_opened_the_page() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:40px;height:60px;break-inside:avoid"),
         ));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:30px;margin-top:20px;break-inside:avoid"),
         ));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;clear:left;height:10px"),
         ));
     });
@@ -14871,22 +13280,15 @@ fn an_ancestors_relative_offset_does_not_move_a_box_that_fits_in_flow() {
     let mut wrapper = 0;
     let mut child = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
         wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;position:relative;top:30px"),
         );
         child = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -14900,22 +13302,15 @@ fn an_ancestors_relative_offset_does_not_move_a_box_that_fits_in_flow() {
 fn a_box_moved_inside_an_offset_ancestor_keeps_the_offset() {
     let mut child = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;position:relative;top:10px"),
         );
         child = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -14926,30 +13321,18 @@ fn a_box_moved_inside_an_offset_ancestor_keeps_the_offset() {
 fn a_float_on_a_grid_item_moves_with_the_grid_flow() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let grid = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:grid;grid-template-columns:100px"),
         );
         ids.push(doc.append_element(
             Some(grid),
             "div",
-            Style::default(),
             Some("float:left;height:60px;break-inside:avoid"),
         ));
-        ids.push(doc.append_element(
-            Some(grid),
-            "div",
-            Style::default(),
-            Some("height:20px;background:red"),
-        ));
+        ids.push(doc.append_element(Some(grid), "div", Some("height:20px;background:red")));
     });
     // `float` does not apply to a grid item, so the next row follows it.
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -14960,22 +13343,15 @@ fn a_float_on_a_grid_item_moves_with_the_grid_flow() {
 fn a_relative_table_does_not_move_a_row_group_that_fits_in_flow() {
     let mut cells = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
         let table = doc.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some("display:table;width:100px;border-spacing:0;position:relative;top:30px"),
         );
         let group = doc.append_element(
             Some(table),
             "tbody",
-            Style::default(),
             Some("display:table-row-group;break-inside:avoid"),
         );
         cells.push(append_row(doc, group, "", 40.0).1);
@@ -14991,18 +13367,13 @@ fn a_relative_table_does_not_move_a_row_group_that_fits_in_flow() {
 fn a_followers_negative_margin_keeps_the_moved_floats_floor() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;break-inside:avoid",
             "float:left;clear:left;width:40px;height:10px;margin-bottom:-20px",
             "display:block;clear:left;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     // The follower's margin box ends at 150, but the moved float still
@@ -15015,18 +13386,13 @@ fn a_followers_negative_margin_keeps_the_moved_floats_floor() {
 fn a_float_too_wide_to_sit_beside_a_moved_float_stays_below_it() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:40px;height:60px;break-inside:avoid",
             "display:block;height:30px;margin-top:20px;break-inside:avoid",
             "float:left;width:70px;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -15037,17 +13403,11 @@ fn a_float_too_wide_to_sit_beside_a_moved_float_stays_below_it() {
 fn a_trailing_margin_does_not_move_a_nested_avoiding_box() {
     let mut id = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
-        let parent = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
+        let parent = doc.append_element(Some(body), "div", Some("display:block"));
         id = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;height:80px;margin-bottom:20px;break-inside:avoid"),
         );
     });
@@ -15060,34 +13420,21 @@ fn a_trailing_margin_does_not_move_a_nested_avoiding_box() {
 fn an_ancestors_relative_offset_does_not_lower_a_moved_floats_floor() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:50px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:50px"));
         let wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;position:relative;top:30px"),
         );
         ids.push(doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("float:left;width:40px;height:60px;break-inside:avoid"),
         ));
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:80px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:80px"));
         ids.push(doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;clear:left;height:10px"),
         ));
     });
@@ -15101,18 +13448,13 @@ fn an_ancestors_relative_offset_does_not_lower_a_moved_floats_floor() {
 fn a_float_stays_below_moved_floats_whose_combined_width_leaves_no_room() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:10px;height:60px;break-inside:avoid",
             "float:left;width:80px;height:60px;break-inside:avoid",
             "float:right;width:15px;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -15123,28 +13465,16 @@ fn a_float_stays_below_moved_floats_whose_combined_width_leaves_no_room() {
 fn a_display_contents_ancestor_adds_no_relative_offset() {
     let mut id = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:50px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:50px"));
         let contents = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:contents;position:relative;top:30px"),
         );
-        let parent = doc.append_element(
-            Some(contents),
-            "div",
-            Style::default(),
-            Some("display:block"),
-        );
+        let parent = doc.append_element(Some(contents), "div", Some("display:block"));
         id = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -15155,22 +13485,11 @@ fn a_display_contents_ancestor_adds_no_relative_offset() {
 fn a_calc_relative_offset_does_not_move_a_box_that_fits_in_flow() {
     let mut id = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
-        let parent = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:100px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
+        let parent = doc.append_element(Some(body), "div", Some("display:block;height:100px"));
         id = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;position:relative;top:calc(10% + 20px);height:60px;break-inside:avoid"),
         );
     });
@@ -15182,18 +13501,13 @@ fn a_calc_relative_offset_does_not_move_a_box_that_fits_in_flow() {
 fn a_float_moved_twice_keeps_only_its_last_place_in_the_floor() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         for css in [
             "float:left;width:60px;height:60px;break-inside:avoid",
             "float:left;width:60px;height:60px;break-inside:avoid",
             "float:right;width:30px;height:10px",
         ] {
-            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(body), "div", Some(css)));
         }
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -15204,22 +13518,15 @@ fn a_float_moved_twice_keeps_only_its_last_place_in_the_floor() {
 fn a_box_in_a_bounded_clipping_ancestor_does_not_move() {
     let mut id = 0;
     let (doc, pages) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         let wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:40px;overflow:hidden"),
         );
         id = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -15230,37 +13537,20 @@ fn a_box_in_a_bounded_clipping_ancestor_does_not_move() {
 fn a_formatting_context_does_not_grow_past_a_float_that_still_holds_the_moved_box() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let root = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:flow-root"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let root = doc.append_element(Some(body), "div", Some("display:flow-root"));
         ids.push(root);
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("float:left;width:20px;height:150px"),
         );
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     // The moved box ends at 160px, inside the float's 210px end.
@@ -15271,32 +13561,15 @@ fn a_formatting_context_does_not_grow_past_a_float_that_still_holds_the_moved_bo
 fn blocks_after_a_moved_nested_box_follow_it() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let wrapper =
-            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         ids.push(doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         ));
-        ids.push(doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        ));
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(wrapper), "div", Some("display:block;height:20px")));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 160.0, 180.0]);
@@ -15306,28 +13579,12 @@ fn blocks_after_a_moved_nested_box_follow_it() {
 fn a_relative_offset_resolves_against_a_percentage_height_that_is_definite() {
     let mut id = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
-        let outer = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:100px"),
-        );
-        let parent = doc.append_element(
-            Some(outer),
-            "div",
-            Style::default(),
-            Some("display:block;height:100%"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
+        let outer = doc.append_element(Some(body), "div", Some("display:block;height:100px"));
+        let parent = doc.append_element(Some(outer), "div", Some("display:block;height:100%"));
         id = doc.append_element(
             Some(parent),
             "div",
-            Style::default(),
             Some("display:block;position:relative;top:calc(10% + 20px);height:60px;break-inside:avoid"),
         );
     });
@@ -15341,20 +13598,13 @@ fn a_clipping_ancestor_below_its_max_height_grows_with_a_moved_box() {
         let wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;overflow:hidden;max-height:500px"),
         );
         ids.push(wrapper);
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         ));
     });
@@ -15366,31 +13616,15 @@ fn a_clipping_ancestor_below_its_max_height_grows_with_a_moved_box() {
 fn an_ancestor_with_a_percentage_height_of_an_auto_block_grows() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        let outer = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-        let wrapper = doc.append_element(
-            Some(outer),
-            "div",
-            Style::default(),
-            Some("display:block;height:50%"),
-        );
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        let outer = doc.append_element(Some(body), "div", Some("display:block"));
+        let wrapper = doc.append_element(Some(outer), "div", Some("display:block;height:50%"));
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:60px"));
         ids.push(doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         ));
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 160.0]);
@@ -15400,30 +13634,14 @@ fn an_ancestor_with_a_percentage_height_of_an_auto_block_grows() {
 fn a_formatting_context_grows_around_a_moved_float() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let root = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:flow-root"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let root = doc.append_element(Some(body), "div", Some("display:flow-root"));
         ids.push(doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("float:left;width:40px;height:60px;break-inside:avoid"),
         ));
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 160.0]);
@@ -15433,31 +13651,15 @@ fn a_formatting_context_grows_around_a_moved_float() {
 fn a_formatting_context_grows_around_a_moved_float_up_to_its_max_height() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let root = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:flow-root;max-height:80px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let root = doc.append_element(Some(body), "div", Some("display:flow-root;max-height:80px"));
         ids.push(root);
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("float:left;width:40px;height:60px;break-inside:avoid"),
         );
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
     assert_eq!((root_height, page_flow_y(&doc, ids[1])), (80.0, 140.0));
@@ -15467,37 +13669,16 @@ fn a_formatting_context_grows_around_a_moved_float_up_to_its_max_height() {
 fn an_ancestor_grows_only_past_its_min_height_when_later_boxes_follow_a_moved_box() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
-        let wrapper = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;min-height:100px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block;min-height:100px"));
         ids.push(wrapper);
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:20px"));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
     });
     let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
     assert_eq!((wrapper_height, page_flow_y(&doc, ids[1])), (120.0, 180.0));
@@ -15510,19 +13691,12 @@ fn a_content_box_max_height_is_compared_with_the_content_height() {
         let wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;overflow:hidden;max-height:100px;padding:45px 0"),
         );
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        doc.append_element(Some(wrapper), "div", Some("display:block;height:10px"));
         id = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:60px;break-inside:avoid"),
         );
     });
@@ -15536,20 +13710,17 @@ fn preserved_white_space_keeps_a_nested_avoiding_box_in_place() {
         let wrapper = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;white-space:pre;font-size:10px;line-height:10px"),
         );
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:80px;break-inside:avoid"),
         );
         doc.append_text(wrapper, "\n\n\n");
         id = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
         );
     });
@@ -15560,16 +13731,10 @@ fn preserved_white_space_keeps_a_nested_avoiding_box_in_place() {
 fn a_sticky_avoiding_float_moves_by_its_normal_flow_position() {
     let mut id = 0;
     let (doc, _) = paged_body(|doc, body| {
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:60px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:60px"));
         id = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;position:sticky;top:30px;width:40px;height:60px;break-inside:avoid"),
         );
     });
@@ -15580,36 +13745,18 @@ fn a_sticky_avoiding_float_moves_by_its_normal_flow_position() {
 fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
     let mut id = 0;
     let (doc, _) = paged_body(|doc, body| {
-        let wrapper =
-            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:80px;break-inside:avoid"),
         );
-        let contents = doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:contents"),
-        );
-        doc.append_element(
-            Some(contents),
-            "div",
-            Style::default(),
-            Some("display:block;height:30px"),
-        );
-        doc.append_element(
-            Some(contents),
-            "div",
-            Style::default(),
-            Some("display:block;height:0px"),
-        );
+        let contents = doc.append_element(Some(wrapper), "div", Some("display:contents"));
+        doc.append_element(Some(contents), "div", Some("display:block;height:30px"));
+        doc.append_element(Some(contents), "div", Some("display:block;height:0px"));
         id = doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
         );
     });
@@ -15707,7 +13854,7 @@ fn lines_after_a_forced_break_clear_the_earlier_floats() {
                     "display:inline-block;width:20px;height:10px".to_string(),
                 ),
             ] {
-                ids.push(doc.append_element(Some(body), tag, Style::default(), Some(&css)));
+                ids.push(doc.append_element(Some(body), tag, Some(&css)));
             }
         });
         let (x, y, _, _) = crate::layout::test_support::absolute_rect(&doc, ids[2]);
@@ -15729,13 +13876,11 @@ fn text_after_a_forced_break_starts_below_the_earlier_floats() {
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:right;width:40px;height:80px"),
         );
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:10px;break-after:page"),
         );
         doc.append_text(body, "text");
@@ -15757,42 +13902,25 @@ fn only_the_block_right_before_a_break_clears_the_lines_after_it() {
     let (doc, _) = paged_body(|doc, body| {
         // The lines after the first block come before the break, and the
         // float that carries it is not a block of the paragraph.
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px")));
         doc.append_text(body, "a");
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("float:left;width:10px;height:10px;break-before:page"),
         );
         doc.append_text(body, "b");
         // Nor does a float's own break after it.
+        doc.append_element(Some(body), "div", Some("display:block;height:10px"));
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
             Some("float:left;width:10px;height:10px;break-after:page"),
         );
         doc.append_text(body, "c");
         // A change of page type between a block and the text after it is a
         // forced break too.
-        ids.push(doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px;page:a"),
-        ));
+        ids.push(doc.append_element(Some(body), "div", Some("display:block;height:10px;page:a")));
         doc.append_text(body, "d");
     });
     assert_eq!(doc.forced_break_line_clearance, vec![ids[1]]);
@@ -15803,29 +13931,17 @@ fn forced_break_line_clearance_applies_to_paged_layout_only() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("float:left;width:40px;height:50px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    doc.append_element(Some(body), "div", Some("float:left;width:40px;height:50px"));
     let block = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;break-after:page;height:10px"),
     );
     let span = doc.append_element(
         Some(body),
         "span",
-        Style::default(),
         Some("display:inline-block;width:20px;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -15892,8 +14008,7 @@ fn later_paragraph_blocks_follow_a_moved_block_whatever_their_top_margin() {
     for margin in [-20.0_f32, 0.0, 10.0] {
         let mut ids = Vec::new();
         let (doc, pages) = paged_body(|doc, body| {
-            let root =
-                doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+            let root = doc.append_element(Some(body), "div", Some("display:block"));
             for (tag, css) in [
                 ("div", "display:block;height:50px".to_string()),
                 (
@@ -15909,7 +14024,7 @@ fn later_paragraph_blocks_follow_a_moved_block_whatever_their_top_margin() {
                     format!("display:block;height:10px;margin-top:{margin}px"),
                 ),
             ] {
-                ids.push(doc.append_element(Some(root), tag, Style::default(), Some(&css)));
+                ids.push(doc.append_element(Some(root), tag, Some(&css)));
             }
         });
         let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
@@ -15930,19 +14045,13 @@ fn generated_after_content_after_a_forced_break_clears_the_earlier_floats() {
         let mut block = 0;
         let (doc, _) = paged_body(|doc, body| {
             let html = doc.parent_of(body).unwrap();
-            let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-            let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+            let head = doc.append_element(Some(html), "head", None::<&str>);
+            let style = doc.append_element(Some(head), "style", None::<&str>);
             doc.append_text(style, format!("body::after {{ content: {content} }}"));
-            doc.append_element(
-                Some(body),
-                "div",
-                Style::default(),
-                Some("float:left;width:40px;height:80px"),
-            );
+            doc.append_element(Some(body), "div", Some("float:left;width:40px;height:80px"));
             block = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;height:10px;break-after:page"),
             );
         });
@@ -15955,12 +14064,7 @@ fn generated_after_content_after_a_forced_break_clears_the_earlier_floats() {
 fn an_absolutely_positioned_box_of_the_paragraph_keeps_its_inset_place() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
-        let root = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;position:relative"),
-        );
+        let root = doc.append_element(Some(body), "div", Some("display:block;position:relative"));
         for (tag, css) in [
             ("div", "display:block;height:50px"),
             (
@@ -15970,7 +14074,7 @@ fn an_absolutely_positioned_box_of_the_paragraph_keeps_its_inset_place() {
             ("div", "display:block;height:60px;break-inside:avoid"),
             ("span", "position:absolute;top:0;width:10px;height:10px"),
         ] {
-            ids.push(doc.append_element(Some(root), tag, Style::default(), Some(css)));
+            ids.push(doc.append_element(Some(root), tag, Some(css)));
         }
     });
     assert_eq!(page_flow_y(&doc, ids[2]), 100.0);
@@ -15984,26 +14088,15 @@ fn relative_child_positions(parent: &str, children: &[&str]) -> Vec<f32> {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let parent = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some(&format!("display:block;{parent}")),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(&format!("display:block;{parent}")));
     let children: Vec<_> = children
         .iter()
         .map(|style| {
             doc.append_element(
                 Some(parent),
                 "div",
-                Style::default(),
                 Some(&format!(
                     "display:block;position:relative;height:10px;{style}"
                 )),
@@ -16053,23 +14146,16 @@ fn vertical_atomic_location(atomic: &str) -> (f32, f32) {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl;width:100px;height:200px"),
     );
     let atomic = doc.append_element(
         Some(root),
         "span",
-        Style::default(),
         Some(&format!(
             "display:inline-block;width:10px;height:10px;position:relative;{atomic}"
         )),
@@ -16105,20 +14191,13 @@ fn a_relative_block_in_a_mixed_root_resolves_a_top_percentage_against_its_height
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;height:200px;font:10px/10px monospace"),
         );
         doc.append_text(root, "x");
-        still = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;height:10px"),
-        );
+        still = doc.append_element(Some(root), "div", Some("display:block;height:10px"));
         moved = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;height:10px;position:relative;top:50%"),
         );
     });
@@ -16137,20 +14216,17 @@ fn a_relative_block_in_an_rtl_mixed_root_prefers_right() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;width:200px;direction:rtl;font:10px/10px monospace"),
         );
         doc.append_text(root, "x");
         still = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:50px;height:10px"),
         );
         moved = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:50px;height:10px;position:relative;left:5px;right:10%"),
         );
     });
@@ -16170,20 +14246,17 @@ fn a_relative_block_in_a_vertical_rl_mixed_root_prefers_right() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;writing-mode:vertical-rl;width:200px;height:100px;font:10px/10px monospace"),
         );
         doc.append_text(root, "x");
         still = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:10px;height:50px"),
         );
         moved = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:10px;height:50px;position:relative;left:5px;right:10%"),
         );
     });
@@ -16203,20 +14276,17 @@ fn a_relative_block_in_an_rtl_vertical_mixed_root_prefers_bottom() {
         let root = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;writing-mode:vertical-rl;direction:rtl;width:200px;height:100px;font:10px/10px monospace"),
         );
         doc.append_text(root, "x");
         still = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:10px;height:50px"),
         );
         moved = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;width:10px;height:50px;position:relative;top:3px;bottom:4px"),
         );
     });
@@ -16289,19 +14359,18 @@ fn a_mixed_calc_grid_track_resolves_against_the_container() {
     // The container is 200px wide with a 10px font: `calc(50% - 1em)` is
     // 100 - 10 = 90px, and `minmax(calc(10% + 1em), 1fr)` takes the rest.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             "display:grid;width:200px;font-size:10px;\
              grid-template-columns:calc(50% - 1em) minmax(calc(10% + 1em),1fr)",
         ),
     );
-    let first = doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
-    let second = doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
+    let first = doc.append_element(Some(grid), "div", Some("height:10px"));
+    let second = doc.append_element(Some(grid), "div", Some("height:10px"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -16317,41 +14386,27 @@ fn a_forced_break_on_a_wrapped_row_flex_item_moves_same_line_siblings() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-wrap:wrap;width:100px;align-items:flex-start"),
     );
     let first = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;flex:none;width:50px;height:20px"),
     );
     let breaking = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;flex:none;width:50px;height:20px;break-before:page"),
     );
     let next_line = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;flex:none;width:50px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16384,28 +14439,20 @@ fn vertical_forced_break_with_before_box(before_css: &str) -> f32 {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl"),
     );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:100px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:0;height:100px;break-before:page"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         format!("section::before {{ content: \"\"; display: block; {before_css} }}").as_str(),
@@ -16413,7 +14460,6 @@ fn vertical_forced_break_with_before_box(before_css: &str) -> f32 {
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:100px;margin-right:30px"),
     );
     doc.mark_in_document_flags();
@@ -16451,26 +14497,19 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_i
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "section::before { content: \"\"; display: block; writing-mode: vertical-rl }",
@@ -16478,7 +14517,6 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_i
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16502,29 +14540,21 @@ fn a_margin_after_an_empty_forced_break_orthogonal_box_is_truncated() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl;width:100px;height:0;break-before:page"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16548,26 +14578,19 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_multicol_before_box_is_t
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "section::before { content: \"\"; display: block; column-count: 2 }",
@@ -16575,7 +14598,6 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_multicol_before_box_is_t
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16599,41 +14621,27 @@ fn a_margin_after_a_forced_break_box_with_a_cleared_empty_child_is_truncated() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let forced = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
     doc.append_element(
         Some(forced),
         "div",
-        Style::default(),
         Some("display:block;float:left;width:10px;height:10px"),
     );
-    doc.append_element(
-        Some(forced),
-        "div",
-        Style::default(),
-        Some("display:block;clear:both"),
-    );
+    doc.append_element(Some(forced), "div", Some("display:block;clear:both"));
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16657,35 +14665,22 @@ fn a_margin_after_an_empty_wrapper_of_a_forced_break_box_is_kept() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
-    let wrapper = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;width:100px"),
-    );
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block;width:100px"));
     doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;height:0;break-before:page"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16709,32 +14704,24 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_cleared_after_box_is_tru
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let section = doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
     doc.append_element(
         Some(section),
         "div",
-        Style::default(),
         Some("display:block;float:left;width:10px;height:10px"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "section::after { content: \"\"; display: block; clear: both }",
@@ -16742,7 +14729,6 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_cleared_after_box_is_tru
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16767,32 +14753,24 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_o
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let section = doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
     doc.append_element(
         Some(section),
         "span",
-        Style::default(),
         Some("display:contents;writing-mode:vertical-rl"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(
         style,
         "span::before { content: \"\"; display: block; writing-mode: vertical-rl }",
@@ -16800,7 +14778,6 @@ fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_o
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16825,29 +14802,21 @@ fn a_margin_after_an_empty_box_after_a_forced_break_after_is_kept() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px;break-after:page"),
     );
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:0"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16871,35 +14840,26 @@ fn a_margin_after_a_bordered_wrapper_of_a_forced_break_box_follows_the_border() 
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;border-bottom:1px solid"),
     );
     doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;height:0;break-before:page"),
     );
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16924,37 +14884,24 @@ fn a_margin_after_a_contents_sibling_with_a_flow_root_before_box_is_truncated() 
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
     doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
-    doc.append_element(
-        Some(body),
-        "span",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_element(Some(body), "span", Some("display:contents"));
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, "span::before { content: \"\"; display: flow-root }");
     let last = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
     doc.mark_in_document_flags();
@@ -16983,27 +14930,15 @@ fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_cs
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;height:20px"),
     );
-    let span = |doc: &mut Document| {
-        doc.append_element(
-            Some(body),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        )
-    };
+    let span =
+        |doc: &mut Document| doc.append_element(Some(body), "span", Some("display:contents"));
     let section_parent = if inside_contents == "section" {
         span(&mut doc)
     } else {
@@ -17012,7 +14947,6 @@ fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_cs
     doc.append_element(
         Some(section_parent),
         "section",
-        Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
     // Collapsible white space generates no box between the boxes.
@@ -17029,10 +14963,9 @@ fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_cs
     let last = doc.append_element(
         Some(last_parent),
         "div",
-        Style::default(),
         Some("display:block;width:100px;margin-top:30px;height:20px"),
     );
-    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(0), "style", None::<&str>);
     doc.append_text(style, pseudo_css);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -17162,26 +15095,19 @@ fn nested_margin_layout(first: &str, second: &str, children: [Option<&str>; 2]) 
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let mut boxes = Vec::new();
     for (style, child) in [first, second].into_iter().zip(children) {
         let id = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:block;width:100px;{style}")),
         );
         if let Some(child) = child {
             doc.append_element(
                 Some(id),
                 "div",
-                Style::default(),
                 Some(&format!("display:block;height:20px;{child}")),
             );
         }
@@ -17249,9 +15175,9 @@ fn a_last_child_margin_inside_a_fixed_height_box_does_not_join_the_gap() {
 #[test]
 fn float_shift_stays_pending_inside_the_moved_float() {
     let mut doc = Document::new();
-    let float = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let inner = doc.append_element(Some(float), "p", Style::default(), None::<&str>);
-    let after = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let float = doc.append_element(Some(0), "div", None::<&str>);
+    let inner = doc.append_element(Some(float), "p", None::<&str>);
+    let after = doc.append_element(Some(0), "p", None::<&str>);
     let mut shifts = FloatShifts {
         pending: Some((float, 12.0, 3)),
         ..FloatShifts::default()
@@ -17301,7 +15227,7 @@ fn dropping_the_last_float_edges_resets_the_later_shift() {
 #[test]
 fn moved_float_edge_keeps_the_block_start_margin_only_after_a_forced_break() {
     let mut document = Document::new();
-    let float = document.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let float = document.append_element(Some(0), "div", None::<&str>);
     let layout = &mut document.nodes[float].unrounded_layout;
     layout.size.width = 40.0;
     layout.margin.left = 3.0;
@@ -17638,16 +15564,11 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     let build = |wrapper_css: &str| {
         let mut doc = Document::new();
         let block = |doc: &mut Document, parent| {
-            doc.append_element(
-                Some(parent),
-                "div",
-                Style::default(),
-                Some("display:block;height:10px"),
-            )
+            doc.append_element(Some(parent), "div", Some("display:block;height:10px"))
         };
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-        let wrapper = doc.append_element(Some(body), "div", Style::default(), Some(wrapper_css));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
+        let wrapper = doc.append_element(Some(body), "div", Some(wrapper_css));
         let first = block(&mut doc, wrapper);
         let second = block(&mut doc, wrapper);
         doc.mark_in_document_flags();
@@ -17676,7 +15597,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     // in block flow by the larger of the two deltas.
     let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
     let mut shifts = SubtreeShifts::default();
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let bounded = move_box_for_transition(
         &mut session,
         &cascade,
@@ -17697,7 +15618,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     // by its own delta.
     let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
     let mut shifts = SubtreeShifts::default();
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let bounded = move_box_for_transition(
         &mut session,
         &cascade,
@@ -17716,7 +15637,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     // Any other break moves the box alone.
     let (mut doc, cascade, body, wrapper, first, second) = build("display:block");
     let mut shifts = SubtreeShifts::default();
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     move_box_for_transition(
         &mut session,
         &cascade,
@@ -17734,7 +15655,7 @@ fn a_box_moved_by_a_transition_brings_along_what_trails_or_holds_it() {
     // An ancestor with a fixed height cannot hold the moved box.
     let (mut doc, cascade, body, wrapper, first, _) = build("display:block;height:20px");
     let mut shifts = SubtreeShifts::default();
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let bounded = move_box_for_transition(
         &mut session,
         &cascade,
@@ -17790,9 +15711,9 @@ fn page_slices_start_at_each_page_origin_with_the_page_type_it_was_given() {
 #[test]
 fn text_between_two_blocks_ends_the_run_of_adjoining_siblings() {
     let mut doc = Document::new();
-    let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let parent = doc.append_element(Some(0), "div", None::<&str>);
     let text = doc.append_text(parent, "between");
-    let other = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let other = doc.append_element(Some(0), "div", None::<&str>);
     let mut margins = SiblingMargins::default();
     margins.record_bottom(parent, 5, true, 40.0);
     margins.record_bottom(other, 6, true, 80.0);
@@ -17843,11 +15764,10 @@ fn text_sets_the_page_type_unless_a_change_or_a_break_already_set_it() {
 fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
     // `body > avoiding, plain, flex > (first, last)`, all 60px blocks.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let block = |doc: &mut Document, parent, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
-    };
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block =
+        |doc: &mut Document, parent, css: &str| doc.append_element(Some(parent), "div", Some(css));
     let avoiding = block(
         &mut doc,
         body,
@@ -17860,6 +15780,7 @@ fn a_box_moves_to_the_next_page_for_each_break_it_avoids() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("styles");
     let context = |set: fn(&mut candidates::ElementContext)| {
         let mut attributes = candidates::ElementContext::default();
         set(&mut attributes);
@@ -18078,11 +15999,9 @@ fn a_named_box_joins_the_transition_of_a_zero_height_named_box_at_its_coordinate
 fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     // `body > first, second, third`, with margins above the last two.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let block = |doc: &mut Document, css: &str| {
-        doc.append_element(Some(body), "div", Style::default(), Some(css))
-    };
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block = |doc: &mut Document, css: &str| doc.append_element(Some(body), "div", Some(css));
     let first = block(&mut doc, "display:block;height:90px");
     let second = block(&mut doc, "display:block;height:30px");
     let third = block(&mut doc, "display:block;height:30px;clear:both");
@@ -18091,9 +16010,12 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     let mut cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     doc.nodes[second].unrounded_layout.margin.top = 30.0;
     doc.nodes[third].unrounded_layout.margin.top = 30.0;
-    let session = crate::layout::context::LayoutSession::new(&mut doc);
     let origins = PageOrigins::new(&[], 100.0);
-    let truncation = |margins: &SiblingMargins, cascade: &CascadeResult, at: &MarginBreak| {
+    let truncation = |doc: &mut Document,
+                      margins: &SiblingMargins,
+                      cascade: &CascadeResult,
+                      at: &MarginBreak| {
+        let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
         margins.truncation_at_break(&session, cascade, &origins, at)
     };
     // The second block starts at 120 below a first block that ends at 90, so
@@ -18111,7 +16033,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
     };
 
     // The block moves up to the top of the page.
-    let found = truncation(&margins, &cascade, &at).unwrap();
+    let found = truncation(&mut doc, &margins, &cascade, &at).unwrap();
     assert_eq!(found.delta, -20.0);
     assert_eq!(found.underflow, None);
 
@@ -18121,7 +16043,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         forced_before: true,
         ..at
     };
-    let found = truncation(&margins, &cascade, &forced).unwrap();
+    let found = truncation(&mut doc, &margins, &cascade, &forced).unwrap();
     assert_eq!(found.delta, 10.0);
     assert_eq!(found.underflow, None);
     let pulled_up = MarginBreak {
@@ -18129,7 +16051,7 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         margin_top: -5.0,
         ..at
     };
-    let found = truncation(&margins, &cascade, &pulled_up).unwrap();
+    let found = truncation(&mut doc, &margins, &cascade, &pulled_up).unwrap();
     assert_eq!(found.delta, -25.0);
     assert_eq!(found.underflow, Some(5.0));
 
@@ -18139,14 +16061,14 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         collapses_with_previous_block: false,
         ..at
     };
-    assert!(truncation(&margins, &cascade, &apart).is_none());
+    assert!(truncation(&mut doc, &margins, &cascade, &apart).is_none());
     let first_page = MarginBreak {
         natural_page: 0,
         ..at
     };
-    assert!(truncation(&margins, &cascade, &first_page).is_none());
+    assert!(truncation(&mut doc, &margins, &cascade, &first_page).is_none());
     // Nor when no block before it was recorded.
-    assert!(truncation(&SiblingMargins::default(), &cascade, &at).is_none());
+    assert!(truncation(&mut doc, &SiblingMargins::default(), &cascade, &at).is_none());
 
     // A box that clears floats keeps the gap, which may hold clearance. The
     // gap above it is judged from the bottom recorded for the block before.
@@ -18158,9 +16080,9 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
         natural_page: 2,
         ..at
     };
-    assert!(truncation(&margins, &cascade, &clearing).is_none());
+    assert!(truncation(&mut doc, &margins, &cascade, &clearing).is_none());
     cascade.computed[third].clear = raikiri_style::property::ClearValue::None;
-    let found = truncation(&margins, &cascade, &clearing).unwrap();
+    let found = truncation(&mut doc, &margins, &cascade, &clearing).unwrap();
     assert_eq!(found.delta, -20.0);
 }
 
@@ -18168,11 +16090,9 @@ fn a_page_edge_in_the_margin_above_a_box_truncates_it() {
 fn a_box_clears_the_moved_floats_of_its_context_by_the_shift_they_took() {
     // `body > clearing, right, floater` after a float moved to 100..140.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let block = |doc: &mut Document, css: &str| {
-        doc.append_element(Some(body), "div", Style::default(), Some(css))
-    };
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block = |doc: &mut Document, css: &str| doc.append_element(Some(body), "div", Some(css));
     let clearing = block(&mut doc, "display:block;clear:left");
     let right = block(&mut doc, "display:block;clear:right");
     let floater = block(&mut doc, "display:block;float:left");
@@ -18293,21 +16213,11 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
     // `body > wrapper > floater` and `body > plain`: the wrapper is a
     // formatting context of its own that holds its float.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let wrapper = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;overflow:hidden"),
-    );
-    let floater = doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("display:block;float:left"),
-    );
-    let plain = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block;overflow:hidden"));
+    let floater = doc.append_element(Some(wrapper), "div", Some("display:block;float:left"));
+    let plain = doc.append_element(Some(body), "div", Some("display:block"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -18345,7 +16255,7 @@ fn a_box_moved_by_a_transition_settles_the_floats_of_its_context() {
         margin_top: 4.0,
         moved_in_bounded_ancestor,
     };
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
 
     // A float that moved across a page edge it avoids is recorded for the
     // floats after it in its context, and the context grows to hold it.
@@ -18540,11 +16450,10 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
     // `body > clearing, floater, wrapper > nested`, after a float moved to
     // 100..140 on the left of `body`.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let block = |doc: &mut Document, parent, css: &str| {
-        doc.append_element(Some(parent), "div", Style::default(), Some(css))
-    };
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let block =
+        |doc: &mut Document, parent, css: &str| doc.append_element(Some(parent), "div", Some(css));
     let clearing = block(&mut doc, body, "display:block;clear:left");
     let floater = block(&mut doc, body, "display:block;float:left");
     let wrapper = block(&mut doc, body, "display:block");
@@ -18608,7 +16517,7 @@ fn the_start_of_a_candidate_ends_the_shifts_it_has_left_and_clears_the_moved_flo
         ifc_root: None,
     };
     let settle = |doc: &mut Document, state: &mut PaginationState, candidate: &PageCandidate| {
-        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         let start = state
             .begin_candidate(&mut session, &env, candidate)
             .unwrap();
@@ -18713,43 +16622,13 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
     // anonymous cell is not a node of the source tree.
     let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");
     let body = doc.parent_of(root).unwrap();
-    let table = doc.append_element(
-        Some(body),
-        "table",
-        Style::default(),
-        Some("display:table;width:100px"),
-    );
-    let header = doc.append_element(
-        Some(table),
-        "thead",
-        Style::default(),
-        Some("display:table-header-group"),
-    );
-    let row = doc.append_element(
-        Some(header),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    let header_cell = doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell;height:20px"),
-    );
-    let body_row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(body_row),
-        "td",
-        Style::default(),
-        Some("display:table-cell;height:20px"),
-    );
-    let text_table = doc.append_element(Some(body), "div", Style::default(), Some("display:table"));
+    let table = doc.append_element(Some(body), "table", Some("display:table;width:100px"));
+    let header = doc.append_element(Some(table), "thead", Some("display:table-header-group"));
+    let row = doc.append_element(Some(header), "tr", Some("display:table-row"));
+    let header_cell = doc.append_element(Some(row), "td", Some("display:table-cell;height:20px"));
+    let body_row = doc.append_element(Some(table), "tr", Some("display:table-row"));
+    doc.append_element(Some(body_row), "td", Some("display:table-cell;height:20px"));
+    let text_table = doc.append_element(Some(body), "div", Some("display:table"));
     doc.append_text(text_table, "aaaa bbbb");
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
@@ -18786,7 +16665,7 @@ fn the_start_of_a_candidate_skips_what_is_not_placed() {
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
         };
-        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         state.begin_candidate(&mut session, &env, candidate)
     };
     let node_count = doc.nodes.len();
@@ -18889,7 +16768,7 @@ fn a_page_type_change_leaves_text_at_a_non_finite_position_where_it_is() {
     state.saw_child = true;
     state.page_names = PageNames::new(Some("a".to_string()));
 
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     state
         .place_text(&mut session, &env, &candidate, &entry)
         .unwrap();
@@ -18943,7 +16822,7 @@ fn a_page_type_change_leaves_a_box_at_a_non_finite_position_where_it_is() {
     state.saw_child = true;
     state.page_names = PageNames::new(Some("a".to_string()));
 
-    let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     state
         .place_box(&mut session, &env, &candidate, &entry)
         .unwrap();
@@ -19023,7 +16902,7 @@ fn a_box_meets_the_break_before_it_where_it_starts_in_the_flow() {
     let meet = |doc: &mut Document, candidate: &PageCandidate, entry: &_| {
         let mut state = pagination_state_before_first_candidate(node_count);
         state.flow_shift = 5.0;
-        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         state.begin_box(&mut session, &env, candidate, entry)
     };
 
@@ -19131,7 +17010,7 @@ fn a_box_is_recorded_among_the_siblings_whose_margins_adjoin_its_own() {
                   participates,
                   collapses,
                   starts_after_forced_break| {
-        let session = crate::layout::context::LayoutSession::new(doc);
+        let session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         state.record_box_among_siblings(
             &session,
             &env,
@@ -19212,7 +17091,7 @@ fn a_finished_box_reaches_the_pages_it_runs_through_and_joins_its_flex_flow() {
             insets,
             page_box: page_box_800x600(),
         };
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         state.finish_box(&mut session, &env, candidate, 90.0)
     };
     let mut reach_after = |candidate: &PageCandidate, insets| {
@@ -19346,7 +17225,7 @@ fn the_first_box_starts_on_the_first_page_and_a_later_one_where_its_break_puts_i
             effective_y,
             starts_after_forced_break: false,
         };
-        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         let met = state
             .start_box_page(
                 &mut session,
@@ -19452,7 +17331,7 @@ fn placement_halts_at_a_page_past_the_page_limit() {
         };
         let mut state = pagination_state_before_first_candidate(node_count);
         state.saw_child = true;
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         if candidate.context.is_text() {
             state.place_text(&mut session, &env, candidate, &entry)
         } else {
@@ -19519,7 +17398,7 @@ fn footnotes_stack_at_the_bottom_of_their_anchor_page_and_leave_the_flow() {
                 insets: PageContentInsets::default(),
                 page_box: page_box_800x600(),
             };
-            let mut session = crate::layout::context::LayoutSession::new(doc);
+            let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
             state.place_footnote(&mut session, &env, &note)
         };
 
@@ -19571,14 +17450,14 @@ fn unpaginated_paragraph_after_a_spacer(
     spacer_height: f32,
 ) -> (Document, CascadeResult, usize, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let spacer_css = format!("display:block;height:{spacer_height}px");
-    doc.append_element(Some(body), "div", Style::default(), Some(&spacer_css));
+    doc.append_element(Some(body), "div", Some(&spacer_css));
     let root_css = format!(
         "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
     );
-    let root = doc.append_element(Some(body), "div", Style::default(), Some(&root_css));
+    let root = doc.append_element(Some(body), "div", Some(&root_css));
     let text = doc.append_text(root, text);
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
@@ -19619,7 +17498,7 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
         named_flex_context: None,
         ifc_root,
     };
-    let session = crate::layout::context::LayoutSession::new(&mut doc);
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let mut checked = CheckedParagraphs::default();
 
     // The text of a paragraph is held by the paragraph's root, a direct child
@@ -19673,15 +17552,10 @@ fn the_blocks_holding_the_lines_of_a_text_follow_from_its_paragraph_root_and_par
 #[test]
 fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_no_block() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let container = doc.append_element(Some(body), "div", Style::default(), Some("display:flex"));
-    let item = doc.append_element(
-        Some(container),
-        "div",
-        Style::default(),
-        Some("display:block;width:100%"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let container = doc.append_element(Some(body), "div", Some("display:flex"));
+    let item = doc.append_element(Some(container), "div", Some("display:block;width:100%"));
     let text = doc.append_text(item, "aaaa");
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
@@ -19711,7 +17585,7 @@ fn a_paragraph_that_is_a_flex_item_alone_on_its_line_has_its_flex_container_but_
         named_flex_context: None,
         ifc_root: Some((item, 0.0)),
     };
-    let session = crate::layout::context::LayoutSession::new(&mut doc);
+    let session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
     let checked = CheckedParagraphs::default();
 
     // The item is not a block that moves as a unit, but its later lines can
@@ -19794,7 +17668,7 @@ fn a_fixed_height_block_whose_first_line_straddles_the_page_end_is_pushed_once()
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
         };
-        let mut session = crate::layout::context::LayoutSession::new(doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
         let blocks = pagination_state::LineBlocks::find(
             &session,
             &env,
@@ -19879,7 +17753,7 @@ fn a_paragraph_breaking_badly_at_the_page_end_moves_its_lines_or_its_block_once(
                 insets: PageContentInsets::default(),
                 page_box: page_box_800x600(),
             };
-            let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+            let mut session = crate::layout::context::LayoutSession::resumed(&mut doc, &cascade);
             let blocks = pagination_state::LineBlocks::find(
                 &session,
                 &env,
@@ -19984,7 +17858,7 @@ fn the_page_of_in_flow_text_follows_its_position_unless_a_break_or_page_type_ope
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
         };
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         let mut position = pagination_state::TextPosition {
             effective_y,
             height: 10.0,
@@ -20054,12 +17928,12 @@ fn unpaginated_blocks(
     second_margin_top: f32,
 ) -> (Document, CascadeResult, usize, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let first_css = format!("display:block;height:{first_height}px");
-    let first = doc.append_element(Some(body), "div", Style::default(), Some(&first_css));
+    let first = doc.append_element(Some(body), "div", Some(&first_css));
     let second_css = format!("display:block;height:20px;margin-top:{second_margin_top}px");
-    let second = doc.append_element(Some(body), "div", Style::default(), Some(&second_css));
+    let second = doc.append_element(Some(body), "div", Some(&second_css));
     doc.mark_in_document_flags();
     let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
@@ -20130,7 +18004,7 @@ fn a_box_meeting_a_page_transition_moves_to_the_top_of_the_next_page() {
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
         };
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         let mut position = pagination_state::BoxPosition {
             effective_y,
             starts_after_forced_break: false,
@@ -20224,7 +18098,7 @@ fn a_box_meeting_no_page_transition_starts_on_the_page_its_position_falls_on() {
             insets: PageContentInsets::default(),
             page_box: page_box_800x600(),
         };
-        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
         let mut position = pagination_state::BoxPosition {
             effective_y: 120.0,
             starts_after_forced_break: false,
@@ -20287,19 +18161,9 @@ fn boxes_outside_the_paginated_flow_reach_the_pages_they_paint_on() {
     // The same document with a body that clips its overflow.
     let (mut clipped, clipped_cascade, clipped_body, ..) = {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("display:block;overflow:hidden"),
-        );
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:250px"),
-        );
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;overflow:hidden"));
+        doc.append_element(Some(body), "div", Some("display:block;height:250px"));
         doc.mark_in_document_flags();
         let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
         layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
@@ -20325,7 +18189,7 @@ fn boxes_outside_the_paginated_flow_reach_the_pages_they_paint_on() {
         };
         let mut state = pagination_state_before_first_candidate(node_count);
         state.page_names.current = Some("z".to_string());
-        let session = crate::layout::context::LayoutSession::new(doc);
+        let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
         let reached = state.reach_overflow_pages(&session, &env, 100.0);
         (reached, state)
     };
@@ -20525,13 +18389,12 @@ fn block_axis_insets_are_the_physical_top_and_bottom_whatever_the_boxs_writing_m
     for writing_mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
         for (insets, explicit, static_position) in cases {
             let mut doc = crate::Document::new();
-            let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-            let body =
-                doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+            let html = doc.append_element(Some(0), "html", Some("display:block"));
+            let body = doc.append_element(Some(html), "body", Some("display:block"));
             let css = format!(
                 "position:absolute;width:20px;height:20px;writing-mode:{writing_mode};{insets}"
             );
-            let positioned = doc.append_element(Some(body), "div", Style::default(), Some(&css));
+            let positioned = doc.append_element(Some(body), "div", Some(&css));
             doc.mark_in_document_flags();
             let rules = raikiri_style::build_rule_tree(&doc);
             let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -20570,16 +18433,15 @@ fn only_lengths_and_percentages_are_explicit_insets() {
 }
 
 #[test]
-fn pagination_reads_are_compared_with_the_retained_style() {
+fn unbreakable_blocks_taller_than_half_a_page_paginate_onto_several_pages() {
     let mut doc = crate::Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
     for _ in 0..3 {
         doc.append_element(
             Some(wrapper),
             "div",
-            Style::default(),
             Some("display:block;height:120px;break-inside:avoid;float:none;overflow:hidden"),
         );
     }
@@ -20590,9 +18452,6 @@ fn pagination_reads_are_compared_with_the_retained_style() {
     page.width = 200.0;
     page.height = 200.0;
     assert!(layout_pages(&mut doc, &cascade, page).unwrap().len() > 1);
-    let reads = &doc.style_view_comparisons.getter_reads
-        [crate::layout::style_views::ReadRole::Pagination as usize];
-    assert!(reads.get() > 0, "the paginator read no style");
 }
 
 #[test]
@@ -20616,17 +18475,16 @@ fn block_axis_insets_of_the_transposed_cascade_match_a_view_on_the_roots_axes() 
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some(format!("display:block;writing-mode:{root_wm}").as_str()),
         );
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
         for writing_mode in ["horizontal-tb", "vertical-rl", "vertical-lr", "sideways-rl"] {
             for position in ["absolute", "fixed"] {
                 for inset in insets {
                     let css = format!(
                         "position:{position};width:20px;height:20px;writing-mode:{writing_mode};{inset}"
                     );
-                    doc.append_element(Some(body), "div", Style::default(), Some(css.as_str()));
+                    doc.append_element(Some(body), "div", Some(css.as_str()));
                 }
             }
         }

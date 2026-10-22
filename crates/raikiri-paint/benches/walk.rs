@@ -92,8 +92,6 @@ use raikiri_paint::paint_single_page;
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 // cov:ignore: bench harness — same reason as above.
 use raikiri_traits::PageBox;
-// cov:ignore: bench harness — same reason as above.
-use raikiri_dom::LayoutStyle as Style;
 
 /// Shared `.expect()` message for this file's `cascade()` and
 /// `layout_single_page()` setup calls.
@@ -117,11 +115,11 @@ const INFALLIBLE_SETUP: &str = "cascade/layout are Ok for this benchmark's fixed
 // cov:ignore: bench harness — same reason as `INFALLIBLE_SETUP` above.
 fn build_doc(n_elems: usize) -> Document {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     for _ in 0..n_elems {
-        let div = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let div = doc.append_element(Some(body), "div", Some("display:block"));
         doc.append_text(div, "x");
     }
     doc

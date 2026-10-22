@@ -80,11 +80,11 @@ fn the_clip_of_a_fragment_is_cut_to_the_clip_around_it() {
 #[test]
 fn the_fragments_of_a_document_are_found_by_the_record_they_hang_under() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let div = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    let span = doc.append_element(Some(div), "span", Style::default(), None::<&str>);
-    let once = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let div = doc.append_element(Some(body), "div", Some("display:block"));
+    let span = doc.append_element(Some(div), "span", None::<&str>);
+    let once = doc.append_element(Some(body), "p", Some("display:block"));
     doc.fragment_tree.fragments = vec![
         fragment(div, None, None),
         fragment(div, None, None),
@@ -109,7 +109,7 @@ fn the_fragments_of_a_document_are_found_by_the_record_they_hang_under() {
 #[test]
 fn a_table_grid_box_is_where_the_page_fragment_of_a_node_is() {
     let mut doc = Document::new();
-    let div = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let div = doc.append_element(Some(0), "div", None::<&str>);
     let area = PaintRect::new(10.0, 20.0, 30.0, 40.0);
     assert_eq!(fragment_area(&doc.nodes[div], area), area);
     doc.nodes[div].table_grid_box = Some(PaintRect::new(1.0, 2.0, 3.0, 4.0));
@@ -122,7 +122,7 @@ fn a_table_grid_box_is_where_the_page_fragment_of_a_node_is() {
 #[test]
 fn only_elements_and_text_with_something_to_show_give_a_source() {
     let mut doc = Document::new();
-    let div = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let div = doc.append_element(Some(0), "div", None::<&str>);
     let text = doc.append_text(div, " a ");
     let blank = doc.append_text(div, " \n\t");
     let comment = doc.append_comment(Some(div), "a comment");
@@ -330,7 +330,7 @@ fn an_inline_element_is_where_its_pieces_are_on_the_lines() {
     let (mut span, mut inner) = (0, 0);
     let (mut doc, cascade, root) = ahem_paragraph_with("width:200px", |doc, root| {
         doc.append_text(root, "aa ");
-        span = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+        span = doc.append_element(Some(root), "span", Some("display:inline"));
         inner = doc.append_text(span, "bbbb");
     });
     let walked = walked(&mut doc, &cascade);
@@ -353,7 +353,7 @@ fn what_is_not_rendered_gives_no_source() {
     let (mut doc, cascade, _) = ahem_paragraph_with("width:200px", |doc, root| {
         blank = doc.append_text(root, " ");
         comment = doc.append_comment(Some(root), "a comment");
-        hidden = doc.append_element(Some(root), "span", Style::default(), Some("display:none"));
+        hidden = doc.append_element(Some(root), "span", Some("display:none"));
         hidden_text = doc.append_text(hidden, "hidden");
         shown = doc.append_text(root, "shown");
     });
@@ -371,7 +371,6 @@ fn a_fixed_subtree_is_marked_as_repeating_on_every_page() {
         fixed = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;position:fixed;top:0;left:0"),
         );
         inner = doc.append_text(fixed, "fixed");
@@ -389,16 +388,11 @@ fn a_fixed_subtree_is_marked_as_repeating_on_every_page() {
 #[test]
 fn the_sources_are_in_node_order_though_a_node_is_placed_more_than_once() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
     for _ in 0..2 {
-        doc.append_element(
-            Some(wrapper),
-            "div",
-            Style::default(),
-            Some("display:block"),
-        );
+        doc.append_element(Some(wrapper), "div", Some("display:block"));
     }
     doc.fragment_tree.fragments =
         vec![fragment(wrapper, None, None), fragment(wrapper, None, None)];

@@ -1,5 +1,4 @@
 use super::super::*;
-use crate::LayoutStyle as Style;
 
 #[test]
 fn hyperlink_cascade_and_query_preserve_empty_html_and_legacy_svg_href() {
@@ -46,7 +45,7 @@ fn hyperlink_cascade_and_query_preserve_empty_html_and_legacy_svg_href() {
         ),
     ] {
         let mut doc = Document::new();
-        let id = doc.append_element(Some(0), tag, Style::default(), None::<&str>);
+        let id = doc.append_element(Some(0), tag, None::<&str>);
         if let Some(namespace) = namespace {
             doc.set_element_namespace_info(id, Some(namespace.into()), None);
         }

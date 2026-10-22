@@ -4,24 +4,9 @@ use super::*;
 /// `child`, laid out on an A4 page.
 fn child_in(container: &str, child: &str) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let container = document.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some(container),
-    );
-    let child = document.append_element(
-        Some(container),
-        "div",
-        crate::LayoutStyle::default(),
-        Some(child),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let container = document.append_element(Some(body), "div", Some(container));
+    let child = document.append_element(Some(container), "div", Some(child));
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -75,28 +60,16 @@ fn a_display_contents_ancestor_is_skipped() {
     // The containing block is the 100px-high body child around the
     // `display: contents` element.
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     let block = document.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;width:100px;height:100px"),
     );
-    let contents = document.append_element(
-        Some(block),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:contents"),
-    );
+    let contents = document.append_element(Some(block), "div", Some("display:contents"));
     let child = document.append_element(
         Some(contents),
         "div",
-        crate::LayoutStyle::default(),
         Some("float:left;position:relative;left:10%;top:20%"),
     );
     document.mark_in_document_flags();
@@ -172,28 +145,16 @@ fn a_column_box_is_the_containing_block_inside_columns() {
 #[test]
 fn an_inline_ancestor_is_not_the_containing_block() {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     let block = document.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;width:300px;height:100px"),
     );
-    let span = document.append_element(
-        Some(block),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline"),
-    );
+    let span = document.append_element(Some(block), "span", Some("display:inline"));
     let child = document.append_element(
         Some(span),
         "div",
-        crate::LayoutStyle::default(),
         Some("float:left;position:relative;left:10%;top:10%;width:10px;height:10px"),
     );
     document.mark_in_document_flags();
@@ -272,13 +233,8 @@ fn relative_body(
     body: &str,
 ) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", crate::LayoutStyle::default(), html);
-    let body = document.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some(body),
-    );
+    let html = document.append_element(Some(0), "html", html);
+    let body = document.append_element(Some(html), "body", Some(body));
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -321,28 +277,12 @@ fn a_stretched_flex_item_has_a_definite_height() {
     // CSS Flexbox 1 §9.8: the item is stretched to the container's definite
     // 100px, so layout resolves `top: 10%` of an in-flow child to 10px.
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let flex = document.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:flex;height:100px"),
-    );
-    let item = document.append_element(
-        Some(flex),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block;width:50px"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let flex = document.append_element(Some(body), "div", Some("display:flex;height:100px"));
+    let item = document.append_element(Some(flex), "div", Some("display:block;width:50px"));
     let child = document.append_element(
         Some(item),
         "div",
-        crate::LayoutStyle::default(),
         Some("float:left;position:relative;top:10%;width:5px;height:5px"),
     );
     document.mark_in_document_flags();
@@ -360,30 +300,10 @@ fn a_stretched_flex_item_has_a_definite_height() {
 /// innermost one; returns the painter's offset for the child.
 fn nested_offset(outer: &str, inner: &str, child: &str) -> (f32, f32) {
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let outer = document.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some(outer),
-    );
-    let inner = document.append_element(
-        Some(outer),
-        "span",
-        crate::LayoutStyle::default(),
-        Some(inner),
-    );
-    let child = document.append_element(
-        Some(inner),
-        "div",
-        crate::LayoutStyle::default(),
-        Some(child),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let outer = document.append_element(Some(body), "div", Some(outer));
+    let inner = document.append_element(Some(outer), "span", Some(inner));
+    let child = document.append_element(Some(inner), "div", Some(child));
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -436,28 +356,20 @@ fn a_spanner_keeps_its_own_definite_height() {
     // Multicol lays a spanner out with no height of its own to impose, so
     // its `height: 100px` is the percentage basis.
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     let multicol = document.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;width:200px;column-count:2;column-gap:20px"),
     );
     let spanner = document.append_element(
         Some(multicol),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;column-span:all;height:100px"),
     );
     let child = document.append_element(
         Some(spanner),
         "div",
-        crate::LayoutStyle::default(),
         Some("float:left;position:relative;width:5px;height:5px;top:50%"),
     );
     document.mark_in_document_flags();
@@ -475,36 +387,19 @@ fn an_anonymous_table_cell_is_a_containing_block() {
     // CSS Tables 3 §3.9: the floated row child is wrapped in a 50px
     // anonymous cell beside a 150px cell, so `left: 50%` is 25px.
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     let table = document.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:table;width:200px;border-spacing:0"),
     );
-    let row = document.append_element(
-        Some(table),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:table-row"),
-    );
+    let row = document.append_element(Some(table), "div", Some("display:table-row"));
     let child = document.append_element(
         Some(row),
         "div",
-        crate::LayoutStyle::default(),
         Some("float:left;position:relative;width:50px;height:5px;left:50%"),
     );
-    document.append_element(
-        Some(row),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:table-cell;width:150px"),
-    );
+    document.append_element(Some(row), "div", Some("display:table-cell;width:150px"));
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
@@ -520,28 +415,16 @@ fn a_table_cell_resolves_against_its_table() {
     // CSS Tables 3 §3.5: the cell sits in the 200px by 100px table's grid,
     // not in its row.
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
     let table = document.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:table;width:200px;height:100px;border-spacing:0"),
     );
-    let row = document.append_element(
-        Some(table),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:table-row"),
-    );
+    let row = document.append_element(Some(table), "div", Some("display:table-row"));
     let cell = document.append_element(
         Some(row),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:table-cell;position:relative;left:50%;top:50%"),
     );
     document.mark_in_document_flags();
@@ -559,34 +442,17 @@ fn a_cell_in_a_row_outside_a_table_resolves_against_the_anonymous_table() {
     // CSS Tables 3 §3.9: the rows sit in an 80px wide anonymous table, not
     // in the body. Its auto height is indefinite, so `top: 50%` is auto.
     let mut document = Document::new();
-    let body = document.append_element(
-        Some(0),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let row = document.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:table-row"),
-    );
+    let body = document.append_element(Some(0), "body", Some("display:block;margin:0"));
+    let row = document.append_element(Some(body), "div", Some("display:table-row"));
     document.append_element(
         Some(row),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:table-cell;width:80px;height:40px"),
     );
-    let row = document.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:table-row"),
-    );
+    let row = document.append_element(Some(body), "div", Some("display:table-row"));
     let cell = document.append_element(
         Some(row),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:table-cell;position:relative;left:50%;top:50%;height:20px"),
     );
     document.mark_in_document_flags();

@@ -8,7 +8,7 @@ fn authored_length_checks_visit_each_cell_once() {
         let mut cells = Vec::new();
         for row in 0..rows {
             for column in 0..columns {
-                let id = doc.append_element(Some(0), "td", Style::default(), None::<&str>);
+                let id = doc.append_element(Some(0), "td", None::<&str>);
                 cells.push(make_cell(id, row, column, 1, 1, Dimension::auto()));
             }
         }
@@ -43,31 +43,17 @@ fn authored_length_checks_visit_each_cell_once() {
 #[test]
 fn later_definite_cell_keeps_spanning_excess_off_its_column() {
     let mut doc = Document::new();
-    let auto = doc.append_element(Some(0), "td", Style::default(), None::<&str>);
+    let auto = doc.append_element(Some(0), "td", None::<&str>);
     let definite = doc.append_element(
         Some(0),
         "td",
-        Style {
-            size: Size {
-                width: Dimension::length(20.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:flex;box-sizing:border-box;width:20px;height:10px"),
     );
-    let span = doc.append_element(Some(0), "td", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(0), "td", None::<&str>);
     doc.append_element(
         Some(span),
         "div",
-        Style {
-            size: Size {
-                width: Dimension::length(100.0),
-                height: Dimension::length(10.0),
-            },
-            ..Style::default()
-        },
-        None::<&str>,
+        Some("display:flex;box-sizing:border-box;width:100px;height:10px"),
     );
     doc.mark_in_document_flags();
     let grid = super::super::TableGrid {

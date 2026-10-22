@@ -58,7 +58,7 @@ pub(crate) struct TableObjects {
     pub(crate) headers: super::headers::HeaderRepeats,
     pub(crate) cells: Vec<AnonymousCell>,
     /// The layout views of `cells`, moved into the node arena once built.
-    cell_nodes: Vec<(Node, crate::LayoutStyle)>,
+    cell_nodes: Vec<Node>,
     pub(crate) tables: Vec<AnonymousTable>,
     /// The anonymous table index of each wrapped row or row group.
     table_by_part: HashMap<usize, usize>,
@@ -67,7 +67,7 @@ pub(crate) struct TableObjects {
     content_by_owner: HashMap<usize, Vec<Content>>,
     overlay_contents_by_owner: HashMap<usize, Vec<usize>>,
     overlay_contents_owner: HashMap<usize, usize>,
-    prototypes_by_owner: HashMap<usize, (Node, crate::LayoutStyle)>,
+    prototypes_by_owner: HashMap<usize, Node>,
     pub(crate) rows: HashMap<usize, Vec<Row>>,
     pub(crate) paragraph_owner: Vec<Option<usize>>,
     pub(crate) part_background_cells: HashMap<usize, Vec<raikiri_traits::PaintRect>>,
@@ -180,32 +180,13 @@ fn children(
     out
 }
 
-/// The inline direction an anonymous box takes from the source box `owner`
-/// it sits in, the one that box's own layout reads.
-fn inherited_direction(cascade: &CascadeResult, owner: usize) -> taffy::Direction {
-    crate::layout::bridge::direction_for_axes(
-        &cascade.computed[owner],
-        crate::layout::bridge::uses_vertical_axes(cascade, owner),
-    )
-}
-
-fn anonymous_prototype(
-    doc: &Document,
-    cascade: &CascadeResult,
-    owner: usize,
-) -> (Node, crate::LayoutStyle) {
+/// The layout node that the anonymous cells in the source box `owner` are
+/// copied from.
+fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
     let source = doc.ifc_layout_node(owner).unwrap();
     // Anonymous boxes have no source attributes, children or retained layout
     // payloads. Text/style projection reads the original owner instead.
-    let mut style = crate::LayoutStyle {
-        direction: inherited_direction(cascade, owner),
-        ..Default::default()
-    };
-    let mut node = Node::new_element(
-        source.tag_name().unwrap_or("div").into(),
-        style.clone(),
-        None,
-    );
+    let mut node = Node::new_element(source.tag_name().unwrap_or("div").into(), None);
     if let crate::node::NodeData::Element(source_data) = &source.data {
         let target = node.data.as_element_mut().expect("element prototype");
         target.namespace = source_data.namespace.clone();
@@ -219,14 +200,13 @@ fn anonymous_prototype(
         .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
     node.computed_border = Some(raikiri_style::ComputedValues::initial().border);
     node.set_display(DisplayValue::TableCell);
-    node.refresh_box_style(&mut style);
     node.border_collapse = source.border_collapse;
     node.border_spacing = source.border_spacing;
     node.caption_side = source.caption_side;
     node.authored_writing_mode = source.authored_writing_mode;
     node.used_writing_mode = source.used_writing_mode;
     node.under_vertical_writing = source.under_vertical_writing;
-    (node, style)
+    node
 }
 
 fn anonymous_cell(
@@ -239,10 +219,10 @@ fn anonymous_cell(
     let prototype = objects
         .prototypes_by_owner
         .entry(owner)
-        .or_insert_with(|| anonymous_prototype(doc, cascade, owner));
+        .or_insert_with(|| anonymous_prototype(doc, owner));
     #[cfg(test)]
-    tests::record_owner_clone(&prototype.0);
-    let (mut node, style) = prototype.clone();
+    tests::record_owner_clone(prototype);
+    let mut node = prototype.clone();
     node.children = content
         .iter()
         .filter_map(|entry| match entry {
@@ -272,7 +252,7 @@ fn anonymous_cell(
         objects.cell_by_content.insert(entry, index);
     }
     objects.cells.push(AnonymousCell { owner, content });
-    objects.cell_nodes.push((node, style));
+    objects.cell_nodes.push(node);
     key
 }
 
@@ -526,18 +506,9 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
 /// The layout view of the anonymous table in `parent` around `parts`. It
 /// inherits its inherited table properties from `parent` and has initial
 /// values for the rest.
-fn anonymous_table_node(
-    doc: &Document,
-    cascade: &CascadeResult,
-    parent: usize,
-    parts: &[usize],
-) -> (Node, crate::LayoutStyle) {
+fn anonymous_table_node(doc: &Document, parent: usize, parts: &[usize]) -> Node {
     let source = doc.ifc_layout_node(parent).unwrap();
-    let mut style = crate::LayoutStyle {
-        direction: inherited_direction(cascade, parent),
-        ..Default::default()
-    };
-    let mut node = Node::new_element("div".into(), style.clone(), None);
+    let mut node = Node::new_element("div".into(), None);
     if let crate::node::NodeData::Element(source_data) = &source.data {
         let target = node.data.as_element_mut().expect("element prototype");
         target.namespace = source_data.namespace.clone();
@@ -547,14 +518,13 @@ fn anonymous_table_node(
     node.flags = NodeFlags::IS_IN_DOCUMENT | NodeFlags::IS_TABLE_ROOT;
     node.computed_border = Some(raikiri_style::ComputedValues::initial().border);
     node.set_display(DisplayValue::Table);
-    node.refresh_box_style(&mut style);
     node.border_collapse = source.border_collapse;
     node.border_spacing = source.border_spacing;
     node.caption_side = source.caption_side;
     node.authored_writing_mode = None;
     node.used_writing_mode = source.used_writing_mode;
     node.under_vertical_writing = source.under_vertical_writing;
-    (node, style)
+    node
 }
 
 pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(), LayoutError> {
@@ -569,7 +539,7 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     let tables = anonymous_table_runs(doc, cascade);
     let table_nodes = tables
         .iter()
-        .map(|table| anonymous_table_node(doc, cascade, table.parent, &table.parts))
+        .map(|table| anonymous_table_node(doc, table.parent, &table.parts))
         .collect();
     // The tables are set first: their number fixes the keys of the cells.
     doc.set_anonymous_tables(table_nodes);

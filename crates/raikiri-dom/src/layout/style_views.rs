@@ -11,8 +11,6 @@ use raikiri_layout_style::{
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::NodeKind;
 
-#[cfg(test)]
-pub(crate) mod checked;
 pub(crate) mod finished;
 pub(crate) mod frozen;
 pub(super) mod metadata;
@@ -44,14 +42,14 @@ pub(crate) struct BlockAxis<'s> {
     idx: usize,
     snapshot: Option<&'s crate::layout::block_axis_style::BlockAxisStyle>,
     /// The view the facts are read from, built by the first one that needs it.
-    view: std::cell::OnceCell<NativeStyle<'s>>,
+    view: std::cell::OnceCell<LayoutStyleView<'s>>,
 }
 
 impl BlockAxis<'_> {
     fn read<T>(
         &self,
         snapshot: impl FnOnce(&crate::layout::block_axis_style::BlockAxisStyle) -> T,
-        view: impl FnOnce(&NativeStyle<'_>) -> T,
+        view: impl FnOnce(&LayoutStyleView<'_>) -> T,
     ) -> T {
         match self.snapshot {
             Some(facts) => snapshot(facts),
@@ -93,15 +91,9 @@ impl BlockAxis<'_> {
     }
 }
 
-#[cfg(not(test))]
-pub(crate) type NativeStyle<'a> = LayoutStyleView<'a>;
-#[cfg(test)]
-pub(crate) type NativeStyle<'a> = checked::CheckedStyle<'a>;
-
 pub(crate) struct PreparedBox<'a> {
     prepared: PreparedStyle<'a>,
     context: ViewContext,
-    was_scoped: bool,
     /// The reduced physical style of the box, filled by the first read that no
     /// override and no percentage basis touches. It dies with the preparation.
     physical: OnceCell<Box<crate::LayoutStyle>>,
@@ -110,7 +102,6 @@ pub(crate) struct PreparedBox<'a> {
 pub(crate) struct StyleViews<'a> {
     cascade: &'a CascadeResult,
     boxes: HashMap<BoxKey, PreparedBox<'a>>,
-    legacy_calcs: HashMap<BoxKey, Vec<Arc<raikiri_layout_style::AlignedCalc>>>,
     // Primitives may retain snapshot handles after their frame has been popped.
     // Keep unique payloads across bridge replacement for the rest of the session.
     snapshot_calcs: HashMap<usize, Arc<raikiri_layout_style::AlignedCalc>>,
@@ -125,7 +116,6 @@ impl<'a> StyleViews<'a> {
         Self {
             cascade,
             boxes: HashMap::default(),
-            legacy_calcs: HashMap::default(),
             snapshot_calcs: HashMap::default(),
             prepared_publication: None,
             prepared_stamp: None,
@@ -170,7 +160,6 @@ impl<'a> StyleViews<'a> {
                 PreparedBox {
                     prepared,
                     context: ViewContext::default(),
-                    was_scoped: false,
                     physical: OnceCell::new(),
                 },
             );
@@ -230,8 +219,7 @@ impl<'a> StyleViews<'a> {
                         if valid {
                             doc.box_style_data.get_mut(key).unwrap().metadata = metadata;
                         } else {
-                            let prepared =
-                                self.prepare_data(doc, key, &self.cascade.computed[source]);
+                            let prepared = self.prepare_data(doc, &self.cascade.computed[source]);
                             let pass =
                                 std::mem::take(&mut doc.box_style_data.get_mut(key).unwrap().pass);
                             // Replacing through the store retires the previous binding data.
@@ -261,7 +249,7 @@ impl<'a> StyleViews<'a> {
                         "neutralized source must publish its explicit recipe before binding"
                     );
                     let metadata = metadata::prepare_metadata(doc, self.cascade, idx);
-                    let prepared = self.prepare_data(doc, key, &self.cascade.computed[source]);
+                    let prepared = self.prepare_data(doc, &self.cascade.computed[source]);
                     doc.box_style_data.insert(
                         key,
                         BoxStyleData {
@@ -273,36 +261,6 @@ impl<'a> StyleViews<'a> {
                             stamp: doc.box_style_data.stamp(),
                         },
                     );
-                }
-            }
-            // Constructors supply these facts outside CSS. Capture each box's
-            // own projection after recipe refresh, including synthetic boxes.
-            let style = doc
-                .layout_style_for_key(idx)
-                .expect("foundation has retained adapter inputs");
-            let (scrollbar_width, is_table, legacy_text_align, compressible_replaced) = (
-                style.scrollbar_width,
-                style.item_is_table,
-                style.text_align,
-                taffy::CoreStyle::is_compressible_replaced(style),
-            );
-            let metadata = &mut doc
-                .box_style_data
-                .get_mut(key)
-                .expect("foundation exists")
-                .metadata;
-            metadata.scrollbar_width = scrollbar_width;
-            metadata.legacy_text_align = legacy_text_align;
-            for (flag, enabled) in [
-                (raikiri_layout_style::StyleFlags::BLOCK_TABLE, is_table),
-                (
-                    raikiri_layout_style::StyleFlags::COMPRESSIBLE_REPLACED,
-                    compressible_replaced,
-                ),
-            ] {
-                metadata.flags = metadata.flags.without(flag);
-                if enabled {
-                    metadata.flags = metadata.flags.union(flag);
                 }
             }
             if let Some(pending) = doc.box_style_data.pending.remove(&key) {
@@ -321,48 +279,26 @@ impl<'a> StyleViews<'a> {
         }
     }
 
-    fn prepare_data(
-        &mut self,
-        doc: &mut Document,
-        key: BoxKey,
-        values: &ComputedValues,
-    ) -> Arc<PreparedData> {
-        let mut pool = self.legacy_calcs.remove(&key).unwrap_or_default();
-        // Expressions come from CSS; keep randomized hashing for their exact bit keys.
-        let mut owner_index = (!pool.is_empty()).then(|| {
-            let mut index = std::collections::HashMap::with_capacity(pool.len());
-            for (position, payload) in pool.iter().enumerate() {
-                let value = payload.expression();
-                index
-                    .entry((
-                        value.px.to_bits(),
-                        value.percent.to_bits(),
-                        payload.non_negative(),
-                    ))
-                    .or_insert(position);
-            }
-            index
-        });
+    fn prepare_data(&mut self, doc: &mut Document, values: &ComputedValues) -> Arc<PreparedData> {
+        // Equal expressions of one box share an owner. They come from CSS, so
+        // keep randomized hashing for their exact bit keys.
+        let mut owners = std::collections::HashMap::new();
         let mut has_calcs = false;
         let data = PreparedData::prepare_with(values, |_, expression, range| {
             has_calcs = true;
             let key = (expression.px.to_bits(), expression.percent.to_bits(), range);
-            if let Some(position) = owner_index.as_ref().and_then(|index| index.get(&key)) {
-                return pool[*position].clone();
-            }
-            let payload = Arc::new(raikiri_layout_style::AlignedCalc::new(expression, range));
-            // Retain before a checked wrapper can publish the raw handle.
-            doc.box_style_data.calc_values.push(payload.clone());
-            owner_index
-                .get_or_insert_with(std::collections::HashMap::new)
-                .insert(key, pool.len());
-            pool.push(payload.clone());
-            payload
+            owners
+                .entry(key)
+                .or_insert_with(|| {
+                    let payload =
+                        Arc::new(raikiri_layout_style::AlignedCalc::new(expression, range));
+                    // Retain before a view can publish the raw handle.
+                    doc.box_style_data.calc_values.push(payload.clone());
+                    payload
+                })
+                .clone()
         })
         .expect("calc owners match source expressions and ranges");
-        if !pool.is_empty() {
-            self.legacy_calcs.insert(key, pool);
-        }
         if has_calcs {
             Arc::new(data)
         } else {
@@ -381,10 +317,7 @@ impl LayoutSession<'_> {
     #[inline]
     fn assert_outside_preparation_batch(&self) {
         assert!(
-            !self
-                .style_views
-                .as_ref()
-                .is_some_and(|views| views.preparation_batch),
+            !self.style_views.preparation_batch,
             "style queries run after the preparation batch"
         );
     }
@@ -402,16 +335,12 @@ impl LayoutSession<'_> {
     ) -> Result<R, E> {
         self.assert_style_queries_allowed();
         self.assert_preparation_outside_legacy_scopes();
-        if let Some(views) = &mut self.style_views {
-            views.preparation_batch = true;
-            views.prepared_stamp = None;
-            self.document.box_style_data.begin_publication();
-        }
+        self.style_views.preparation_batch = true;
+        self.style_views.prepared_stamp = None;
+        self.document.box_style_data.begin_publication();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self)));
-        let old_prefix = self.style_views.as_mut().and_then(|views| {
-            views.preparation_batch = false;
-            views.deferred_calc_prefix.take()
-        });
+        self.style_views.preparation_batch = false;
+        let old_prefix = self.style_views.deferred_calc_prefix.take();
         match result {
             Ok(Ok(value)) => {
                 self.publish_layout_cache_mutations();
@@ -427,10 +356,8 @@ impl LayoutSession<'_> {
     }
 
     pub(crate) fn finish_style_bridge(&mut self, old_calc_len: usize) {
-        if let Some(views) = &mut self.style_views
-            && views.preparation_batch
-        {
-            views.deferred_calc_prefix = Some(old_calc_len);
+        if self.style_views.preparation_batch {
+            self.style_views.deferred_calc_prefix = Some(old_calc_len);
             return;
         }
         self.prepare_style_views();
@@ -439,12 +366,10 @@ impl LayoutSession<'_> {
 
     fn retire_calc_prefix(&mut self, length: usize) {
         // Append after the retiring prefix to preserve escaped snapshot handles.
-        if let Some(views) = &self.style_views {
-            self.document
-                .box_style_data
-                .calc_values
-                .extend(views.snapshot_calcs.values().cloned());
-        }
+        self.document
+            .box_style_data
+            .calc_values
+            .extend(self.style_views.snapshot_calcs.values().cloned());
         self.document.box_style_data.calc_values.drain(..length);
     }
 
@@ -452,10 +377,7 @@ impl LayoutSession<'_> {
         &mut self,
         owners: impl IntoIterator<Item = Arc<raikiri_layout_style::AlignedCalc>>,
     ) {
-        let views = self
-            .style_views
-            .as_mut()
-            .expect("frozen inputs borrow a prepared session");
+        let views = &mut self.style_views;
         for owner in owners {
             let identity = Arc::as_ptr(&owner) as usize;
             if let std::collections::hash_map::Entry::Vacant(slot) =
@@ -467,22 +389,10 @@ impl LayoutSession<'_> {
         }
     }
 
-    pub(crate) fn native_style(&self, idx: usize, role: ReadRole) -> NativeStyle<'_> {
-        #[cfg(test)]
-        {
-            self.checked_query(idx, role)
-        }
-        #[cfg(not(test))]
-        {
-            self.query_style(idx, role)
-        }
-    }
-
-    /// The box's own style with no role context: the read that replaces a
-    /// direct look into the retained style.
+    /// The box's own style with no role context.
     #[inline]
-    pub(crate) fn physical_style(&self, idx: usize) -> NativeStyle<'_> {
-        self.native_style(idx, ReadRole::Physical)
+    pub(crate) fn physical_style(&self, idx: usize) -> LayoutStyleView<'_> {
+        self.query_style(idx, ReadRole::Physical)
     }
 
     /// `reduce` applied to the box's physical style.
@@ -494,7 +404,7 @@ impl LayoutSession<'_> {
     pub(crate) fn reduced_physical_style(
         &self,
         idx: usize,
-        reduce: impl FnOnce(NativeStyle<'_>) -> crate::LayoutStyle,
+        reduce: impl FnOnce(LayoutStyleView<'_>) -> crate::LayoutStyle,
     ) -> crate::LayoutStyle {
         let Some(prepared) = self.unmodified_box(idx) else {
             return reduce(self.physical_style(idx));
@@ -509,9 +419,8 @@ impl LayoutSession<'_> {
     /// The prepared box when its physical style is the prepared style alone:
     /// no pass or scoped override and no replaced percentage basis.
     fn unmodified_box(&self, idx: usize) -> Option<&PreparedBox<'_>> {
-        let views = self.style_views.as_ref()?;
         let key = self.nodes.box_key(idx)?;
-        let prepared = views.boxes.get(&key)?;
+        let prepared = self.style_views.boxes.get(&key)?;
         (prepared.context.percent_basis == PercentBasis::Taffy
             && self.document.box_style_data.get(key)?.pass.is_empty()
             && self.scoped_overrides.entries(key).is_empty())
@@ -520,8 +429,8 @@ impl LayoutSession<'_> {
 
     /// The paginator's view of the laid-out box `idx`.
     #[inline]
-    pub(crate) fn pagination_style(&self, idx: usize) -> NativeStyle<'_> {
-        self.native_style(idx, ReadRole::Pagination)
+    pub(crate) fn pagination_style(&self, idx: usize) -> LayoutStyleView<'_> {
+        self.query_style(idx, ReadRole::Pagination)
     }
 
     pub(crate) fn query_style(&self, idx: usize, role: ReadRole) -> LayoutStyleView<'_> {
@@ -539,13 +448,9 @@ impl LayoutSession<'_> {
             return view;
         }
         let mut context = self
-            .style_views
-            .as_ref()
-            .and_then(|views| {
-                self.nodes
-                    .box_key(idx)
-                    .and_then(|key| views.boxes.get(&key))
-            })
+            .nodes
+            .box_key(idx)
+            .and_then(|key| self.style_views.boxes.get(&key))
             .map_or_else(ViewContext::default, |prepared| prepared.context);
         context.claims_policy = if matches!(role, ReadRole::CoreContainer) {
             ClaimsPolicy::Prepared
@@ -597,41 +502,6 @@ impl LayoutSession<'_> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn checked_query(
-        &self,
-        idx: usize,
-        role: checked::ReadRole,
-    ) -> checked::CheckedStyle<'_> {
-        if matches!(role, ReadRole::Pagination) {
-            self.assert_outside_preparation_batch();
-        } else {
-            self.assert_style_queries_allowed();
-        }
-        let key = self.nodes.box_key(idx).expect("style query has a box key");
-        let mut context = checked::ReadContext::new(key, role);
-        let view = self.style_views.as_ref().map(|views| {
-            let prepared = views
-                .boxes
-                .get(&key)
-                .unwrap_or_else(|| panic!("missing prepared style for {key:?}"));
-            context.pass_entries = self.document.box_style_data.get(key).unwrap().pass.len();
-            context.scope_depth = self.scoped_overrides.depth(key);
-            context.was_scoped = prepared.was_scoped || self.scoped_overrides.was_scoped(key);
-            let view = self.query_style(idx, role);
-            context.context = view.context();
-            view
-        });
-        let legacy = checked::legacy::LegacyQuery::for_role(self, idx, role);
-        checked::CheckedStyle::new(
-            legacy.style(),
-            view,
-            context,
-            &self.document.style_view_comparisons,
-        )
-        .with_legacy_query(legacy)
-    }
-
     pub(crate) fn propagate_viewport_overflow(&mut self, cascade: &CascadeResult, body: usize) {
         use raikiri_layout_style::Axis;
         use raikiri_style::property::OverflowValue;
@@ -651,37 +521,17 @@ impl LayoutSession<'_> {
         }
     }
 
-    pub(crate) fn retain_bridge_calcs(
-        &mut self,
-        key: BoxKey,
-        values: Vec<Arc<raikiri_layout_style::AlignedCalc>>,
-    ) {
-        if let Some(views) = &mut self.style_views {
-            self.document
-                .box_style_data
-                .calc_values
-                .extend(values.iter().cloned());
-            if !values.is_empty() {
-                views.legacy_calcs.insert(key, values);
-            }
-        } else {
-            self.document.box_style_data.calc_values.extend(values);
-        }
-    }
-
     pub(crate) fn begin_style_bridge(&mut self) {
         self.assert_native_style_access_allowed();
         self.assert_preparation_outside_legacy_scopes();
-        if let Some(views) = &mut self.style_views {
-            views.boxes.clear();
-            self.document.box_style_data.begin_bridge();
-            self.document
-                .box_style_data
-                .reserve_sources(self.document.nodes.len());
-            views.legacy_calcs.clear();
-            views.prepared_publication = None;
-            views.prepared_stamp = None;
-        }
+        let views = &mut self.style_views;
+        views.boxes.clear();
+        self.document.box_style_data.begin_bridge();
+        self.document
+            .box_style_data
+            .reserve_sources(self.document.nodes.len());
+        views.prepared_publication = None;
+        views.prepared_stamp = None;
     }
     fn assert_preparation_outside_legacy_scopes(&self) {
         self.scoped_overrides.assert_inactive();
@@ -694,18 +544,17 @@ impl LayoutSession<'_> {
     pub(crate) fn prepare_style_views(&mut self) {
         self.assert_style_queries_allowed();
         self.assert_preparation_outside_legacy_scopes();
-        if let Some(views) = &mut self.style_views {
-            self.scoped_overrides.clear_history();
-            views.prepare(self.document, &self.scoped_overrides);
-        }
+        self.scoped_overrides.clear_history();
+        self.style_views
+            .prepare(self.document, &self.scoped_overrides);
     }
 
     pub(crate) fn refresh_style_views(&mut self) {
         self.assert_style_queries_allowed();
         let publication = self.document.layout_cache_context.publication_epoch();
-        if let Some(views) = &mut self.style_views
-            && (views.prepared_publication != Some(publication)
-                || !self.document.box_style_data.is_ready())
+        let views = &mut self.style_views;
+        if views.prepared_publication != Some(publication)
+            || !self.document.box_style_data.is_ready()
         {
             self.scoped_overrides.assert_inactive();
             assert!(
@@ -728,11 +577,9 @@ impl LayoutSession<'_> {
 
     #[cfg(test)]
     pub(crate) fn has_style_view(&self, idx: usize) -> bool {
-        self.nodes.box_key(idx).is_some_and(|key| {
-            self.style_views
-                .as_ref()
-                .is_some_and(|views| views.boxes.contains_key(&key))
-        })
+        self.nodes
+            .box_key(idx)
+            .is_some_and(|key| self.style_views.boxes.contains_key(&key))
     }
 
     #[inline]
@@ -744,10 +591,7 @@ impl LayoutSession<'_> {
     #[inline]
     fn prepared_style_view(&self, idx: usize) -> LayoutStyleView<'_> {
         let key = self.nodes.box_key(idx).expect("style query has a box key");
-        let views = self
-            .style_views
-            .as_ref()
-            .expect("checked session borrows its cascade");
+        let views = &self.style_views;
         assert!(
             views.prepared_stamp.is_some() && self.document.box_style_data.is_ready(),
             "style queries require completed document and session preparation"
@@ -779,23 +623,13 @@ impl LayoutSession<'_> {
                 .calc_values
                 .push(payload.clone());
         }
-        value.apply_to_style(
-            self.document
-                .layout_style_for_key_mut(idx)
-                .expect("override has a retained projection"),
-        );
-        if self.style_views.is_some() {
-            if let Some(record) = self.document.box_style_data.get_mut(key) {
-                value.install(&mut record.pass);
-            } else {
-                value.install(self.document.box_style_data.pending.entry(key).or_default());
-            }
+        if let Some(record) = self.document.box_style_data.get_mut(key) {
+            value.install(&mut record.pass);
+        } else {
+            value.install(self.document.box_style_data.pending.entry(key).or_default());
         }
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests;
-
-#[cfg(all(test, feature = "snapshot-serde"))]
-mod corpus_tests;

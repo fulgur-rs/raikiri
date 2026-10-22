@@ -1,12 +1,11 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use crate::node::NodeFlags;
 
 #[test]
 fn replace_children_from_empty_source_invalidates_and_preserves_detached_subtrees() {
     let mut target = Document::new();
-    let parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
-    let first = target.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    let parent = target.append_element(Some(0), "main", None::<&str>);
+    let first = target.append_element(Some(parent), "span", None::<&str>);
     let descendant = target.append_text(first, "old subtree");
     let second = target.append_text(parent, "old sibling");
     let outside = target.append_text(0, "outside");
@@ -62,21 +61,16 @@ fn replace_children_from_empty_to_empty_preserves_dirty_state() {
 #[test]
 fn replace_children_from_deep_copies_nodes_in_order_and_detaches_old_subtree() {
     let mut target = Document::new();
-    let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
-    let old = target.append_element(Some(target_parent), "old", Style::default(), None::<&str>);
+    let target_parent = target.append_element(Some(0), "main", None::<&str>);
+    let old = target.append_element(Some(target_parent), "old", None::<&str>);
     let old_text = target.append_text(old, "kept in arena");
 
     let mut source = Document::new();
-    let source_parent = source.append_element(Some(0), "source", Style::default(), None::<&str>);
+    let source_parent = source.append_element(Some(0), "source", None::<&str>);
     let source_comment = source.append_comment(Some(source_parent), "leading comment");
     let source_instruction =
         source.append_processing_instruction(Some(source_parent), "work", "ready");
-    let section = source.append_element(
-        Some(source_parent),
-        "section",
-        Style::default(),
-        Some("color: red"),
-    );
+    let section = source.append_element(Some(source_parent), "section", Some("color: red"));
     source.set_element_namespace(section, Some(SmolStr::new("urn:example")));
     source.set_element_attributes(
         section,
@@ -87,7 +81,7 @@ fn replace_children_from_deep_copies_nodes_in_order_and_detaches_old_subtree() {
     );
     let text = source.append_text(section, "first");
     let comment = source.append_comment(Some(section), "middle comment");
-    let span = source.append_element(Some(section), "span", Style::default(), None::<&str>);
+    let span = source.append_element(Some(section), "span", None::<&str>);
     source.set_element_attributes(span, vec![(SmolStr::new("title"), SmolStr::new("tip"))]);
     source
         .set_element_attribute(span, "style", "display: block")
@@ -201,14 +195,14 @@ fn replace_children_from_deep_copies_nodes_in_order_and_detaches_old_subtree() {
 #[test]
 fn replace_children_from_splices_document_fragment_children() {
     let mut source = Document::new();
-    let source_parent = source.append_element(Some(0), "section", Style::default(), None::<&str>);
+    let source_parent = source.append_element(Some(0), "section", None::<&str>);
     let fragment = source.create_detached_fragment();
     source.nodes[source_parent].children.push(fragment);
     source.nodes[fragment].parent = Some(source_parent);
     source.append_text(fragment, "fragment text");
 
     let mut target = Document::new();
-    let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
+    let target_parent = target.append_element(Some(0), "main", None::<&str>);
     target.replace_children_from(target_parent, &source, source_parent);
     assert_eq!(
         target.serialize_inner_html(target_parent).unwrap(),
@@ -220,12 +214,12 @@ fn replace_children_from_splices_document_fragment_children() {
 #[should_panic(expected = "replace_children_from cannot copy a Document node as a child")]
 fn replace_children_from_rejects_document_nodes_in_child_lists() {
     let mut source = Document::new();
-    let source_parent = source.append_element(Some(0), "section", Style::default(), None::<&str>);
+    let source_parent = source.append_element(Some(0), "section", None::<&str>);
     let source_root = source.root_index();
     source.nodes[source_parent].children.push(source_root);
     source.nodes[source_root].parent = Some(source_parent);
 
     let mut target = Document::new();
-    let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
+    let target_parent = target.append_element(Some(0), "main", None::<&str>);
     target.replace_children_from(target_parent, &source, source_parent);
 }

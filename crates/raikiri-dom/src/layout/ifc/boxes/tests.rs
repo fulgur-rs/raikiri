@@ -1,6 +1,5 @@
 use super::*;
 use crate::Document;
-use crate::layout::context::LayoutSession;
 pub(super) mod clear_break_tests;
 mod group_align_tests;
 mod intrinsic_block_size_tests;
@@ -9,11 +8,11 @@ mod percent_edge_tests;
 mod vertical_atomic_tests;
 mod vertical_bfc_tests;
 use crate::layout::ifc::flow::FlowGeometry;
-use crate::layout::test_support::with_ahem;
 use crate::layout::test_support::{
     absolute_rect, ahem_paragraph, ahem_paragraph_with_atomic, ahem_paragraph_with_float,
     ifc_ahem_fonts, line_start_x,
 };
+use crate::layout::test_support::{with_ahem, with_bridged_session};
 
 pub(super) fn layout_with_boxes(
     tree: &mut Document,
@@ -22,8 +21,9 @@ pub(super) fn layout_with_boxes(
     block_ctx: Option<&mut BlockContext<'_>>,
     perform: bool,
 ) -> IfcLines {
-    let mut session = LayoutSession::new(tree);
-    super::layout_with_boxes(&mut session, idx, geometry, block_ctx, perform)
+    with_bridged_session(tree, |session| {
+        super::layout_with_boxes(session, idx, geometry, block_ctx, perform)
+    })
 }
 
 pub(super) fn layout_with_boxes_in(
@@ -35,16 +35,17 @@ pub(super) fn layout_with_boxes_in(
     top_margin_escapes: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
-    let mut session = LayoutSession::new(tree);
-    super::layout_with_boxes_in(
-        &mut session,
-        idx,
-        geometry,
-        block_ctx,
-        perform,
-        top_margin_escapes,
-        bottom_margin_escapes,
-    )
+    with_bridged_session(tree, |session| {
+        super::layout_with_boxes_in(
+            session,
+            idx,
+            geometry,
+            block_ctx,
+            perform,
+            top_margin_escapes,
+            bottom_margin_escapes,
+        )
+    })
 }
 
 pub(super) fn layout_with_boxes_in_fragmentainers(
@@ -54,8 +55,9 @@ pub(super) fn layout_with_boxes_in_fragmentainers(
     context: crate::fragment::FragmentationContext,
     perform: bool,
 ) -> IfcLines {
-    let mut session = LayoutSession::new(tree);
-    super::layout_with_boxes_in_fragmentainers(&mut session, idx, geometry, context, perform)
+    with_bridged_session(tree, |session| {
+        super::layout_with_boxes_in_fragmentainers(session, idx, geometry, context, perform)
+    })
 }
 
 #[test]
@@ -68,7 +70,6 @@ fn many_atomics_keep_placement_and_visibility_work_linear() {
                 atomics.push(doc.append_element(
                     Some(root),
                     "span",
-                    crate::LayoutStyle::default(),
                     Some("display:inline-block;width:1px;height:10px"),
                 ));
             }
@@ -139,7 +140,6 @@ fn ellipsis_hides_only_atomic_fragments_it_removes() {
                 atomics.push(doc.append_element(
                     Some(root),
                     "span",
-                    crate::LayoutStyle::default(),
                     Some("display:inline-block;width:10px;height:10px"),
                 ));
             }
@@ -346,12 +346,7 @@ fn a_probe_does_not_record_an_inline_element_and_a_performed_layout_does() {
     let (mut doc, cascade, root) =
         crate::layout::test_support::ahem_paragraph_with("width:100px", |doc, root| {
             doc.append_text(root, "aa");
-            span_id = doc.append_element(
-                Some(root),
-                "span",
-                crate::LayoutStyle::default(),
-                Some("display:inline;padding:0 3px"),
-            );
+            span_id = doc.append_element(Some(root), "span", Some("display:inline;padding:0 3px"));
             doc.append_text(span_id, "bb");
         });
     doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());

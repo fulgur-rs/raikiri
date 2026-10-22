@@ -31,25 +31,18 @@ fn laid_out_beside(
         container = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!("float:left;{container_css}")),
         );
         item = doc.append_element(
             Some(container),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!(
                 "display:block;margin:5px;padding:3px;border:2px solid;{item_css}"
             )),
         );
         doc.append_text(item, "A A");
         for &sibling in siblings {
-            doc.append_element(
-                Some(container),
-                "div",
-                crate::LayoutStyle::default(),
-                Some(sibling),
-            );
+            doc.append_element(Some(container), "div", Some(sibling));
         }
     });
     let mut doc = fixture.doc;
@@ -227,7 +220,6 @@ fn floated_width(container_css: &str, count: usize) -> f32 {
         container = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!(
                 "float:left;border:1px solid;height:12px;{container_css}"
             )),
@@ -236,7 +228,6 @@ fn floated_width(container_css: &str, count: usize) -> f32 {
             doc.append_element(
                 Some(container),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:block;width:30px;border:1px solid"),
             );
         }

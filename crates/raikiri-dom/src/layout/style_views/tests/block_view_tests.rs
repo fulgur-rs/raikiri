@@ -13,16 +13,14 @@ fn block_view_prepares_normal_source_and_text_keys() {
         tree.style_view(child).size().width,
         taffy::Dimension::length(31.0)
     );
-    assert_eq!(
-        tree.style_view(text).size(),
-        tree.layout_style_for_key(text).unwrap().size()
-    );
+    assert_eq!(tree.style_view(text).size(), LayoutStyle::default().size());
 }
 
-use crate::layout::style_views::checked::{CheckedStyle, ReadRole};
+use crate::layout::style_views::ReadRole;
+use raikiri_layout_style::LayoutStyleView;
 use taffy::{BlockContainerStyle as BC, BlockItemStyle as BI, OofItemStyle as OI};
 
-fn read_core(query: &CheckedStyle<'_>) {
+fn read_core(query: &LayoutStyleView<'_>) {
     macro_rules! read {
         ($($method:ident),+ $(,)?) => { $(let _ = taffy::CoreStyle::$method(query);)+ };
     }
@@ -50,7 +48,7 @@ fn read_core(query: &CheckedStyle<'_>) {
 }
 
 #[test]
-fn block_view_compares_each_new_role_and_bridge_alignment_at_read() {
+fn block_view_reads_each_new_role_and_bridge_alignment() {
     let (mut doc, cascade, child, _) = fixture_with_styles(
         "display:block;width:100px",
         "display:block;width:calc(21px + 10%);height:7px;padding:10%;border:2px solid;transform:translateX(0);align-content:space-between;align-self:center;justify-self:end;clear:both",
@@ -64,7 +62,7 @@ fn block_view_compares_each_new_role_and_bridge_alignment_at_read() {
         ReadRole::Oof,
         ReadRole::Physical,
     ] {
-        let query = tree.checked_query(child, role);
+        let query = tree.query_style(child, role);
         read_core(&query);
         match role {
             ReadRole::CoreContainer => assert!(query.is_containing_block().fixed),
@@ -106,25 +104,6 @@ fn block_view_compares_each_new_role_and_bridge_alignment_at_read() {
             taffy::AlignContent::SPACE_BETWEEN
         );
     }
-    for count in &tree.style_view_comparisons.getter_reads[4..ReadRole::Pagination as usize] {
-        assert!(count.get() > 0);
-    }
-    assert!(tree.style_view_comparisons.calc_comparisons.get() > 0);
-    for name in [
-        "Bridge::align_self",
-        "Bridge::justify_self",
-        "Bridge::align_content",
-    ] {
-        assert!(
-            tree.style_view_comparisons
-                .properties
-                .borrow()
-                .get(name)
-                .copied()
-                .unwrap_or(0)
-                > 0
-        );
-    }
 }
 
 #[test]
@@ -137,11 +116,11 @@ fn block_view_basis_is_role_specific_and_scopes_restore() {
     tree.context
         .block_item_percent_bases
         .push((parent, Some(100.0)));
-    let item = tree.checked_query(child, ReadRole::BlockItem);
+    let item = tree.query_style(child, ReadRole::BlockItem);
     assert_eq!(item.padding().top, taffy::LengthPercentage::length(10.0));
     assert_eq!(item.padding().left, taffy::LengthPercentage::percent(0.1));
     assert_eq!(
-        tree.checked_query(child, ReadRole::Oof).padding().top,
+        tree.query_style(child, ReadRole::Oof).padding().top,
         taffy::LengthPercentage::percent(0.1)
     );
     let key = tree.nodes.box_key(child).unwrap();
@@ -158,52 +137,50 @@ fn block_view_basis_is_role_specific_and_scopes_restore() {
                 ReadRole::Oof,
             ] {
                 assert_eq!(
-                    tree.checked_query(child, role).size().width,
+                    tree.query_style(child, role).size().width,
                     taffy::Dimension::length(19.0)
                 );
             }
         },
     );
     assert_eq!(
-        tree.checked_query(child, ReadRole::BlockItem).size().width,
+        tree.query_style(child, ReadRole::BlockItem).size().width,
         taffy::Dimension::length(31.0)
     );
-    assert!(tree.style_view_comparisons.scoped_reads.get() > 0);
-    assert!(tree.style_view_comparisons.restored_reads.get() == 0);
     tree.context.block_item_percent_bases.pop();
-    let _ = tree.checked_query(child, ReadRole::BlockItem).size();
-    assert!(tree.style_view_comparisons.restored_reads.get() > 0);
+    assert_eq!(
+        tree.query_style(child, ReadRole::BlockItem).padding().top,
+        taffy::LengthPercentage::percent(0.1)
+    );
 }
 
 #[test]
-fn block_view_oof_table_identity_and_raw_session_are_independent() {
+fn block_view_oof_table_identity_is_independent() {
     for display in ["table", "inline-table", "block"] {
         let (mut doc, cascade, child, _) =
             fixture_with_styles("display:block", &format!("display:{display};width:31px"));
         let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-        assert!(!BI::is_table(
-            &tree.checked_query(child, ReadRole::BlockItem)
-        ));
+        assert!(!BI::is_table(&tree.query_style(child, ReadRole::BlockItem)));
         assert_eq!(
-            OI::is_table(&tree.checked_query(child, ReadRole::Oof)),
+            OI::is_table(&tree.query_style(child, ReadRole::Oof)),
             display != "block"
         );
-        drop(tree);
-        let tree = LayoutSession::new(&mut doc);
-        let query = tree.checked_query(child, ReadRole::BlockItem);
-        assert_eq!(query.size().width, taffy::Dimension::length(31.0));
+        assert_eq!(
+            tree.query_style(child, ReadRole::BlockItem).size().width,
+            taffy::Dimension::length(31.0)
+        );
     }
     let (mut doc, cascade, child, _) = fixture_with_styles("display:block", "width:31px");
     let tree = LayoutSession::with_cascade(&mut doc, &cascade);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        tree.checked_query(child, ReadRole::BlockItem).size()
+        tree.query_style(child, ReadRole::BlockItem).size()
     }));
     assert!(result.is_err());
 }
 
 #[test]
-fn block_view_materialized_input_reads_real_getters_and_raw_alignment() {
+fn block_view_materialized_input_reads_real_getters_and_bridge_alignment() {
     use crate::taffy_impl::block_flow::style_input;
     let (mut doc, cascade, child, _) = fixture_with_styles(
         "display:block;width:100px",
@@ -228,8 +205,6 @@ fn block_view_materialized_input_reads_real_getters_and_raw_alignment() {
     assert_eq!(input.align_content, taffy::AlignContent::SPACE_BETWEEN);
     assert_eq!(input.float, taffy::Float::Left);
     assert_eq!(input.clear, taffy::Clear::Both);
-    assert!(tree.style_view_comparisons.getter_reads[ReadRole::BlockContainer as usize].get() > 0);
-    assert!(tree.style_view_comparisons.getter_reads[ReadRole::BlockItem as usize].get() > 0);
 }
 
 #[test]
@@ -245,7 +220,7 @@ fn block_view_basis_excludes_absolute_items_other_parents_and_unknown_widths() {
         for (owner, basis) in [(parent, None), (child, Some(100.0))] {
             tree.context.block_item_percent_bases.push((owner, basis));
             assert_eq!(
-                tree.checked_query(child, ReadRole::BlockItem).padding().top,
+                tree.query_style(child, ReadRole::BlockItem).padding().top,
                 taffy::LengthPercentage::percent(0.1)
             );
             tree.context.block_item_percent_bases.pop();
@@ -259,7 +234,7 @@ fn block_view_basis_excludes_absolute_items_other_parents_and_unknown_widths() {
             taffy::LengthPercentage::length(10.0)
         };
         assert_eq!(
-            tree.checked_query(child, ReadRole::BlockItem).padding().top,
+            tree.query_style(child, ReadRole::BlockItem).padding().top,
             expected
         );
     }
@@ -272,7 +247,7 @@ pub(super) fn assert_all_new_roles(tree: &LayoutSession<'_>, idx: usize) {
         ReadRole::BlockItem,
         ReadRole::Oof,
     ] {
-        let query = tree.checked_query(idx, role);
+        let query = tree.query_style(idx, role);
         read_core(&query);
         match role {
             ReadRole::BlockContainer => {
@@ -312,27 +287,6 @@ pub(super) fn assert_all_new_roles(tree: &LayoutSession<'_>, idx: usize) {
 }
 
 #[test]
-fn block_view_preserves_each_box_scrollbar_input_across_preparation() {
-    let (mut doc, cascade, child, text) = fixture_with_styles("display:block", "display:block");
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-    for (idx, width) in [(child, 20.0), (text, 13.0)] {
-        tree.layout_style_for_key_mut(idx).unwrap().scrollbar_width = width;
-    }
-    for _ in 0..2 {
-        tree.prepare_style_views();
-        for (idx, width) in [(child, 20.0), (text, 13.0)] {
-            assert_eq!(tree.style_view(idx).scrollbar_width(), width);
-            assert_eq!(
-                tree.checked_query(idx, ReadRole::BlockItem)
-                    .scrollbar_width(),
-                width
-            );
-        }
-    }
-}
-
-#[test]
 fn native_sticky_flex_grid_insets_keep_the_bridge_position() {
     for display in ["flex", "grid"] {
         let (mut doc, cascade, child, _) = fixture_with_styles(
@@ -363,94 +317,9 @@ fn native_sticky_flex_grid_insets_keep_the_bridge_position() {
             ReadRole::Oof,
         ] {
             assert_eq!(
-                tree.checked_query(child, role).position(),
+                tree.query_style(child, role).position(),
                 taffy::Position::Sticky
             );
-        }
-    }
-}
-
-#[test]
-fn block_view_keeps_programmatic_table_identity_distinct_from_css_tables() {
-    let (mut doc, cascade, child, text) = fixture_with_styles("display:block", "display:block");
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-    for table in [true, false] {
-        for idx in [child, text] {
-            tree.layout_style_for_key_mut(idx).unwrap().item_is_table = table;
-        }
-        tree.prepare_style_views();
-        for idx in [child, text] {
-            assert_eq!(
-                BI::is_table(&tree.checked_query(idx, ReadRole::BlockItem)),
-                table
-            );
-            assert_eq!(OI::is_table(&tree.checked_query(idx, ReadRole::Oof)), table);
-        }
-    }
-}
-
-#[test]
-fn block_view_preserves_constructor_text_alignment_and_contents_neutralization() {
-    for (display, expected) in [
-        ("block", taffy::TextAlign::LegacyRight),
-        ("contents", taffy::TextAlign::Auto),
-    ] {
-        let mut doc = Document::new();
-        let root = doc.append_element(
-            Some(0),
-            "html",
-            LayoutStyle::default(),
-            Some("display:block"),
-        );
-        let child = doc.append_element(
-            Some(root),
-            "div",
-            LayoutStyle {
-                text_align: taffy::TextAlign::LegacyRight,
-                ..LayoutStyle::default()
-            },
-            Some(format!("display:{display};text-align:center")),
-        );
-        doc.mark_in_document_flags();
-        let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-        let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-        apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-        for _ in 0..2 {
-            assert_eq!(
-                BC::text_align(&tree.checked_query(child, ReadRole::BlockContainer)),
-                expected
-            );
-            tree.prepare_style_views();
-        }
-    }
-}
-
-#[test]
-fn block_view_preserves_constructor_compressible_replaced_supplement() {
-    let mut doc = Document::new();
-    let child = doc.append_element(
-        Some(0),
-        "div",
-        LayoutStyle {
-            item_is_compressible_replaced: true,
-            ..LayoutStyle::default()
-        },
-        Some("display:block;width:31px;height:7px"),
-    );
-    doc.mark_in_document_flags();
-    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
-    for compressible in [true, false] {
-        tree.layout_style_for_key_mut(child)
-            .unwrap()
-            .item_is_compressible_replaced = compressible;
-        tree.prepare_style_views();
-        for role in [ReadRole::CoreContainer, ReadRole::BlockItem, ReadRole::Oof] {
-            let query = tree.checked_query(child, role);
-            assert!(!query.is_replaced());
-            assert_eq!(query.is_compressible_replaced(), compressible);
         }
     }
 }

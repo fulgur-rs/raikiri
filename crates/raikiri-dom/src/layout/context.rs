@@ -94,22 +94,11 @@ pub(crate) struct NodeLayoutState {
 pub(crate) struct LayoutSession<'doc> {
     pub(crate) document: &'doc mut Document,
     pub(crate) context: LayoutContext,
-    pub(crate) style_views: Option<super::style_views::StyleViews<'doc>>,
+    pub(crate) style_views: super::style_views::StyleViews<'doc>,
     pub(crate) scoped_overrides: super::style_views::ScopedOverrides,
 }
 
 impl<'doc> LayoutSession<'doc> {
-    #[cfg(test)]
-    pub(crate) fn new(document: &'doc mut Document) -> Self {
-        document.layout_cache_context.begin_session();
-        Self {
-            document,
-            context: LayoutContext::default(),
-            style_views: None,
-            scoped_overrides: Default::default(),
-        }
-    }
-
     pub(crate) fn with_cascade(
         document: &'doc mut Document,
         cascade: &'doc raikiri_style::CascadeResult,
@@ -120,7 +109,7 @@ impl<'doc> LayoutSession<'doc> {
         Self {
             document,
             context: LayoutContext::default(),
-            style_views: Some(super::style_views::StyleViews::new(cascade)),
+            style_views: super::style_views::StyleViews::new(cascade),
             scoped_overrides: Default::default(),
         }
     }

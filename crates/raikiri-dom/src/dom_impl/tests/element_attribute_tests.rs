@@ -1,12 +1,11 @@
 use super::super::*;
-use crate::LayoutStyle as Style;
 
 /// Builds a `Document` with a single `<div>` element (child of root)
 /// carrying one attribute, and returns the element's arena id.
 fn doc_with_attr(local: &str, value: &str) -> (Document, usize) {
     let mut doc = Document::new();
     let root = doc.root_index();
-    let id = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(root), "div", None::<&str>);
     doc.set_element_attributes(id, vec![(local.into(), value.into())]);
     (doc, id)
 }

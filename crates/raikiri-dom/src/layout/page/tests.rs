@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 
 mod page_name_performance_tests;
 
@@ -10,15 +9,10 @@ fn hello_world_doc() -> (Document, raikiri_style::CascadeResult) {
     // Equivalent to parsing (built manually instead; future umbrella integration handles raikiri-html).
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let p = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;color:red"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Some("display:block;color:red"));
     let _text = doc.append_text(p, "Hi");
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -44,9 +38,9 @@ fn initial_page_context_errors_have_descriptive_messages() {
 #[test]
 fn find_body_returns_index_when_present() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     assert_eq!(find_body(&doc), Some(body));
 }
 
@@ -55,28 +49,18 @@ fn propagated_start_page_name_handles_dom_edge_cases() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let named = doc.append_element(Some(body), "section", Style::default(), Some("page: named"));
-    let inline = doc.append_element(
-        Some(named),
-        "span",
-        Style::default(),
-        Some("display: inline"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let named = doc.append_element(Some(body), "section", Some("page: named"));
+    let inline = doc.append_element(Some(named), "span", Some("display: inline"));
     let inline_text = doc.append_text(inline, "inline content");
     let whitespace = doc.append_text(named, "   ");
-    let hidden = doc.append_element(Some(named), "div", Style::default(), Some("display: none"));
-    let absolute = doc.append_element(
-        Some(named),
-        "div",
-        Style::default(),
-        Some("position: absolute"),
-    );
-    let normal = doc.append_element(Some(named), "div", Style::default(), None::<&str>);
+    let hidden = doc.append_element(Some(named), "div", Some("display: none"));
+    let absolute = doc.append_element(Some(named), "div", Some("position: absolute"));
+    let normal = doc.append_element(Some(named), "div", None::<&str>);
     let _normal_text = doc.append_text(normal, "normal content");
-    let empty = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let detached = doc.append_element(None, "div", Style::default(), None::<&str>);
+    let empty = doc.append_element(Some(body), "div", None::<&str>);
+    let detached = doc.append_element(None, "div", None::<&str>);
 
     doc.mark_in_document_flags();
     crate::layout::test_support::with_ahem(&mut doc);
@@ -177,8 +161,8 @@ fn page_auto_margins_preserve_negative_remainder() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _body = doc.append_element(Some(html), "body", None::<&str>);
     let mut rules = RuleTree::empty();
     rules.add_stylesheet(
         "@page { size: 300px; width: 340px; height: 340px; margin: auto; }",
@@ -202,8 +186,8 @@ fn page_auto_margins_keep_the_declared_page_area_inside_padding() {
     use raikiri_style::{Origin, RuleTree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _body = doc.append_element(Some(html), "body", None::<&str>);
     let mut rules = RuleTree::empty();
     rules.add_stylesheet(
         "@page { size: 200px; width: 100px; height: 100px; margin: auto; padding: 10px }",
@@ -225,8 +209,8 @@ fn page_calc_padding_resolves_against_the_page_box() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _body = doc.append_element(Some(html), "body", None::<&str>);
     let mut rules = RuleTree::empty();
     rules.add_stylesheet(
         "@page { size: 400px 300px; margin: 0; padding-left: calc(10% + 1em);\
@@ -248,8 +232,8 @@ fn page_geometry_helpers_delegate_to_the_page_only_variants() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _body = doc.append_element(Some(html), "body", None::<&str>);
     let mut rules = RuleTree::empty();
     rules.add_stylesheet(
         "@page { size: 400px 300px; margin: 10% 12px auto; width: 300px; height: 200px;\
@@ -271,7 +255,7 @@ fn page_geometry_helpers_delegate_to_the_page_only_variants() {
 fn find_body_returns_none_when_absent() {
     // Fragment equivalent: append <p> directly under the Document root, with no <body>.
     let mut doc = Document::new();
-    let _p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let _p = doc.append_element(Some(0), "p", None::<&str>);
     assert_eq!(find_body(&doc), None);
 }
 
@@ -282,7 +266,7 @@ fn find_body_iterative_no_stack_overflow_on_deep_dom() {
     let mut doc = Document::new();
     let mut parent = 0usize;
     for _ in 0..5000 {
-        parent = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+        parent = doc.append_element(Some(parent), "div", None::<&str>);
     }
     assert_eq!(find_body(&doc), None);
 }
@@ -292,9 +276,9 @@ fn find_body_returns_first_body_in_document_order() {
     // For the pathological case of two <body> elements, return the first in document order
     // (html5ever should create only one, but pin the defensive contract).
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body1 = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let _body2 = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body1 = doc.append_element(Some(html), "body", None::<&str>);
+    let _body2 = doc.append_element(Some(html), "body", None::<&str>);
     assert_eq!(find_body(&doc), Some(body1));
 }
 
@@ -302,8 +286,8 @@ fn find_body_returns_first_body_in_document_order() {
 fn the_icb_uses_the_page_area_inside_page_margins_and_insets() {
     use raikiri_style::{Origin, build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    doc.append_element(Some(html), "body", Some("display:block"));
     let mut rules = build_rule_tree(&doc);
     rules.add_stylesheet(
         "@page { margin:20px 10px; padding:1px 2px 3px 4px }",
@@ -515,31 +499,15 @@ fn first_page_name_follows_ordered_auto_grid_items() {
     use raikiri_style::{Origin, build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:grid;grid-template-columns:100px"),
     );
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("order:1;page:wide;height:10px"),
-    );
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("order:0;page:narrow;height:10px"),
-    );
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:none;order:-1;page:wide"),
-    );
+    doc.append_element(Some(body), "div", Some("order:1;page:wide;height:10px"));
+    doc.append_element(Some(body), "div", Some("order:0;page:narrow;height:10px"));
+    doc.append_element(Some(body), "div", Some("display:none;order:-1;page:wide"));
     let mut rules = build_rule_tree(&doc);
     rules.add_stylesheet(
         "@page wide { size:200px 300px; margin:5px; } \
@@ -556,26 +524,15 @@ fn first_page_name_uses_order_in_nested_flex_before_layout() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:block;order:1;page:wide"),
-    );
-    doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:block;order:0;page:narrow"),
-    );
+    doc.append_element(Some(flex), "div", Some("display:block;order:1;page:wide"));
+    doc.append_element(Some(flex), "div", Some("display:block;order:0;page:narrow"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("nested flex cascade Ok");
@@ -588,45 +545,23 @@ fn first_page_name_reads_the_body_before_a_footer_written_first() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
     let footer = doc.append_element(
         Some(table),
         "tfoot",
-        Style::default(),
         Some("display:table-footer-group;page:footer"),
     );
-    let footer_row = doc.append_element(
-        Some(footer),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(footer_row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let footer_row = doc.append_element(Some(footer), "tr", Some("display:table-row"));
+    doc.append_element(Some(footer_row), "td", Some("display:table-cell"));
     let group = doc.append_element(
         Some(table),
         "tbody",
-        Style::default(),
         Some("display:table-row-group;page:body"),
     );
-    let row = doc.append_element(
-        Some(group),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
@@ -639,51 +574,24 @@ fn first_page_name_reads_the_body_before_a_footer_inside_a_contents_wrapper() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
-    let wrapper = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    let wrapper = doc.append_element(Some(table), "div", Some("display:contents"));
     let footer = doc.append_element(
         Some(wrapper),
         "tfoot",
-        Style::default(),
         Some("display:table-footer-group;page:footer"),
     );
-    let footer_row = doc.append_element(
-        Some(footer),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(footer_row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let footer_row = doc.append_element(Some(footer), "tr", Some("display:table-row"));
+    doc.append_element(Some(footer_row), "td", Some("display:table-cell"));
     let group = doc.append_element(
         Some(table),
         "tbody",
-        Style::default(),
         Some("display:table-row-group;page:body"),
     );
-    let row = doc.append_element(
-        Some(group),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
@@ -696,37 +604,24 @@ fn first_page_name_skips_a_second_caption_that_table_layout_drops() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
     doc.append_element(
         Some(table),
         "caption",
-        Style::default(),
         Some("display:table-caption;caption-side:bottom"),
     );
     let group = doc.append_element(
         Some(table),
         "tbody",
-        Style::default(),
         Some("display:table-row-group;page:body"),
     );
-    let row = doc.append_element(
-        Some(group),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.append_element(
         Some(table),
         "caption",
-        Style::default(),
         Some("display:table-caption;caption-side:top;page:caption"),
     );
     doc.mark_in_document_flags();
@@ -741,45 +636,23 @@ fn first_page_name_skips_a_caption_inside_a_contents_wrapper() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
-    let wrapper = doc.append_element(
-        Some(table),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    let wrapper = doc.append_element(Some(table), "div", Some("display:contents"));
     doc.append_element(
         Some(wrapper),
         "caption",
-        Style::default(),
         Some("display:table-caption;page:wrapped"),
     );
     doc.append_element(
         Some(table),
         "caption",
-        Style::default(),
         Some("display:table-caption;page:caption"),
     );
-    let group = doc.append_element(
-        Some(table),
-        "tbody",
-        Style::default(),
-        Some("display:table-row-group"),
-    );
-    let row = doc.append_element(
-        Some(group),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let group = doc.append_element(Some(table), "tbody", Some("display:table-row-group"));
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
@@ -792,51 +665,28 @@ fn first_page_name_skips_a_table_column() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
     let footer = doc.append_element(
         Some(table),
         "tfoot",
-        Style::default(),
         Some("display:table-footer-group;page:footer"),
     );
-    let footer_row = doc.append_element(
-        Some(footer),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(footer_row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let footer_row = doc.append_element(Some(footer), "tr", Some("display:table-row"));
+    doc.append_element(Some(footer_row), "td", Some("display:table-cell"));
     doc.append_element(
         Some(table),
         "colgroup",
-        Style::default(),
         Some("display:table-column-group;page:column"),
     );
     let group = doc.append_element(
         Some(table),
         "tbody",
-        Style::default(),
         Some("display:table-row-group;page:body"),
     );
-    let row = doc.append_element(
-        Some(group),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("table cascade Ok");
@@ -849,31 +699,19 @@ fn first_page_name_skips_a_non_rendered_table_header() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
     let group = doc.append_element(
         Some(table),
         "tbody",
-        Style::default(),
         Some("display:table-row-group;page:body"),
     );
-    let row = doc.append_element(
-        Some(group),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
-    doc.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display:table-cell"),
-    );
+    let row = doc.append_element(Some(group), "tr", Some("display:table-row"));
+    doc.append_element(Some(row), "td", Some("display:table-cell"));
     doc.append_element(
         Some(table),
         "script",
-        Style::default(),
         Some("display:table-header-group;page:ghost"),
     );
     doc.mark_in_document_flags();
@@ -888,20 +726,10 @@ fn first_page_name_reads_a_static_position_absolute_box() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let absolute = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:absolute;page:wide"),
-    );
-    doc.append_element(
-        Some(absolute),
-        "div",
-        Style::default(),
-        Some("display:block;page:narrow"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let absolute = doc.append_element(Some(body), "div", Some("position:absolute;page:wide"));
+    doc.append_element(Some(absolute), "div", Some("display:block;page:narrow"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -916,25 +744,23 @@ fn first_page_name_keeps_the_source_order_of_an_absolute_block_before_layout() {
     // Before the first layout no box is classified yet, so the block's
     // children keep their source order: its `flex-direction` does not apply.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let absolute = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("position:absolute;flex-direction:column-reverse"),
     );
     for page in ["first", "second"] {
         doc.append_element(
             Some(absolute),
             "p",
-            Style::default(),
             Some(format!("display:block;page:{page}").as_str()),
         );
     }
     // A grid gives layout a resolved order to record.
-    let grid = doc.append_element(Some(body), "div", Style::default(), Some("display:grid"));
-    doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
+    let grid = doc.append_element(Some(body), "div", Some("display:grid"));
+    doc.append_element(Some(grid), "div", Some("height:10px"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
@@ -952,24 +778,17 @@ fn first_page_name_blockifies_a_flex_item_inside_display_contents() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    let contents = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let contents = doc.append_element(Some(flex), "div", Some("display:contents"));
     doc.append_element(
         Some(contents),
         "div",
-        Style::default(),
         Some("display:inline-block;page:narrow"),
     );
     doc.mark_in_document_flags();
@@ -998,38 +817,25 @@ fn resolved_image_intrinsic_size_changes_flex_grid_column_count_and_page_order()
         use raikiri_style::{build_rule_tree, cascade};
 
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let flex = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:flex;width:300px"),
-        );
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", None::<&str>);
+        let flex = doc.append_element(Some(body), "div", Some("display:flex;width:300px"));
         let grid = doc.append_element(
                 Some(flex),
                 "section",
-                Style::default(),
                 Some("display:grid;order:0;flex:1 1 0;min-width:0;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));grid-template-rows:auto auto"),
             );
         doc.append_element(
             Some(grid),
             "div",
-            Style::default(),
             Some("display:block;grid-row:2;order:0;page:wide;height:10px"),
         );
         doc.append_element(
             Some(grid),
             "div",
-            Style::default(),
             Some("display:block;grid-row:1;order:1;page:narrow;height:10px"),
         );
-        let image = doc.append_element(
-            Some(flex),
-            "img",
-            Style::default(),
-            Some("order:1;flex:0 0 auto"),
-        );
+        let image = doc.append_element(Some(flex), "img", Some("order:1;flex:0 0 auto"));
         doc.set_element_attributes(
             image,
             vec![("src".into(), "https://example.test/image.png".into())],
@@ -1065,26 +871,15 @@ fn first_page_name_ignores_resolved_order_from_an_older_cascade() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let flex = doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    let wide = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:block;order:1;page:wide"),
-    );
-    let narrow = doc.append_element(
-        Some(flex),
-        "div",
-        Style::default(),
-        Some("display:block;order:0;page:narrow"),
-    );
+    let wide = doc.append_element(Some(flex), "div", Some("display:block;order:1;page:wide"));
+    let narrow = doc.append_element(Some(flex), "div", Some("display:block;order:0;page:narrow"));
     doc.mark_in_document_flags();
     let old_rules = build_rule_tree(&doc);
     let old_cascade = cascade(&doc, &old_rules).expect("initial cascade Ok");
@@ -1110,24 +905,21 @@ fn first_page_name_ignores_resolved_grid_rows_from_an_older_cascade() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "section",
-        Style::default(),
         Some("display:grid;grid-template-columns:100%;grid-template-rows:auto auto"),
     );
     let wide = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("display:block;grid-row:2;order:0;page:wide"),
     );
     let narrow = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("display:block;grid-row:1;order:0;page:narrow"),
     );
     doc.mark_in_document_flags();
@@ -1188,25 +980,14 @@ fn first_page_name_follows_order_and_column_reverse_for_flex_children() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut normal_doc = Document::new();
-    let html = normal_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = normal_doc.append_element(Some(0), "html", None::<&str>);
     let body = normal_doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:flex;flex-direction:column"),
     );
-    normal_doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("order:1;page:wide"),
-    );
-    normal_doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("order:0;page:narrow"),
-    );
+    normal_doc.append_element(Some(body), "div", Some("order:1;page:wide"));
+    normal_doc.append_element(Some(body), "div", Some("order:0;page:narrow"));
     let rules = build_rule_tree(&normal_doc);
     let normal_cascade = cascade(&normal_doc, &rules).expect("normal flex cascade Ok");
     assert_eq!(
@@ -1215,25 +996,14 @@ fn first_page_name_follows_order_and_column_reverse_for_flex_children() {
     );
 
     let mut reverse_doc = Document::new();
-    let html = reverse_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = reverse_doc.append_element(Some(0), "html", None::<&str>);
     let body = reverse_doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:flex;flex-direction:column-reverse"),
     );
-    reverse_doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("order:0;page:wide"),
-    );
-    reverse_doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("order:1;page:narrow"),
-    );
+    reverse_doc.append_element(Some(body), "div", Some("order:0;page:wide"));
+    reverse_doc.append_element(Some(body), "div", Some("order:1;page:narrow"));
     let rules = build_rule_tree(&reverse_doc);
     let reverse_cascade = cascade(&reverse_doc, &rules).expect("reverse flex cascade Ok");
     assert_eq!(
@@ -1252,18 +1022,16 @@ fn layout_pages_orders_implicit_and_repeated_single_column_grids() {
         "display:grid;grid-template-columns:repeat(1,40px)",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some(grid_style));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some(grid_style));
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;grid-column:1;order:1;page:wide;height:10px"),
         );
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;grid-column:1;order:0;page:narrow;height:10px"),
         );
         let rules = build_rule_tree(&doc);
@@ -1283,23 +1051,20 @@ fn initial_page_child_order_keeps_explicit_grid_columns_in_source_order() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:grid;grid-template-columns:100px 100px"),
     );
     let second_column = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("order:0;grid-column:2;page:wide;height:10px"),
     );
     let first_column = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("order:1;grid-column:1;page:narrow;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -1316,22 +1081,12 @@ fn grid_pagination_item_filter_matches_in_flow_boxes_and_text() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let static_box = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
-    let relative_box = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:relative"),
-    );
-    let hidden_box = doc.append_element(Some(body), "div", Style::default(), Some("display:none"));
-    let absolute_box = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("position:absolute"),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let static_box = doc.append_element(Some(body), "div", None::<&str>);
+    let relative_box = doc.append_element(Some(body), "div", Some("position:relative"));
+    let hidden_box = doc.append_element(Some(body), "div", Some("display:none"));
+    let absolute_box = doc.append_element(Some(body), "div", Some("position:absolute"));
     let text = doc.append_text(body, "content");
     let whitespace = doc.append_text(body, "   ");
     let comment = doc.append_comment(Some(body), "not a grid item");
@@ -1355,26 +1110,15 @@ fn pagination_child_order_falls_back_when_grid_row_details_are_incomplete() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:100px"),
     );
-    let later = doc.append_element(
-        Some(grid),
-        "div",
-        Style::default(),
-        Some("order:1;height:10px"),
-    );
-    let earlier = doc.append_element(
-        Some(grid),
-        "div",
-        Style::default(),
-        Some("order:0;height:10px"),
-    );
+    let later = doc.append_element(Some(grid), "div", Some("order:1;height:10px"));
+    let earlier = doc.append_element(Some(grid), "div", Some("order:0;height:10px"));
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
@@ -1393,32 +1137,16 @@ fn pagination_child_order_orders_grid_items_inside_contents_wrappers_by_row() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let grid = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:grid;grid-template-columns:100px"),
     );
-    let wrapper = doc.append_element(
-        Some(grid),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let second = doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("grid-row:2;height:10px"),
-    );
-    let first = doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("grid-row:1;height:10px"),
-    );
+    let wrapper = doc.append_element(Some(grid), "div", Some("display:contents"));
+    let second = doc.append_element(Some(wrapper), "div", Some("grid-row:2;height:10px"));
+    let first = doc.append_element(Some(wrapper), "div", Some("grid-row:1;height:10px"));
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
@@ -1436,20 +1164,14 @@ fn pagination_child_order_orders_grid_items_inside_contents_wrappers_by_row() {
 fn stretched_column_flex_image_keeps_the_known_cross_size() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;flex-direction:column;width:800px"),
     );
-    let image = doc.append_element(
-        Some(flex),
-        "img",
-        Style::default(),
-        Some("display:inline-block"),
-    );
+    let image = doc.append_element(Some(flex), "img", Some("display:inline-block"));
     if let crate::node::NodeData::Element(element) = &mut doc.nodes[image].data {
         let mut intrinsic = raikiri_traits::IntrinsicBox::new(300.0, 150.0);
         intrinsic.aspect_ratio = Some(2.0);
@@ -1506,25 +1228,15 @@ fn ratio_only_inline_svg_uses_the_containing_width() {
         ),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
         let container_style = format!("display:block;width:{container_width}px");
-        let container = doc.append_element(
-            Some(body),
-            "section",
-            Style::default(),
-            Some(&container_style),
-        );
+        let container = doc.append_element(Some(body), "section", Some(&container_style));
         doc.append_text(container, "\n");
-        let svg = doc.append_element(Some(container), "svg", Style::default(), Some(svg_style));
+        let svg = doc.append_element(Some(container), "svg", Some(svg_style));
         doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
         doc.set_element_attributes(svg, vec![("viewBox".into(), "0 0 1000 500".into())]);
-        let rect = doc.append_element(
-            Some(svg),
-            "rect",
-            Style::default(),
-            Some("width:9999px;height:9999px"),
-        );
+        let rect = doc.append_element(Some(svg), "rect", Some("width:9999px;height:9999px"));
         doc.set_element_namespace(rect, Some("http://www.w3.org/2000/svg".into()));
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
@@ -1559,12 +1271,11 @@ fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
         ("display:inline;width:30px;height:20px", true, (30.0, 20.0)),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-        let paragraph =
-            doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
+        let paragraph = doc.append_element(Some(body), "p", Some("display:block"));
         doc.append_text(paragraph, "aa");
-        let svg = doc.append_element(Some(paragraph), "svg", Style::default(), Some(svg_style));
+        let svg = doc.append_element(Some(paragraph), "svg", Some(svg_style));
         doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
         doc.set_element_attributes(
             svg,
@@ -1574,7 +1285,7 @@ fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
             ],
         );
         if with_content {
-            let rect = doc.append_element(Some(svg), "rect", Style::default(), None::<&str>);
+            let rect = doc.append_element(Some(svg), "rect", None::<&str>);
             doc.set_element_namespace(rect, Some("http://www.w3.org/2000/svg".into()));
         }
         doc.mark_in_document_flags();
@@ -1598,7 +1309,6 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
     let svg = doc.append_element(
         Some(0),
         "svg",
-        Style::default(),
         Some("display:block;width:calc(100% - 20px)"),
     );
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
@@ -1632,7 +1342,7 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
         ),
     ] {
         let output = {
-            let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+            let mut session = crate::layout::context::LayoutSession::bridged(&mut doc, &cascade);
             taffy::LayoutPartialTree::compute_child_layout(
                 &mut session,
                 NodeId::from(svg),
@@ -1665,18 +1375,12 @@ fn lay_out_body_with_children(
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some(body_style));
-    let flow = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;height:10px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some(body_style));
+    let flow = doc.append_element(Some(body), "div", Some("display:block;height:10px"));
     let abs = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;top:50px;width:10px;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -1744,17 +1448,11 @@ fn body_inline_margins_keep_absolute_offsets_against_the_page() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0 20px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0 20px"));
     let abs = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;right:0;width:50%;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -1770,12 +1468,11 @@ fn body_inline_margins_keep_absolute_offsets_against_the_page() {
 fn the_first_layout_breaks_the_lines_of_the_placement_probes_paragraphs() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:flex"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:flex"));
     let item = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;page:chapter;font-family:Ahem;font-size:10px"),
     );
     doc.append_text(item, "aa bb cc");
@@ -1843,28 +1540,28 @@ fn layout_with_a_base_url_records_it_as_the_document_base_url() {
 fn find_body_takes_a_frameset_only_as_a_child_of_the_root_element() {
     // A frameset document: the frameset child of `html` is the body element.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let frameset = doc.append_element(Some(html), "frameset", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let _head = doc.append_element(Some(html), "head", None::<&str>);
+    let frameset = doc.append_element(Some(html), "frameset", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(find_body(&doc), Some(frameset));
 
     // A frameset elsewhere, ahead of the real body, is not the body element.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let _stray = doc.append_element(Some(head), "frameset", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let _stray = doc.append_element(Some(head), "frameset", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(find_body(&doc), Some(body));
 
     // A foreign `frameset` child of `html` is not the body element either.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let svg = doc.append_element(Some(html), "frameset", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let svg = doc.append_element(Some(html), "frameset", None::<&str>);
     doc.nodes[svg].data.as_element_mut().unwrap().namespace =
         Some("http://www.w3.org/2000/svg".into());
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(find_body(&doc), Some(body));
 }

@@ -2,7 +2,6 @@
 
 use anyrender::{PaintScene, Scene, recording::RenderCommand};
 use kurbo::Affine;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -24,17 +23,12 @@ fn fixture(align: &str, wrapper: bool, atomic: bool) -> (Document, CascadeResult
         )
         .expect("Ahem only"),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let root = doc.append_element(Some(body), "div", Style::default(), Some("display:block;font-family:Ahem;font-size:20px;line-height:40px;width:200px;color:black"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let root = doc.append_element(Some(body), "div", Some("display:block;font-family:Ahem;font-size:20px;line-height:40px;width:200px;color:black"));
     doc.append_text(root, "X");
     let parent = if wrapper {
-        doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("font-size:30px;line-height:30px"),
-        )
+        doc.append_element(Some(root), "span", Some("font-size:30px;line-height:30px"))
     } else {
         root
     };
@@ -49,7 +43,6 @@ fn fixture(align: &str, wrapper: bool, atomic: bool) -> (Document, CascadeResult
     let child = doc.append_element(
         Some(parent),
         if atomic { "img" } else { "span" },
-        Style::default(),
         Some(&css),
     );
     if !atomic {
@@ -142,21 +135,14 @@ fn keyword_text_and_replaced_ink_match_literal_positioned_references_exactly() {
             let actual = scene(&doc, &cascade);
             // Build a separate positioned reference without vertical-align.
             let mut reference = Document::new();
-            let html =
-                reference.append_element(Some(0), "html", Style::default(), Some("display:block"));
-            let body = reference.append_element(
-                Some(html),
-                "body",
-                Style::default(),
-                Some("display:block"),
-            );
+            let html = reference.append_element(Some(0), "html", Some("display:block"));
+            let body = reference.append_element(Some(html), "body", Some("display:block"));
             reference.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("position:absolute;left:0;top:10px;width:20px;height:20px;background:black"),
             );
-            reference.append_element(Some(body), "div", Style::default(), Some(&format!("position:absolute;left:20px;top:{top}px;width:10px;height:10px;background:green")));
+            reference.append_element(Some(body), "div", Some(&format!("position:absolute;left:20px;top:{top}px;width:10px;height:10px;background:green")));
             reference.mark_in_document_flags();
             let tree = build_rule_tree(&reference);
             let expected_cascade = raikiri_style::cascade(&reference, &tree).unwrap();
@@ -206,11 +192,10 @@ fn legacy_paint_does_not_align_blockified_or_out_of_flow_boxes_to_parent_metrics
                 )
                 .unwrap(),
             );
-            let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-            let body =
-                doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-            let root = doc.append_element(Some(body), "div", Style::default(), Some(&format!("display:{display};position:relative;font-family:Ahem;font-size:20px;line-height:40px;width:100px;height:40px")));
-            let item = doc.append_element(Some(root), "span", Style::default(), Some(&format!("{item_style};font-size:10px;line-height:10px;width:10px;height:10px;vertical-align:{align}")));
+            let html = doc.append_element(Some(0), "html", Some("display:block"));
+            let body = doc.append_element(Some(html), "body", Some("display:block"));
+            let root = doc.append_element(Some(body), "div", Some(&format!("display:{display};position:relative;font-family:Ahem;font-size:20px;line-height:40px;width:100px;height:40px")));
+            let item = doc.append_element(Some(root), "span", Some(&format!("{item_style};font-size:10px;line-height:10px;width:10px;height:10px;vertical-align:{align}")));
             doc.append_text(item, "X");
             doc.mark_in_document_flags();
             let tree = build_rule_tree(&doc);

@@ -2,15 +2,14 @@ use super::*;
 
 fn page_tree(width: usize, depth: usize, named: bool) -> (Document, CascadeResult, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     for _ in 0..width {
         let mut parent = body;
         for _ in 0..depth {
             parent = doc.append_element(
                 Some(parent),
                 "div",
-                Style::default(),
                 Some(if named {
                     "display:block;page:chapter"
                 } else {
@@ -170,24 +169,13 @@ fn propagation_resumes_after_hidden_and_whitespace_children() {
             let root = doc.append_element(
                 Some(0),
                 "div",
-                Style::default(),
                 Some(&format!("display:{display};page:outer")),
             );
             doc.append_text(root, "   ");
-            doc.append_element(
-                Some(root),
-                "div",
-                Style::default(),
-                Some("display:none;page:hidden"),
-            );
+            doc.append_element(Some(root), "div", Some("display:none;page:hidden"));
             doc.append_text(root, "\n");
             if named_child {
-                doc.append_element(
-                    Some(root),
-                    "div",
-                    Style::default(),
-                    Some("display:block;page:inner"),
-                );
+                doc.append_element(Some(root), "div", Some("display:block;page:inner"));
             }
             doc.mark_in_document_flags();
             let rules = raikiri_style::build_rule_tree(&doc);

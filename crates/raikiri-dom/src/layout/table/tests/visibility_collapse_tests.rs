@@ -11,24 +11,18 @@ struct Fixture {
 /// With `span` set, the first row also holds a cell spanning that many rows.
 fn fixture(table_css: &str, group_css: &str, rows: &[&str], span: Option<u32>) -> Fixture {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let table = doc.append_element(Some(body), "div", Style::default(), Some(table_css));
-    let group = doc.append_element(Some(table), "div", Style::default(), Some(group_css));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(Some(body), "div", Some(table_css));
+    let group = doc.append_element(Some(table), "div", Some(group_css));
     let mut row_ids = Vec::new();
     let mut cells = Vec::new();
     for (index, row_css) in rows.iter().enumerate() {
-        let row = doc.append_element(Some(group), "div", Style::default(), Some(*row_css));
+        let row = doc.append_element(Some(group), "div", Some(*row_css));
         row_ids.push(row);
         cells.push(doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some("display:table-cell;width:20px;height:20px;padding:0"),
         ));
         if index == 0
@@ -37,7 +31,6 @@ fn fixture(table_css: &str, group_css: &str, rows: &[&str], span: Option<u32>) -
             let cell = doc.append_element(
                 Some(row),
                 "div",
-                Style::default(),
                 Some("display:table-cell;width:20px;padding:0"),
             );
             doc.set_element_attributes(cell, vec![("rowspan".into(), span.to_string().into())]);
@@ -125,27 +118,20 @@ fn a_cell_spanning_only_collapsed_rows_has_no_block_extent() {
 /// pair. Returns the document, the table and the cells in row order.
 fn collapsing_table(rows: &[(&str, &str)]) -> (Document, usize, Vec<usize>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let table = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:table;border-collapse:collapse"),
     );
     let cells = rows
         .iter()
         .map(|(row_css, cell_css)| {
-            let row = doc.append_element(Some(table), "div", Style::default(), Some(*row_css));
+            let row = doc.append_element(Some(table), "div", Some(*row_css));
             doc.append_element(
                 Some(row),
                 "div",
-                Style::default(),
                 Some(format!(
                     "display:table-cell;width:20px;height:20px;padding:0;box-sizing:border-box;{cell_css}"
                 )),
@@ -211,24 +197,18 @@ fn collapsed_rows_at_the_end_leave_the_last_remaining_row_whole() {
 #[test]
 fn an_anonymous_row_collapses_with_its_row_group() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(Some(body), "div", Some(SEPARATE));
     let mut cells = Vec::new();
     for group_css in [
         "display:table-row-group;visibility:collapse",
         "display:table-row-group",
     ] {
-        let group = doc.append_element(Some(table), "div", Style::default(), Some(group_css));
+        let group = doc.append_element(Some(table), "div", Some(group_css));
         cells.push(doc.append_element(
             Some(group),
             "div",
-            Style::default(),
             Some("display:table-cell;width:20px;height:20px;padding:0"),
         ));
     }
@@ -244,20 +224,14 @@ fn an_anonymous_row_collapses_with_its_row_group() {
 fn the_first_remaining_row_carries_the_table_baseline() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(Some(body), "div", Some(SEPARATE));
     for row_css in [COLLAPSED, ROW] {
-        let row = doc.append_element(Some(table), "div", Style::default(), Some(row_css));
+        let row = doc.append_element(Some(table), "div", Some(row_css));
         let cell = doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some("display:table-cell;padding:0;font-family:Ahem;font-size:20px;line-height:20px"),
         );
         doc.append_text(cell, "X");
@@ -304,17 +278,11 @@ fn the_row_after_a_collapsed_first_row_resolves_against_the_table_edge() {
     // The collapsed row's wide bottom border would win the line between the
     // rows; once it is gone the second row's top border meets the table's.
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let table = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:table;border-collapse:collapse;border-top:2px solid black"),
     );
     let mut cells = Vec::new();
@@ -322,11 +290,10 @@ fn the_row_after_a_collapsed_first_row_resolves_against_the_table_edge() {
         (COLLAPSED, "border-bottom:10px solid black"),
         (ROW, "border-top:4px solid black"),
     ] {
-        let row = doc.append_element(Some(table), "div", Style::default(), Some(row_css));
+        let row = doc.append_element(Some(table), "div", Some(row_css));
         cells.push(doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some(format!(
                 "display:table-cell;width:20px;height:20px;{cell_css}"
             )),
@@ -343,21 +310,15 @@ fn the_row_after_a_collapsed_first_row_resolves_against_the_table_edge() {
 fn a_spanning_cell_moved_past_a_collapsed_row_aligns_with_its_new_row() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(Some(body), "div", Some(SEPARATE));
     let mut cells = Vec::new();
     for (row_css, font_size, span) in [(COLLAPSED, 40, true), (ROW, 20, false)] {
-        let row = doc.append_element(Some(table), "div", Style::default(), Some(row_css));
+        let row = doc.append_element(Some(table), "div", Some(row_css));
         let cell = doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some(format!(
                 "display:table-cell;padding:0;vertical-align:baseline;font-family:Ahem;font-size:{font_size}px;line-height:{font_size}px"
             )),
@@ -379,36 +340,23 @@ fn a_spanning_cell_moved_past_a_collapsed_row_aligns_with_its_new_row() {
 #[test]
 fn a_row_inside_a_contents_wrapper_collapses_with_its_row_group() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let table = doc.append_element(Some(body), "div", Style::default(), Some(SEPARATE));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let table = doc.append_element(Some(body), "div", Some(SEPARATE));
     let group = doc.append_element(
         Some(table),
         "div",
-        Style::default(),
         Some("display:table-row-group;visibility:collapse"),
     );
-    let wrapper = doc.append_element(
-        Some(group),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
+    let wrapper = doc.append_element(Some(group), "div", Some("display:contents"));
     let row = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:table-row;visibility:visible"),
     );
     let cell = doc.append_element(
         Some(row),
         "div",
-        Style::default(),
         Some("display:table-cell;width:20px;height:20px;padding:0"),
     );
     doc.mark_in_document_flags();

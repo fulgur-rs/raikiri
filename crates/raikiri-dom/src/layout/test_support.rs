@@ -22,12 +22,7 @@ pub(crate) fn ahem_paragraph(text: &str, css: &str) -> (Document, CascadeResult,
         block_fixture(&format!("line-height:10px;{css}"), |doc, root| {
             for (index, piece) in text.split('\n').enumerate() {
                 if index > 0 {
-                    doc.append_element(
-                        Some(root),
-                        "br",
-                        crate::LayoutStyle::default(),
-                        Some("display:inline"),
-                    );
+                    doc.append_element(Some(root), "br", Some("display:inline"));
                 }
                 if !piece.is_empty() {
                     doc.append_text(root, piece);
@@ -66,6 +61,98 @@ pub(crate) fn with_ahem(doc: &mut Document) -> &mut Document {
     doc
 }
 
+/// `layout` run in a session over `doc` whose styles are bridged from a fresh
+/// cascade of the document.
+pub(crate) fn with_bridged_session<R>(
+    doc: &mut Document,
+    layout: impl FnOnce(&mut crate::layout::context::LayoutSession<'_>) -> R,
+) -> R {
+    let cascade = cascaded(doc);
+    let mut session = crate::layout::context::LayoutSession::bridged(doc, &cascade);
+    layout(&mut session)
+}
+
+/// `layout` run in a session over `doc` as an earlier bridge or layout left
+/// it: the node fields a test patched and the results layout computed are
+/// kept, as bridging again would rebuild them.
+pub(crate) fn with_resumed_session<R>(
+    doc: &mut Document,
+    layout: impl FnOnce(&mut crate::layout::context::LayoutSession<'_>) -> R,
+) -> R {
+    let cascade = cascaded(doc);
+    let mut session = crate::layout::context::LayoutSession::resumed(doc, &cascade);
+    layout(&mut session)
+}
+
+/// `read` applied to a view of `values` under the pass overrides recorded for
+/// box `key` of `doc`.
+pub(crate) fn with_pass_view<R>(
+    doc: &Document,
+    key: crate::node::arena::BoxKey,
+    values: &raikiri_style::ComputedValues,
+    read: impl FnOnce(&raikiri_layout_style::LayoutStyleView<'_>) -> R,
+) -> R {
+    let prepared = raikiri_layout_style::PreparedStyle::prepare(
+        values,
+        raikiri_layout_style::StyleMetadata::default(),
+    );
+    let overrides: Vec<_> = doc
+        .box_style_data
+        .get(key)
+        .expect("the box has style data")
+        .pass
+        .iter()
+        .map(raikiri_layout_style::OwnedPropertyOverride::as_borrowed)
+        .collect();
+    read(&raikiri_layout_style::LayoutStyleView::new(
+        &prepared,
+        raikiri_layout_style::ViewContext::default(),
+        &[],
+        &overrides,
+    ))
+}
+
+/// Appends `declarations` to the inline style of element `node`; they override
+/// the declarations they repeat.
+pub(crate) fn restyle(doc: &mut Document, node: usize, declarations: &str) {
+    let element = doc.nodes[node]
+        .data
+        .as_element_mut()
+        .expect("restyle needs an element");
+    let mut css = element
+        .inline_style
+        .as_deref()
+        .unwrap_or_default()
+        .to_owned();
+    css.push(';');
+    css.push_str(declarations);
+    doc.set_element_inline_style(node, Some(css.into()));
+}
+
+/// The physical style input of `node` once `cascade` is bridged into `doc`.
+///
+/// The bridge runs in a session of its own, so the style reflects the
+/// document as it is now, not as an earlier layout left it.
+pub(crate) fn bridged_style(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+    node: usize,
+) -> crate::LayoutStyle {
+    let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
+    crate::taffy_impl::block_flow::style_input::physical(&session, node)
+}
+
+/// The display of `node` once `cascade` is bridged into `doc`, in the terms
+/// layout dispatches on (`flow-root`, `grid`, ...).
+pub(crate) fn bridged_display(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+    node: usize,
+) -> taffy::Display {
+    let session = crate::layout::context::LayoutSession::bridged(doc, cascade);
+    session.nodes[node].taffy_display()
+}
+
 /// An 800x600 page with no margins.
 pub(crate) fn page_box_800x600() -> PageBox {
     let mut page = PageBox::new();
@@ -87,34 +174,17 @@ pub(crate) fn ahem_paragraph_in_block_wrapper(
     wrapper_css: &str,
 ) -> (Document, CascadeResult, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("{AHEM_FAMILY_CSS}{wrapper_css}")),
     );
-    let inner = doc.append_element(
-        Some(wrapper),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let inner = doc.append_element(Some(wrapper), "div", Some("display:block"));
     let root = doc.append_element(
         Some(inner),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;{AHEM_FAMILY_CSS}line-height:10px")),
     );
     doc.append_text(root, text);
@@ -132,41 +202,22 @@ pub(crate) fn ahem_paragraph_beside_floats(
     root_css: &str,
 ) -> (Document, CascadeResult, Vec<usize>, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;width:100px;{AHEM_FAMILY_CSS}line-height:10px"
         )),
     );
     let floats: Vec<usize> = float_css
         .iter()
-        .map(|css| {
-            doc.append_element(
-                Some(wrapper),
-                "div",
-                crate::LayoutStyle::default(),
-                Some(&format!("display:block;{css}")),
-            )
-        })
+        .map(|css| doc.append_element(Some(wrapper), "div", Some(&format!("display:block;{css}"))))
         .collect();
     let root = doc.append_element(
         Some(wrapper),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;{root_css}")),
     );
     doc.append_text(root, text);
@@ -187,17 +238,11 @@ pub(crate) fn ahem_span_beside_float(
     sheet: &str,
 ) -> (Document, CascadeResult, usize) {
     let (mut doc, _, _, root) = ahem_paragraph_beside_floats("", &[float_css], root_css);
-    let style_element = doc.append_element(
-        Some(root),
-        "style",
-        crate::LayoutStyle::default(),
-        Some("display:none"),
-    );
+    let style_element = doc.append_element(Some(root), "style", Some("display:none"));
     doc.append_text(style_element, sheet);
     let span = doc.append_element(
         Some(root),
         "span",
-        crate::LayoutStyle::default(),
         Some(&format!("display:inline;{span_css}")),
     );
     doc.append_text(span, text);
@@ -243,22 +288,11 @@ pub(crate) fn ahem_paragraph_with_float(
     root_css: &str,
 ) -> (Document, CascadeResult, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let root = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;width:100px;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
         )),
@@ -267,7 +301,6 @@ pub(crate) fn ahem_paragraph_with_float(
     let float = doc.append_element(
         Some(root),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;{float_css}")),
     );
     doc.append_text(root, after);
@@ -286,22 +319,11 @@ pub(crate) fn ahem_paragraph_with_atomic(
     root_css: &str,
 ) -> (Document, CascadeResult, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let root = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;width:100px;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
         )),
@@ -310,7 +332,6 @@ pub(crate) fn ahem_paragraph_with_atomic(
     let atomic = doc.append_element(
         Some(root),
         "span",
-        crate::LayoutStyle::default(),
         Some(&format!("display:inline-block;{atomic_css}")),
     );
     doc.append_text(root, after);
@@ -324,23 +345,13 @@ pub(crate) fn ahem_paragraph_with_atomic(
 /// Returns `(doc, body)`.
 fn html_body() -> (Document, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     (doc, body)
 }
 
 /// Mark the flags of `doc` and cascade it.
-fn cascaded(doc: &Document) -> CascadeResult {
+pub(crate) fn cascaded(doc: &Document) -> CascadeResult {
     let rules = raikiri_style::build_rule_tree(doc);
     raikiri_style::cascade(doc, &rules).expect("cascade")
 }
@@ -357,13 +368,11 @@ pub(crate) fn ahem_paragraph_in(
     let parent = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;{AHEM_FAMILY_CSS}{parent_css}")),
     );
     let root = doc.append_element(
         Some(parent),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;line-height:10px;{css}")),
     );
     doc.append_text(root, text);
@@ -380,17 +389,11 @@ pub(crate) fn flex_container_with_inline_item(text: &str) -> (Document, CascadeR
     let flex = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:flex;align-items:flex-start;{AHEM_FAMILY_CSS}line-height:10px"
         )),
     );
-    let item = doc.append_element(
-        Some(flex),
-        "span",
-        crate::LayoutStyle::default(),
-        None::<&str>,
-    );
+    let item = doc.append_element(Some(flex), "span", None::<&str>);
     doc.append_text(item, text);
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
@@ -404,25 +407,14 @@ pub(crate) fn body_with_text_and_block_child(
     inner: &str,
 ) -> (Document, CascadeResult, usize, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        crate::LayoutStyle::default(),
         Some(&format!("display:block;{AHEM_FAMILY_CSS}line-height:10px")),
     );
     doc.append_text(body, text);
-    let div = doc.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let div = doc.append_element(Some(body), "div", Some("display:block"));
     doc.append_text(div, inner);
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
@@ -439,7 +431,6 @@ fn ahem_root_with(
     let root = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;{AHEM_FAMILY_CSS}line-height:10px;{root_css}"
         )),
@@ -454,12 +445,7 @@ fn ahem_root_with(
 /// without text.
 pub(crate) fn paragraph_with_only_atomic(atomic_css: &str) -> (Document, CascadeResult, usize) {
     ahem_root_with("", |doc, root| {
-        doc.append_element(
-            Some(root),
-            "span",
-            crate::LayoutStyle::default(),
-            Some(atomic_css),
-        );
+        doc.append_element(Some(root), "span", Some(atomic_css));
     })
 }
 
@@ -467,12 +453,7 @@ pub(crate) fn paragraph_with_only_atomic(atomic_css: &str) -> (Document, Cascade
 pub(crate) fn paragraph_with_only_br(count: usize) -> (Document, CascadeResult, usize) {
     ahem_root_with("", |doc, root| {
         for _ in 0..count {
-            doc.append_element(
-                Some(root),
-                "br",
-                crate::LayoutStyle::default(),
-                Some("display:inline"),
-            );
+            doc.append_element(Some(root), "br", Some("display:inline"));
         }
     })
 }
@@ -485,7 +466,6 @@ pub(crate) fn paragraph_with_only_an_empty_span(
         doc.append_element(
             Some(root),
             "span",
-            crate::LayoutStyle::default(),
             Some(&format!("display:inline;{span_css}")),
         );
     })
@@ -503,7 +483,6 @@ pub(crate) fn paragraph_with_inline_block(
         inline_block = doc.append_element(
             Some(root),
             "span",
-            crate::LayoutStyle::default(),
             Some(&format!("display:inline-block;width:{width}px")),
         );
         doc.append_text(inline_block, text);
@@ -521,7 +500,6 @@ pub(crate) fn ahem_paragraph_in_text_only(
     let parent = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:block;{AHEM_FAMILY_CSS}line-height:10px;{parent_css}"
         )),
@@ -544,21 +522,14 @@ pub(crate) fn ahem_table(
     let table = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
         )),
     );
-    let row = doc.append_element(
-        Some(table),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:table-row"),
-    );
+    let row = doc.append_element(Some(table), "div", Some("display:table-row"));
     let cell = doc.append_element(
         Some(row),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!("display:table-cell;{cell_css}")),
     );
     build(&mut doc, cell);
@@ -577,7 +548,6 @@ pub(crate) fn ahem_table_with_only_text(
     let table = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:table;{AHEM_FAMILY_CSS}line-height:10px;{table_css}"
         )),

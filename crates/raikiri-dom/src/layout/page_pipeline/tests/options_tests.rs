@@ -25,14 +25,9 @@ impl ReplacedResolver for RecordingResolver {
 
 fn image_document(root_css: &str, src: &str) -> (Document, raikiri_style::CascadeResult) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some(root_css));
-    let body = document.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let image = document.append_element(Some(body), "img", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some(root_css));
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let image = document.append_element(Some(body), "img", None::<&str>);
     document.set_element_attributes(image, vec![("src".into(), src.into())]);
     let rules = raikiri_style::build_rule_tree(&document);
     let cascade = raikiri_style::cascade(&document, &rules).unwrap();
@@ -44,21 +39,14 @@ fn forced_pages(writing_mode: &str) -> (Document, raikiri_style::CascadeResult, 
     let html = document.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some(format!("display:block;writing-mode:{writing_mode}").as_str()),
     );
-    let body = document.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = document.append_element(Some(html), "body", Some("display:block;margin:0"));
     let children = (0..3)
         .map(|_| {
             document.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;height:10px;width:50%;break-before:page"),
             )
         })
@@ -423,7 +411,7 @@ fn options_vertical_error_restores_physical_style() {
     );
     assert!(matches!(result, Err(LayoutError::PageLimitExceeded { .. })));
     for child in children {
-        let size = document.layout_style(child).unwrap().size;
+        let size = crate::layout::test_support::bridged_style(&mut document, &cascade, child).size;
         assert_eq!(size.width, Dimension::length(30.0));
         assert_eq!(size.height, Dimension::length(10.0));
     }

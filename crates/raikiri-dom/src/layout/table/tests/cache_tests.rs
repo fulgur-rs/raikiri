@@ -46,7 +46,8 @@ fn repeated_table_probes_build_grid_and_resolve_borders_once() {
         let (mut doc, table, _) = fixture(rows, columns);
         GRID_BUILDS.with(|count| count.set(0));
         BORDER_RESOLUTIONS.with(|count| count.set(0));
-        let mut session = LayoutSession::new(&mut doc);
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
+        let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
         let input = column_probe_input();
         let first = compute_table_layout_in_session(&mut session, table.into(), input);
         for _ in 0..4 {
@@ -69,7 +70,8 @@ fn width_changes_recompute_borders_but_keep_the_grid() {
     let (mut doc, table, _) = fixture(2, 2);
     GRID_BUILDS.with(|count| count.set(0));
     BORDER_RESOLUTIONS.with(|count| count.set(0));
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     session.record_pass_override(
         table,
         width_override(ComputedLengthPercentageOrAuto::Percent(100.0)),
@@ -93,7 +95,8 @@ fn width_changes_recompute_borders_but_keep_the_grid() {
 #[test]
 fn size_probe_does_not_cache_cell_layout_or_temporary_widths() {
     let (mut doc, table, first) = fixture(1, 1);
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut input = column_probe_input();
     input.run_mode = taffy::tree::RunMode::ComputeSize;
     let narrow = compute_table_layout_in_session(&mut session, table.into(), input);
@@ -130,9 +133,8 @@ fn new_session_and_rebridging_observe_dom_spans_and_changed_borders() {
         "display:table-cell;width:60px;height:10px;border:8px solid green",
     )
     .unwrap();
-    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-    let mut session = LayoutSession::new(&mut doc);
-    crate::layout::bridge::apply_computed_to_style_in_session(&mut session, &computed).unwrap();
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let changed = compute_table_layout_in_session(&mut session, table.into(), input);
     assert!(changed.size.width > original.size.width);
     assert_eq!(
@@ -144,20 +146,19 @@ fn new_session_and_rebridging_observe_dom_spans_and_changed_borders() {
             .px(),
         8.0
     );
-    // Re-bridging a live session can replace anonymous objects and reuse keys.
-    session
-        .set_element_attribute(first, "colspan", "1")
-        .unwrap();
-    session
-        .set_element_attribute(
-            first,
-            "style",
-            "display:table-cell;width:20px;height:10px;border:2px solid blue",
-        )
-        .unwrap();
-    let computed = cascade(&*session, &build_rule_tree(&*session)).unwrap();
-    crate::layout::bridge::apply_computed_to_style_in_session(&mut session, &computed).unwrap();
-    let restored = compute_table_layout_in_session(&mut session, table.into(), input);
+    // Bridging again can replace anonymous objects and reuse keys. A session
+    // reads one cascade, so the restyled document is bridged in a new one.
+    drop(session);
+    doc.set_element_attribute(first, "colspan", "1").unwrap();
+    doc.set_element_attribute(
+        first,
+        "style",
+        "display:table-cell;width:20px;height:10px;border:2px solid blue",
+    )
+    .unwrap();
+    let restored = with_layout_session(&mut doc, |session| {
+        compute_table_layout_in_session(session, table.into(), input)
+    });
     assert_eq!(restored.size, original.size);
 }
 
@@ -173,7 +174,8 @@ fn collapsed_column_probes_restore_the_same_borders_and_cell_geometry() {
     );
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let input = column_probe_input();
     let original = compute_table_layout_in_session(&mut session, table.into(), input);
     let geometry = session.nodes[first + 1].unrounded_layout;
@@ -192,12 +194,7 @@ fn collapsed_column_probes_restore_the_same_borders_and_cell_geometry() {
 #[test]
 fn rebridging_anonymous_tables_does_not_reuse_old_cell_placements() {
     let mut doc = Document::new();
-    let root = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;border-spacing:0"),
-    );
+    let root = doc.append_element(Some(0), "html", Some("display:block;border-spacing:0"));
     let row = append_grid_part(
         &mut doc,
         root,
@@ -215,12 +212,12 @@ fn rebridging_anonymous_tables_does_not_reuse_old_cell_placements() {
     let hidden = doc.append_element(
         Some(row),
         "div",
-        Style::default(),
         Some("display:none;width:50px;height:10px"),
     );
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     crate::layout::bridge::apply_computed_to_style_in_session(&mut session, &computed).unwrap();
     assert_eq!(session.table_objects.tables.len(), 1);
     let table = session.nodes.anonymous_table_key(0);
@@ -252,7 +249,8 @@ fn rebridging_anonymous_tables_does_not_reuse_old_cell_placements() {
 fn temporary_table_edges_rebuild_topology_on_entry_and_exit() {
     let (mut doc, table, _) = fixture(1, 1);
     GRID_BUILDS.with(|count| count.set(0));
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     super::super::cache::table_grid(&mut session, table).unwrap();
     session.with_resolved_edges(table, 100.0, true, |session| {
         super::super::cache::table_grid(session, table).unwrap();
@@ -264,7 +262,8 @@ fn temporary_table_edges_rebuild_topology_on_entry_and_exit() {
 #[test]
 fn cell_measurement_unwind_restores_authored_height() {
     let (mut doc, table, first) = fixture(1, 1);
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let mut grid = super::super::cache::table_grid(&mut session, table).unwrap();
     let height = session.table_style(first).size().height;
     session.nodes[first].children.push(usize::MAX - 1);
@@ -304,25 +303,21 @@ fn descendant_fixture() -> (Document, raikiri_style::CascadeResult, usize, usize
     let block = doc.append_element(
         Some(tall),
         "div",
-        Style::default(),
         Some("display:block;width:50%;height:12px;margin:2px"),
     );
     let flex = doc.append_element(
         Some(tall),
         "div",
-        Style::default(),
         Some("display:flex;width:100%;height:10px"),
     );
     let item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:6px;flex-grow:1"),
     );
     doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;width:10px;height:6px"),
     );
     append_grid_part(
@@ -404,7 +399,7 @@ fn table_descendant_geometry_agrees_across_cold_warm_and_forced_miss() {
         let mut tree = if views {
             LayoutSession::with_cascade(&mut doc, &cascade)
         } else {
-            LayoutSession::new(&mut doc)
+            LayoutSession::bridged(&mut doc, &cascade)
         };
         if views {
             crate::layout::style_views::tests::prepare_all_layout_views(&mut tree);

@@ -2,7 +2,6 @@
 //! with the other axis `auto`, and along axes that repeat or do not.
 
 use anyrender::Scene;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, ImageRasterSize, PageBox};
@@ -76,12 +75,11 @@ fn paint(block_style: &str) -> Vec<u8> {
 
 fn paint_with(block_style: &str, source: &dyn ImagePixelSource) -> Vec<u8> {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(format!("display:block;{block_style}").as_str()),
     );
     doc.mark_in_document_flags();

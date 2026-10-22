@@ -21,7 +21,6 @@ fn atomic_rect_styled(root_css: &str, atomic_css: &str) -> (f32, f32, f32, f32) 
         atomic = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(format!("display:inline-block;{atomic_css}").as_str()),
         );
     });
@@ -173,7 +172,6 @@ fn a_shrink_to_fit_vertical_root_counts_the_height_of_an_atomic_along_its_lines(
             atomic = doc.append_element(
                 Some(root),
                 "div",
-                crate::LayoutStyle::default(),
                 Some("display:inline-block;width:20px;height:10px"),
             );
         },

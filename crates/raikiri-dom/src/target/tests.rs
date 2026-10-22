@@ -1,6 +1,5 @@
 use super::*;
 
-use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
 
 #[test]
@@ -29,24 +28,9 @@ fn counter_snapshot_limit_error_has_stable_display() {
 #[test]
 fn counter_snapshots_resolve_named_reset_and_following_increments() {
     let mut doc = Document::new();
-    let scope = doc.append_element(
-        Some(0),
-        "section",
-        Style::default(),
-        Some("counter-reset: step 4"),
-    );
-    let first = doc.append_element(
-        Some(scope),
-        "div",
-        Style::default(),
-        Some("counter-increment: step"),
-    );
-    let second = doc.append_element(
-        Some(scope),
-        "div",
-        Style::default(),
-        Some("counter-increment: step"),
-    );
+    let scope = doc.append_element(Some(0), "section", Some("counter-reset: step 4"));
+    let first = doc.append_element(Some(scope), "div", Some("counter-increment: step"));
+    let second = doc.append_element(Some(scope), "div", Some("counter-increment: step"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -60,18 +44,8 @@ fn counter_snapshots_resolve_named_reset_and_following_increments() {
 #[test]
 fn shared_counter_snapshots_are_reused_until_the_tree_changes() {
     let mut doc = Document::new();
-    let scope = doc.append_element(
-        Some(0),
-        "section",
-        Style::default(),
-        Some("counter-reset: step 4"),
-    );
-    let first = doc.append_element(
-        Some(scope),
-        "div",
-        Style::default(),
-        Some("counter-increment: step"),
-    );
+    let scope = doc.append_element(Some(0), "section", Some("counter-reset: step 4"));
+    let first = doc.append_element(Some(scope), "div", Some("counter-increment: step"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -111,56 +85,43 @@ fn counter_snapshots_include_implicit_list_item_ordinals() {
     let list = doc.append_element(
         Some(doc.root_index()),
         "ol",
-        Style::default(),
         Some("counter-reset: list-item"),
     );
     let first = doc.append_element(
         Some(list),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-type: decimal"),
     );
-    doc.append_element(Some(list), "span", Style::default(), Some("display: block"));
+    doc.append_element(Some(list), "span", Some("display: block"));
     let second = doc.append_element(
         Some(list),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-type: decimal"),
     );
     let third = doc.append_element(
         Some(list),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-type: decimal"),
     );
     let explicit_list = doc.append_element(
         Some(doc.root_index()),
         "ol",
-        Style::default(),
         Some("counter-reset: list-item"),
     );
     let explicit = doc.append_element(
         Some(explicit_list),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-type: decimal; counter-reset: list-item 7"),
     );
     let explicit_following = doc.append_element(
         Some(explicit_list),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-type: decimal"),
     );
-    let nested_list = doc.append_element(
-        Some(first),
-        "ol",
-        Style::default(),
-        Some("counter-reset: list-item"),
-    );
+    let nested_list = doc.append_element(Some(first), "ol", Some("counter-reset: list-item"));
     let nested = doc.append_element(
         Some(nested_list),
         "li",
-        Style::default(),
         Some("display: list-item; list-style-type: decimal"),
     );
     doc.mark_in_document_flags();
@@ -204,12 +165,7 @@ fn counter_snapshot_budget_accounts_for_nested_stack_capacity_before_clone() {
     let mut nested_nodes = Vec::with_capacity(DEPTH);
     let mut parent = doc.root_index();
     for _ in 0..DEPTH {
-        parent = doc.append_element(
-            Some(parent),
-            "div",
-            Style::default(),
-            Some("counter-reset: nested"),
-        );
+        parent = doc.append_element(Some(parent), "div", Some("counter-reset: nested"));
         nested_nodes.push(parent);
     }
     doc.mark_in_document_flags();
@@ -242,23 +198,13 @@ fn counter_snapshot_budget_accounts_for_nested_stack_capacity_before_clone() {
 #[test]
 fn counter_snapshots_include_before_pseudo_scope_for_descendants() {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(doc.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(doc.root_index()), "style", None::<&str>);
     doc.append_text(
         style,
         r#"div::before { content: counters(test, "."); counter-reset: test }"#,
     );
-    let outer = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
-    let inner = doc.append_element(Some(outer), "div", Style::default(), None::<&str>);
+    let outer = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+    let inner = doc.append_element(Some(outer), "div", None::<&str>);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -272,23 +218,13 @@ fn counter_snapshots_include_before_pseudo_scope_for_descendants() {
 #[test]
 fn counter_snapshots_ignore_none_before_pseudo_scope() {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(doc.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(doc.root_index()), "style", None::<&str>);
     doc.append_text(
         style,
         r#"div::before { content: none; counter-reset: test }"#,
     );
-    let outer = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
-    let inner = doc.append_element(Some(outer), "div", Style::default(), None::<&str>);
+    let outer = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+    let inner = doc.append_element(Some(outer), "div", None::<&str>);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -304,39 +240,23 @@ fn counter_snapshots_skip_display_none_and_apply_display_contents_descendants() 
     let hidden = doc.append_element(
         Some(0),
         "div",
-        Style::default(),
         Some("display: none; counter-reset: hidden 7"),
     );
-    let hidden_child = doc.append_element(
-        Some(hidden),
-        "div",
-        Style::default(),
-        Some("counter-increment: hidden"),
-    );
+    let hidden_child = doc.append_element(Some(hidden), "div", Some("counter-increment: hidden"));
     let contents = doc.append_element(
         Some(0),
         "div",
-        Style::default(),
         Some("display: contents; counter-reset: visible 2"),
     );
-    let visible_child = doc.append_element(
-        Some(contents),
-        "div",
-        Style::default(),
-        Some("counter-increment: visible"),
-    );
-    let template = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+    let visible_child =
+        doc.append_element(Some(contents), "div", Some("counter-increment: visible"));
+    let template = doc.append_element(Some(0), "template", None::<&str>);
     // The probe lives in the detached contents fragment (the parser's
     // shape): it is unreachable, so snapshots skip it. An ordinary
     // light-DOM child appended directly under the template element would
     // stay in-document instead.
     let frag = doc.allocate_template_fragment_root(template);
-    let inert_child = doc.append_element(
-        Some(frag),
-        "div",
-        Style::default(),
-        Some("counter-increment: inert"),
-    );
+    let inert_child = doc.append_element(Some(frag), "div", Some("counter-increment: inert"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -366,19 +286,9 @@ fn counter_snapshots_same_name_nested_reset_produces_two_level_stack() {
     // name, encountered while an ancestor's scope for that name is still
     // active, pushes a nested level rather than replacing it.
     let mut doc = Document::new();
-    let outer = doc.append_element(
-        Some(0),
-        "section",
-        Style::default(),
-        Some("counter-reset: sec 1"),
-    );
-    let inner = doc.append_element(
-        Some(outer),
-        "section",
-        Style::default(),
-        Some("counter-reset: sec 1"),
-    );
-    let leaf = doc.append_element(Some(inner), "h2", Style::default(), None::<&str>);
+    let outer = doc.append_element(Some(0), "section", Some("counter-reset: sec 1"));
+    let inner = doc.append_element(Some(outer), "section", Some("counter-reset: sec 1"));
+    let leaf = doc.append_element(Some(inner), "h2", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, leaf, "sec"), vec![1, 1]);
 }
@@ -391,7 +301,6 @@ fn counter_snapshots_increment_mutates_top_level_not_a_new_one() {
     let el = doc.append_element(
         Some(0),
         "h2",
-        Style::default(),
         Some("counter-reset: c 5; counter-increment: c 2"),
     );
     doc.mark_in_document_flags();
@@ -407,7 +316,6 @@ fn counter_snapshots_increment_saturates_instead_of_panicking_or_wrapping_on_ove
     let el = doc.append_element(
         Some(0),
         "h2",
-        Style::default(),
         Some("counter-reset: c 2147483646; counter-increment: c 5"),
     );
     doc.mark_in_document_flags();
@@ -420,12 +328,7 @@ fn counter_snapshots_duplicate_name_in_one_counter_reset_keeps_only_last_value()
     // "If multiple instances of the same <counter-name> occur in the
     // property value, only the last one is honored."
     let mut doc = Document::new();
-    let el = doc.append_element(
-        Some(0),
-        "h2",
-        Style::default(),
-        Some("counter-reset: c 1 c 2"),
-    );
+    let el = doc.append_element(Some(0), "h2", Some("counter-reset: c 1 c 2"));
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, el, "c"), vec![2]);
 }
@@ -435,24 +338,9 @@ fn counter_increment_continues_across_siblings_sharing_an_ancestor_scope() {
     // Two children of a common <section> that carries counter-reset both
     // see, and continue, that still-open ancestor scope.
     let mut doc = Document::new();
-    let section = doc.append_element(
-        Some(0),
-        "section",
-        Style::default(),
-        Some("counter-reset: item"),
-    );
-    let p1 = doc.append_element(
-        Some(section),
-        "p",
-        Style::default(),
-        Some("counter-increment: item"),
-    );
-    let p2 = doc.append_element(
-        Some(section),
-        "p",
-        Style::default(),
-        Some("counter-increment: item"),
-    );
+    let section = doc.append_element(Some(0), "section", Some("counter-reset: item"));
+    let p1 = doc.append_element(Some(section), "p", Some("counter-increment: item"));
+    let p2 = doc.append_element(Some(section), "p", Some("counter-increment: item"));
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, p1, "item"), vec![1]);
     assert_eq!(stack_at(&doc, p2, "item"), vec![2]);
@@ -465,25 +353,10 @@ fn counter_snapshots_counter_increment_visible_across_cross_branch_cousin() {
     // `#foo`, but takes the value 2 from `#bar` (`#foo`'s child), the
     // previous element in tree order.
     let mut doc = Document::new();
-    let ul = doc.append_element(
-        Some(0),
-        "ul",
-        Style::default(),
-        Some("counter-reset: example 0"),
-    );
-    let foo = doc.append_element(
-        Some(ul),
-        "li",
-        Style::default(),
-        Some("counter-increment: example"),
-    );
-    doc.append_element(
-        Some(foo),
-        "div",
-        Style::default(),
-        Some("counter-increment: example"),
-    );
-    let baz = doc.append_element(Some(ul), "li", Style::default(), None::<&str>);
+    let ul = doc.append_element(Some(0), "ul", Some("counter-reset: example 0"));
+    let foo = doc.append_element(Some(ul), "li", Some("counter-increment: example"));
+    doc.append_element(Some(foo), "div", Some("counter-increment: example"));
+    let baz = doc.append_element(Some(ul), "li", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, baz, "example"), vec![2]);
 }
@@ -494,20 +367,10 @@ fn counter_snapshots_counter_reset_obscures_earlier_sibling_scope() {
     // counter-reset evicts the first section's still-open same-name level
     // instead of nesting inside it, so the full stack is `[5]`, not `[1, 5]`.
     let mut doc = Document::new();
-    let sec1 = doc.append_element(
-        Some(0),
-        "section",
-        Style::default(),
-        Some("counter-reset: chapter 1"),
-    );
-    let h2_1 = doc.append_element(Some(sec1), "h2", Style::default(), None::<&str>);
-    let sec2 = doc.append_element(
-        Some(0),
-        "section",
-        Style::default(),
-        Some("counter-reset: chapter 5"),
-    );
-    let h2_2 = doc.append_element(Some(sec2), "h2", Style::default(), None::<&str>);
+    let sec1 = doc.append_element(Some(0), "section", Some("counter-reset: chapter 1"));
+    let h2_1 = doc.append_element(Some(sec1), "h2", None::<&str>);
+    let sec2 = doc.append_element(Some(0), "section", Some("counter-reset: chapter 5"));
+    let h2_2 = doc.append_element(Some(sec2), "h2", None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, h2_1, "chapter"), vec![1]);
     assert_eq!(stack_at(&doc, h2_2, "chapter"), vec![5]);
@@ -519,8 +382,8 @@ fn counter_increment_without_ancestor_reset_persists_across_siblings() {
     // a counter with no counter-reset anywhere is instantiated by p1's
     // increment, and that scope covers p1's following siblings too.
     let mut doc = Document::new();
-    let p1 = doc.append_element(Some(0), "p", Style::default(), Some("counter-increment: x"));
-    let p2 = doc.append_element(Some(0), "p", Style::default(), Some("counter-increment: x"));
+    let p1 = doc.append_element(Some(0), "p", Some("counter-increment: x"));
+    let p2 = doc.append_element(Some(0), "p", Some("counter-increment: x"));
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, p1, "x"), vec![1]);
     assert_eq!(stack_at(&doc, p2, "x"), vec![2]);
@@ -531,8 +394,8 @@ fn counter_increment_on_following_sibling_of_reset_element_continues_that_scope(
     // CSS Lists 3 §4.3 puts a counter-reset's scope over "the element's
     // descendants and its following siblings with their descendants".
     let mut doc = Document::new();
-    doc.append_element(Some(0), "div", Style::default(), Some("counter-reset: c 5"));
-    let p = doc.append_element(Some(0), "p", Style::default(), Some("counter-increment: c"));
+    doc.append_element(Some(0), "div", Some("counter-reset: c 5"));
+    let p = doc.append_element(Some(0), "p", Some("counter-increment: c"));
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, p, "c"), vec![6]);
 }
@@ -543,14 +406,12 @@ fn list_items_increment_list_item_before_their_counter_set() {
     let list = doc.append_element(
         Some(doc.root_index()),
         "ol",
-        Style::default(),
         Some("counter-reset: list-item 4"),
     );
     let item = |doc: &mut Document, style: &str| {
         doc.append_element(
             Some(list),
             "li",
-            Style::default(),
             Some(format!("display: list-item; {style}").as_str()),
         )
     };
@@ -558,8 +419,7 @@ fn list_items_increment_list_item_before_their_counter_set() {
     let set = item(&mut doc, "counter-set: list-item 10");
     let after_set = item(&mut doc, "");
     let explicit = item(&mut doc, "counter-increment: list-item 5");
-    let not_list_item =
-        doc.append_element(Some(list), "div", Style::default(), Some("display: block"));
+    let not_list_item = doc.append_element(Some(list), "div", Some("display: block"));
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -576,12 +436,7 @@ fn list_items_increment_list_item_before_their_counter_set() {
 #[test]
 fn list_item_before_pseudo_increments_list_item_for_itself_and_children() {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(doc.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(doc.root_index()), "style", None::<&str>);
     doc.append_text(
         style,
         "div::before { display: list-item; list-style: none; content: counter(list-item) }",
@@ -589,10 +444,9 @@ fn list_item_before_pseudo_increments_list_item_for_itself_and_children() {
     let host = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("counter-reset: list-item 4"),
     );
-    let child = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+    let child = doc.append_element(Some(host), "span", None::<&str>);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -612,12 +466,7 @@ fn list_item_before_pseudo_increments_list_item_for_itself_and_children() {
 #[test]
 fn list_item_after_pseudo_increments_carry_to_following_siblings() {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(doc.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(doc.root_index()), "style", None::<&str>);
     doc.append_text(
         style,
         "div::after { display: list-item; list-style: none; content: counter(list-item) }",
@@ -625,12 +474,11 @@ fn list_item_after_pseudo_increments_carry_to_following_siblings() {
     let list = doc.append_element(
         Some(doc.root_index()),
         "section",
-        Style::default(),
         Some("counter-reset: list-item"),
     );
-    let first = doc.append_element(Some(list), "div", Style::default(), None::<&str>);
-    let second = doc.append_element(Some(list), "div", Style::default(), None::<&str>);
-    let following = doc.append_element(Some(list), "span", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(list), "div", None::<&str>);
+    let second = doc.append_element(Some(list), "div", None::<&str>);
+    let following = doc.append_element(Some(list), "span", None::<&str>);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -707,12 +555,11 @@ fn reversed_counter_starting_value_follows_the_increments_up_to_the_first_set() 
         let list = doc.append_element(
             Some(doc.root_index()),
             "div",
-            Style::default(),
             Some("counter-reset: reversed(foo)"),
         );
         let nodes: Vec<usize> = items
             .iter()
-            .map(|style| doc.append_element(Some(list), "div", Style::default(), Some(*style)))
+            .map(|style| doc.append_element(Some(list), "div", Some(*style)))
             .collect();
         doc.mark_in_document_flags();
         assert_eq!(innermost_values(&doc, &[list], "foo"), start, "{items:?}");
@@ -726,25 +573,17 @@ fn reversed_counter_counts_following_siblings_and_skips_display_none() {
     let list = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("counter-reset: reversed(foo)"),
     );
-    let inner = doc.append_element(
-        Some(list),
-        "div",
-        Style::default(),
-        Some("counter-increment: foo -1"),
-    );
+    let inner = doc.append_element(Some(list), "div", Some("counter-increment: foo -1"));
     doc.append_element(
         Some(list),
         "div",
-        Style::default(),
         Some("display: none; counter-increment: foo -5"),
     );
     let following = doc.append_element(
         Some(doc.root_index()),
         "div",
-        Style::default(),
         Some("counter-increment: foo -2"),
     );
     doc.mark_in_document_flags();
@@ -761,30 +600,18 @@ fn reversed_list_item_counter_counts_list_items_down() {
     let list = doc.append_element(
         Some(doc.root_index()),
         "ol",
-        Style::default(),
         Some("counter-reset: reversed(list-item)"),
     );
     let item = |doc: &mut Document, style: &str| {
         doc.append_element(
             Some(list),
             "li",
-            Style::default(),
             Some(format!("display: list-item; {style}").as_str()),
         )
     };
     let first = item(&mut doc, "");
-    let nested = doc.append_element(
-        Some(first),
-        "ol",
-        Style::default(),
-        Some("counter-reset: list-item"),
-    );
-    let nested_item = doc.append_element(
-        Some(nested),
-        "li",
-        Style::default(),
-        Some("display: list-item"),
-    );
+    let nested = doc.append_element(Some(first), "ol", Some("counter-reset: list-item"));
+    let nested_item = doc.append_element(Some(nested), "li", Some("display: list-item"));
     let second = item(&mut doc, "");
     let third = item(&mut doc, "");
     doc.mark_in_document_flags();
@@ -802,15 +629,9 @@ fn reversed_counter_with_a_given_starting_value_keeps_it() {
     let list = doc.append_element(
         Some(doc.root_index()),
         "ol",
-        Style::default(),
         Some("counter-reset: reversed(list-item) 10"),
     );
-    let item = doc.append_element(
-        Some(list),
-        "li",
-        Style::default(),
-        Some("display: list-item"),
-    );
+    let item = doc.append_element(Some(list), "li", Some("display: list-item"));
     doc.mark_in_document_flags();
     assert_eq!(innermost_values(&doc, &[list, item], "list-item"), [10, 9]);
 }
@@ -818,25 +639,15 @@ fn reversed_counter_with_a_given_starting_value_keeps_it() {
 #[test]
 fn pseudo_local_reversed_counter_is_calculated_from_its_own_directives() {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(doc.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(doc.root_index()), "style", None::<&str>);
     doc.append_text(
         style,
         "div::before { counter-reset: reversed(c); counter-increment: c -2; content: counter(c) } \
          p::before { display: list-item; list-style: none; \
          counter-reset: reversed(list-item); content: counter(list-item) }",
     );
-    let div = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
-    let p = doc.append_element(Some(doc.root_index()), "p", Style::default(), None::<&str>);
+    let div = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+    let p = doc.append_element(Some(doc.root_index()), "p", None::<&str>);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -857,18 +668,8 @@ fn pseudo_local_reversed_counter_is_calculated_from_its_own_directives() {
 #[test]
 fn counter_set_without_a_counter_in_scope_instantiates_one() {
     let mut doc = Document::new();
-    let set = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        Some("counter-set: c 3"),
-    );
-    let following = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        Some("counter-increment: c"),
-    );
+    let set = doc.append_element(Some(doc.root_index()), "div", Some("counter-set: c 3"));
+    let following = doc.append_element(Some(doc.root_index()), "div", Some("counter-increment: c"));
     doc.mark_in_document_flags();
     assert_eq!(innermost_values(&doc, &[set, following], "c"), [3, 4]);
 }
@@ -886,12 +687,7 @@ fn pseudo_text(doc: &Document, element: usize, pseudo: raikiri_style::PseudoElem
 /// A document whose `<style>` holds `css`.
 fn styled_document(css: &str) -> Document {
     let mut doc = Document::new();
-    let style = doc.append_element(
-        Some(doc.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
+    let style = doc.append_element(Some(doc.root_index()), "style", None::<&str>);
     doc.append_text(style, css);
     doc
 }
@@ -903,18 +699,8 @@ fn after_reads_the_before_and_child_directives() {
          div::before { counter-increment: c; content: counter(c) } \
          div::after { content: counter(c) }",
     );
-    let host = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
-    doc.append_element(
-        Some(host),
-        "span",
-        Style::default(),
-        Some("counter-increment: c 10"),
-    );
+    let host = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
+    doc.append_element(Some(host), "span", Some("counter-increment: c 10"));
     doc.mark_in_document_flags();
     assert_eq!(
         pseudo_text(&doc, host, raikiri_style::PseudoElem::Before),
@@ -932,14 +718,9 @@ fn before_reversed_reset_counts_its_whole_scope() {
         "div::before { counter-reset: reversed(c); content: counter(c) } \
          span { counter-increment: c }",
     );
-    let host = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
+    let host = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
     for _ in 0..3 {
-        doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+        doc.append_element(Some(host), "span", None::<&str>);
     }
     doc.mark_in_document_flags();
     // The scope holds the three spans' increments of 1: the start is their
@@ -958,11 +739,10 @@ fn list_item_pseudo_counts_down_in_a_reversed_list() {
     let list = doc.append_element(
         Some(doc.root_index()),
         "section",
-        Style::default(),
         Some("counter-reset: reversed(list-item)"),
     );
     let items: Vec<_> = (0..3)
-        .map(|_| doc.append_element(Some(list), "div", Style::default(), None::<&str>))
+        .map(|_| doc.append_element(Some(list), "div", None::<&str>))
         .collect();
     doc.mark_in_document_flags();
     let texts: Vec<_> = items
@@ -978,12 +758,7 @@ fn only_pseudos_that_read_counters_get_snapshots() {
         "div::before { counter-increment: c; content: \"x\" } \
          div::after { content: \"y\" / counter(c) }",
     );
-    let host = doc.append_element(
-        Some(doc.root_index()),
-        "div",
-        Style::default(),
-        None::<&str>,
-    );
+    let host = doc.append_element(Some(doc.root_index()), "div", None::<&str>);
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1004,12 +779,7 @@ fn only_pseudos_that_read_counters_get_snapshots() {
 fn pseudo_snapshot_entries_count_against_the_budget() {
     let mut doc = styled_document("div::before { content: counter(c) }");
     for _ in 0..4 {
-        doc.append_element(
-            Some(doc.root_index()),
-            "div",
-            Style::default(),
-            None::<&str>,
-        );
+        doc.append_element(Some(doc.root_index()), "div", None::<&str>);
     }
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);

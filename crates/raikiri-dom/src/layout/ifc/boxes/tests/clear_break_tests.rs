@@ -26,7 +26,6 @@ fn projected_breaks(cleared: usize, total: usize) -> super::super::super::projec
             doc.append_element(
                 Some(root),
                 "br",
-                crate::LayoutStyle::default(),
                 Some(format!("display:inline;clear:{side}").as_str()),
             );
             doc.append_text(root, "A");
@@ -112,7 +111,6 @@ fn float_fixture(floats: bool, extra: &str) -> crate::layout::ifc::test_support:
                     doc.append_element(
                         Some(root),
                         "div",
-                        crate::LayoutStyle::default(),
                         Some(
                             format!("display:block;float:{side};width:20px;height:{height}px")
                                 .as_str(),
@@ -130,7 +128,6 @@ fn float_fixture(floats: bool, extra: &str) -> crate::layout::ifc::test_support:
                 doc.append_element(
                     Some(root),
                     "br",
-                    crate::LayoutStyle::default(),
                     Some(format!("display:inline;clear:{clear}").as_str()),
                 );
                 doc.append_text(root, text);

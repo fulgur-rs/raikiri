@@ -48,8 +48,7 @@ need coordinated input/output, overflow, baseline and OOF transformations.
 Grid tracks and gaps retain their CSS inline/block meaning rather than being
 unconditionally exchanged with physical width/height.
 Template tracks and line names return `Some` even for an empty iterator,
-matching the current `taffy::Style` implementation. Absent template areas
-remain `None`.
+as `taffy::Style` does. Absent template areas remain `None`.
 
 ## Calc safety
 
@@ -83,12 +82,9 @@ The DOM layout session borrows the external cascade and prepares Flex/Grid
 containers and all of their projected children before style queries. Hidden
 and out-of-flow children are included because Taffy reads their styles before
 filtering them. Source values are borrowed; synthetic recipes own shared values.
-The production Flex/Grid associated style types use this view. Unit tests wrap
-the same prepared views in `CheckedStyle`, compare each consumed value against
-an independently converted retained style, and return that retained value.
-Core, Block and out-of-flow layout still use the retained style, including the
-Grid rows needed by pagination and sizing. `Document::layout_style` continues
-to expose the complete converted style.
+Every layout algorithm reads its styles through this view: no box keeps a
+converted `taffy::Style`. Block flow and the local sizing steps reduce the
+view to a transient `taffy::Style` for the length of one call.
 
 Document metadata publications refresh preparation before parent cache lookup
 and before entering size or edge scopes. Preparation rejects active scopes;

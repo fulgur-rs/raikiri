@@ -305,8 +305,7 @@ fn indexed_calc_owners_preserve_exact_bits_ranges_and_first_legacy_owner() {
         cv.grid_auto_rows = Arc::new(vec![S::Breadth(B::Calc(a))]);
         let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
         apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
-        let pool = &session.style_views.as_ref().unwrap().legacy_calcs
-            [&crate::node::arena::BoxKey::Source(child)];
+        let pool = &session.box_style_data.calc_values;
         let check = |handle: *const (), expression: CalcLengthPercentage, range| {
             let first = pool
                 .iter()

@@ -1,7 +1,6 @@
 use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
@@ -19,10 +18,10 @@ fn paragraph(
     build: impl FnOnce(&mut Document, usize),
 ) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let style = format!("display:block;font-family:Ahem;font-size:10px;line-height:10px;{css}");
-    let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
+    let root = doc.append_element(Some(body), "div", Some(style.as_str()));
     build(&mut doc, root);
     doc.mark_in_document_flags();
     doc.set_font_collection(
@@ -175,7 +174,7 @@ fn a_replacing_content_image_is_drawn_at_its_object_fit_rect_in_its_box_clip() {
         }
     }
     let (mut doc, cascade, root) = paragraph("", |doc, root| {
-        let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+        let style = doc.append_element(Some(0), "style", None::<&str>);
         doc.append_text(
             style,
             "div::before{content:url(https://images.test/a.png);width:32px;height:32px;\
@@ -251,7 +250,7 @@ fn translucent_image_only_before_is_a_group() {
         }
     }
     let (mut doc, cascade, root) = paragraph("", |doc, root| {
-        let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+        let style = doc.append_element(Some(0), "style", None::<&str>);
         doc.append_text(
             style,
             "div::before{content:url(https://images.test/a.png);opacity:.5}",
@@ -314,7 +313,7 @@ fn before_content_image_scales_raster_pixels_into_its_line_rect() {
         }
     }
     let (mut doc, cascade, root) = paragraph("", |doc, root| {
-        let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+        let style = doc.append_element(Some(0), "style", None::<&str>);
         doc.append_text(style, "div::before{content:url(https://images.test/a.png)}");
         doc.append_text(root, "a");
     });
@@ -381,11 +380,10 @@ fn many_inline_pieces_on_separate_lines_paint_within_three_seconds() {
             let span = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;background-color:red"),
             );
             doc.append_text(span, "a");
-            doc.append_element(Some(root), "br", Style::default(), None::<&str>);
+            doc.append_element(Some(root), "br", None::<&str>);
         }
     });
     lay_out(&mut doc, &cascade);
@@ -551,12 +549,7 @@ fn vertical_ifc_glyph_origins_and_outline_axes_are_converted_to_physical_space()
 fn each_run_takes_the_color_of_its_text_node() {
     let (mut doc, cascade, root) = paragraph("color:blue", |doc, root| {
         doc.append_text(root, "aa ");
-        let inner = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("display:inline;color:red"),
-        );
+        let inner = doc.append_element(Some(root), "span", Some("display:inline;color:red"));
         doc.append_text(inner, "bb");
     });
     lay_out(&mut doc, &cascade);
@@ -768,11 +761,10 @@ fn a_body_root_takes_the_body_left_margin_like_its_text() {
     // synthetic body root.
     let build = || {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin-left:30px;font-family:Ahem;font-size:10px;line-height:10px"),
         );
         doc.append_text(body, "abcde");
@@ -807,7 +799,6 @@ fn a_paragraph_inside_a_fixed_box_is_painted_like_fixed_text() {
         let inner = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;word-break:break-all"),
         );
         doc.append_text(inner, "abcde");
@@ -905,8 +896,7 @@ fn an_undecorated_paragraph_draws_no_decoration_rectangle() {
 fn a_decoration_reaches_text_inside_an_inline_element() {
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa ");
-        let inner =
-            doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+        let inner = doc.append_element(Some(root), "span", Some("display:inline"));
         doc.append_text(inner, "bb");
     };
     let css = "text-decoration:underline";
@@ -924,7 +914,6 @@ fn a_decoration_originating_on_an_inline_element_covers_only_its_text() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;text-decoration:underline"),
         );
         doc.append_text(inner, "bb");
@@ -941,7 +930,7 @@ fn a_decoration_originating_on_an_inline_element_covers_only_its_text() {
 fn a_trailing_empty_line_paints_no_glyphs() {
     let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
         doc.append_text(root, "abcd");
-        doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+        doc.append_element(Some(root), "br", Some("display:inline"));
     });
     lay_out(&mut doc, &cascade);
     assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
@@ -958,7 +947,6 @@ fn a_float_inside_the_paragraph_is_painted_as_a_box() {
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:30px;height:20px;background-color:red"),
         );
         doc.append_text(root, " bbbb cccc");
@@ -992,7 +980,6 @@ fn a_float_inside_the_paragraph_is_painted_once() {
         doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:30px;height:20px;background-color:red"),
         );
         doc.append_text(root, " bb");
@@ -1020,7 +1007,6 @@ fn an_atomic_inline_is_painted_at_its_position_once() {
         doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline-block;width:30px;height:10px;background-color:red"),
         );
         doc.append_text(root, " bb");
@@ -1128,12 +1114,7 @@ fn an_inherited_ch_spacing_places_glyphs() {
     // with its own 20px font.
     let on = painted_root("width:300px;letter-spacing:1ch", |doc, root| {
         doc.append_text(root, "ab");
-        let inner = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("display:inline;font-size:20px"),
-        );
+        let inner = doc.append_element(Some(root), "span", Some("display:inline;font-size:20px"));
         doc.append_text(inner, "cd");
     });
     // Only the inline positions are compared: the baseline is unrelated to
@@ -1239,7 +1220,6 @@ fn a_relative_inline_with_no_offset_paints() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;position:relative;color:blue"),
         );
         doc.append_text(inner, "bb");
@@ -1275,7 +1255,6 @@ fn a_relative_block_child_with_no_offset_is_painted_once() {
         let block = doc.append_element(
             Some(root),
             "div",
-            Style::default(),
             Some("display:block;position:relative;background-color:green"),
         );
         doc.append_text(block, "bb");
@@ -1373,12 +1352,7 @@ fn a_blurred_shadow_is_drawn_inside_a_filter_layer() {
 fn a_shadow_of_an_inline_element_uses_that_elements_color() {
     let on = painted_root("width:100px;text-shadow:1px 1px", |doc, root| {
         doc.append_text(root, "a");
-        let inner = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("display:inline;color:blue"),
-        );
+        let inner = doc.append_element(Some(root), "span", Some("display:inline;color:blue"));
         doc.append_text(inner, "b");
     });
     // `currentcolor` shadows take the color of the text they belong to.
@@ -1479,24 +1453,21 @@ fn beside_float(
     text: &'static str,
 ) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let wrapper = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:100px;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some(format!("display:block;{float_css}").as_str()),
     );
     let root = doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some(format!("display:block;{root_css}").as_str()),
     );
     doc.append_text(root, text);
@@ -1626,7 +1597,6 @@ fn raised(doc: &mut Document, root: usize, align: &str, css: &str) {
     let inner = doc.append_element(
         Some(root),
         "span",
-        Style::default(),
         Some(format!("display:inline;vertical-align:{align};{css}").as_str()),
     );
     doc.append_text(inner, "bb");
@@ -1775,10 +1745,10 @@ fn inline_background_pieces_keep_source_order_within_and_across_lines() {
     let (mut doc, cascade, root) = paragraph("width:80px", |doc, root| {
         for (index, color) in colors.into_iter().enumerate() {
             if index == 2 {
-                doc.append_element(Some(root), "br", Style::default(), None::<&str>);
+                doc.append_element(Some(root), "br", None::<&str>);
             }
             let style = format!("display:inline;background-color:{color}");
-            let span = doc.append_element(Some(root), "span", Style::default(), Some(&style));
+            let span = doc.append_element(Some(root), "span", Some(&style));
             doc.append_text(span, "aa");
         }
     });
@@ -1816,7 +1786,6 @@ fn an_inline_background_and_border_are_pinned() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(format!("display:inline;{BOX_EDGES}").as_str()),
         );
         doc.append_text(inner, "bb");
@@ -1845,7 +1814,6 @@ fn a_wrapping_inline_keeps_the_start_border_on_its_first_piece_only() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(format!("display:inline;{BOX_EDGES}").as_str()),
         );
         doc.append_text(inner, "aaaa bbbb");
@@ -1873,7 +1841,6 @@ fn a_wrapping_inline_has_square_corners_where_it_continues() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(format!("display:inline;{BOX_EDGES};border-radius:4px").as_str()),
         );
         doc.append_text(inner, "aaaa bbbb");
@@ -1908,7 +1875,6 @@ fn vertical_edges_grow_the_painted_box_but_not_the_line() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(
                 "display:inline;background-color:rgb(255,0,0);padding:1px 0;\
                  border-width:2px 0;border-style:solid;border-color:rgb(0,0,255)",
@@ -1937,7 +1903,6 @@ fn an_inline_box_shadow_is_pinned() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;padding:0 3px;box-shadow:2px 2px rgb(0,255,0)"),
         );
         doc.append_text(inner, "bb");
@@ -1994,7 +1959,6 @@ fn an_inline_outline_is_pinned() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;padding:0 3px;outline:2px solid rgb(0,255,0)"),
         );
         doc.append_text(inner, "bb");
@@ -2018,7 +1982,6 @@ fn the_start_border_follows_the_elements_own_direction() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(
                 "display:inline;direction:ltr;padding:0 3px;border-width:0 2px;\
                  border-style:solid;border-color:rgb(0,0,255)",
@@ -2057,7 +2020,6 @@ fn an_inline_shadow_without_a_border_or_background_has_square_corners() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;border-radius:4px;box-shadow:2px 2px rgb(0,255,0)"),
         );
         doc.append_text(inner, "bb");
@@ -2079,7 +2041,6 @@ fn an_inline_background_clipped_to_its_content_box_is_pinned() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(format!("display:inline;{BOX_EDGES};background-clip:content-box").as_str()),
         );
         doc.append_text(inner, "bb");
@@ -2105,7 +2066,6 @@ fn a_wrapped_piece_has_no_padding_where_it_continues() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(format!("display:inline;{BOX_EDGES};background-clip:content-box").as_str()),
         );
         doc.append_text(inner, "aaaa bbbb");
@@ -2126,7 +2086,6 @@ fn a_right_to_left_element_has_its_start_border_on_the_right() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(
                 "display:inline;direction:rtl;padding:0 3px;border-width:0 2px;\
                  border-style:solid;border-color:rgb(0,0,255)",
@@ -2162,7 +2121,6 @@ fn a_content_box_background_leaves_out_the_vertical_padding() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(
                 "display:inline;background-color:rgb(255,0,0);background-clip:content-box;\
                  padding:1px 0;border-width:2px 0;border-style:solid;border-color:rgb(0,0,255)",
@@ -2185,7 +2143,6 @@ fn a_relative_inline_is_painted() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some(
                 "display:inline;position:relative;left:5px;top:2px;\
                  background-color:rgb(255,0,0);text-decoration:underline",
@@ -2218,7 +2175,6 @@ fn a_text_shadow_moves_with_a_relative_inline() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;position:relative;left:5px;top:2px;text-shadow:1px 1px rgb(0,255,0)"),
         );
         doc.append_text(inner, "bb");
@@ -2263,7 +2219,6 @@ fn a_relative_inline_resolves_a_percentage_against_the_root_width() {
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;position:relative;left:50%;right:7px;top:50%;bottom:3px"),
         );
         doc.append_text(inner, "bb");
@@ -2293,7 +2248,6 @@ fn a_relative_inline_resolves_a_vertical_percentage_against_a_definite_height() 
         let inner = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;position:relative;top:50%;bottom:3px"),
         );
         doc.append_text(inner, "bb");
@@ -2325,7 +2279,6 @@ fn a_relative_inline_resolves_a_vertical_percentage_in_a_fixed_root() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;position:relative;top:50%"),
             );
             doc.append_text(inner, "bb");
@@ -2353,12 +2306,11 @@ fn a_relative_inline_ignores_a_vertical_percentage_in_a_flex_item_of_auto_height
     let (mut doc, cascade, _root) = paragraph(
         "display:flex;align-items:flex-start;width:200px;height:100px",
         |doc, root| {
-            let item = doc.append_element(Some(root), "div", Style::default(), Some("width:200px"));
+            let item = doc.append_element(Some(root), "div", Some("width:200px"));
             doc.append_text(item, "aa");
             let inner = doc.append_element(
                 Some(item),
                 "span",
-                Style::default(),
                 Some("display:inline;position:relative;top:50%;bottom:4px"),
             );
             doc.append_text(inner, "bb");
@@ -2389,7 +2341,6 @@ fn a_relative_inline_resolves_a_left_percentage_against_a_multicol_root() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;position:relative;left:50%"),
             );
             doc.append_text(inner, "bb");
@@ -2420,7 +2371,6 @@ fn a_relative_inline_ignores_a_vertical_percentage_in_a_vertical_root_of_auto_he
                 let inner = doc.append_element(
                     Some(root),
                     "span",
-                    Style::default(),
                     Some(&format!("display:inline;position:relative;{insets}")),
                 );
                 doc.append_text(inner, "bb");
@@ -2448,7 +2398,6 @@ fn a_relative_inline_resolves_a_vertical_percentage_against_a_border_box_height(
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;position:relative;top:50%"),
             );
             doc.append_text(inner, "bb");
@@ -2477,7 +2426,6 @@ fn a_contents_element_is_transparent_in_the_paragraph() {
         let wrapper = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:contents;color:rgb(0,0,255)"),
         );
         doc.append_text(wrapper, "bb");
@@ -2505,7 +2453,7 @@ fn a_block_child_of_a_paragraph_paints_its_text() {
     // text is laid out and painted by the inline engine, once.
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
-        let block = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+        let block = doc.append_element(Some(root), "div", Some("display:block"));
         doc.append_text(block, "bbbb");
     };
     let on = painted_root("", build);
@@ -2578,7 +2526,6 @@ fn a_raised_inline_block_root_is_painted_where_the_engine_placed_it() {
         let block = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline-block;vertical-align:10px"),
         );
         doc.append_text(block, "bb");
@@ -2614,16 +2561,10 @@ fn a_table_cell_root_paints_its_text_inside_its_border_and_padding() {
     // A cell with a 3px border and 5px of padding: its content box starts
     // 8px in, so "aa" starts at x = 8 with its baseline at 8 + 8.
     let build = |doc: &mut Document, table: usize| {
-        let row = doc.append_element(
-            Some(table),
-            "div",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(table), "div", Some("display:table-row"));
         let cell = doc.append_element(
             Some(row),
             "div",
-            Style::default(),
             Some("display:table-cell;padding:5px;border:3px solid"),
         );
         doc.append_text(cell, "aa");
@@ -2648,7 +2589,7 @@ fn a_block_child_under_a_decoration_is_underlined() {
     // baselines at 8 and 18.
     let build = |doc: &mut Document, root: usize| {
         doc.append_text(root, "aa");
-        let block = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+        let block = doc.append_element(Some(root), "div", Some("display:block"));
         doc.append_text(block, "bb");
     };
     let on = painted_root("width:200px;text-decoration:underline", build);
@@ -2676,7 +2617,6 @@ fn a_propagated_underline_stays_on_its_box_across_a_line_relative_inline() {
         let span = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;vertical-align:top;font-size:20px"),
         );
         doc.append_text(span, "bb");
@@ -2704,19 +2644,18 @@ fn a_propagated_underline_stays_on_its_box_across_a_line_relative_inline() {
 /// `aa <span>bb</span>` in an Ahem root 200px wide, styled by `sheet`.
 fn generated_paragraph(sheet: &str) -> (Document, raikiri_style::CascadeResult, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Some("display:none"));
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(style, sheet);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px;width:200px"),
     );
     doc.append_text(root, "aa ");
-    let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(root), "span", None::<&str>);
     doc.append_text(span, "bb");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
@@ -2817,17 +2756,11 @@ fn a_dfs_offset_accumulator_does_not_add_an_inline_elements_location() {
     // An inline-block inside a relatively positioned span: it is painted
     // once, at its place on the line moved by the span's offset.
     let (mut doc, cascade, root) = paragraph("width:100px", |doc, root| {
-        let span = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("position:relative;left:5px"),
-        );
+        let span = doc.append_element(Some(root), "span", Some("position:relative;left:5px"));
         doc.append_text(span, "aa ");
         doc.append_element(
             Some(span),
             "span",
-            Style::default(),
             Some("display:inline-block;width:30px;height:10px;background-color:red"),
         );
         doc.append_text(root, " bb");
@@ -2855,12 +2788,11 @@ fn a_raised_inline_block_inside_a_span_is_painted_where_the_engine_placed_it() {
     // with the inline-block inside a span: it is still a box the inline
     // engine placed, so its text is not raised a second time.
     let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
-        let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+        let span = doc.append_element(Some(root), "span", None::<&str>);
         doc.append_text(span, "aa");
         let block = doc.append_element(
             Some(span),
             "span",
-            Style::default(),
             Some("display:inline-block;vertical-align:10px"),
         );
         doc.append_text(block, "bb");
@@ -2878,12 +2810,7 @@ fn lines_after_a_block_moved_to_the_next_page_are_painted_there() {
     // block starts the second 50px page and the line after it follows.
     let (mut doc, cascade, root) = paragraph("width:100px", |doc, root| {
         doc.append_text(root, "aa");
-        let block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;break-before:page"),
-        );
+        let block = doc.append_element(Some(root), "div", Some("display:block;break-before:page"));
         doc.append_text(block, "bb");
         doc.append_text(root, " cc");
     });
@@ -2917,17 +2844,11 @@ fn a_positioned_box_inside_the_paragraph_is_painted_once_where_it_was_placed() {
     // still painted.
     let (mut doc, cascade, root) = paragraph("width:200px;position:relative", |doc, root| {
         doc.append_text(root, "aaaa ");
-        let inline = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("background-color:blue"),
-        );
+        let inline = doc.append_element(Some(root), "span", Some("background-color:blue"));
         doc.append_text(inline, "cc");
         doc.append_element(
             Some(inline),
             "span",
-            Style::default(),
             Some("position:absolute;left:5px;top:20px;width:10px;height:10px;background-color:red"),
         );
         doc.append_text(root, " bbbb");
@@ -2997,19 +2918,9 @@ fn an_inline_box_after_a_block_moved_to_the_next_page_is_painted_with_its_line()
     // second page, once.
     let (mut doc, cascade, root) = paragraph("width:100px", |doc, root| {
         doc.append_text(root, "aa");
-        let block = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:block;break-before:page"),
-        );
+        let block = doc.append_element(Some(root), "div", Some("display:block;break-before:page"));
         doc.append_text(block, "bb");
-        let span = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("background-color:red"),
-        );
+        let span = doc.append_element(Some(root), "span", Some("background-color:red"));
         doc.append_text(span, "cc");
     });
     let dir = std::path::Path::new(FONT_DIR);
@@ -3210,7 +3121,6 @@ fn vertical_emphasis_marks_take_one_mark_per_combined_square() {
             let span = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;text-combine-upright:all"),
             );
             doc.append_text(span, "12");
@@ -3236,7 +3146,6 @@ fn ellipsis_is_painted_in_the_root_style() {
         let span = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;color:rgb(255,0,0)"),
         );
         doc.append_text(span, "aaaaaaaaaa");
@@ -3270,7 +3179,6 @@ fn ellipsis_is_painted_in_the_root_style() {
         let span = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline;visibility:visible;color:rgb(255,0,0)"),
         );
         doc.append_text(span, "aaaaaaaaaa");
@@ -3293,7 +3201,6 @@ fn atomic_inlines_past_the_ellipsis_are_not_painted() {
                 doc.append_element(
                     Some(root),
                     "span",
-                    Style::default(),
                     Some(
                         "display:inline-block;width:10px;height:10px;background-color:rgb(0,0,255)",
                     ),
@@ -3544,21 +3451,11 @@ fn a_blurred_shadow_layer_covers_marks_pushed_out_by_a_ruby_annotation() {
                  text-shadow:2px 3px 1px rgb(0,0,255)"
             ),
             |doc, root| {
-                let ruby =
-                    doc.append_element(Some(root), "ruby", Style::default(), Some("display:ruby"));
-                let base = doc.append_element(
-                    Some(ruby),
-                    "rb",
-                    Style::default(),
-                    Some("display:ruby-base"),
-                );
+                let ruby = doc.append_element(Some(root), "ruby", Some("display:ruby"));
+                let base = doc.append_element(Some(ruby), "rb", Some("display:ruby-base"));
                 doc.append_text(base, "a");
-                let annotation = doc.append_element(
-                    Some(ruby),
-                    "rt",
-                    Style::default(),
-                    Some("display:ruby-text;font-size:50px"),
-                );
+                let annotation =
+                    doc.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:50px"));
                 doc.append_text(annotation, "x");
             },
         );
@@ -3738,21 +3635,11 @@ fn a_blurred_vertical_shadow_layer_covers_marks_pushed_out_by_a_ruby_annotation(
         "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;font-size:10px;\
          color:black;text-emphasis:dot;text-shadow:2px 3px 4px rgb(0,0,255)",
         |doc, root| {
-            let ruby =
-                doc.append_element(Some(root), "ruby", Style::default(), Some("display:ruby"));
-            let base = doc.append_element(
-                Some(ruby),
-                "rb",
-                Style::default(),
-                Some("display:ruby-base"),
-            );
+            let ruby = doc.append_element(Some(root), "ruby", Some("display:ruby"));
+            let base = doc.append_element(Some(ruby), "rb", Some("display:ruby-base"));
             doc.append_text(base, "a");
-            let annotation = doc.append_element(
-                Some(ruby),
-                "rt",
-                Style::default(),
-                Some("display:ruby-text;font-size:50px"),
-            );
+            let annotation =
+                doc.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:50px"));
             doc.append_text(annotation, "x");
         },
     );
@@ -3821,7 +3708,6 @@ fn a_blurred_vertical_shadow_layer_covers_the_mark_of_a_combined_square_down_the
             let span = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;text-combine-upright:all"),
             );
             doc.append_text(span, "\t1");
@@ -3878,7 +3764,6 @@ fn a_vertical_text_shadow_follows_a_combined_square() {
             let span = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;text-combine-upright:all"),
             );
             doc.append_text(span, "12");
@@ -3909,21 +3794,11 @@ fn a_vertical_text_shadow_covers_a_ruby_annotation() {
         "writing-mode:vertical-rl;text-orientation:upright;line-height:40px;color:black;\
          text-shadow:2px 3px rgb(0,0,255)",
         |doc, root| {
-            let ruby =
-                doc.append_element(Some(root), "ruby", Style::default(), Some("display:ruby"));
-            let base = doc.append_element(
-                Some(ruby),
-                "rb",
-                Style::default(),
-                Some("display:ruby-base"),
-            );
+            let ruby = doc.append_element(Some(root), "ruby", Some("display:ruby"));
+            let base = doc.append_element(Some(ruby), "rb", Some("display:ruby-base"));
             doc.append_text(base, "a");
-            let annotation = doc.append_element(
-                Some(ruby),
-                "rt",
-                Style::default(),
-                Some("display:ruby-text;font-size:5px"),
-            );
+            let annotation =
+                doc.append_element(Some(ruby), "rt", Some("display:ruby-text;font-size:5px"));
             doc.append_text(annotation, "xy");
         },
     );
@@ -3971,8 +3846,7 @@ fn text_inside_a_contents_element_shares_the_enclosing_box_phases() {
         "width:200px;color:black;text-decoration:underline line-through",
         |doc, root| {
             doc.append_text(root, "ab ");
-            let wrapper =
-                doc.append_element(Some(root), "i", Style::default(), Some("display:contents"));
+            let wrapper = doc.append_element(Some(root), "i", Some("display:contents"));
             doc.append_text(wrapper, "cd ");
             doc.append_text(root, "ef");
         },
@@ -3999,7 +3873,6 @@ fn a_contents_element_paints_its_own_shadow_within_the_enclosing_box() {
         let wrapper = doc.append_element(
             Some(root),
             "i",
-            Style::default(),
             Some("display:contents;text-shadow:2px 2px red"),
         );
         doc.append_text(wrapper, "b");
@@ -4042,7 +3915,6 @@ fn a_wrapping_vertical_inline_keeps_its_start_border_on_its_first_piece_only() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some(
                     "display:inline;background-color:rgb(255,0,0);padding:3px 0;\
                  border-width:2px 0;border-style:solid;border-color:rgb(0,0,255);margin:4px 0",
@@ -4075,7 +3947,6 @@ fn a_wrapping_vertical_inline_slices_its_shadow_from_the_joined_box() {
             let inner = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;box-shadow:2px 2px rgb(0,255,0)"),
             );
             doc.append_text(inner, "aaaa bbbb");
@@ -4296,7 +4167,6 @@ fn vertical_emphasis_marks_a_combined_square_that_starts_without_a_glyph() {
             let span = doc.append_element(
                 Some(root),
                 "span",
-                Style::default(),
                 Some("display:inline;text-combine-upright:all"),
             );
             doc.append_text(span, "\t1");
@@ -4334,7 +4204,7 @@ fn lay_out_ligature(css: &str, span: &str, text: &str) -> Vec<(u32, f64, f64, an
             root
         } else {
             let style = format!("display:inline;{span}");
-            doc.append_element(Some(root), "span", Style::default(), Some(style.as_str()))
+            doc.append_element(Some(root), "span", Some(style.as_str()))
         };
         doc.append_text(parent, text);
     });

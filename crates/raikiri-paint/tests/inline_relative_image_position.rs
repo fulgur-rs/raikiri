@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_paint::paint_single_page_with_images;
 use raikiri_style::{DisplayValue, build_rule_tree, cascade};
@@ -22,24 +21,21 @@ impl ImagePixelSource for OneImageSource {
 #[test]
 fn inline_relative_image_uses_taffy_inset_once_when_painted() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
     let container = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;align-items:flex-start"),
     );
     let first = document.append_element(
         Some(container),
         "img",
-        Style::default(),
         Some("display:inline-block;width:10px;height:10px"),
     );
     let second = document.append_element(
         Some(container),
         "img",
-        Style::default(),
         Some("display:inline-block;width:10px;height:10px;position:relative;top:12px;left:7px"),
     );
     document.set_element_attributes(first, vec![("src".into(), "file:///inline.png".into())]);

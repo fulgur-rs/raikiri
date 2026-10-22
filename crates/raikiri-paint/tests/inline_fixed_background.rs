@@ -2,7 +2,6 @@
 //! area, not in the inline box.
 
 use anyrender::Scene;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
@@ -59,12 +58,11 @@ fn paint(block_style: &str, build: impl FnOnce(&mut Document, usize)) -> Vec<u8>
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let root = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some(
             format!(
                 "display:block;width:40px;margin-left:30px;{block_style};\
@@ -95,9 +93,9 @@ fn paint(block_style: &str, build: impl FnOnce(&mut Document, usize)) -> Vec<u8>
 
 /// `AAAA<br>AAAA` in a span styled `style` appended to `parent`; the span.
 fn two_lines(doc: &mut Document, parent: usize, style: &str) -> usize {
-    let span = doc.append_element(Some(parent), "span", Style::default(), Some(style));
+    let span = doc.append_element(Some(parent), "span", Some(style));
     doc.append_text(span, "AAAA");
-    doc.append_element(Some(span), "br", Style::default(), None::<&str>);
+    doc.append_element(Some(span), "br", None::<&str>);
     doc.append_text(span, "AAAA");
     span
 }
@@ -202,12 +200,8 @@ fn a_fixed_layer_in_a_filtered_inline_box_stays_in_the_inline_box() {
 #[test]
 fn a_fixed_layer_inside_a_filtered_inline_element_stays_in_the_inline_box() {
     let pixels = paint("", |doc, root| {
-        let outer = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("display:inline;filter:opacity(1)"),
-        );
+        let outer =
+            doc.append_element(Some(root), "span", Some("display:inline;filter:opacity(1)"));
         two_lines(doc, outer, &format!("display:inline;{}", fixed()));
     });
     assert_box_positioned(&pixels);
@@ -216,12 +210,8 @@ fn a_fixed_layer_inside_a_filtered_inline_element_stays_in_the_inline_box() {
 #[test]
 fn a_fixed_layer_inside_a_plain_inline_element_is_positioned_in_the_page_area() {
     let pixels = paint("", |doc, root| {
-        let outer = doc.append_element(
-            Some(root),
-            "span",
-            Style::default(),
-            Some("display:inline;color:transparent"),
-        );
+        let outer =
+            doc.append_element(Some(root), "span", Some("display:inline;color:transparent"));
         two_lines(doc, outer, &format!("display:inline;{}", fixed()));
     });
     assert_page_positioned(&pixels);
@@ -232,12 +222,7 @@ fn a_fixed_layer_of_an_anonymous_table_cell_paragraph_is_positioned_in_the_page_
     // Text beside a table row's cells is wrapped in an anonymous cell, whose
     // lines are painted as a paragraph of their own.
     let pixels = paint("display:table", |doc, root| {
-        let row = doc.append_element(
-            Some(root),
-            "div",
-            Style::default(),
-            Some("display:table-row"),
-        );
+        let row = doc.append_element(Some(root), "div", Some("display:table-row"));
         two_lines(doc, row, &format!("display:inline;{}", fixed()));
     });
     assert_page_positioned(&pixels);
@@ -258,9 +243,9 @@ fn paint_sheet(css: &str, build: impl FnOnce(&mut Document, usize)) -> Vec<u8> {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(
         style,
         format!(
@@ -269,8 +254,8 @@ fn paint_sheet(css: &str, build: impl FnOnce(&mut Document, usize)) -> Vec<u8> {
              font: 10px/20px Ahem; color: transparent }} {css}"
         ),
     );
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
+    let div = doc.append_element(Some(body), "div", None::<&str>);
     build(&mut doc, div);
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -352,17 +337,12 @@ fn a_fixed_layer_of_a_filtered_pseudo_element_stays_in_the_pseudo_element() {
 fn a_fixed_layer_of_a_pseudo_element_in_a_filtered_inline_element_stays_in_the_box() {
     let css = format!("span::before {{ content: 'AAAA'; {} }}", wide_fixed());
     let build = |doc: &mut Document, div: usize| {
-        doc.append_element(
-            Some(div),
-            "span",
-            Style::default(),
-            Some("display:inline;filter:opacity(1)"),
-        );
+        doc.append_element(Some(div), "span", Some("display:inline;filter:opacity(1)"));
     };
     assert_wide_box_positioned(&paint_sheet(&css, build), 10);
     // Without the filter the layer is positioned in the page area.
     let plain = |doc: &mut Document, div: usize| {
-        doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
+        doc.append_element(Some(div), "span", Some("display:inline"));
     };
     assert_wide_page_positioned(&paint_sheet(&css, plain), 10);
 }

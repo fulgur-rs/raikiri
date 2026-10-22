@@ -1,9 +1,9 @@
 use super::*;
+use crate::Document;
 use crate::node::NodeFlags;
-use crate::{Document, LayoutStyle};
 
 fn element(doc: &mut Document, parent: Option<usize>) -> usize {
-    doc.append_element(parent, "div", LayoutStyle::default(), None::<&str>)
+    doc.append_element(parent, "div", None::<&str>)
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn detached_and_template_subtrees_stop_before_any_host() {
     let mut doc = Document::new();
     let detached = element(&mut doc, None);
     let detached_leaf = element(&mut doc, Some(detached));
-    let template = doc.append_element(Some(0), "template", LayoutStyle::default(), None::<&str>);
+    let template = doc.append_element(Some(0), "template", None::<&str>);
     let fragment = doc.allocate_template_fragment_root(template);
     let template_leaf = element(&mut doc, Some(fragment));
     for (leaf, top) in [(detached_leaf, detached), (template_leaf, fragment)] {

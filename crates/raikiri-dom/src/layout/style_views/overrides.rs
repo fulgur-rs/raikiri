@@ -1,5 +1,4 @@
 use super::*;
-use raikiri_layout_style::LegacySizingUndo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OverrideToken {
@@ -13,7 +12,6 @@ pub(crate) struct OverrideToken {
 struct ScopedBox {
     entries: Vec<OwnedPropertyOverride>,
     depth: usize,
-    was_scoped: bool,
 }
 
 #[derive(Default)]
@@ -24,14 +22,7 @@ pub(crate) struct ScopedOverrides {
 
 struct ScopeUndo {
     token: OverrideToken,
-    index: usize,
-    legacy: LegacyUndo,
     transposed: Vec<crate::taffy_impl::TransposedSizingUndo>,
-}
-
-enum LegacyUndo {
-    None,
-    Field(LegacySizingUndo),
 }
 
 impl ScopedOverrides {
@@ -49,11 +40,6 @@ impl ScopedOverrides {
     #[cfg(test)]
     pub(super) fn depth(&self, key: BoxKey) -> usize {
         self.boxes.get(&key).map_or(0, |state| state.depth)
-    }
-
-    #[cfg(test)]
-    pub(super) fn was_scoped(&self, key: BoxKey) -> bool {
-        self.boxes.get(&key).is_some_and(|state| state.was_scoped)
     }
 
     pub(super) fn clear_history(&mut self) {
@@ -91,17 +77,13 @@ impl LayoutSession<'_> {
         }
         let mut indexed = Vec::with_capacity(entries.len());
         let mut counts = HashMap::<BoxKey, usize>::default();
-        // Validate with the same projection before changing any published field.
-        let mut validation_style = crate::LayoutStyle::default();
+        // Validate every entry before changing any state.
         for (key, entry) in entries {
             let index = self.nodes.layout_index(key).expect("override key is live");
             assert!(
-                self.layout_style_for_key(index).is_some(),
-                "override has a retained style"
+                entry.is_legacy_sizing(),
+                "scope entry is a physical sizing override"
             );
-            let _ = entry
-                .apply_legacy_sizing(&mut validation_style)
-                .expect("scope entry is a physical sizing override");
             *counts.entry(key).or_default() += 1;
             indexed.push((key, index, entry));
         }
@@ -129,7 +111,7 @@ impl LayoutSession<'_> {
                 &self.context.transposed_style_index,
                 index,
             );
-            if !transposed.is_empty() && self.style_views.is_some() {
+            if !transposed.is_empty() {
                 // A primitive can outlive both the late override and its frame.
                 self.retain_snapshot_calcs(entry.calc_owner().cloned());
             }
@@ -146,33 +128,15 @@ impl LayoutSession<'_> {
                 checkpoint: self.scoped_overrides.journal.len(),
             };
             state.depth += 1;
-            state.was_scoped = true;
             state.entries.push(entry);
-            self.scoped_overrides.journal.push(ScopeUndo {
-                token,
-                index,
-                legacy: LegacyUndo::None,
-                transposed,
-            });
+            self.scoped_overrides
+                .journal
+                .push(ScopeUndo { token, transposed });
             let undo = self
                 .scoped_overrides
                 .journal
                 .last_mut()
                 .expect("registered undo slot");
-            let style = self
-                .document
-                .retained_layout_styles
-                .get_mut(key)
-                .expect("validated style");
-            // Both slots are reserved before the infallible field replacement.
-            undo.legacy = LegacyUndo::Field(
-                state
-                    .entries
-                    .last()
-                    .expect("registered entry")
-                    .apply_legacy_sizing(style)
-                    .expect("validated sizing entry"),
-            );
             for snapshot in &mut undo.transposed {
                 snapshot.apply(
                     &mut self.context.transposed_blocks,
@@ -201,14 +165,6 @@ impl LayoutSession<'_> {
             self.document
                 .layout_cache_context
                 .override_changed(saved.token.key);
-            let style = self
-                .document
-                .layout_style_for_key_mut(saved.index)
-                .expect("scope key stays live");
-            match saved.legacy {
-                LegacyUndo::None => {}
-                LegacyUndo::Field(undo) => undo.restore(style),
-            }
             for snapshot in saved.transposed.into_iter().rev() {
                 snapshot.restore(&mut self.context.transposed_blocks);
             }
@@ -230,15 +186,12 @@ impl LayoutSession<'_> {
         self.assert_style_queries_allowed();
         use raikiri_layout_style::PercentBasis;
         let key = self.nodes.box_key(idx).expect("edge scope has a box key");
-        self.style_views.as_mut().and_then(|views| {
-            let prepared = views.boxes.get_mut(&key)?;
-            let previous = prepared.context.percent_basis;
-            if previous == PercentBasis::Taffy {
-                prepared.context.percent_basis = PercentBasis::Definite(basis);
-            }
-            prepared.was_scoped = true;
-            Some(previous)
-        })
+        let prepared = self.style_views.boxes.get_mut(&key)?;
+        let previous = prepared.context.percent_basis;
+        if previous == PercentBasis::Taffy {
+            prepared.context.percent_basis = PercentBasis::Definite(basis);
+        }
+        Some(previous)
     }
 
     pub(crate) fn end_edge_recording(
@@ -249,8 +202,6 @@ impl LayoutSession<'_> {
         if let Some(previous) = previous {
             let key = self.nodes.box_key(idx).expect("edge scope has a box key");
             self.style_views
-                .as_mut()
-                .expect("edge scope has a session")
                 .boxes
                 .get_mut(&key)
                 .expect("edge scope has a prepared style")
@@ -314,12 +265,9 @@ impl LayoutSession<'_> {
         };
         self.scoped_overrides.journal.push(ScopeUndo {
             token,
-            index: idx,
-            legacy: LegacyUndo::None,
             transposed: Vec::new(),
         });
         state.depth += 1;
-        state.was_scoped = true;
         state.entries.extend(entries);
         Some(token)
     }

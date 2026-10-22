@@ -2,7 +2,6 @@ use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use raikiri_dom::Document;
-use raikiri_dom::LayoutStyle as Style;
 use raikiri_style::property::ContentComponent;
 use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
 use raikiri_traits::PaintRect;
@@ -58,26 +57,11 @@ fn list_fixture(
 ) -> (Document, CascadeResult, usize, usize) {
     let mut document = Document::new();
     if let Some(stylesheet) = marker_stylesheet {
-        let style = document.append_element(
-            Some(document.root_index()),
-            "style",
-            Style::default(),
-            None::<&str>,
-        );
+        let style = document.append_element(Some(document.root_index()), "style", None::<&str>);
         document.append_text(style, stylesheet);
     }
-    let first = document.append_element(
-        Some(document.root_index()),
-        "li",
-        Style::default(),
-        Some(first_style),
-    );
-    let second = document.append_element(
-        Some(document.root_index()),
-        "li",
-        Style::default(),
-        Some(second_style),
-    );
+    let first = document.append_element(Some(document.root_index()), "li", Some(first_style));
+    let second = document.append_element(Some(document.root_index()), "li", Some(second_style));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     (document, cascade, first, second)
@@ -86,12 +70,8 @@ fn list_fixture(
 #[test]
 fn generated_content_resolves_dom_attributes_and_fallbacks() {
     let mut document = Document::new();
-    let element = document.append_element(
-        Some(document.root_index()),
-        "div",
-        Style::default(),
-        Some("display:block"),
-    );
+    let element =
+        document.append_element(Some(document.root_index()), "div", Some("display:block"));
     document.set_element_attributes(element, vec![("data-value".into(), "Actual".into())]);
     let components = vec![
         ContentComponent::AttrFallback {
@@ -256,28 +236,17 @@ fn generated_pseudo_metrics_preserve_before_after_order() {
 #[test]
 fn paint_document_skips_hidden_table_decoration() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let table = document.append_element(
             Some(body),
             "table",
-            Style::default(),
             Some(
                 "display: table; width: 100px; height: 100px; box-sizing: border-box; border: 20px solid red; border-collapse: collapse; visibility: hidden",
             ),
         );
-    let row = document.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display: table-row"),
-    );
-    document.append_element(
-        Some(row),
-        "td",
-        Style::default(),
-        Some("display: table-cell"),
-    );
+    let row = document.append_element(Some(table), "tr", Some("display: table-row"));
+    document.append_element(Some(row), "td", Some("display: table-cell"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
@@ -296,15 +265,15 @@ fn paint_document_skips_hidden_table_decoration() {
 #[test]
 fn paint_document_orders_literal_pseudos_around_direct_text() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(
         style,
         r##"div::before { content: "BEFORE " } div::after { content: " AFTER" }"##,
     );
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let div = document.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let div = document.append_element(Some(body), "div", Some("display:block"));
     document.append_text(div, "BODY");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -342,19 +311,19 @@ fn paint_document_orders_literal_pseudos_around_direct_text() {
 #[test]
 fn paint_document_offsets_generated_counter_inline_siblings() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(
             style,
             r##"div { counter-reset: c } div span { counter-increment: c } div span::before { content: counter(c) } div span::after { display: none; content: "hidden" }"##,
         );
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let test = document.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    let test = document.append_element(Some(body), "div", Some("display:block"));
     document.append_text(test, "\n");
-    document.append_element(Some(test), "span", Style::default(), None::<&str>);
+    document.append_element(Some(test), "span", None::<&str>);
     document.append_text(test, "\n");
-    document.append_element(Some(test), "span", Style::default(), None::<&str>);
+    document.append_element(Some(test), "span", None::<&str>);
 
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -373,15 +342,15 @@ fn paint_document_offsets_generated_counter_inline_siblings() {
 #[test]
 fn paint_document_expands_auto_height_for_empty_pseudo_box() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(
         style,
         r##"div { border: 2px solid black } div::before { content: "A" }"##,
     );
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    document.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
+    document.append_element(Some(body), "div", Some("display:block"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout Ok");
@@ -603,25 +572,21 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
     let start_px_id = document.append_element(
         Some(document.root_index()),
         "div",
-        Style::default(),
         Some("display:block;background-position: 3px 4px"),
     );
     let start_percent_id = document.append_element(
         Some(document.root_index()),
         "div",
-        Style::default(),
         Some("display:block;background-position: 25% 50%"),
     );
     let end_px_id = document.append_element(
         Some(document.root_index()),
         "div",
-        Style::default(),
         Some("display:block;background-position: right 3px bottom 4px"),
     );
     let end_percent_id = document.append_element(
         Some(document.root_index()),
         "div",
-        Style::default(),
         Some("display:block;background-position: bottom 50% right 25%"),
     );
     let rules = build_rule_tree(&document);
@@ -894,10 +859,9 @@ fn root_border_document(style: &str) -> Document {
     let html = document.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some(format!("display:block;width:100px;height:100px;{style}")),
     );
-    document.append_element(Some(html), "body", Style::default(), Some("display:none"));
+    document.append_element(Some(html), "body", Some("display:none"));
     document
 }
 
@@ -979,13 +943,13 @@ fn painting_document_decorations_paints_html_border_sides() {
 
 fn canvas_fixture(page_css: Option<&str>, body_style: Option<&str>) -> (Document, CascadeResult) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let head = document.append_element(Some(html), "head", None::<&str>);
     if let Some(css) = page_css {
-        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+        let style = document.append_element(Some(head), "style", None::<&str>);
         document.append_text(style, css);
     }
-    let body = document.append_element(Some(html), "body", Style::default(), body_style);
+    let body = document.append_element(Some(html), "body", body_style);
     document.append_text(body, "hi");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -1071,13 +1035,8 @@ fn canvas_background_without_body_color_paints_page_only() {
 fn canvas_background_ignores_a_frameset_background() {
     // Only a `body` propagates its background to the canvas.
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    document.append_element(
-        Some(html),
-        "frameset",
-        Style::default(),
-        Some("background-color: blue"),
-    );
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    document.append_element(Some(html), "frameset", Some("background-color: blue"));
     document.mark_in_document_flags();
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -1097,20 +1056,15 @@ fn canvas_background_with_page_margins_keeps_canvas_layer() {
 #[test]
 fn a_root_with_display_none_paints_blank_paper() {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:none"));
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:none"));
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(
         style,
         "@page { margin: 20px; background: red; border: 2px solid red; \
          @top-center { content: 'x'; background: red; } }",
     );
-    let body = document.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("background:blue"),
-    );
+    let body = document.append_element(Some(html), "body", Some("background:blue"));
     document.append_text(body, "hi");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).unwrap();
@@ -1152,9 +1106,9 @@ fn a_root_with_display_none_paints_blank_paper() {
 
 fn transformed_box_scene(transform: &str, origin: &str) -> Scene {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    document.append_element(Some(body), "div", Style::default(), Some(format!(
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("margin:0"));
+    document.append_element(Some(body), "div", Some(format!(
         "display:block;position:absolute;left:10px;top:20px;width:100px;height:50px;background:green;transform:{transform};transform-origin:{origin}"
     )));
     let rules = build_rule_tree(&document);
@@ -1717,7 +1671,6 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
         document.append_element(
             Some(0),
             "div",
-            Style::default(),
             Some(format!("transform:scale(2);transform-origin:{origin}")),
         );
         let rules = build_rule_tree(&document);
@@ -1730,7 +1683,6 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
     document.append_element(
         Some(0),
         "div",
-        Style::default(),
         Some("display:block;transform:scale(1) translate(100%,100%);transform-origin:0 0"),
     );
     let rules = build_rule_tree(&document);
@@ -1744,7 +1696,6 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
     document.append_element(
         Some(0),
         "div",
-        Style::default(),
         Some(
             "display:block;font-size:10px;\
              transform:translate(calc(50% + 1em), calc(-100% - 2px));transform-origin:0 0",
@@ -1767,7 +1718,6 @@ fn background_repeat_fixture(
     let id = document.append_element(
         Some(document.root_index()),
         "div",
-        Style::default(),
         Some(format!(
             "background-repeat:{repeat};background-position:{position}"
         )),
@@ -3979,9 +3929,8 @@ fn margin_box_image(
     // constructor.
     let (document, cascade) = {
         let mut document = Document::new();
-        let html =
-            document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let style = document.append_element(Some(html), "style", Style::default(), None::<&str>);
+        let html = document.append_element(Some(0), "html", Some("display:block"));
+        let style = document.append_element(Some(html), "style", None::<&str>);
         document.append_text(
             style,
             "@page { margin: 10px; @top-center { content: ''; \
@@ -4287,8 +4236,8 @@ fn margin_box_content_overflows_unless_overflow_clips() {
 #[test]
 fn visible_margin_box_overflow_keeps_text_shadow_bounds() {
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Some("display:none"));
     doc.append_text(
         style,
         "@page { margin: 20px; @top-left-corner { content: 'abcdefghij'; \
@@ -4375,8 +4324,8 @@ fn visible_margin_box_overflow_keeps_text_shadow_bounds() {
 #[test]
 fn aligned_margin_box_text_shadows_include_positioned_glyphs() {
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Some("display:none"));
     doc.append_text(
         style,
         "@page { margin: 20px; @top-center { content: 'a'; \
@@ -4731,8 +4680,8 @@ fn engine_document() -> Document {
 #[test]
 fn a_vertical_margin_box_is_drawn_down_its_column() {
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Some("display:none"));
     doc.append_text(
         style,
         "@page { margin: 40px; @top-left { content: 'abc'; font-family: Ahem; \
@@ -4761,8 +4710,8 @@ fn a_vertical_margin_box_is_drawn_down_its_column() {
 #[test]
 fn margin_box_text_shadows_are_drawn_below_the_text() {
     let mut doc = engine_document();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Some("display:none"));
     doc.append_text(
         style,
         "@page { margin: 40px; @top-left { content: 'a'; font-family: Ahem; \
@@ -4827,16 +4776,16 @@ impl raikiri_traits::ImagePixelSource for NoImages {
 /// the number of engine results.
 fn margin_box_glyph_ys() -> (Vec<(f64, f64)>, usize) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let head = document.append_element(Some(html), "head", Some("display:none"));
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(
         style,
         "@page { margin: 50px; \
            @top-left { content: 'a'; font-family: Ahem; font-size: 10px } \
            @top-right { content: 'a'; font-family: serif; font-size: 10px } }",
     );
-    document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    document.append_element(Some(html), "body", Some("display:block"));
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let dir = std::path::Path::new(concat!(
@@ -5288,7 +5237,6 @@ fn conic_angular_offsets_cover_missing_angle_and_percent() {
     let id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(red 45deg, blue)"),
     );
     let rules = build_rule_tree(&document);
@@ -5347,13 +5295,11 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     let center_id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(at 25% 25%, red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let angle_id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(from 90deg, red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let rules = build_rule_tree(&document);
@@ -5387,7 +5333,6 @@ fn conic_paint_covers_empty_and_square_boxes() {
     let square_id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let rules = build_rule_tree(&document);
@@ -5421,7 +5366,6 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
     let conic_id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("background-image: conic-gradient(red 0 25%, green 25% 50%, blue 50% 75%, black 75% 100%)"),
     );
     let rules = build_rule_tree(&document);
@@ -5536,15 +5480,14 @@ fn generated_scene(
     build: impl FnOnce(&mut Document, usize),
 ) -> (Document, CascadeResult, Scene, usize) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = document.append_element(Some(html), "head", Style::default(), Some("display:none"));
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let head = document.append_element(Some(html), "head", Some("display:none"));
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(style, css);
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let div = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
     build(&mut document, div);
@@ -5715,43 +5658,33 @@ fn whitespace_only_marker_content_has_no_glyph_paint() {
 
 fn fragmented_flex_float_paint_fixture() -> (Document, CascadeResult, Scene, usize) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = document.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = document.append_element(Some(0), "html", Some("display:block"));
+    let body = document.append_element(Some(html), "body", Some("display:block"));
     let multicol = document.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:300px;columns:100px auto;max-height:160px;border:3px solid pink"),
     );
-    let flex = document.append_element(
-        Some(multicol),
-        "div",
-        Style::default(),
-        Some("display:flex"),
-    );
+    let flex = document.append_element(Some(multicol), "div", Some("display:flex"));
     let flex_item = document.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("border:4px solid teal;outline:4px solid blue"),
     );
     document.append_element(
         Some(flex_item),
         "div",
-        Style::default(),
         Some("float:left;border:3px solid black;height:500px;width:100px;background:yellow"),
     );
-    document.append_element(Some(flex_item), "br", Style::default(), None::<&str>);
+    document.append_element(Some(flex_item), "br", None::<&str>);
     let second_float = document.append_element(
         Some(flex_item),
         "div",
-        Style::default(),
         Some("float:left;background:cyan;width:100px"),
     );
     document.append_element(
         Some(second_float),
         "div",
-        Style::default(),
         Some("display:inline-block;width:30px;height:30px;background:purple"),
     );
     document.mark_in_document_flags();
@@ -5814,9 +5747,8 @@ fn paint_document_uses_each_nested_float_fragment_once() {
 #[test]
 fn generated_flow_height_skips_a_node_already_queued_from_a_duplicate_child() {
     let mut document = Document::new();
-    let parent = document.append_element(Some(0), "div", Style::default(), Some("display:block"));
-    let child =
-        document.append_element(Some(parent), "div", Style::default(), Some("display:block"));
+    let parent = document.append_element(Some(0), "div", Some("display:block"));
+    let child = document.append_element(Some(parent), "div", Some("display:block"));
     document.attach_child(parent, child);
 
     let rules = build_rule_tree(&document);
@@ -7151,28 +7083,21 @@ fn a_border_image_is_rasterized_at_the_scale_its_parts_are_drawn() {
 #[test]
 fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
     let mut document = Document::new();
-    let auto_id = document.append_element(
-        Some(document.root_index()),
-        "div",
-        raikiri_dom::LayoutStyle::default(),
-        Some("position: fixed"),
-    );
+    let auto_id =
+        document.append_element(Some(document.root_index()), "div", Some("position: fixed"));
     let left_id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("position: fixed; left: 10px"),
     );
     let percent_id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("position: fixed; top: calc(10% + 5px)"),
     );
     let bottom_id = document.append_element(
         Some(document.root_index()),
         "div",
-        raikiri_dom::LayoutStyle::default(),
         Some("position: fixed; bottom: calc(50% - 10px)"),
     );
     let rules = build_rule_tree(&document);
@@ -7740,7 +7665,6 @@ fn inline_border_image_tile_ends(
     let span = document.append_element(
         Some(document.root_index()),
         "span",
-        Style::default(),
         Some("border:5px solid blue;border-image:linear-gradient(lime,lime) 1"),
     );
     let rules = build_rule_tree(&document);

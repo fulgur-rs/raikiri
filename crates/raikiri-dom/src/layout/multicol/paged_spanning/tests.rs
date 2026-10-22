@@ -1,12 +1,11 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use crate::fragment::FragmentRect;
 use crate::layout::page_pipeline::PageLayoutControl;
 
 fn source_fragments() -> (Document, usize, usize, usize) {
     let mut tree = Document::new();
-    let owner = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let child = tree.append_element(Some(owner), "p", Style::default(), None::<&str>);
+    let owner = tree.append_element(Some(0), "div", None::<&str>);
+    let child = tree.append_element(Some(owner), "p", None::<&str>);
     let container = tree
         .fragment_tree
         .try_push(LayoutFragment {
@@ -109,7 +108,7 @@ fn replacement_work_limit_rejects_before_installing_a_partial_fragment_stream() 
 #[test]
 fn edits_apply_to_the_records_a_node_has_now() {
     let (mut tree, owner, child, container) = source_fragments();
-    let grandchild = tree.append_element(Some(child), "span", Style::default(), None::<&str>);
+    let grandchild = tree.append_element(Some(child), "span", None::<&str>);
     let mut placed = tree.fragment_tree.fragments[1];
     placed.node_id = grandchild;
     placed.parent = Some(1);
@@ -182,7 +181,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
     let control = PageLayoutControl::new(None);
     let mut work = ProjectionWork::new(&control, tree.fragment_tree.limit);
     let valid = paragraph_group::paginate(
-        &LayoutSession::new(&mut tree),
+        &LayoutSession::resumed(&mut tree, &cascade),
         &entries,
         context,
         0.0,
@@ -194,7 +193,7 @@ fn invalid_page_capacity_keeps_the_measured_paragraph_instead_of_planning_fragme
         let control = PageLayoutControl::new(None);
         let mut work = ProjectionWork::new(&control, tree.fragment_tree.limit);
         let result = paragraph_group::paginate(
-            &LayoutSession::new(&mut tree),
+            &LayoutSession::resumed(&mut tree, &cascade),
             &entries,
             context,
             0.0,

@@ -50,8 +50,9 @@ use taffy::{
 use crate::document::Document;
 use crate::document::ancestors::{AncestorCursor, ParentRelation};
 use crate::layout::context::LayoutSession;
-use crate::layout::style_views::{NativeStyle, ReadRole};
+use crate::layout::style_views::ReadRole;
 use crate::taffy_impl::content_limits::ContentLimits;
+use raikiri_layout_style::LayoutStyleView;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
@@ -156,8 +157,8 @@ impl LayoutSession<'_> {
     /// never substitutes the transposed view that a vertical block frame gives
     /// block content. The table algorithm positions these boxes itself, so the
     /// neutral core query is the right role for every one of them.
-    fn table_style(&self, idx: usize) -> NativeStyle<'_> {
-        self.native_style(idx, ReadRole::CoreContainer)
+    fn table_style(&self, idx: usize) -> LayoutStyleView<'_> {
+        self.query_style(idx, ReadRole::CoreContainer)
     }
 }
 

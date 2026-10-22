@@ -1,5 +1,7 @@
 use super::super::{Bounds, height_bounds, scoped};
 use super::*;
+use raikiri_layout_style::{LengthProperty, OwnedPropertyOverride};
+use raikiri_style::ComputedLengthPercentageOrAuto as L;
 
 fn input(width: f32, height: f32) -> LayoutInput {
     LayoutInput {
@@ -33,19 +35,17 @@ fn height_memo_distinguishes_the_effective_percentage_height_basis() {
         child = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("position:absolute;display:block;width:100px;max-height:max-content"),
         );
         doc.append_element(
             Some(child),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;width:10px;height:50%"),
         );
     });
     let mut doc = fixture.doc;
-    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).unwrap();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     tree.sync_layout_cache_mutations();
     let limits = tree.nodes[child].content_limits;
     let heights = scoped(&mut tree, |tree| {
@@ -68,12 +68,12 @@ fn height_memo_distinguishes_the_effective_percentage_height_basis() {
 fn height_memo_distinguishes_preferred_width_kept_by_the_probe() {
     let mut child = 0;
     let fixture = block_fixture_with_ahem("width:200px;height:300px", |doc, root| {
-        child = doc.append_element(Some(root), "div", crate::LayoutStyle::default(), Some("position:absolute;display:block;width:100px;max-height:max-content;line-height:10px"));
+        child = doc.append_element(Some(root), "div", Some("position:absolute;display:block;width:100px;max-height:max-content;line-height:10px"));
         doc.append_text(child, "AAAA BBBB");
     });
     let mut doc = fixture.doc;
-    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).unwrap();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     tree.sync_layout_cache_mutations();
     let limits = tree.nodes[child].content_limits;
     let mut inputs = input(200.0, 300.0);
@@ -92,8 +92,11 @@ fn height_memo_distinguishes_preferred_width_kept_by_the_probe() {
         )
         .max
         .unwrap();
-        tree.cache_override_changed(child);
-        tree.layout_style_for_key_mut(child).unwrap().size.width = taffy::Dimension::length(40.0);
+        let key = tree.nodes.box_key(child).unwrap();
+        tree.push_overrides(vec![(
+            key,
+            OwnedPropertyOverride::length(LengthProperty::Width, L::Px(40.0), true).unwrap(),
+        )]);
         let narrow = height_bounds(
             tree,
             NodeId::from(child),
@@ -115,14 +118,13 @@ fn height_memo_tracks_current_border_widths() {
         child = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;width:100px;max-height:max-content;line-height:10px"),
         );
         doc.append_text(child, "A");
     });
     let mut doc = fixture.doc;
-    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).unwrap();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     tree.sync_layout_cache_mutations();
     let limits = tree.nodes[child].content_limits;
     let mut inputs = input(100.0, 0.0);
@@ -137,9 +139,11 @@ fn height_memo_tracks_current_border_widths() {
         )
         .max
         .unwrap();
-        tree.cache_override_changed(child);
-        tree.layout_style_for_key_mut(child).unwrap().border.top =
-            taffy::LengthPercentage::length(10.0);
+        let key = tree.nodes.box_key(child).unwrap();
+        tree.push_overrides(vec![(
+            key,
+            OwnedPropertyOverride::length(LengthProperty::BorderTop, L::Px(10.0), true).unwrap(),
+        )]);
         let bordered = height_bounds(
             tree,
             NodeId::from(child),
@@ -161,14 +165,13 @@ fn paragraph_height_memo_tracks_the_active_flex_edge_basis() {
         child = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("width:100px;max-height:max-content;padding:10%;line-height:10px"),
         );
         doc.append_text(child, "A");
     });
     let mut doc = fixture.doc;
-    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).unwrap();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     tree.sync_layout_cache_mutations();
     let limits = tree.nodes[child].content_limits;
     let mut inputs = input(100.0, 0.0);
@@ -214,7 +217,8 @@ fn paragraph_height_memo_tracks_the_active_flex_edge_basis() {
 #[test]
 fn intrinsic_scope_unwind_restores_percentage_height_basis() {
     let mut doc = crate::Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     tree.context
         .content_limit_percentage_height_bases
         .push((0, 50.0));
@@ -237,7 +241,8 @@ fn intrinsic_scope_unwind_restores_percentage_height_basis() {
 #[test]
 fn oof_input_capture_restores_its_stack_and_prepass_depth_on_unwind() {
     let mut doc = crate::Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     tree.context
         .oof_content_limit_inputs
         .push(std::collections::HashMap::new());
@@ -265,13 +270,12 @@ fn oof_prepass_runs_again_after_an_unwind() {
         child = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some("position:absolute;width:50px;max-height:max-content"),
         );
     });
     let mut doc = fixture.doc;
-    crate::layout::apply_computed_to_style(&mut doc, &fixture.cascade).unwrap();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let candidate = NodeId::from(child);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_oof_content_limits(&mut tree, Some(&[candidate]), &[], |_| {
@@ -292,7 +296,8 @@ fn oof_prepass_runs_again_after_an_unwind() {
 #[should_panic(expected = "style scopes restore in reverse order")]
 fn typed_scopes_reject_restoring_an_outer_scope_first() {
     let mut doc = crate::Document::new();
-    let mut tree = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
     let outer = tree.record_style_overrides(0, Vec::new());
     let _inner = tree.record_style_overrides(0, Vec::new());
     tree.restore_recorded_style_overrides(outer);

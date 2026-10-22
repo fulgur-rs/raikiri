@@ -1025,8 +1025,8 @@ pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult,
 /// ([`crate::system_font_collection`]) on its first layout.
 ///
 /// # In-place changes
-/// - Bridge computed values to taffy::Style with `apply_computed_to_style`
-///   and assign the paragraphs of the inline engine
+/// - Bridge computed values to the node fields and pass overrides layout
+///   reads, and assign the paragraphs of the inline engine
 /// - Create a definite layout-only page-area ICB and lay out the document
 ///   element and its ordinary descendants through Taffy
 /// - Store each box's used geometry in Node.unrounded_layout
@@ -1060,6 +1060,18 @@ pub(super) fn layout_single_page_checked(
 ) -> Result<(), LayoutError> {
     let mut session = super::context::LayoutSession::with_cascade(document, cascade);
     layout_single_page_with_table_projection(&mut session, cascade, page_box, false, false)
+}
+
+/// A single-page layout in `session`, which stays open afterwards so that a
+/// test can read what the pass left in the document through the same views
+/// the pass used.
+#[cfg(test)]
+pub(super) fn layout_single_page_in_session(
+    session: &mut super::context::LayoutSession<'_>,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+) -> Result<(), LayoutError> {
+    layout_single_page_with_table_projection(session, cascade, page_box, false, false)
 }
 
 /// The error a layout pass recorded in the session while taffy ran: a
@@ -1133,7 +1145,7 @@ fn layout_single_page_with_table_projection(
 
     let (icb, available_space, content_width, content_height, body_id) = document
         .with_style_preparation_batch(|document| {
-            // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
+            // Step 1: bridge the computed values to the node fields and pass overrides.
             super::bridge::apply_computed_to_style_in_session(document, cascade)?;
             if paged {
                 if let Some(breaks) = &document.clearance_breaks {

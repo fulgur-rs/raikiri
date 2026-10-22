@@ -1,7 +1,7 @@
 use super::*;
 use crate::node::arena::BoxKey;
 use std::cell::Cell;
-use taffy::Dimension;
+use taffy::{Dimension, FlexboxItemStyle};
 
 type SetupInspector = fn(&LayoutSession<'_>, usize, usize);
 
@@ -16,10 +16,7 @@ pub(crate) fn after_setup_entry(tree: &LayoutSession<'_>, index: usize, count: u
         inspect(tree, index, count);
     }
     if SETUP_PANIC_AFTER.get() == Some(count) {
-        assert_eq!(
-            tree.layout_style_for_key(index).unwrap().size.width,
-            Dimension::length(11.0)
-        );
+        assert_eq!(tree.style_view(index).size().width, Dimension::length(11.0));
         SAW_APPLIED_SETUP.set(true);
         panic!("fail after an applied setup entry");
     }
@@ -57,8 +54,7 @@ fn scoped_override_production_invalidates_a_b_a_cache_and_late_outer_store() {
     use taffy::CacheTree;
 
     let (mut doc, cascade, child, _) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
     let id = taffy::NodeId::from(child);
     let input = taffy::LayoutInput {
@@ -108,8 +104,7 @@ fn scoped_override_production_retains_calc_until_successful_rebinding() {
     use std::sync::Arc;
 
     let (mut doc, cascade, child, _) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
     let value = OwnedPropertyOverride::length(
         LengthProperty::Width,
@@ -128,10 +123,6 @@ fn scoped_override_production_retains_calc_until_successful_rebinding() {
             tree.style_view(child).size().width,
             Dimension::calc(pointer)
         );
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().size.width,
-            Dimension::calc(pointer)
-        );
         let owner = weak.upgrade().unwrap();
         assert!(owner.non_negative());
         assert_eq!(owner.resolve(0.0), 0.0);
@@ -141,19 +132,17 @@ fn scoped_override_production_retains_calc_until_successful_rebinding() {
     assert_eq!(tree.style_view(child).size().width, Dimension::length(31.0));
     drop(tree);
     assert!(weak.upgrade().is_some());
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
     assert!(weak.upgrade().is_none());
 }
 
 #[test]
 fn scoped_override_production_restores_an_applied_setup_prefix() {
     let (mut doc, cascade, child, text) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
     let text_key = tree.nodes.box_key(text).unwrap();
-    let old_text = tree.layout_style_for_key(text).unwrap().size.width;
+    let old_text = tree.style_view(text).size().width;
     let before = tree.layout_cache_context.epoch();
     let _reset = ResetSetupFailure;
     SAW_APPLIED_SETUP.set(false);
@@ -170,22 +159,14 @@ fn scoped_override_production_restores_an_applied_setup_prefix() {
     assert_eq!(tree.override_checkpoint(), 0);
     assert_eq!(tree.style_override_depth(child), 0);
     assert_eq!(tree.style_view(child).size().width, Dimension::length(31.0));
-    assert_eq!(
-        tree.layout_style_for_key(child).unwrap().size.width,
-        Dimension::length(31.0)
-    );
-    assert_eq!(
-        tree.layout_style_for_key(text).unwrap().size.width,
-        old_text
-    );
+    assert_eq!(tree.style_view(text).size().width, old_text);
     assert!(tree.layout_cache_context.epoch() > before);
 }
 
 #[test]
 fn scoped_override_production_rejects_preparation_before_publication_changes() {
     let (mut doc, cascade, child, _) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
     tree.with_overrides(vec![entry(key, 11.0)], |tree| {
         tree.box_style_data.invalidate_metadata();
@@ -195,10 +176,10 @@ fn scoped_override_production_rejects_preparation_before_publication_changes() {
         }));
         assert!(failure.is_err());
         assert_eq!(tree.layout_cache_context.publication_epoch(), before);
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().size.width,
-            Dimension::length(11.0)
-        );
+        // The rejected preparation leaves the scope live; the views are not
+        // ready for a query until the next preparation.
+        assert_eq!(tree.style_override_depth(child), 1);
+        assert_eq!(tree.override_checkpoint(), 1);
     });
     tree.refresh_style_views();
     assert_eq!(tree.style_view(child).size().width, Dimension::length(31.0));
@@ -206,9 +187,9 @@ fn scoped_override_production_rejects_preparation_before_publication_changes() {
 
 #[test]
 fn scoped_override_production_validates_the_whole_batch_before_applying_it() {
-    let (mut doc, _, child, _) = fixture_with_styles("display:block", "");
-    doc.layout_style_for_key_mut(child).unwrap().size.width = Dimension::length(31.0);
-    let mut session = LayoutSession::new(&mut doc);
+    let (mut doc, _, child, _) = fixture_with_styles("display:block", "width:31px");
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let key = session.nodes.box_key(child).unwrap();
     for invalid in [
         BoxKey::Source(usize::MAX),
@@ -225,7 +206,7 @@ fn scoped_override_production_validates_the_whole_batch_before_applying_it() {
         assert!(failure.is_err());
         assert!(!called);
         assert_eq!(
-            session.layout_style_for_key(child).unwrap().size.width,
+            session.style_view(child).size().width,
             Dimension::length(31.0)
         );
     }
@@ -245,7 +226,7 @@ fn scoped_override_production_validates_the_whole_batch_before_applying_it() {
     assert!(failure.is_err());
     assert!(!called);
     assert_eq!(
-        session.layout_style_for_key(child).unwrap().size.width,
+        session.style_view(child).size().width,
         Dimension::length(31.0)
     );
 }
@@ -253,46 +234,41 @@ fn scoped_override_production_validates_the_whole_batch_before_applying_it() {
 #[test]
 fn scoped_override_production_reaches_all_generated_key_kinds() {
     let mut doc = Document::new();
-    let node = || {
-        let style = LayoutStyle {
-            size: taffy::Size {
-                width: Dimension::length(31.0),
-                height: Dimension::auto(),
-            },
-            ..LayoutStyle::default()
-        };
-        (
-            crate::node::Node::new_element("div".into(), style.clone(), None),
-            style,
-        )
-    };
-    doc.set_anonymous_tables(vec![node()]);
-    doc.set_anonymous_cells(vec![node()]);
-    let (node, style) = node();
-    let icb = doc.set_initial_containing_block(node, style);
+    let source = doc.append_element(Some(0), "div", Some("display:block"));
+    // A table row with text in it, and no table around it, gets an anonymous
+    // table and an anonymous cell.
+    let row = doc.append_element(Some(source), "span", Some("display:table-row"));
+    doc.append_text(row, "x");
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
+    let icb = session
+        .with_style_preparation_batch(|session| {
+            Ok::<_, ()>(crate::layout::initial_containing_block::prepare(
+                session.document,
+                &session_cascade,
+                100.0,
+                100.0,
+            ))
+        })
+        .unwrap();
     let indices = [
-        doc.nodes.anonymous_table_key(0),
-        doc.nodes.anonymous_cell_key(0),
+        session.nodes.anonymous_table_key(0),
+        session.nodes.anonymous_cell_key(0),
         icb,
     ];
-    let mut session = LayoutSession::new(&mut doc);
+    let originals = indices.map(|idx| session.style_view(idx).size().width);
     let entries = indices
         .iter()
         .map(|&idx| entry(session.nodes.box_key(idx).unwrap(), 19.0))
         .collect();
     session.with_overrides(entries, |tree| {
         for idx in indices {
-            assert_eq!(
-                tree.layout_style_for_key(idx).unwrap().size.width,
-                Dimension::length(19.0)
-            );
+            assert_eq!(tree.style_view(idx).size().width, Dimension::length(19.0));
         }
     });
-    for idx in indices {
-        assert_eq!(
-            session.layout_style_for_key(idx).unwrap().size.width,
-            Dimension::length(31.0)
-        );
+    for (idx, original) in indices.into_iter().zip(originals) {
+        assert_eq!(session.style_view(idx).size().width, original);
+        assert_ne!(original, Dimension::length(19.0));
     }
 }
 
@@ -302,46 +278,28 @@ fn scoped_override_production_supports_legacy_session_and_nested_error() {
     let child = doc.append_element(
         Some(0),
         "div",
-        LayoutStyle {
-            size: taffy::Size {
-                width: Dimension::length(31.0),
-                height: Dimension::auto(),
-            },
-            ..LayoutStyle::default()
-        },
-        None::<&str>,
+        Some("display:flex;box-sizing:border-box;width:31px"),
     );
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     let key = session.nodes.box_key(child).unwrap();
     let before = session.layout_cache_context.epoch();
     let result: Result<(), ()> = session.with_overrides(vec![entry(key, 11.0)], |tree| {
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().size.width,
-            Dimension::length(11.0)
-        );
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
         let inner: Result<(), ()> = tree.with_overrides(vec![entry(key, 17.0)], |tree| {
-            if tree.layout_style_for_key(child).unwrap().size.width == Dimension::length(17.0) {
+            if tree.style_view(child).size().width == Dimension::length(17.0) {
                 return Err(());
             }
             Ok(())
         });
         assert!(inner.is_err());
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().size.width,
-            Dimension::length(11.0)
-        );
-        tree.layout_style_for_key_mut(child).unwrap().margin.left =
-            taffy::LengthPercentageAuto::length(91.0);
+        assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
         Err(())
     });
     assert!(result.is_err());
     assert_eq!(
-        session.layout_style_for_key(child).unwrap().size.width,
+        session.style_view(child).size().width,
         Dimension::length(31.0)
-    );
-    assert_eq!(
-        session.layout_style_for_key(child).unwrap().margin.left,
-        taffy::LengthPercentageAuto::length(91.0)
     );
     assert_ne!(session.layout_cache_context.epoch(), before);
 }
@@ -359,13 +317,10 @@ fn scoped_override_production_supports_prepared_block_queries() {
         let key = session.nodes.box_key(child).unwrap();
         session.with_overrides(vec![entry(key, 19.0)], |tree| {
             assert!(tree.has_style_view(child));
-            assert_eq!(
-                tree.layout_style_for_key(child).unwrap().size.width,
-                Dimension::length(19.0)
-            );
+            assert_eq!(tree.style_view(child).size().width, Dimension::length(19.0));
         });
         assert_eq!(
-            session.layout_style_for_key(child).unwrap().size.width,
+            session.style_view(child).size().width,
             Dimension::length(31.0)
         );
     }
@@ -378,7 +333,7 @@ fn scoped_override_production_updates_view_and_legacy_then_unwinds_multiple_keys
     apply_computed_to_style_in_session(&mut session, &cascade).unwrap();
     let child_key = session.nodes.box_key(child).unwrap();
     let text_key = session.nodes.box_key(text).unwrap();
-    let text_before = session.layout_style_for_key(text).unwrap().size.width;
+    let text_before = session.style_view(text).size().width;
     let mut observed_overrides = false;
     let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         session.with_overrides(
@@ -389,15 +344,7 @@ fn scoped_override_production_updates_view_and_legacy_then_unwinds_multiple_keys
             ],
             |tree| {
                 assert_eq!(tree.style_view(child).size().width, Dimension::length(17.0));
-                assert_eq!(
-                    tree.layout_style_for_key(child).unwrap().size.width,
-                    Dimension::length(17.0)
-                );
                 assert_eq!(tree.style_view(text).size().width, Dimension::length(23.0));
-                assert_eq!(
-                    tree.layout_style_for_key(text).unwrap().size.width,
-                    Dimension::length(23.0)
-                );
                 observed_overrides = true;
                 panic!("unwind a multi-key override scope");
             },
@@ -409,22 +356,13 @@ fn scoped_override_production_updates_view_and_legacy_then_unwinds_multiple_keys
         session.style_view(child).size().width,
         Dimension::length(31.0)
     );
-    assert_eq!(
-        session.layout_style_for_key(child).unwrap().size.width,
-        Dimension::length(31.0)
-    );
-    assert_eq!(
-        session.layout_style_for_key(text).unwrap().size.width,
-        text_before
-    );
     assert_eq!(session.style_view(text).size().width, text_before);
 }
 
 #[test]
 fn scoped_override_checkpoint_rejects_future_markers_without_losing_state() {
     let (mut doc, cascade, child, _) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
     tree.with_overrides(vec![entry(key, 11.0)], |tree| {
         let checkpoint = tree.override_checkpoint();
@@ -440,16 +378,9 @@ fn scoped_override_checkpoint_rejects_future_markers_without_losing_state() {
         assert_eq!(tree.override_checkpoint(), checkpoint);
         assert_eq!(tree.style_override_depth(child), 1);
         assert_eq!(tree.style_view(child).size().width, Dimension::length(11.0));
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().size.width,
-            Dimension::length(11.0)
-        );
     });
     assert_eq!(tree.override_checkpoint(), 0);
-    assert_eq!(
-        tree.layout_style_for_key(child).unwrap().size.width,
-        Dimension::length(31.0)
-    );
+    assert_eq!(tree.style_view(child).size().width, Dimension::length(31.0));
 }
 
 fn border_entry(key: BoxKey, px: f32) -> (BoxKey, OwnedPropertyOverride) {
@@ -461,13 +392,11 @@ fn border_entry(key: BoxKey, px: f32) -> (BoxKey, OwnedPropertyOverride) {
 
 #[test]
 fn border_scope_edge_overlap() {
-    let (mut doc, cascade, child, _) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let (mut doc, cascade, child, _) =
+        fixture_with_styles("display:flex", "width:31px;height:7px;padding-left:10%");
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
-    let original = tree.layout_style_for_key(child).unwrap().border;
-    tree.layout_style_for_key_mut(child).unwrap().padding.left =
-        taffy::LengthPercentage::percent(0.1);
+    let original = tree.style_view(child).border();
     tree.with_resolved_edges(child, 200.0, false, |tree| {
         tree.with_overrides(vec![border_entry(key, 17.0)], |tree| {
             assert_eq!(
@@ -477,7 +406,7 @@ fn border_scope_edge_overlap() {
             let result: Result<(), ()> =
                 tree.with_overrides(vec![border_entry(key, 9.0)], |tree| {
                     assert_eq!(
-                        tree.layout_style_for_key(child).unwrap().padding.left,
+                        tree.style_view(child).padding().left,
                         taffy::LengthPercentage::length(20.0)
                     );
                     assert_eq!(
@@ -489,15 +418,22 @@ fn border_scope_edge_overlap() {
             assert_eq!(result, Err(()));
             let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 tree.with_overrides(vec![border_entry(key, 2.0)], |tree| {
-                    tree.layout_style_for_key_mut(child).unwrap().padding.top =
-                        taffy::LengthPercentage::length(91.0);
+                    tree.record_pass_override(
+                        child,
+                        OwnedPropertyOverride::length(
+                            LengthProperty::PaddingTop,
+                            L::Px(91.0),
+                            true,
+                        )
+                        .unwrap(),
+                    );
                     panic!("border body failure");
                 });
             }))
             .unwrap_err();
             assert_eq!(panic.downcast_ref::<&str>(), Some(&"border body failure"));
             assert_eq!(
-                tree.layout_style_for_key(child).unwrap().padding.top,
+                tree.style_view(child).padding().top,
                 taffy::LengthPercentage::length(91.0)
             );
             assert_eq!(
@@ -505,11 +441,11 @@ fn border_scope_edge_overlap() {
                 taffy::LengthPercentage::length(17.0)
             );
         });
-        assert_eq!(tree.layout_style_for_key(child).unwrap().border, original);
+        assert_eq!(tree.style_view(child).border(), original);
     });
     assert_eq!(tree.override_checkpoint(), 0);
     assert_eq!(
-        tree.layout_style_for_key(child).unwrap().padding.left,
+        tree.style_view(child).padding().left,
         taffy::LengthPercentage::percent(0.1)
     );
 }
@@ -519,18 +455,17 @@ fn border_scope_partial_setup_restores_applied_fields() {
     fn fail(tree: &LayoutSession<'_>, idx: usize, count: usize) {
         if count == 2 {
             assert_eq!(
-                tree.layout_style_for_key(idx).unwrap().border.left,
+                tree.style_view(idx).border().left,
                 taffy::LengthPercentage::length(17.0)
             );
-            assert_eq!(tree.layout_style_for_key(idx).unwrap().flex_shrink, 0.0);
+            assert_eq!(tree.style_view(idx).flex_shrink(), 0.0);
             panic!("border setup failure");
         }
     }
     let (mut doc, cascade, child, _) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
-    let original = tree.layout_style_for_key(child).unwrap().border;
+    let original = tree.style_view(child).border();
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_setup_inspector(fail, || {
             tree.with_overrides(
@@ -545,21 +480,21 @@ fn border_scope_partial_setup_restores_applied_fields() {
     .unwrap_err();
     assert_eq!(panic.downcast_ref::<&str>(), Some(&"border setup failure"));
     assert_eq!(tree.override_checkpoint(), 0);
-    assert_eq!(tree.layout_style_for_key(child).unwrap().border, original);
-    assert_eq!(tree.layout_style_for_key(child).unwrap().flex_shrink, 1.0);
+    assert_eq!(tree.style_view(child).border(), original);
+    assert_eq!(tree.style_view(child).flex_shrink(), 1.0);
 }
 
 #[test]
 fn border_scope_legacy_session_reaches_synthetic_and_wrapperless_keys() {
     let mut doc = Document::new();
-    let source = doc.append_element(Some(0), "div", LayoutStyle::default(), None::<&str>);
-    let style = LayoutStyle::default();
-    doc.set_anonymous_cells(vec![(
-        crate::node::Node::new_element("td".into(), style.clone(), None),
-        style,
-    )]);
-    let anonymous = doc.nodes.anonymous_cell_key(0);
-    let mut tree = LayoutSession::new(&mut doc);
+    let source = doc.append_element(Some(0), "div", Some("display:block"));
+    // A table row with text in it, and no table around it, gets anonymous
+    // table boxes.
+    let row = doc.append_element(Some(source), "span", Some("display:table-row"));
+    doc.append_text(row, "x");
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut tree = LayoutSession::bridged(&mut doc, &session_cascade);
+    let anonymous = tree.nodes.anonymous_table_key(0);
     let indices = [source, anonymous];
     let entries = indices
         .iter()
@@ -574,18 +509,18 @@ fn border_scope_legacy_session_reaches_synthetic_and_wrapperless_keys() {
     tree.with_overrides(entries, |tree| {
         for idx in indices {
             assert_eq!(
-                tree.layout_style_for_key(idx).unwrap().border.left,
+                tree.style_view(idx).border().left,
                 taffy::LengthPercentage::length(17.0)
             );
-            assert_eq!(tree.layout_style_for_key(idx).unwrap().flex_shrink, 0.0);
+            assert_eq!(tree.style_view(idx).flex_shrink(), 0.0);
         }
     });
     for idx in indices {
         assert_eq!(
-            tree.layout_style_for_key(idx).unwrap().border.left,
+            tree.style_view(idx).border().left,
             taffy::LengthPercentage::length(0.0)
         );
-        assert_eq!(tree.layout_style_for_key(idx).unwrap().flex_shrink, 1.0);
+        assert_eq!(tree.style_view(idx).flex_shrink(), 1.0);
     }
     assert_eq!(tree.override_checkpoint(), 0);
 }
@@ -596,8 +531,7 @@ fn border_scope_retains_calc_until_successful_rebinding() {
     use std::sync::Arc;
 
     let (mut doc, cascade, child, _) = fixture();
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    let mut tree = LayoutSession::bridged(&mut doc, &cascade);
     let key = tree.nodes.box_key(child).unwrap();
     let value = OwnedPropertyOverride::length(
         LengthProperty::BorderLeft,
@@ -616,10 +550,6 @@ fn border_scope_retains_calc_until_successful_rebinding() {
             tree.style_view(child).border().left,
             taffy::LengthPercentage::calc(pointer)
         );
-        assert_eq!(
-            tree.layout_style_for_key(child).unwrap().border.left,
-            taffy::LengthPercentage::calc(pointer)
-        );
         let owner = weak.upgrade().unwrap();
         assert!(owner.non_negative());
         assert_eq!(owner.resolve(0.0), 0.0);
@@ -632,7 +562,6 @@ fn border_scope_retains_calc_until_successful_rebinding() {
     );
     drop(tree);
     assert!(weak.upgrade().is_some());
-    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
-    apply_computed_to_style_in_session(&mut tree, &cascade).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
     assert!(weak.upgrade().is_none());
 }

@@ -7,7 +7,6 @@
 
 mod box_properties;
 
-use crate::LayoutStyle as Style;
 use box_properties::BoxProperties;
 pub(crate) use box_properties::BoxPropertiesRef;
 use smol_str::SmolStr;
@@ -420,8 +419,7 @@ pub struct Node {
     box_properties: BoxProperties,
     /// How this box lays out its contents. Layout dispatch and the other
     /// consumers read this classification instead of re-deriving it from
-    /// [`Self::display`], the retained style from
-    /// [`crate::Document::layout_node_with_style`], and the paragraph root flag.
+    /// [`Self::display`] and the paragraph root flag.
     pub(crate) formatting_context: FormattingContext,
     /// Computed line alignment used for the hypothetical inline static
     /// position of out-of-flow children in block flow.
@@ -690,28 +688,17 @@ impl Node {
         }
     }
 
-    /// Refresh the backend projection after rebuilding other style fields.
-    pub(crate) fn refresh_box_style(&self, style: &mut Style) {
-        let kind = self.kind();
-        self.box_properties.apply_to_style(
-            style,
-            self.multicol.is_some(),
-            kind,
-            self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
-        );
-    }
-
     /// Change the display of an engine-created box while retaining its position.
     pub(crate) fn set_display(&mut self, display: DisplayValue) {
         self.set_box_properties(display, self.position().clone());
     }
 
-    /// Construct a node carrying `data` and `style`, with every other field at
-    /// its pre-cascade, pre-layout default. Each `new_*` constructor delegates
+    /// Construct a node carrying `data`, with every other field at its
+    /// pre-cascade, pre-layout default. Each `new_*` constructor delegates
     /// here so the defaults live in one place.
-    fn with_data(data: NodeData, style: &Style) -> Self {
+    fn with_data(data: NodeData) -> Self {
         let box_properties = if matches!(data, NodeData::Element(_)) {
-            BoxProperties::from_taffy_style(style)
+            BoxProperties::new(DisplayValue::Block, PositionValue::Static)
         } else {
             BoxProperties::new(DisplayValue::Inline, PositionValue::Static)
         };
@@ -793,39 +780,33 @@ impl Node {
 
     /// Construct the Document root node for arena index 0.
     pub(crate) fn new_document() -> Self {
-        Self::with_data(NodeData::Document, &Style::default())
+        Self::with_data(NodeData::Document)
     }
 
-    /// Construct an Element node with its tag name, style, and inline_style.
+    /// Construct an Element node with its tag name and inline_style.
     /// `namespace`, `attributes`, and `template_contents` start empty or None.
     /// At finish, the raikiri-html sink populates the first two through
     /// [`crate::Document::set_element_namespace`] and
     /// [`crate::Document::set_element_attributes`]. For `<template>` elements
     /// only, the sink eagerly populates `template_contents` in `create_element`
     /// through [`crate::Document::allocate_template_fragment_root`].
-    pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
-        Self::with_data(
-            NodeData::Element(Box::new(ElementData {
-                tag_name: tag,
-                inline_style,
-                animation_style: None,
-                namespace: None,
-                prefix: None,
-                attributes: Vec::new(),
-                template_contents: None,
-                image_intrinsic_size: None,
-                canvas_bitmap: None,
-            })),
-            &style,
-        )
+    pub(crate) fn new_element(tag: SmolStr, inline_style: Option<SmolStr>) -> Self {
+        Self::with_data(NodeData::Element(Box::new(ElementData {
+            tag_name: tag,
+            inline_style,
+            animation_style: None,
+            namespace: None,
+            prefix: None,
+            attributes: Vec::new(),
+            template_contents: None,
+            image_intrinsic_size: None,
+            canvas_bitmap: None,
+        })))
     }
 
     /// Construct a Text node with its character data.
     pub(crate) fn new_text(text: SmolStr) -> Self {
-        Self::with_data(
-            NodeData::Text(TextData { text_content: text }),
-            &Style::default(),
-        )
+        Self::with_data(NodeData::Text(TextData { text_content: text }))
     }
 
     /// Construct a Comment node with its character data.
@@ -835,17 +816,14 @@ impl Node {
     /// layout, paint, and cascade automatically skip them through the
     /// `is_in_document()` gate.
     pub(crate) fn new_comment(text: SmolStr) -> Self {
-        Self::with_data(NodeData::Comment(text), &Style::default())
+        Self::with_data(NodeData::Comment(text))
     }
 
     /// Construct a Processing instruction node with its target and data.
     /// As with Comment nodes, [`crate::Document::mark_in_document_flags`]
     /// clears its `IS_IN_DOCUMENT` bit.
     pub(crate) fn new_processing_instruction(target: SmolStr, data: SmolStr) -> Self {
-        Self::with_data(
-            NodeData::ProcessingInstruction { target, data },
-            &Style::default(),
-        )
+        Self::with_data(NodeData::ProcessingInstruction { target, data })
     }
 
     /// Construct a Document fragment root. It is typically placed in the arena
@@ -854,7 +832,7 @@ impl Node {
     /// `mark_in_document_flags` clears it because it is unreachable from the
     /// Document root.
     pub(crate) fn new_document_fragment() -> Self {
-        Self::with_data(NodeData::DocumentFragment, &Style::default())
+        Self::with_data(NodeData::DocumentFragment)
     }
 
     // ─── inherent accessor methods ─────────────────
@@ -936,7 +914,7 @@ impl Node {
 
     /// The `::first-letter` fragments of an ifc root in layout order: each
     /// fragment's typographic box, the owner of the letters it wraps (as in
-    /// [`Self::ifc_typographic_style_for_owner`]) and its retained style.
+    /// [`Self::ifc_typographic_style_for_owner`]) and its computed values.
     pub(crate) fn ifc_letter_fragments(
         &self,
     ) -> impl Iterator<Item = (usize, usize, &raikiri_style::ComputedValues)> {

@@ -19,13 +19,11 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
                 wrapper = doc.append_element(
                     Some(root),
                     "div",
-                    Style::default(),
                     Some("display:block;writing-mode:vertical-rl;width:auto;height:auto"),
                 );
                 let seed = doc.append_element(
                     Some(wrapper),
                     "div",
-                    Style::default(),
                     Some("display:block;width:10px;height:10px"),
                 );
                 doc.append_text(seed, "a");
@@ -33,7 +31,6 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
                     let block = doc.append_element(
                         Some(wrapper),
                         "div",
-                        Style::default(),
                         Some("display:block;width:50%;height:10px"),
                     );
                     doc.append_text(block, "a");
@@ -41,7 +38,6 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
                 doc.append_element(
                     Some(wrapper),
                     "div",
-                    Style::default(),
                     Some("display:block;float:left;width:10px;height:10px"),
                 );
             },
@@ -75,7 +71,8 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
     }
 
     let (mut doc, wrapper) = fixture();
-    let mut session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let mut session = LayoutSession::bridged(&mut doc, &session_cascade);
     assert!(crate::taffy_impl::vertical_block::has_same_vertical_block_parent(&session, wrapper));
     let mut owner = BlockFormattingContext::new();
     let mut context = owner.root_block_context();
@@ -95,7 +92,8 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
     );
 
     let (mut reference_doc, reference_wrapper) = fixture();
-    let mut reference_session = LayoutSession::new(&mut reference_doc);
+    let session_cascade = crate::layout::test_support::cascaded(&reference_doc);
+    let mut reference_session = LayoutSession::bridged(&mut reference_doc, &session_cascade);
     let mut reference_owner = BlockFormattingContext::new();
     let mut reference_context = reference_owner.root_block_context();
     reference_context.set_width(100.0);
@@ -115,8 +113,8 @@ fn vertical_auto_size_probe_keeps_shared_floats_at_the_returned_extent() {
 #[test]
 fn leaf_intrinsic_ratio_derives_normal_image_ratio_and_ignores_inline_svg() {
     let mut doc = crate::document::Document::new();
-    let image = doc.append_element(None, "img", Style::default(), None::<&str>);
-    let svg = doc.append_element(None, "svg", Style::default(), None::<&str>);
+    let image = doc.append_element(None, "img", None::<&str>);
+    let svg = doc.append_element(None, "svg", None::<&str>);
     for idx in [image, svg] {
         if let crate::node::NodeData::Element(element) = &mut doc.nodes[idx].data {
             element.image_intrinsic_size = Some(raikiri_traits::IntrinsicBox::new(20.0, 10.0));
@@ -138,13 +136,11 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
         let atomic = doc.append_element(
             Some(root),
             "span",
-            Style::default(),
             Some("display:inline-block;width:10px;height:10px"),
         );
         fixed = Some(doc.append_element(
             Some(atomic),
             "div",
-            Style::default(),
             Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
         ));
     });
@@ -172,8 +168,9 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_atomic_children() {
         vertical_margins_are_collapsible: taffy::Line::FALSE,
     };
 
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
     let output = compute_ifc_root(
-        &mut LayoutSession::new(&mut doc),
+        &mut LayoutSession::bridged(&mut doc, &session_cascade),
         NodeId::from(fixture.root),
         input,
         None,
@@ -205,11 +202,10 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
             if let Some(text) = leading_text {
                 doc.append_text(root, text);
             }
-            let child = doc.append_element(Some(root), "div", Style::default(), Some(child_style));
+            let child = doc.append_element(Some(root), "div", Some(child_style));
             fixed = Some(doc.append_element(
                 Some(child),
                 "div",
-                Style::default(),
                 Some("display:block;position:fixed;left:11px;top:13px;width:5px;height:6px"),
             ));
         });
@@ -237,8 +233,9 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
             vertical_margins_are_collapsible: taffy::Line::FALSE,
         };
 
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
         let output = compute_ifc_root(
-            &mut LayoutSession::new(&mut doc),
+            &mut LayoutSession::bridged(&mut doc, &session_cascade),
             NodeId::from(fixture.root),
             input,
             None,
@@ -270,19 +267,22 @@ fn ifc_bubbles_uncontained_fixed_candidates_from_block_and_float_children() {
 
 #[test]
 fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
-    use raikiri_style::property::WritingMode;
     for (mode, expected) in [
-        (WritingMode::HorizontalTb, 60.0),
-        (WritingMode::VerticalRl, 30.0),
-        (WritingMode::VerticalLr, 30.0),
-        (WritingMode::SidewaysRl, 30.0),
-        (WritingMode::SidewaysLr, 30.0),
+        ("horizontal-tb", 60.0),
+        ("vertical-rl", 30.0),
+        ("vertical-lr", 30.0),
+        ("sideways-rl", 30.0),
+        ("sideways-lr", 30.0),
     ] {
         let mut tree = Document::new();
-        let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-        let node = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
-        tree.nodes[parent].used_writing_mode = mode;
-        let session = LayoutSession::new(&mut tree);
+        let parent = tree.append_element(
+            Some(0),
+            "div",
+            Some(format!("display:block;writing-mode:{mode}")),
+        );
+        let node = tree.append_element(Some(parent), "div", Some("display:block"));
+        let session_cascade = crate::layout::test_support::cascaded(&tree);
+        let session = LayoutSession::bridged(&mut tree, &session_cascade);
 
         assert_eq!(
             ifc_parent_inline_size(
@@ -294,7 +294,7 @@ fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
                 },
             ),
             Some(expected),
-            "{mode:?} uses its containing block inline basis"
+            "{mode} uses its containing block inline basis"
         );
     }
 }
@@ -305,16 +305,17 @@ fn whitespace_only_text_is_not_a_child_of_a_block_container() {
     // anonymous block box, so taffy's block algorithm never sees it and it
     // cannot separate the margins of its siblings.
     let mut tree = Document::new();
-    let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let parent = tree.append_element(Some(0), "div", None::<&str>);
     tree.set_display(parent, raikiri_style::property::DisplayValue::Block);
     tree.append_text(parent, "\n  ");
-    let first = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let first = tree.append_element(Some(parent), "div", None::<&str>);
     tree.append_text(parent, "\t\r\u{000c} ");
     let text = tree.append_text(parent, " x ");
-    let last = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    let last = tree.append_element(Some(parent), "div", None::<&str>);
     tree.append_text(parent, "\n");
     let parent = NodeId::from(parent);
-    let session = LayoutSession::new(&mut tree);
+    let session_cascade = crate::layout::test_support::cascaded(&tree);
+    let session = LayoutSession::bridged(&mut tree, &session_cascade);
 
     let children: Vec<usize> = session.child_ids(parent).map(usize::from).collect();
     assert_eq!(children, vec![first, text, last]);
@@ -328,22 +329,21 @@ fn children_walked_by_index_match_the_child_iterator() {
     // contents` span after a whitespace-only text, and a second container
     // with one child.
     let mut tree = Document::new();
-    let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    tree.set_display(parent, raikiri_style::property::DisplayValue::Block);
+    let parent = tree.append_element(Some(0), "div", Some("display:block"));
     let mut expected = Vec::new();
     for _ in 0..37 {
-        expected.push(tree.append_element(Some(parent), "div", Style::default(), None::<&str>));
+        expected.push(tree.append_element(Some(parent), "div", Some("display:block")));
     }
     tree.append_text(parent, " ");
-    let contents = tree.append_element(Some(parent), "span", Style::default(), None::<&str>);
-    tree.set_display(contents, DisplayValue::Contents);
+    let contents = tree.append_element(Some(parent), "span", Some("display:contents"));
     for _ in 0..3 {
-        expected.push(tree.append_element(Some(contents), "div", Style::default(), None::<&str>));
+        expected.push(tree.append_element(Some(contents), "div", Some("display:block")));
     }
-    let other = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let e = tree.append_element(Some(other), "div", Style::default(), None::<&str>);
+    let other = tree.append_element(Some(0), "div", Some("display:block"));
+    let e = tree.append_element(Some(other), "div", Some("display:block"));
     let (parent, other) = (NodeId::from(parent), NodeId::from(other));
-    let mut session = LayoutSession::new(&mut tree);
+    let session_cascade = crate::layout::test_support::cascaded(&tree);
+    let mut session = LayoutSession::bridged(&mut tree, &session_cascade);
     let children: Vec<usize> = session.child_ids(parent).map(usize::from).collect();
     assert_eq!(children, expected);
 
@@ -496,26 +496,18 @@ fn a_horizontal_override_keeps_the_vertical_ancestor_fragmentation_guard() {
         "sideways-lr",
     ] {
         let mut doc = Document::new();
-        let body = doc.append_element(Some(0), "body", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(0), "body", Some("display:block"));
         let ancestor = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!("display:block;writing-mode:{mode}")),
         );
-        let columns = doc.append_element(Some(ancestor), "div", Style::default(),
-            Some("display:block;writing-mode:horizontal-tb;columns:2;column-gap:0;width:200px;height:100px"));
-        let flex = doc.append_element(Some(columns), "div", Style::default(), Some("display:flex"));
-        let paragraph = doc.append_element(
-            Some(flex),
-            "div",
-            Style::default(),
-            Some("display:block;font:10px Ahem"),
-        );
+        let columns = doc.append_element(Some(ancestor), "div", Some("display:block;writing-mode:horizontal-tb;columns:2;column-gap:0;width:200px;height:100px"));
+        let flex = doc.append_element(Some(columns), "div", Some("display:flex"));
+        let paragraph = doc.append_element(Some(flex), "div", Some("display:block;font:10px Ahem"));
         let float = doc.append_element(
             Some(paragraph),
             "div",
-            Style::default(),
             Some("display:block;float:left;width:10px;height:10px"),
         );
         doc.append_text(float, "x");
@@ -536,7 +528,7 @@ fn a_horizontal_override_keeps_the_vertical_ancestor_fragmentation_guard() {
             doc.nodes[columns].multicol.unwrap(),
         )
         .unwrap();
-        let mut session = LayoutSession::new(&mut doc);
+        let mut session = LayoutSession::bridged(&mut doc, &cascade);
         session.context.fragmentation_stack.push(context);
         let expected = (mode == "horizontal-tb").then_some(context);
         assert_eq!(
@@ -550,25 +542,14 @@ fn a_horizontal_override_keeps_the_vertical_ancestor_fragmentation_guard() {
 fn absolute_auto_width_respects_space_after_its_inset() {
     use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600};
     let mut doc = crate::Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let parent = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;position:relative;width:200px;height:100px"),
     );
-    let child = doc.append_element(Some(parent), "div", crate::LayoutStyle::default(), Some("display:block;position:absolute;left:120px;font-family:Ahem;font-size:10px;line-height:10px"));
+    let child = doc.append_element(Some(parent), "div", Some("display:block;position:absolute;left:120px;font-family:Ahem;font-size:10px;line-height:10px"));
     doc.append_text(child, "aaaa bbbb cccc");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -585,18 +566,16 @@ fn grid_abspos_static_alignment_uses_the_content_box_and_parent_percentage_basis
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
     let containing_block = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("position:relative;width:200px;height:200px"),
     );
     let grid = doc.append_element(
         Some(containing_block),
         "div",
-        Style::default(),
         Some(
             "display:grid;width:100px;height:100px;border:2px solid;padding:0;padding-left:10%;padding-top:10%;justify-items:center;align-items:center",
         ),
@@ -604,7 +583,6 @@ fn grid_abspos_static_alignment_uses_the_content_box_and_parent_percentage_basis
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some("position:absolute;width:20px;height:20px;margin:auto"),
     );
     doc.mark_in_document_flags();
@@ -649,23 +627,16 @@ fn vertical_grid_abspos_keeps_positive_inline_space_centered() {
     use raikiri_traits::PageBox;
 
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let containing_block = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("position:relative;width:200px;height:200px"),
     );
     let grid = doc.append_element(
         Some(containing_block),
         "div",
-        Style::default(),
         Some(
             "display:grid;position:relative;writing-mode:vertical-rl;width:100px;height:100px;grid-template-columns:100px;grid-template-rows:100px",
         ),
@@ -673,7 +644,6 @@ fn vertical_grid_abspos_keeps_positive_inline_space_centered() {
     let child = doc.append_element(
         Some(grid),
         "div",
-        Style::default(),
         Some(
             "position:absolute;grid-column:1;grid-row:1;top:10px;bottom:10px;height:20px;width:10px;margin-top:auto;margin-bottom:auto",
         ),
@@ -691,18 +661,18 @@ fn vertical_grid_abspos_keeps_positive_inline_space_centered() {
 #[test]
 fn grid_alignment_ignores_children_owned_by_another_grid() {
     let mut doc = Document::new();
-    let grid = doc.append_element(Some(0), "div", Style::default(), Some("display:grid"));
-    let other_parent = doc.append_element(Some(0), "div", Style::default(), Some("display:block"));
+    let grid = doc.append_element(Some(0), "div", Some("display:grid"));
+    let other_parent = doc.append_element(Some(0), "div", Some("display:block"));
     let child = doc.append_element(
         Some(other_parent),
         "div",
-        Style::default(),
         Some("position:absolute;width:10px;height:10px"),
     );
     doc.mark_in_document_flags();
     let computed = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
-    let session = LayoutSession::new(&mut doc);
+    let session_cascade = crate::layout::test_support::cascaded(&doc);
+    let session = LayoutSession::bridged(&mut doc, &session_cascade);
 
     assert!(
         super::auto_grid_abspos_aligned_layout(
@@ -724,48 +694,13 @@ fn grid_alignment_ignores_children_owned_by_another_grid() {
 fn baseline_aligned_tops(scroller_style: &str, container: &str) -> (f32, f32) {
     use crate::layout::test_support::{absolute_rect, page_box_800x600};
     let mut doc = crate::Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
-    let parent = doc.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some(container),
-    );
-    let wrapper = doc.append_element(
-        Some(parent),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block;width:100px"),
-    );
-    let scroller = doc.append_element(
-        Some(wrapper),
-        "div",
-        crate::LayoutStyle::default(),
-        Some(scroller_style),
-    );
-    doc.append_element(
-        Some(scroller),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("width:20px;height:80px"),
-    );
-    let sibling = doc.append_element(
-        Some(parent),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("width:10px;height:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+    let parent = doc.append_element(Some(body), "div", Some(container));
+    let wrapper = doc.append_element(Some(parent), "div", Some("display:block;width:100px"));
+    let scroller = doc.append_element(Some(wrapper), "div", Some(scroller_style));
+    doc.append_element(Some(scroller), "div", Some("width:20px;height:80px"));
+    let sibling = doc.append_element(Some(parent), "div", Some("width:10px;height:20px"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -805,30 +740,14 @@ fn a_flex_box_that_does_not_scroll_aligns_by_its_content_baseline() {
 fn line_height_around_inline_block(fill: impl FnOnce(&mut crate::Document, usize)) -> f32 {
     use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600};
     let mut doc = crate::Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let line = doc.append_element(
         Some(body),
         "div",
-        crate::LayoutStyle::default(),
         Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
     );
-    let inline_block = doc.append_element(
-        Some(line),
-        "span",
-        crate::LayoutStyle::default(),
-        Some("display:inline-block"),
-    );
+    let inline_block = doc.append_element(Some(line), "span", Some("display:inline-block"));
     fill(&mut doc, inline_block);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -844,7 +763,6 @@ fn two_lines_in(doc: &mut crate::Document, parent: usize, css: &str) -> usize {
     let boxed = doc.append_element(
         Some(parent),
         "div",
-        crate::LayoutStyle::default(),
         Some(format!("display:block;width:40px;{css}")),
     );
     doc.append_text(boxed, "aaaa bbbb");
@@ -880,7 +798,6 @@ fn a_scroll_container_inside_another_is_clamped_to_both() {
         let outer = doc.append_element(
             Some(inline_block),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;height:10px;overflow:hidden"),
         );
         two_lines_in(doc, outer, "height:30px;overflow:hidden");
@@ -896,15 +813,9 @@ fn a_scroll_container_scrolled_out_of_another_is_clamped_to_the_outer_edge() {
         let outer = doc.append_element(
             Some(inline_block),
             "div",
-            crate::LayoutStyle::default(),
             Some("display:block;height:10px;overflow:hidden"),
         );
-        doc.append_element(
-            Some(outer),
-            "div",
-            crate::LayoutStyle::default(),
-            Some("display:block;height:20px"),
-        );
+        doc.append_element(Some(outer), "div", Some("display:block;height:20px"));
         two_lines_in(doc, outer, "height:10px;overflow:hidden");
     });
     assert_eq!(height, 12.0);

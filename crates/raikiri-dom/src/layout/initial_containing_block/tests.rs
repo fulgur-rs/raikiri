@@ -1,5 +1,4 @@
 use crate::Document;
-use crate::LayoutStyle as Style;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
@@ -13,19 +12,16 @@ fn paginating_a_vertical_root_preserves_percentage_width_limits() {
             for paginated in [false, true] {
                 let mut doc = Document::new();
                 let html = doc.append_element(
-                    Some(0), "html", Style::default(),
-                    Some(format!("display:block;writing-mode:{writing_mode};width:100px;height:400px;margin:0;padding:5px;border:2px solid").as_str()),
+                    Some(0), "html", Some(format!("display:block;writing-mode:{writing_mode};width:100px;height:400px;margin:0;padding:5px;border:2px solid").as_str()),
                 );
                 let body = doc.append_element(
                     Some(html),
                     "body",
-                    Style::default(),
                     Some(format!("display:block;margin:0;{limits}").as_str()),
                 );
                 doc.append_element(
                     Some(body),
                     "div",
-                    Style::default(),
                     Some(format!("display:block;width:{child_width}px;height:20px").as_str()),
                 );
                 let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
@@ -50,19 +46,16 @@ fn authored_html_and_body_sizes_are_laid_out_inside_the_page_area() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;margin:10px;padding:5px;border:2px solid;width:240px;height:180px"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:20px;padding:3px;border:1px solid;width:100px;height:50px"),
     );
     let child = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;width:50%;height:50%"),
     );
     let count = doc.node_count();
@@ -86,22 +79,11 @@ fn authored_html_and_body_sizes_are_laid_out_inside_the_page_area() {
 #[test]
 fn root_margins_add_to_the_margins_collapsing_through_body() {
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;margin:10px"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:20px"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin:10px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:20px"));
     let child = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;height:30px;margin-top:40px"),
     );
     let rules = build_rule_tree(&doc);
@@ -123,19 +105,17 @@ fn positioned_descendants_use_the_root_padding_box_or_the_page_area() {
         ("relative", "fixed", (400.0, 300.0, 20.0, 10.0)),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some(format!(
+        let html = doc.append_element(Some(0), "html", Some(format!(
             "display:block;position:{root_position};margin:10px;padding:10px;border:2px solid;width:200px;height:100px"
         ).as_str()));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:7px;width:80px;height:40px"),
         );
         let child = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(
                 format!(
                     "display:block;position:{position};left:50%;top:50%;width:20px;height:10px"
@@ -160,13 +140,11 @@ fn the_icb_uses_the_principal_direction_for_a_definite_root_width() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;direction:rtl;width:300px"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;width:200px;height:30px"),
     );
     let rules = build_rule_tree(&doc);
@@ -180,13 +158,11 @@ fn the_icb_uses_the_principal_direction_for_a_definite_root_width() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;direction:ltr;width:300px"),
     );
     doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;direction:rtl;width:200px;height:30px"),
     );
     let cascade = raikiri_style::cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -200,13 +176,11 @@ fn the_canvas_root_box_uses_the_laid_out_content_height() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;margin:10px;padding:5px"),
     );
     doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:20px;padding:10px;height:50px"),
     );
     let rules = build_rule_tree(&doc);
@@ -228,24 +202,13 @@ fn the_canvas_root_box_uses_the_laid_out_content_height() {
 fn source_growth_and_anonymous_table_rebuild_keep_the_icb_outside_the_dom() {
     use crate::layout::test_support::absolute_rect;
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;margin:10px"),
-    );
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
-    let row = doc.append_element(
-        Some(table),
-        "tr",
-        Style::default(),
-        Some("display:table-row"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block;margin:10px"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let table = doc.append_element(Some(body), "table", Some("display:table"));
+    let row = doc.append_element(Some(table), "tr", Some("display:table-row"));
     doc.append_element(
         Some(row),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -259,7 +222,6 @@ fn source_growth_and_anonymous_table_rebuild_keep_the_icb_outside_the_dom() {
     let child = doc.append_element(
         Some(row),
         "div",
-        Style::default(),
         Some("display:block;width:20px;height:20px"),
     );
     assert_eq!(child, 6);
@@ -287,19 +249,16 @@ fn pagination_truncates_root_and_descendant_margins_from_used_boxes() {
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some(format!("display:block;margin-top:{root_margin}px").as_str()),
         );
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some(format!("display:block;margin:{body_margin}px 0 0").as_str()),
         );
         let child = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(format!("display:block;height:10px;margin-top:{child_margin}px").as_str()),
         );
         let rules = build_rule_tree(&doc);
@@ -328,13 +287,11 @@ fn pagination_keeps_block_alignment_space_instead_of_truncating_it_as_a_margin()
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;height:500px;align-content:center"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;height:20px"),
     );
     let rules = build_rule_tree(&doc);
@@ -348,18 +305,12 @@ fn pagination_keeps_block_alignment_space_instead_of_truncating_it_as_a_margin()
 #[test]
 fn truncating_a_sibling_margin_shrinks_auto_height_body_and_root_boxes() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    doc.append_element(Some(body), "div", Some("display:block;height:20px"));
     doc.append_element(
         Some(body),
         "div",
-        Style::default(),
-        Some("display:block;height:20px"),
-    );
-    doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
         Some("display:block;height:10px;margin-top:1000px"),
     );
     let rules = build_rule_tree(&doc);
@@ -378,13 +329,11 @@ fn a_contents_root_keeps_its_blockified_box_properties_and_percentage_basis() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:contents;margin:10px;padding:5px;border:2px solid;width:240px;height:180px"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:20px;width:50%;height:10px"),
     );
     let rules = build_rule_tree(&doc);
@@ -411,12 +360,10 @@ fn a_contents_root_keeps_its_blockified_box_properties_and_percentage_basis() {
 fn vertical_root_percentage_padding_uses_the_icb_inline_size() {
     for display in ["block", "inline"] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(),
-            Some("display:block;writing-mode:vertical-rl;width:80px;height:60px;padding:10%;font-family:Ahem;font-size:10px;line-height:10px"));
+        let html = doc.append_element(Some(0), "html", Some("display:block;writing-mode:vertical-rl;width:80px;height:60px;padding:10%;font-family:Ahem;font-size:10px;line-height:10px"));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some(format!("display:{display};width:30px;height:20px").as_str()),
         );
         doc.append_text(body, "A");
@@ -448,14 +395,13 @@ fn root_box_queries_blockify_contents_before_testing_fixed_containment() {
     use crate::layout::test_support::absolute_rect;
     for effect in ["transform:translateX(3px)", "contain:paint"] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some(format!(
+        let html = doc.append_element(Some(0), "html", Some(format!(
             "display:contents;margin:10px;padding:5px;border:2px solid;width:240px;height:180px;{effect}"
         ).as_str()));
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block"));
         let fixed = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("position:fixed;left:50%;top:50%;width:20px;height:10px"),
         );
         let rules = build_rule_tree(&doc);
@@ -482,25 +428,17 @@ fn relative_root_offsets_do_not_change_normal_flow_page_breaks() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;position:relative;top:20px"),
     );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let first = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;height:70px;break-inside:avoid"),
     );
     let second = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;height:70px;break-inside:avoid"),
     );
     let rules = build_rule_tree(&doc);
@@ -522,23 +460,20 @@ fn moving_a_direct_body_child_grows_the_actual_auto_height_boxes() {
             ("max-height:120px", 120.0),
         ] {
             let mut doc = Document::new();
-            let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+            let html = doc.append_element(Some(0), "html", Some("display:block"));
             let body = doc.append_element(
                 Some(html),
                 "body",
-                Style::default(),
                 Some(format!("display:block;margin:0;{body_height}").as_str()),
             );
             doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;height:70px;break-inside:avoid"),
             );
             let second = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some(format!("display:block;height:70px;{boundary}").as_str()),
             );
             let rules = build_rule_tree(&doc);
@@ -579,13 +514,12 @@ fn blockified_internal_root_displays_keep_vertical_box_geometry() {
         "ruby-text",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some(format!(
+        let html = doc.append_element(Some(0), "html", Some(format!(
             "display:{display};writing-mode:vertical-rl;width:80px;height:60px;padding:10%;margin:0"
         ).as_str()));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:0;width:30px;height:20px"),
         );
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -617,19 +551,17 @@ fn root_blockification_preserves_flex_and_grid_inner_layout() {
         ("inline-grid", (47.0, 17.0)),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some(format!(
+        let html = doc.append_element(Some(0), "html", Some(format!(
             "display:{display};margin:10px;padding:5px;border:2px solid;width:120px;height:80px;grid-template-columns:30px 20px"
         ).as_str()));
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:0;width:30px;height:20px;flex-shrink:0"),
         );
         let second = doc.append_element(
             Some(html),
             "section",
-            Style::default(),
             Some("display:block;width:20px;height:15px;flex-shrink:0"),
         );
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -658,21 +590,14 @@ fn percentage_heights_follow_the_authored_definite_root_and_body_chain() {
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some(format!("display:block;height:{root_height}").as_str()),
         );
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some("display:block;margin:0;height:50%"),
         );
-        let child = doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:50%"),
-        );
+        let child = doc.append_element(Some(body), "div", Some("display:block;height:50%"));
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
         assert_eq!(doc.nodes[html].unrounded_layout.size.height, html_height);
@@ -687,19 +612,12 @@ fn absolute_overflow_page_count_includes_the_used_root_offset() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;margin-top:20px;height:0"),
     );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0;height:0"),
-    );
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0;height:0"));
     let absolute = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:absolute;top:199px;left:0;width:10px;height:2px"),
     );
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -724,19 +642,16 @@ fn viewport_overflow_propagation_caps_absolute_overflow_pages() {
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some(format!("display:block;height:0;overflow:{root_overflow}").as_str()),
         );
         let body = doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some(format!("display:block;height:0;margin:0;overflow:{body_overflow}").as_str()),
         );
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("position:absolute;top:199px;width:10px;height:2px"),
         );
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -759,19 +674,12 @@ fn only_page_fixed_boxes_repeat_instead_of_extending_overflow_pages() {
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some(&format!("display:block;height:0;{transform}")),
         );
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0;height:0"),
-        );
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0;height:0"));
         let fixed = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some("display:block;position:fixed;left:0;top:199px;width:10px;height:2px"),
         );
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -793,20 +701,17 @@ fn an_auto_width_table_root_shrink_wraps_its_content_inside_the_icb() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:table;border:10px solid green;border-spacing:0;margin:auto;padding:0"),
     );
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;padding:0;font:0px/0px Ahem"),
     );
     for width in [200, 80] {
         doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!(
                 "display:inline-block;width:{width}px;height:300px"
             )),
@@ -823,29 +728,21 @@ fn an_auto_width_table_root_shrink_wraps_its_content_inside_the_icb() {
 #[test]
 fn paginated_flex_stretch_keeps_the_items_used_height_despite_visible_overflow() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     let flex = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:flex;box-sizing:border-box;width:130px;height:70px;border:10px solid"),
     );
     let item = doc.append_element(
         Some(flex),
         "div",
-        Style::default(),
         Some("display:block;box-sizing:border-box;flex:1;border:10px solid"),
     );
     doc.append_element(
         Some(item),
         "div",
-        Style::default(),
         Some("display:block;box-sizing:border-box;height:140px;border:10px solid"),
     );
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -861,31 +758,19 @@ fn paginated_flex_auto_height_encloses_a_forced_break_in_its_item() {
         "flex;flex-direction:column",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-        let body = doc.append_element(
-            Some(html),
-            "body",
-            Style::default(),
-            Some("display:block;margin:0"),
-        );
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
+        let html = doc.append_element(Some(0), "html", Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
         let flex = doc.append_element(
             Some(body),
             "div",
-            Style::default(),
             Some(&format!("display:{display};border:10px solid")),
         );
-        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let item = doc.append_element(Some(flex), "div", Some("display:block"));
         for i in 0..4 {
             let child = doc.append_element(
                 Some(item),
                 "div",
-                Style::default(),
                 Some(if i == 1 {
                     "display:block;height:20px;break-after:page;font:10px/10px Ahem"
                 } else {
@@ -894,12 +779,7 @@ fn paginated_flex_auto_height_encloses_a_forced_break_in_its_item() {
             );
             doc.append_text(child, "x");
         }
-        doc.append_element(
-            Some(body),
-            "div",
-            Style::default(),
-            Some("display:block;height:20px"),
-        );
+        doc.append_element(Some(body), "div", Some("display:block;height:20px"));
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
         let mut page = page_box_800x600();
         page.height = 100.0;
@@ -949,13 +829,11 @@ fn the_icb_takes_the_writing_mode_of_the_html_body() {
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some(format!("display:block;width:100px;{root_css}").as_str()),
         );
         doc.append_element(
             Some(html),
             "body",
-            Style::default(),
             Some(format!("display:block;margin:0;{body_css}").as_str()),
         );
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -971,11 +849,10 @@ fn the_icb_takes_the_writing_mode_of_the_html_body() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;width:100px;writing-mode:horizontal-tb"),
     );
     for body_css in ["display:none", "display:block;writing-mode:vertical-rl"] {
-        doc.append_element(Some(html), "body", Style::default(), Some(body_css));
+        doc.append_element(Some(html), "body", Some(body_css));
     }
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
@@ -988,20 +865,17 @@ fn a_foreign_body_lookalike_is_not_the_principal_element() {
     let html = doc.append_element(
         Some(0),
         "html",
-        Style::default(),
         Some("display:block;width:100px;writing-mode:horizontal-tb"),
     );
     let foreign = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;writing-mode:vertical-rl"),
     );
     doc.set_element_namespace(foreign, Some("urn:x".into()));
     doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;writing-mode:horizontal-tb"),
     );
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -1015,22 +889,15 @@ fn fixed_boxes_take_the_principal_direction_of_the_page_area() {
     // With both insets, `left` wins in the body's ltr direction even though
     // the root is rtl.
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;direction:rtl"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block;direction:rtl"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;direction:ltr"),
     );
     let fixed = doc.append_element(
         Some(body),
         "div",
-        Style::default(),
         Some("display:block;position:fixed;left:10px;right:10px;top:0;width:50px;height:10px"),
     );
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -1059,27 +926,20 @@ fn paginated_heights_keep_a_flex_items_overflow_outside_its_used_height() {
                 continue;
             }
             let mut doc = Document::new();
-            let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-            let body = doc.append_element(
-                Some(html),
-                "body",
-                Style::default(),
-                Some("display:block;margin:0"),
-            );
-            let flex = doc.append_element(Some(body), "div", Style::default(), Some(container));
-            let item = doc.append_element(Some(flex), "div", Style::default(), Some(item));
+            let html = doc.append_element(Some(0), "html", Some("display:block"));
+            let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
+            let flex = doc.append_element(Some(body), "div", Some(container));
+            let item = doc.append_element(Some(flex), "div", Some(item));
             if forced_break {
                 doc.append_element(
                     Some(item),
                     "div",
-                    Style::default(),
                     Some("display:block;height:40px;break-after:page"),
                 );
             }
             doc.append_element(
                 Some(item),
                 "div",
-                Style::default(),
                 Some("display:block;width:50px;height:400px"),
             );
             let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
@@ -1104,13 +964,11 @@ fn a_vertical_root_truncates_a_block_end_margin_at_a_page_break() {
             let html = doc.append_element(
                 Some(0),
                 "html",
-                Style::default(),
                 Some(format!("display:block;writing-mode:{writing_mode}").as_str()),
             );
             let body = doc.append_element(
                 Some(html),
                 "body",
-                Style::default(),
                 Some("display:block;font:10px/10px Ahem"),
             );
             if leading_text {
@@ -1119,12 +977,10 @@ fn a_vertical_root_truncates_a_block_end_margin_at_a_page_break() {
             let first = doc.append_element(
                 Some(body),
                 "div",
-                Style::default(),
                 Some("display:block;margin-block-end:10000px"),
             );
             doc.append_text(first, "a");
-            let second =
-                doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+            let second = doc.append_element(Some(body), "div", Some("display:block"));
             doc.append_text(second, "b");
             let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
             let pages =

@@ -24,7 +24,7 @@ fn item(node: usize, kind: PageFragmentKind, fragment: u32) -> PageFragmentItem 
 }
 
 fn anchor(doc: &mut Document, parent: usize, href: &str) -> usize {
-    let id = doc.append_element(Some(parent), "a", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(parent), "a", None::<&str>);
     doc.set_element_attributes(id, vec![(SmolStr::new("href"), SmolStr::new(href))]);
     id
 }
@@ -36,8 +36,8 @@ fn workload(
     depth: usize,
 ) -> (Document, Vec<PageFragment>, Vec<(usize, usize)>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", None::<&str>);
     let mut items = Vec::new();
     let mut expected = Vec::new();
     for _ in 0..anchors {
@@ -46,11 +46,11 @@ fn workload(
         items.push(item(owner, PageFragmentKind::Box, 0));
         let mut parent = owner;
         for _ in 0..depth {
-            parent = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+            parent = doc.append_element(Some(parent), "span", None::<&str>);
             items.push(item(parent, PageFragmentKind::Box, 0));
         }
         for _ in 0..boxes {
-            let id = doc.append_element(Some(parent), "span", Style::default(), None::<&str>);
+            let id = doc.append_element(Some(parent), "span", None::<&str>);
             items.push(item(id, PageFragmentKind::Box, 0));
             expected.push((owner, id));
         }
@@ -127,10 +127,10 @@ fn suppression_preserves_anchor_boundaries_fragments_and_page_local_fallbacks() 
     let (mut doc, _, _) = workload(1, 0, 0, 0);
     let outer = 3;
     let inner = anchor(&mut doc, outer, "#inner");
-    let image = doc.append_element(Some(inner), "img", Style::default(), None::<&str>);
+    let image = doc.append_element(Some(inner), "img", None::<&str>);
     let empty = anchor(&mut doc, outer, "  ");
     let zero_child = doc.append_text(empty, "zero");
-    let no_href = doc.append_element(Some(outer), "a", Style::default(), None::<&str>);
+    let no_href = doc.append_element(Some(outer), "a", None::<&str>);
     let leaf = doc.append_text(no_href, "outer leaf");
     let mut zero = item(zero_child, PageFragmentKind::Text, 0);
     zero.rect.width = 0.0;

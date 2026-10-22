@@ -1,5 +1,4 @@
 use super::*;
-use crate::LayoutStyle as Style;
 use raikiri_style::{build_rule_tree, cascade};
 
 fn fixture(page_css: &str, html_style: &str) -> (Document, CascadeResult) {
@@ -8,11 +7,11 @@ fn fixture(page_css: &str, html_style: &str) -> (Document, CascadeResult) {
 
 fn fixture_with_text(page_css: &str, html_style: &str, text: &str) -> (Document, CascadeResult) {
     let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", Style::default(), Some(html_style));
-    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = document.append_element(Some(0), "html", Some(html_style));
+    let head = document.append_element(Some(html), "head", None::<&str>);
+    let style = document.append_element(Some(head), "style", None::<&str>);
     document.append_text(style, page_css);
-    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", None::<&str>);
     document.append_text(body, text);
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
@@ -133,7 +132,7 @@ fn root_transform_turns_about_its_origin_on_the_box() {
 #[test]
 fn no_root_element_has_no_root_box() {
     let mut document = Document::new();
-    let div = document.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let div = document.append_element(Some(0), "div", None::<&str>);
     document.append_text(div, "hi");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");

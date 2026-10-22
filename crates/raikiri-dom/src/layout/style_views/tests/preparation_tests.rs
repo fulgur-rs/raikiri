@@ -8,30 +8,10 @@ fn all_key_preparation_includes_hidden_oof_flattened_and_unrelated_boxes() {
         fixture_with_styles("display:flex", "position:absolute;width:31px;height:7px");
     let body = doc.nodes[oof].parent.unwrap();
     let html = doc.nodes[body].parent.unwrap();
-    let unrelated = doc.append_element(
-        Some(html),
-        "aside",
-        LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let hidden = doc.append_element(
-        Some(body),
-        "div",
-        LayoutStyle::default(),
-        Some("display:none;width:17px"),
-    );
-    let contents = doc.append_element(
-        Some(body),
-        "div",
-        LayoutStyle::default(),
-        Some("display:contents"),
-    );
-    let flattened = doc.append_element(
-        Some(contents),
-        "div",
-        LayoutStyle::default(),
-        Some("width:23px"),
-    );
+    let unrelated = doc.append_element(Some(html), "aside", Some("display:block"));
+    let hidden = doc.append_element(Some(body), "div", Some("display:none;width:17px"));
+    let contents = doc.append_element(Some(body), "div", Some("display:contents"));
+    let flattened = doc.append_element(Some(contents), "div", Some("width:23px"));
     doc.mark_in_document_flags();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
@@ -51,39 +31,23 @@ fn all_key_preparation_includes_hidden_oof_flattened_and_unrelated_boxes() {
     assert!(
         session
             .style_views
-            .as_ref()
-            .unwrap()
             .boxes
             .contains_key(&BoxKey::Source(text))
     );
     assert!(
         session
             .style_views
-            .as_ref()
-            .unwrap()
             .boxes
             .contains_key(&BoxKey::Source(unrelated))
     );
-    assert!(
-        session
-            .style_views
-            .as_ref()
-            .unwrap()
-            .boxes
-            .contains_key(&BoxKey::Source(0))
-    );
+    assert!(session.style_views.boxes.contains_key(&BoxKey::Source(0)));
 }
 
 #[test]
 fn pass_overrides_survive_reparenting_between_block_and_flex() {
     let (mut doc, _, child, _) = fixture_with_styles("display:block", "width:31px;height:7px");
     let body = doc.nodes[child].parent.unwrap();
-    let flex = doc.append_element(
-        Some(body),
-        "div",
-        LayoutStyle::default(),
-        Some("display:flex"),
-    );
+    let flex = doc.append_element(Some(body), "div", Some("display:flex"));
     doc.mark_in_document_flags();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
@@ -91,8 +55,6 @@ fn pass_overrides_survive_reparenting_between_block_and_flex() {
     assert!(
         session
             .style_views
-            .as_ref()
-            .unwrap()
             .boxes
             .contains_key(&BoxKey::Source(child))
     );
@@ -111,8 +73,6 @@ fn pass_overrides_survive_reparenting_between_block_and_flex() {
     assert!(
         session
             .style_views
-            .as_ref()
-            .unwrap()
             .boxes
             .contains_key(&BoxKey::Source(child))
     );
@@ -144,13 +104,9 @@ fn prepared_edge_scopes_keep_both_query_restoration_and_epoch_notifications() {
             session.style_view(child).padding().left,
             taffy::LengthPercentage::length(20.0)
         );
-        assert_eq!(
-            session.layout_style_for_key(child).unwrap().padding.left,
-            taffy::LengthPercentage::length(20.0)
-        );
     });
     assert_eq!(
-        session.layout_style_for_key(child).unwrap().padding.left,
+        session.style_view(child).padding().left,
         taffy::LengthPercentage::percent(0.1)
     );
     assert_ne!(session.layout_cache_context.epoch(), epoch);
@@ -219,12 +175,7 @@ fn publication_refreshes_metadata_before_parent_cache_lookup() {
 fn publication_is_prepared_before_size_scope_target_selection() {
     let (mut doc, _, child, _) = fixture_with_styles("display:block", "width:31px");
     let body = doc.nodes[child].parent.unwrap();
-    let flex = doc.append_element(
-        Some(body),
-        "div",
-        LayoutStyle::default(),
-        Some("display:flex"),
-    );
+    let flex = doc.append_element(Some(body), "div", Some("display:flex"));
     doc.mark_in_document_flags();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     let mut session = LayoutSession::with_cascade(&mut doc, &cascade);
@@ -290,7 +241,6 @@ fn relayout_discards_old_oof_coordinates_after_style_and_owner_changes() {
         let owner = doc.append_element(
             Some(body),
             "div",
-            LayoutStyle::default(),
             Some("position:relative;display:block;width:100px;height:20px"),
         );
         doc.mark_in_document_flags();
@@ -424,14 +374,7 @@ fn batch_error_and_unwind_keep_previous_calc_owners_until_repair() {
         }
         assert!(owner.upgrade().is_some());
         assert!(!session.box_style_data.is_ready());
-        assert!(
-            session
-                .style_views
-                .as_ref()
-                .unwrap()
-                .prepared_stamp
-                .is_none()
-        );
+        assert!(session.style_views.prepared_stamp.is_none());
         let query = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = session.style_view(child);
         }));

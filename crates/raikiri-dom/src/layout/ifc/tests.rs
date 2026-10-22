@@ -181,23 +181,12 @@ fn a_huge_font_size_or_line_height_lays_out_in_bounded_time() {
 /// child of a zero-margin body (plus `text` after it), in a document of the
 /// given quirks mode.
 fn replaced_offset_y(mode: raikiri_traits::QuirksMode, tag: &str, text: &str) -> f32 {
-    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block;margin:0"));
     doc.append_text(body, " ");
-    let replaced = doc.append_element(
-        Some(body),
-        tag,
-        Style::default(),
-        Some("width:2px;height:2px"),
-    );
+    let replaced = doc.append_element(Some(body), tag, Some("width:2px;height:2px"));
     doc.append_text(body, text);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -230,31 +219,28 @@ fn image_line_geometry(
     vertical_align: &str,
     second_line_text: bool,
 ) -> (f32, Vec<f32>) {
-    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font-size:20px;line-height:20px"),
     );
     let parent = if let Some(css) = wrapper_css {
-        doc.append_element(Some(body), "span", Style::default(), Some(css))
+        doc.append_element(Some(body), "span", Some(css))
     } else {
         body
     };
     let image = doc.append_element(
         Some(parent),
         "img",
-        Style::default(),
         Some(&format!(
             "width:2px;height:2px;vertical-align:{vertical_align}"
         )),
     );
     if second_line_text {
-        doc.append_element(Some(body), "br", Style::default(), None::<&str>);
+        doc.append_element(Some(body), "br", None::<&str>);
         doc.append_text(body, "x");
     }
     doc.mark_in_document_flags();
@@ -275,14 +261,12 @@ fn mixed_image_line_geometry(
     wrapped: bool,
     vertical_aligns: &[&str],
 ) -> (Vec<f32>, Vec<(f32, f32)>) {
-    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font-size:20px;line-height:20px"),
     );
     let mut images = Vec::new();
@@ -291,14 +275,13 @@ fn mixed_image_line_geometry(
             doc.append_text(body, "x");
         }
         let parent = if wrapped {
-            doc.append_element(Some(body), "span", Style::default(), None::<&str>)
+            doc.append_element(Some(body), "span", None::<&str>)
         } else {
             body
         };
         let image = doc.append_element(
             Some(parent),
             "img",
-            Style::default(),
             Some(&format!(
                 "width:2px;height:2px;vertical-align:{}",
                 vertical_align
@@ -309,7 +292,7 @@ fn mixed_image_line_geometry(
             doc.append_text(body, "x");
         }
         if line != 4 {
-            doc.append_element(Some(body), "br", Style::default(), None::<&str>);
+            doc.append_element(Some(body), "br", None::<&str>);
         }
     }
     doc.mark_in_document_flags();
@@ -413,23 +396,16 @@ fn quirks_mode_inline_axis_padding_preserves_its_line_height() {
 }
 
 fn nested_inline_line_height(mode: raikiri_traits::QuirksMode, inner_css: &str) -> f32 {
-    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(mode);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font-size:20px;line-height:20px"),
     );
-    let outer = doc.append_element(
-        Some(body),
-        "span",
-        Style::default(),
-        Some("line-height:40px"),
-    );
-    let inner = doc.append_element(Some(outer), "b", Style::default(), Some(inner_css));
+    let outer = doc.append_element(Some(body), "span", Some("line-height:40px"));
+    let inner = doc.append_element(Some(outer), "b", Some(inner_css));
     doc.append_text(inner, "x");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -461,25 +437,18 @@ fn quirks_mode_parent_inline_without_direct_text_has_no_strut() {
 
 #[test]
 fn quirks_mode_generated_text_keeps_only_its_own_inline_strut() {
-    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
     doc.set_quirks_mode(raikiri_traits::QuirksMode::Quirks);
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let head = doc.append_element(Some(html), "head", None::<&str>);
+    let style = doc.append_element(Some(head), "style", None::<&str>);
     doc.append_text(style, "span::before { content: \"x\"; line-height: 10px; }");
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font-size:20px;line-height:20px"),
     );
-    doc.append_element(
-        Some(body),
-        "span",
-        Style::default(),
-        Some("line-height:40px"),
-    );
+    doc.append_element(Some(body), "span", Some("line-height:40px"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
@@ -492,25 +461,18 @@ fn quirks_mode_generated_text_keeps_only_its_own_inline_strut() {
 
 #[test]
 fn a_line_break_is_placed_on_the_line_it_ends() {
-    use crate::LayoutStyle as Style;
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
     let body = doc.append_element(
         Some(html),
         "body",
-        Style::default(),
         Some("display:block;margin:0;font-size:20px;line-height:20px"),
     );
     doc.append_text(body, "aa");
-    let first = doc.append_element(Some(body), "br", Style::default(), None::<&str>);
+    let first = doc.append_element(Some(body), "br", None::<&str>);
     doc.append_text(body, "bbbb");
-    let span = doc.append_element(
-        Some(body),
-        "span",
-        Style::default(),
-        Some("line-height:40px"),
-    );
-    let second = doc.append_element(Some(span), "br", Style::default(), None::<&str>);
+    let span = doc.append_element(Some(body), "span", Some("line-height:40px"));
+    let second = doc.append_element(Some(span), "br", None::<&str>);
     doc.append_text(body, "c");
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
@@ -536,7 +498,6 @@ fn a_line_break_is_placed_on_the_line_it_ends() {
 
 #[test]
 fn quirks_mode_a_line_break_uses_the_box_generating_ancestor_of_a_contents_body() {
-    use crate::LayoutStyle as Style;
     use raikiri_traits::QuirksMode;
     for (tag, display, expected) in [
         ("body", "contents", [20.0, 10.0]),
@@ -548,7 +509,6 @@ fn quirks_mode_a_line_break_uses_the_box_generating_ancestor_of_a_contents_body(
         let html = doc.append_element(
             Some(0),
             "html",
-            Style::default(),
             Some("display:block;font-size:10px;line-height:10px"),
         );
         // A contents element has no strut. Its paragraph and break use html's
@@ -556,14 +516,13 @@ fn quirks_mode_a_line_break_uses_the_box_generating_ancestor_of_a_contents_body(
         let body = doc.append_element(
             Some(html),
             tag,
-            Style::default(),
             Some(format!("display:{display};margin:0;font-size:20px;line-height:20px").as_str()),
         );
         // The layout API currently requires a body, even for the span control.
         if tag != "body" {
-            doc.append_element(Some(html), "body", Style::default(), Some("display:none"));
+            doc.append_element(Some(html), "body", Some("display:none"));
         }
-        doc.append_element(Some(body), "br", Style::default(), Some("line-height:2"));
+        doc.append_element(Some(body), "br", Some("line-height:2"));
         doc.append_text(body, "z");
         doc.mark_in_document_flags();
         let rules = raikiri_style::build_rule_tree(&doc);
@@ -652,12 +611,7 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
             let mut child = None;
             let (mut doc, cascade, _root) = ahem_paragraph_with(root_css, |doc, root| {
                 doc.append_text(root, "AA");
-                let id = doc.append_element(
-                    Some(root),
-                    "div",
-                    crate::LayoutStyle::default(),
-                    Some(child_css),
-                );
+                let id = doc.append_element(Some(root), "div", Some(child_css));
                 doc.append_text(id, "B");
                 child = Some(id);
             });
@@ -678,39 +632,18 @@ fn inline_block_paragraph_in_an_auto_wrapper(max_css: &str) -> (f32, f32) {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
-    let wrapper = doc.append_element(
-        Some(body),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("display:block"),
-    );
+    let html = doc.append_element(Some(0), "html", Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Some("display:block"));
+    let wrapper = doc.append_element(Some(body), "div", Some("display:block"));
     let root = doc.append_element(
         Some(wrapper),
         "div",
-        crate::LayoutStyle::default(),
         Some(&format!(
             "display:inline-block;width:100px;font-family:Ahem;font-size:10px;line-height:10px;height:100px;{max_css}"
         )),
     );
     doc.append_text(root, "AA");
-    let child = doc.append_element(
-        Some(root),
-        "div",
-        crate::LayoutStyle::default(),
-        Some("float:left;width:10px;height:50%"),
-    );
+    let child = doc.append_element(Some(root), "div", Some("float:left;width:10px;height:50%"));
     doc.append_text(child, "B");
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);

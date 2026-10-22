@@ -24,7 +24,6 @@ fn item_rect(container_css: &str, item_css: &str, body: Body) -> (f32, f32, f32,
         item = doc.append_element(
             Some(root),
             "div",
-            crate::LayoutStyle::default(),
             Some(&format!("display:block;{item_css}")),
         );
         match body {
@@ -35,7 +34,6 @@ fn item_rect(container_css: &str, item_css: &str, body: Body) -> (f32, f32, f32,
                 doc.append_element(
                     Some(item),
                     "div",
-                    crate::LayoutStyle::default(),
                     Some(&format!("display:block;width:{width}px;height:10px")),
                 );
             }
@@ -248,18 +246,15 @@ fn an_item_is_in_a_column_flex_container_only_when_the_main_axis_is_vertical() {
     ] {
         let mut item = 0;
         let fixture = block_fixture(container, |doc, root| {
-            item = doc.append_element(
-                Some(root),
-                "div",
-                crate::LayoutStyle::default(),
-                Some("display:block"),
-            );
+            item = doc.append_element(Some(root), "div", Some("display:block"));
         });
         let mut doc = fixture.doc;
         layout_single_page(with_ahem(&mut doc), &fixture.cascade, page_box_800x600())
             .expect("layout");
+        let session_cascade = crate::layout::test_support::cascaded(&doc);
         assert_eq!(
-            crate::layout::context::LayoutSession::new(&mut doc).in_column_flex_container(item),
+            crate::layout::context::LayoutSession::bridged(&mut doc, &session_cascade)
+                .in_column_flex_container(item),
             expected,
             "{container}"
         );

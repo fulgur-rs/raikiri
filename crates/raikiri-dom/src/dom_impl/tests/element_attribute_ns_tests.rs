@@ -1,5 +1,4 @@
 use super::super::*;
-use crate::LayoutStyle as Style;
 
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
@@ -13,7 +12,7 @@ fn element_ref(doc: &Document, id: usize) -> ElementRef<'_> {
 #[test]
 fn attr_ns_reads_xlink_href_while_attr_does_not() {
     let mut doc = Document::new();
-    let id = doc.append_element(Some(0), "use", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "use", None::<&str>);
     doc.set_element_namespace_info(id, Some(SVG_NS.into()), None);
     doc.set_element_namespaced_attribute(id, XLINK_NS, Some("xlink".into()), "href", "#shape")
         .expect("valid namespaced attribute");
@@ -28,7 +27,7 @@ fn attr_ns_reads_xlink_href_while_attr_does_not() {
 #[test]
 fn attr_ns_is_exact_and_returns_none_when_absent() {
     let mut doc = Document::new();
-    let id = doc.append_element(Some(0), "use", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "use", None::<&str>);
     doc.set_element_namespaced_attribute(id, XLINK_NS, Some("xlink".into()), "href", "#a")
         .expect("valid namespaced attribute");
     let element = element_ref(&doc, id);
@@ -57,7 +56,7 @@ fn attr_ns_is_exact_and_returns_none_when_absent() {
 #[test]
 fn attr_ns_reaches_through_dom_trait_object() {
     let mut doc = Document::new();
-    let id = doc.append_element(Some(0), "use", Style::default(), None::<&str>);
+    let id = doc.append_element(Some(0), "use", None::<&str>);
     doc.set_element_namespaced_attribute(id, XLINK_NS, Some("xlink".into()), "href", "#shape")
         .expect("valid namespaced attribute");
     let node_id = raikiri_traits::NodeId::new(id as u64);

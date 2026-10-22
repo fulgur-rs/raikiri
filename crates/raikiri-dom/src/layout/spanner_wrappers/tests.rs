@@ -1,23 +1,16 @@
 use super::*;
-use crate::LayoutStyle as Style;
 
 /// `body > div (container) > wrapper > [text,] spanner [, text]`, laid out.
 /// Returns the document and the wrapper.
 fn wrapped_spanner(container_css: &str, wrapper_tag: &str, wrapper_css: &str) -> (Document, usize) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let container = doc.append_element(Some(body), "div", Style::default(), Some(container_css));
-    let wrapper = doc.append_element(
-        Some(container),
-        wrapper_tag,
-        Style::default(),
-        Some(wrapper_css),
-    );
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(Some(body), "div", Some(container_css));
+    let wrapper = doc.append_element(Some(container), wrapper_tag, Some(wrapper_css));
     doc.append_element(
         Some(wrapper),
         "div",
-        Style::default(),
         Some("display:block;column-span:all;height:10px"),
     );
     lay_out(&mut doc);
@@ -52,25 +45,19 @@ fn a_plain_wrapper_of_a_spanner_makes_no_box() {
 #[test]
 fn every_plain_wrapper_between_the_spanner_and_the_container_makes_no_box() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
-    let outer = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
-    let contents = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:contents"),
-    );
-    let inner = doc.append_element(Some(contents), "section", Style::default(), Some(BLOCK));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+    let outer = doc.append_element(Some(container), "div", Some(BLOCK));
+    let contents = doc.append_element(Some(outer), "div", Some("display:contents"));
+    let inner = doc.append_element(Some(contents), "section", Some(BLOCK));
     let spanner = doc.append_element(
         Some(inner),
         "h2",
-        Style::default(),
         Some("display:block;column-span:all;height:10px"),
     );
-    let beside = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
-    doc.append_element(Some(beside), "p", Style::default(), Some(BLOCK));
+    let beside = doc.append_element(Some(container), "div", Some(BLOCK));
+    doc.append_element(Some(beside), "p", Some(BLOCK));
     lay_out(&mut doc);
 
     assert!(doc.nodes[outer].generates_no_box());
@@ -88,6 +75,8 @@ fn a_wrapper_with_a_box_of_its_own_keeps_it() {
         "border-top:1px solid",
         "margin-top:5px",
         "margin-left:5px",
+        "margin-left:5%",
+        "margin-left:calc(5px + 1%)",
         "width:50px",
         "height:10px",
         "min-height:10px",
@@ -135,21 +124,15 @@ fn a_wrapper_with_a_box_of_its_own_keeps_it() {
 #[test]
 fn a_wrapper_below_one_that_keeps_its_box_is_not_reached() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
-    let outer = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
-    let padded = doc.append_element(
-        Some(outer),
-        "div",
-        Style::default(),
-        Some("display:block;padding:1px"),
-    );
-    let inner = doc.append_element(Some(padded), "div", Style::default(), Some(BLOCK));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+    let outer = doc.append_element(Some(container), "div", Some(BLOCK));
+    let padded = doc.append_element(Some(outer), "div", Some("display:block;padding:1px"));
+    let inner = doc.append_element(Some(padded), "div", Some(BLOCK));
     doc.append_element(
         Some(inner),
         "h2",
-        Style::default(),
         Some("display:block;column-span:all;height:10px"),
     );
     lay_out(&mut doc);
@@ -167,16 +150,16 @@ fn a_wrapper_below_one_that_keeps_its_box_is_not_reached() {
 /// space) or `comment`.
 fn lifts_with_lines(container_css: &str, wrapper_css: &str, content: &str) -> bool {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-    let container = doc.append_element(Some(body), "div", Style::default(), Some(container_css));
-    let wrapper = doc.append_element(Some(container), "div", Style::default(), Some(wrapper_css));
+    let html = doc.append_element(Some(0), "html", None::<&str>);
+    let body = doc.append_element(Some(html), "body", Some("margin:0"));
+    let container = doc.append_element(Some(body), "div", Some(container_css));
+    let wrapper = doc.append_element(Some(container), "div", Some(wrapper_css));
     match content {
         "text" => {
             doc.append_text(wrapper, "before");
         }
         "inline" => {
-            doc.append_element(Some(wrapper), "b", Style::default(), None::<&str>);
+            doc.append_element(Some(wrapper), "b", None::<&str>);
         }
         "space" => {
             doc.append_text(wrapper, " \n ");
@@ -192,7 +175,6 @@ fn lifts_with_lines(container_css: &str, wrapper_css: &str, content: &str) -> bo
     doc.append_element(
         Some(wrapper),
         "h2",
-        Style::default(),
         Some("display:block;column-span:all;height:10px"),
     );
     lay_out(&mut doc);
@@ -319,11 +301,11 @@ fn a_box_that_is_not_a_spanner_lifts_nothing() {
         "display:block;column-span:none;height:10px",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-        let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
-        let wrapper = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
-        doc.append_element(Some(wrapper), "div", Style::default(), Some(css));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+        let wrapper = doc.append_element(Some(container), "div", Some(BLOCK));
+        doc.append_element(Some(wrapper), "div", Some(css));
         lay_out(&mut doc);
         assert!(!doc.nodes[wrapper].generates_no_box(), "{css}");
     }
@@ -334,12 +316,12 @@ fn a_spanner_with_a_logical_float_is_still_a_spanner() {
     // Only `left` and `right` float a box; the logical keywords do not.
     for float in ["inline-start", "inline-end"] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-        let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
-        let wrapper = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+        let wrapper = doc.append_element(Some(container), "div", Some(BLOCK));
         let css = format!("display:block;column-span:all;height:10px;float:{float}");
-        doc.append_element(Some(wrapper), "div", Style::default(), Some(css.as_str()));
+        doc.append_element(Some(wrapper), "div", Some(css.as_str()));
         lay_out(&mut doc);
         assert!(doc.nodes[wrapper].generates_no_box(), "{css}");
     }
@@ -371,22 +353,16 @@ fn lines_are_compared_with_the_container_not_with_the_parent() {
         "display:contents;text-align:center",
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-        let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
-        let outer = doc.append_element(Some(container), "div", Style::default(), Some(outer_css));
-        let inner = doc.append_element(Some(outer), "div", Style::default(), Some(BLOCK));
-        let contents = doc.append_element(
-            Some(inner),
-            "span",
-            Style::default(),
-            Some("display:contents"),
-        );
+        let html = doc.append_element(Some(0), "html", None::<&str>);
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+        let outer = doc.append_element(Some(container), "div", Some(outer_css));
+        let inner = doc.append_element(Some(outer), "div", Some(BLOCK));
+        let contents = doc.append_element(Some(inner), "span", Some("display:contents"));
         doc.append_text(contents, "text");
         doc.append_element(
             Some(inner),
             "h2",
-            Style::default(),
             Some("display:block;column-span:all;height:10px"),
         );
         lay_out(&mut doc);
@@ -414,18 +390,17 @@ fn a_wrapper_with_a_first_line_or_first_letter_style_keeps_its_box() {
         ("div div::before{color:red}", true),
     ] {
         let mut doc = Document::new();
-        let html = doc.append_element(Some(0), "html", Style::default(), Some(BLOCK));
-        let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
-        let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+        let html = doc.append_element(Some(0), "html", Some(BLOCK));
+        let head = doc.append_element(Some(html), "head", Some("display:none"));
+        let style = doc.append_element(Some(head), "style", None::<&str>);
         doc.append_text(style, rule);
-        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
-        let container = doc.append_element(Some(body), "div", Style::default(), Some(COLUMNS));
-        let wrapper = doc.append_element(Some(container), "div", Style::default(), Some(BLOCK));
+        let body = doc.append_element(Some(html), "body", Some("margin:0"));
+        let container = doc.append_element(Some(body), "div", Some(COLUMNS));
+        let wrapper = doc.append_element(Some(container), "div", Some(BLOCK));
         doc.append_text(wrapper, "before");
         doc.append_element(
             Some(wrapper),
             "h2",
-            Style::default(),
             Some("display:block;column-span:all;height:10px"),
         );
         doc.mark_in_document_flags();

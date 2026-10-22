@@ -65,18 +65,9 @@ fn a_paginated_block_pseudo_keeps_its_placement_fragmentainer_clip() {
         "p{display:block;width:10px;margin:0} p::before{content:'B';display:block;height:250px;background:blue}",
         "width:10px;line-height:10px",
         |doc, root| {
-            let wrapper = doc.append_element(
-                Some(root),
-                "section",
-                crate::LayoutStyle::default(),
-                Some("display:block;overflow:hidden"),
-            );
-            let paragraph = doc.append_element(
-                Some(wrapper),
-                "p",
-                crate::LayoutStyle::default(),
-                None::<&str>,
-            );
+            let wrapper =
+                doc.append_element(Some(root), "section", Some("display:block;overflow:hidden"));
+            let paragraph = doc.append_element(Some(wrapper), "p", None::<&str>);
             doc.append_text(paragraph, "X");
         },
     );
