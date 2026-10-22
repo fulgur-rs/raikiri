@@ -40,7 +40,7 @@ pub(super) fn transpose_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rec
 }
 
 /// Map sides from the transposed geometry back to physical coordinates.
-pub(super) fn physical_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
+fn physical_rect<T: Copy>(rect: Rect<T>, right_to_left: bool) -> Rect<T> {
     let (left, right) = if right_to_left {
         (rect.bottom, rect.top)
     } else {
@@ -114,27 +114,7 @@ pub(super) fn transpose_output_to_physical(
             y: inline_axis,
         };
     }
-    let top_margin = if preserve_margin_collapse {
-        output.top_margin
-    } else {
-        CollapsibleMarginSet::ZERO
-    };
-    let bottom_margin = if preserve_margin_collapse {
-        output.bottom_margin
-    } else {
-        CollapsibleMarginSet::ZERO
-    };
-    LayoutOutput {
-        size: swap(output.size),
-        scrollable_overflow_rect: swap_rect_axes(output.scrollable_overflow_rect),
-        baselines: Baselines::NONE,
-        top_margin,
-        bottom_margin,
-        margins_can_collapse_through: preserve_margin_collapse
-            && output.margins_can_collapse_through,
-        oof_positioning_area,
-        ..output
-    }
+    swap_output_axes(output, oof_positioning_area, preserve_margin_collapse)
 }
 
 /// Convert a child's physical-axis output to the transposed axes used by its
@@ -171,6 +151,18 @@ pub(super) fn transpose_child_output_to_vertical(
             },
         };
     }
+    swap_output_axes(output, oof_positioning_area, preserve_margin_collapse)
+}
+
+/// The part of an output conversion that does not depend on the direction:
+/// swap the sizes and the overflow rectangle, drop the baselines, and keep
+/// the margin collapsing state only when the caller says both sides share a
+/// block formatting context.
+fn swap_output_axes(
+    output: LayoutOutput,
+    oof_positioning_area: Option<taffy::OofPositioningArea>,
+    preserve_margin_collapse: bool,
+) -> LayoutOutput {
     let top_margin = if preserve_margin_collapse {
         output.top_margin
     } else {
@@ -194,10 +186,9 @@ pub(super) fn transpose_child_output_to_vertical(
     }
 }
 
-pub(super) fn reverse_static_position(
-    position: AxisStaticPosition,
-    extent: f32,
-) -> AxisStaticPosition {
+/// Mirror a static position within an axis of length `extent`, swapping the
+/// start and end alignments with it.
+fn reverse_static_position(position: AxisStaticPosition, extent: f32) -> AxisStaticPosition {
     let reverse_edge = |edge| match edge {
         AxisStaticEdge::Start => AxisStaticEdge::End,
         AxisStaticEdge::Center => AxisStaticEdge::Center,
@@ -218,7 +209,7 @@ pub(super) fn reverse_static_position(
 
 /// A scrollable overflow rectangle, measured along the inline and block
 /// axes from the scroll origin, with its axes swapped.
-pub(super) fn swap_rect_axes(rect: Rect<f32>) -> Rect<f32> {
+fn swap_rect_axes(rect: Rect<f32>) -> Rect<f32> {
     Rect {
         left: rect.top,
         right: rect.bottom,

@@ -602,3 +602,33 @@ fn frozen_sizing_undo_rejects_reused_frame_generation() {
         taffy::Dimension::length(20.0)
     );
 }
+
+#[test]
+fn a_physical_read_of_a_vertical_box_keeps_the_physical_axes() {
+    let (mut doc, cascade, child, _) = fixture_with_styles(
+        "display:block",
+        "display:block;writing-mode:vertical-rl;width:31px;height:7px;\
+         margin-left:5px;margin-top:9px;padding-right:3px;border-bottom:2px solid",
+    );
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let mut tree = LayoutSession::with_cascade(&mut doc, &cascade);
+    tree.prepare_style_views();
+    let physical = tree.physical_style(child);
+    assert_eq!(
+        physical.size(),
+        Size {
+            width: taffy::Dimension::length(31.0),
+            height: taffy::Dimension::length(7.0)
+        }
+    );
+    assert_eq!(
+        physical.margin().left,
+        taffy::LengthPercentageAuto::length(5.0)
+    );
+    assert_eq!(
+        physical.margin().top,
+        taffy::LengthPercentageAuto::length(9.0)
+    );
+    assert_eq!(physical.padding().right, LengthPercentage::length(3.0));
+    assert_eq!(physical.border().bottom, LengthPercentage::length(2.0));
+}
