@@ -14,8 +14,9 @@ use std::{
     sync::Arc,
 };
 use taffy::{
-    CoreStyle, FlexboxContainerStyle as FC, FlexboxItemStyle as FI, GenericRepetition,
-    GridContainerStyle as GC, GridItemStyle as GI,
+    BlockContainerStyle as BC, BlockItemStyle as BI, CoreStyle, FlexboxContainerStyle as FC,
+    FlexboxItemStyle as FI, GenericRepetition, GridContainerStyle as GC, GridItemStyle as GI,
+    OofItemStyle as OI,
 };
 
 thread_local! {
@@ -105,6 +106,12 @@ fn read_all(v: &LayoutStyleView<'_>) {
         ($t:ident: $($method:ident),+ $(,)?) => { $(black_box($t::$method(v));)+ };
     }
     query!(CoreStyle: box_generation_mode,is_block,is_compressible_replaced,is_replaced,box_sizing,direction,overflow,scrollbar_width,position,inset,is_containing_block,size,min_size,max_size,aspect_ratio,margin,padding,border,contain);
+    query!(BC: text_align,align_content,justify_items);
+    query!(BI: is_table,align_self,justify_self,align_content,float,clear);
+    query!(OI: align_self,justify_self,is_table,grid_row,grid_column);
+    black_box(v.bridge_align_self());
+    black_box(v.bridge_justify_self());
+    black_box(v.bridge_align_content());
     query!(FC: flex_direction,flex_wrap,gap,align_content,align_items,justify_content);
     query!(FI: flex_basis,flex_grow,flex_shrink,align_self);
     query!(GC: grid_auto_flow,gap,align_content,justify_content,align_items,justify_items,grid_template_area_row_count,grid_template_area_column_count);
@@ -283,6 +290,14 @@ fn all_getters_and_iterator_clones_allocate_nothing() {
                 for _ in 0..100 {
                     read_all(black_box(&v));
                     read_all(black_box(&v.for_flex_grid()));
+                    for right_to_left in [false, true] {
+                        read_all(black_box(&v.with_context(ViewContext {
+                            bridge_projection: BridgeProjection::BlockTranspose { right_to_left },
+                            block_item_basis: Some(123.0),
+                            claims_policy: ClaimsPolicy::Positioning,
+                            ..ViewContext::default()
+                        })));
+                    }
                     black_box(v);
                     for prepared in [&owned, &shared, &from_data, &from_shared_data] {
                         let v = LayoutStyleView::with_owned_overrides(
